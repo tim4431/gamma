@@ -502,14 +502,15 @@ function buildInlineDecos(state, ctx) {
   const flushQuoteRun = () => {
     if (!quoteRun.length) return;
     // The marker may carry Obsidian's fold flag ("[!note]-" / "+"), hidden
-    // with the rest of it (callouts.js CALLOUT_MARKER_RE).
-    const co = quoteRun[0].line.text.match(/^> ?\[!(\w+)\][-+]?[ \t]*/);
+    // with the rest of it (callouts.js CALLOUT_MARKER_RE); a foldable
+    // callout's title is a <summary>, a little further from the body.
+    const co = quoteRun[0].line.text.match(/^> ?\[!(\w+)\]([-+]?)[ \t]*/);
     const type = co ? calloutType(co[1]) : null;
     quoteRun.forEach(({ line, prefixLen, lineTouched }, i) => {
       let cls = "cmQuoteLine";
       if (type) {
         cls += ` cmCalloutLine cmCallout-${type}`;
-        if (i === 0) cls += " cmCalloutFirst";
+        if (i === 0) cls += co[2] ? " cmCalloutFirst cmCalloutFold" : " cmCalloutFirst";
         if (i === quoteRun.length - 1) cls += " cmCalloutLast";
       }
       ranges.push(Decoration.line({ class: cls }).range(line.from));

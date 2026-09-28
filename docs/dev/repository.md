@@ -45,8 +45,9 @@ App.jsx decomposition.
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |
 | `desktop/assets/store/` | Store listing artwork and listing text |
-| `desktop/ui/tokens.css`, `desktop/ui/fonts/` | The shell's committed copies of the design tokens and the Latin Inter file; `npm run desktop-tokens` in `frontend/` refreshes them ([ui-design.md](ui-design.md#the-desktop-shell)) |
+| `desktop/ui/tokens.css`, `desktop/ui/fonts/` | The shell's committed copies of the design tokens and the Latin Inter file; `npm run copy-tokens` in `frontend/` refreshes them ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)) |
 | `extension/assets/icons/` | Connector toolbar, manifest, and notification icons |
+| `extension/tokens.css`, `extension/fonts/` | The Connector's committed copies of the same tokens and font, refreshed by the same command |
 
 Keep generated assets with their consumer so the frontend build and the extension
 archive remain self-contained. Edit authoritative brand sources in

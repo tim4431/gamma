@@ -4,13 +4,14 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, isPdfFile, makeId, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
+import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -24,7 +25,7 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -60,50 +61,37 @@ const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon,
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
 // provider refused it (text went instead). A full native attachment or a
-// paper that fit whole stays silent. A selection says where the server
-// placed it ("p. 7 · Methods › Noise model") and whether a picture of it
-// went along (its text layer looked like a formula or table).
-function selectionPlace(selection) {
-  const placed = (selection?.passages || []).filter((p) => p.page);
-  if (!placed.length) return "";
-  const pages = [...new Set(placed.map((p) => p.page))];
-  const section = placed.find((p) => p.section)?.section || "";
-  const short = section.length > 40 ? `${section.slice(0, 40)}…` : section;
-  return `${pages.length > 1 ? "pp." : "p."} ${pages.join(", ")}${short ? ` · ${short}` : ""}`;
-}
-
-function ContextCoverage({ items }) {
+// paper that fit whole stays silent. The pill folds in what the reply's
+// tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
+// which pages nobody saw; a selection says where the server placed it
+// ("p. 7 · Methods › Noise model") and whether a picture of it went along
+// (its text layer looked like a formula or table). Two more pills, per
+// reply: the oldest messages left out of a conversation the model can't
+// hold any more, and a reply cut off at the output limit (chat/coverage.js).
+function ContextCoverage({ items, actions, tools, trimmed, truncated }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
-  const notes = items.flatMap((c) => {
+  const notes = (items || []).flatMap((c) => {
     const out = [];
-    const refused = c.native_requested && !c.native;
-    const place = selectionPlace(c.selection);
-    const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the PDF");
-    if (refused || c.partial) {
-      const around = c.selection && !c.pages_shown;
-      const span = c.pages_shown && c.pages
-        ? t("pages 1–{pages} of {pages2}", { pages: Math.min(c.pages_shown, c.pages), pages2: c.pages })
-        : around ? (place ? t("text around {place}", { place }) : t("selected passages + head")) : `${(c.chars || 0).toLocaleString()} characters`;
-      const short = refused && !c.partial
-        ? t("PDF file not accepted — sent as text")
-        : refused
-          ? t("PDF file not accepted — text only, {span}", { span })
-          : t("Model saw {span}", { span });
-      const long = (refused ? t("This provider does not accept PDF files, so the document went as extracted text. ") : "")
-        + (!c.partial ? `${what} was sent as extracted text.`
-          : around ? `The model got the text around your selection${place ? ` (${place})` : ""} and the start of ${what}, not the whole document. Turn on Tools so it can read and search the rest.`
-          : `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings / AI / Advanced AI settings / Context size, or turn on Tools so it can read and search the whole paper.`);
-      out.push({ short, long, refused });
-    }
-    if ((c.selection?.passages || []).some((p) => p.crop)) {
+    const note = coverageNote(c, { actions, tools });
+    if (note) out.push(note);
+    const areas = areaPicturesNote(c);
+    if (areas) out.push(areas);
+    const cropped = (c.selection?.passages || []).filter((p) => p.crop);
+    if (cropped.length) {
       out.push({
         short: T("Picture of the selection sent"),
         long: t("The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page."),
         refused: false,
+        // Drawn again by the server from the saved page + crop box — the
+        // same picture the model got. Replies saved before the box was kept
+        // have none to show.
+        pictures: c.doc_id ? cropped.filter((p) => p.box?.length === 4).map((p) =>
+          withWorkspace(`${API}/ai/selection-crop/${c.doc_id}?page=${p.page}&box=${p.box.join(",")}`)) : [],
       });
     }
     return out;
   });
+  for (const extra of [trimmedNote(trimmed), truncatedNote(truncated)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
   return (
@@ -117,6 +105,9 @@ function ContextCoverage({ items }) {
         </button>
       ))}
       {notes[open] ? <p className="chatCoverageNote">{notes[open].long}</p> : null}
+      {notes[open]?.pictures?.map((src) => (
+        <img key={src} className="chatCoverageCrop" src={src} alt={t("Picture of the selection sent")} draggable={false} />
+      ))}
     </div>
   );
 }
@@ -318,7 +309,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
   const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
   return (
     <div className="chatSetup" data-guide="chat.setup">
-      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
       <div className="chatSetupTitle">{t("Chat with your papers")}</div>
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
@@ -842,6 +833,84 @@ export default function ChatDock({
     }
   }, [chatMessages, busyHere]);
 
+  // What the message points at inside the notes: the chips, and the cursor
+  // block's selection when it has one (first, as the server labels it S1).
+  function pendingNotes() {
+    const notes = chatNotes || [];
+    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
+    return { notes, cursorSel };
+  }
+
+  // The /api/ai/chat request for `text` after `prevMessages`, from what the
+  // composer holds now — the send and the context export build the same one.
+  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
+    const { notes, cursorSel } = pendingNotes();
+    const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
+    return {
+      prompt: text,
+      page_id: focusedBlockId || "",
+      // Only what the server replays: the text and the tool calls of
+      // each turn — never the pictures, reports and counts saved with
+      // them (failed replies aren't answers).
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
+        role, text: turnText, ...(turnActions?.length ? { actions: turnActions } : {}) })),
+      chat_key: key, // the conversation, for the provider's prompt cache
+      model: model || chatModel || "",
+      selections: pdfSelections,
+      focus_block_id: cursorChip ? cursorChip.id : "",
+      // Note chips: attached blocks go as ids (the server serves their
+      // current text, id-labelled, so the agent can edit them); selected
+      // note text as exact source ranges — edit_block mode "selection"
+      // rewrites only that.
+      context_blocks: notes.filter((n) => n.kind === "block").map((n) => n.id),
+      note_selections: [...cursorSel, ...notes.filter((n) => n.kind === "note")]
+        .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text })),
+      attach_pdf: attach,
+      effort,
+      system: chatSystem || "",
+      pages: selectedDocs.length ? contextIds : [],
+      include_notes: includeNotes,
+      images: chatImages,
+      files: chatFiles,
+      context_char_limit: chatContextChars,
+      multi_context_char_limit: multiContextChars,
+      ...agentPayload(),
+    };
+  }
+
+  // Download what the model would be sent now — system prompt, tools, every
+  // turn with the pages' context, the draft as the last message — as Markdown.
+  const [exporting, setExporting] = useState(false);
+  async function exportContext() {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/ai/chat/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
+      });
+      if (!res.ok) {
+        let detail = "";
+        try { detail = (await res.json()).detail || ""; } catch { /* not JSON */ }
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const filename = `${activeTitle.replace(/[\\/:*?"<>|\s]+/g, " ").trim().slice(0, 80) || "chat"} - context.md`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      setStatus(t("Couldn't export the chat context: {message}", { message: err.message }));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
@@ -856,17 +925,8 @@ export default function ChatDock({
     const selections = pdfSelections;
     const selection = selections.map((s) => s.text).join("\n\n---\n\n");
     setPdfSelections([]);
-    // Note chips: attached blocks go as ids (the server serves their current
-    // text, id-labelled, so the agent can edit them); selected note text as
-    // verbatim passages.
-    const notes = chatNotes || [];
+    const { notes, cursorSel } = pendingNotes();
     setChatNotes?.([]);
-    const contextBlocks = notes.filter((n) => n.kind === "block").map((n) => n.id);
-    // Selected note text goes as exact source ranges (the cursor block's
-    // selection first) — edit_block mode "selection" rewrites only that.
-    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
-    const noteSelections = [...cursorSel, ...notes.filter((n) => n.kind === "note")]
-      .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text }));
     if (cursorSel.length) onSelectionSent?.();
     const images = chatImages;
     setChatImages([]);
@@ -922,15 +982,20 @@ export default function ChatDock({
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
+    let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
+    let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const replyId = makeId(); // every version of this reply, partial or final, is one message
     const aiMsg = (extra = {}) => ({
       id: replyId, role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
-      ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}) } : {}),
+      ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
+        ...(answered.tools ? { tools: true } : {}) } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
+      ...(trimmed ? { trimmed } : {}),
+      ...(truncated ? { truncated: true } : {}),
       ...extra,
     });
     try {
@@ -939,26 +1004,11 @@ export default function ChatDock({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         signal: ctrl.signal,
+        // chatRequest reads this render's composer state — the clears above
+        // only change it for the next render.
         body: JSON.stringify({
-          prompt: text,
-          page_id: focusedBlockId || "",
-          history: prevMessages.filter((m) => !m.error), // failed replies aren't answers
-          model: model || chatModel || "",
-          selections,
-          focus_block_id: cursorChip ? cursorChip.id : "",
-          context_blocks: contextBlocks,
-          note_selections: noteSelections,
-          attach_pdf: sendingPdf,
-          effort,
-          system: chatSystem || "",
-          pages: selectedDocs.length ? contextIds : [],
-          include_notes: includeNotes,
-          images,
-          files,
-          context_char_limit: chatContextChars,
-          multi_context_char_limit: multiContextChars,
+          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
           stream: true,
-          ...agentPayload(),
         }),
       });
       if (!res.ok) {
@@ -990,6 +1040,10 @@ export default function ChatDock({
             coverage = ev.context;
           } else if (ev.model) {
             answered = ev.model;
+          } else if (ev.trimmed) {
+            trimmed = ev.trimmed;
+          } else if (ev.truncated) {
+            truncated = true;
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
@@ -1250,10 +1304,10 @@ export default function ChatDock({
   }
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
-  // the context ring (opens the settings popover, whose Tokens section
+  // Export context, the context ring (opens the settings popover, whose Tokens section
   // spells it out), ⚙ chat settings (context size, tools and tokens — the
   // same prefs Settings / AI edits, in a popover; the model and effort are
-  // the composer's model chip), Tools, Find, New chat.
+  // the composer's model chip), Tools, Find, History, New chat.
   const settingsOpen = openPopover === "chatsettings";
   const findBtn = (
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
@@ -1271,6 +1325,13 @@ export default function ChatDock({
   const headerContent = aiOff ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
+        {/* First in the strip: a button right of ⚙ would push its popover
+            (right-aligned under it) past a narrow panel's edge. */}
+        <button type="button" className="ctlBtn" onClick={exportContext} disabled={exporting}
+          title={t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown")}
+          aria-label={t("Export chat context")}>
+          <DownloadIcon size={16} />
+        </button>
         {headerModels.length > 0 ? (() => {
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
@@ -1426,14 +1487,10 @@ export default function ChatDock({
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
         // here, where the failure would otherwise surface mid-conversation,
-        // in the error card's words. Only a probe with no model picked comes
-        // without a kind.
+        // in the error card's words.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
-            {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
-              {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-              {t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
-            </>}
+            {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
           <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
@@ -1550,8 +1607,9 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && m.context?.length ? (
-                      <ContextCoverage items={m.context} />
+                    {!isUser && (m.context?.length || m.trimmed || m.truncated) ? (
+                      <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
+                        trimmed={m.trimmed} truncated={m.truncated} />
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
@@ -1848,7 +1906,7 @@ export default function ChatDock({
             </button>
           ) : (
             <>
-              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
                 <MicIcon size={14} />
               </button> : null}
               <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>

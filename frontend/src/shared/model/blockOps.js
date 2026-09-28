@@ -3,8 +3,9 @@
 // ops — ours echoed back, or another client's — to a tree (applyOps).
 //
 // Pure: no React, no network. Trees are the App's nested block arrays
-// ({id, content, properties, children, …} plus the UI-only editMode /
-// collapsed flags, which never travel). Positions (fractional-index keys,
+// ({id, content, properties, children, …} — the document only; the open
+// editor and the viewer's folding live beside the tree, blockModel's
+// `view`). Positions (fractional-index keys,
 // same library as the backend) live in a separate Map id → key that both
 // functions read and write, so the tree objects themselves stay untouched
 // and history snapshots can share them.
@@ -218,7 +219,7 @@ export function applyOps(tree, ops, pageId, pos) {
       const node = ex
         ? { ...ex.node, content: op.content ?? "", properties: op.props || {}, position: op.position }
         : { id: op.id, content: op.content ?? "", properties: op.props || {}, position: op.position,
-            children: [], collapsed: Boolean(op.props?.collapsed), editMode: false };
+            children: [] };
       out = placeUnder(ex ? ex.rest : out, op.parent, node, pageId, pos);
     } else if (op.op === "move") {
       const ex = extract(out, op.id);
@@ -257,21 +258,4 @@ export function pushOp(queue, op) {
   }
   queue.push(op);
   return null;
-}
-
-// Carry the per-viewer UI flags (open editor, folding) from the tree on
-// screen onto a freshly fetched one, so a reload never closes an editor.
-// The text is the fetched tree's: what this tab has not saved yet is laid
-// over it by the collab session (collabSession's `overlay`), never taken
-// from the screen — a screen copy would become the base and never be sent.
-export function keepUiFlags(fresh, current) {
-  const flags = new Map();
-  const walk = (list) => { for (const n of list || []) { flags.set(n.id, n); walk(n.children); } };
-  walk(current);
-  const apply = (list) => (list || []).map((n) => {
-    const old = flags.get(n.id);
-    const node = old ? { ...n, editMode: !!old.editMode, collapsed: !!old.collapsed } : n;
-    return n.children?.length ? { ...node, children: apply(n.children) } : node;
-  });
-  return apply(fresh);
 }

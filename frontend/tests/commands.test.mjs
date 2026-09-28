@@ -8,11 +8,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_COMMANDS, GROUPS, fixedKeys } from "../src/app/commands.js";
+import { ALL_COMMANDS, GROUPS, commandById, commandChord, fixedKeys } from "../src/app/commands.js";
 import { APP_COMMANDS } from "../src/app/appCommands.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 import { chordLabel, conflicts, effectiveKeys, normalizeChord } from "../src/shared/lib/hotkeys.js";
-import { moveSibling, removeBlockKeepChildren, visibleNeighbor } from "../src/shared/model/blockModel.js";
+import { EMPTY_VIEW, moveSibling, removeBlockKeepChildren, visibleNeighbor } from "../src/shared/model/blockModel.js";
 import { toggleTodoLine } from "../src/editor/mdMarks.js";
 
 const GUIDE = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../docs/user_guide.md");
@@ -59,8 +59,19 @@ test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);
 });
 
+test("commandChord is the chord a command answers to for this account", () => {
+  assert.equal(commandChord("app.quickOpen", {}), "Mod-p");
+  assert.equal(commandChord("app.redo", {}), "Mod-y", "the first of several defaults");
+  assert.equal(commandChord("app.quickOpen", { "app.quickOpen": "Mod-Shift-o" }), "Mod-Shift-o", "a rebound command");
+  assert.equal(commandChord("app.quickOpen", { "app.quickOpen": null }), "", "an unbound command");
+  assert.equal(commandChord("app.share", {}), "", "a command with no default");
+  assert.equal(commandChord("app.nothing", {}), "");
+  assert.equal(commandById("app.share").label, "Share this page…");
+  assert.equal(commandById("app.nothing"), null);
+});
+
 const tree = () => [
-  { id: "a", content: "a", children: [{ id: "a1", content: "a1", children: [] }, { id: "a2", content: "a2", collapsed: true, children: [{ id: "a2x", content: "x", children: [] }] }] },
+  { id: "a", content: "a", children: [{ id: "a1", content: "a1", children: [] }, { id: "a2", content: "a2", properties: { collapsed: true }, children: [{ id: "a2x", content: "x", children: [] }] }] },
   { id: "b", content: "b", children: [] },
 ];
 const ids = (list) => list.map((b) => b.id + (b.children?.length ? `(${ids(b.children)})` : "")).join(",");
@@ -80,13 +91,13 @@ test("removeBlockKeepChildren lifts the children into the block's place", () => 
   assert.equal(ids(removeBlockKeepChildren(tree(), "b")), "a(a1,a2(a2x))");
 });
 
-test("visibleNeighbor walks the outliner as shown, collapsed subtrees skipped", () => {
+test("visibleNeighbor walks the outliner as shown, folded subtrees skipped", () => {
   const t = tree();
-  assert.equal(visibleNeighbor(t, "a", 1)?.id, "a1");
-  assert.equal(visibleNeighbor(t, "a2", 1)?.id, "b", "a2 is collapsed: its child is not shown");
-  assert.equal(visibleNeighbor(t, "b", -1)?.id, "a2");
-  assert.equal(visibleNeighbor(t, "a", -1), null);
-  assert.equal(visibleNeighbor(t, "b", 1), null);
+  assert.equal(visibleNeighbor(t, "a", 1, EMPTY_VIEW)?.id, "a1");
+  assert.equal(visibleNeighbor(t, "a2", 1, EMPTY_VIEW)?.id, "b", "a2 is folded: its child is not shown");
+  assert.equal(visibleNeighbor(t, "b", -1, EMPTY_VIEW)?.id, "a2");
+  assert.equal(visibleNeighbor(t, "a", -1, EMPTY_VIEW), null);
+  assert.equal(visibleNeighbor(t, "b", 1, EMPTY_VIEW), null);
 });
 
 test("toggleTodoLine adds, checks and unchecks a checkbox on the caret's line", () => {

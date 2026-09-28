@@ -228,6 +228,39 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await ctx.close();
   });
 
+  await step("share: the command palette's Share this page… opens the open page's popover, not the last one shown", async () => {
+    const shared = await alice.api("/api/pages", { method: "POST", body: { title: "Palette shared" } });
+    const plain = await alice.api("/api/pages", { method: "POST", body: { title: "Palette plain" } });
+    await alice.api(`/api/share/${shared.id}`, { method: "POST" });
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${shared.id}&ws=${alice.ws}`);
+    await page.locator(".blockList").first().waitFor();
+    const pop = page.locator(".sharePopover");
+    const shareFromPalette = async () => {
+      await page.keyboard.press("Control+Shift+p");
+      const dialog = page.getByRole("dialog", { name: "Command palette" });
+      await dialog.getByRole("textbox", { name: "Type a command" }).fill(">share this page");
+      await until(async () => /Share this page/.test(await dialog.locator('[role="option"][aria-selected="true"]').textContent()), { what: "the Share command is selected" });
+      await page.keyboard.press("Enter");
+      await pop.waitFor();
+    };
+    await shareFromPalette();
+    await pop.getByRole("button", { name: "Copy link" }).waitFor();
+    await page.keyboard.press("Escape");
+    await pop.waitFor({ state: "detached" });
+    // Another page, opened in place: the popover is that page's, unshared.
+    await page.keyboard.press("Control+p");
+    await page.getByRole("dialog", { name: "Open a page" }).getByRole("option", { name: /Palette plain/ }).click();
+    await until(async () => (await page.locator(".pageTitleRow .titleText").textContent()).includes("Palette plain"), { what: "the second page open" });
+    await shareFromPalette();
+    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    assertEq(await pop.getByRole("button", { name: "Copy link" }).count(), 0, "not the first page's link");
+    assertEq((await alice.api(`/api/share-settings/${plain.id}`)).token, null, "opening the popover shares nothing");
+    assertNoProblems(page);
+    await ctx.close();
+    await alice.api(`/api/share-settings/${shared.id}`, { method: "DELETE" });
+  });
+
   const account = alice2;
   let token;
   if (!pdfPageId) { console.log("  skip  share: needs the pdf steps (drop --only)"); return; }
@@ -256,7 +289,16 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
   });
 
   await step("share: an anonymous visitor sees the paper, the highlight and the image, read-only", async () => {
+    // A note linking to the paper and referencing a block on a page the
+    // share does not open: the share view looks both up through the token
+    // (/block-search), and the outside one stays unresolved.
+    const elsewhere = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Not shared" } });
+    const secret = await account.api("/api/blocks", { method: "POST", body: { parent_id: elsewhere.id, content: "an unshared secret" } });
+    const note = await account.api("/api/blocks", { method: "POST", body: {
+      parent_id: pdfPageId, content: `links: [the paper](/?page=${pdfPageId}) and [[${secret.id}]]` } });
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const lookups = [];
+    ctx.on("response", (r) => { if (r.url().includes("/api/block-search")) lookups.push(r.status()); });
     const page = await openPage(ctx, `${server.base}/?share=${token}`);
     await page.waitForSelector(".readOnlyTitle", { timeout: 15000 });
     assert((await page.textContent(".readOnlyTitle")).includes("Rydberg paper"), "title in the share view");
@@ -266,6 +308,12 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
       const imgs = await page.$$eval("img.mdImg", (els) => els.map((e) => [e.getAttribute("src"), e.naturalWidth]));
       return imgs.length === 1 && imgs[0][0].includes("share=") && imgs[0][1] === 1;
     }, { what: "image served through the share token" });
+    await page.locator(".blockRow", { hasText: "links:" }).waitFor();
+    await until(() => lookups.length > 0, { what: "the note's links looked up" });
+    assertEq(lookups.filter((s) => s !== 200).length, 0, "lookups go through the share token");
+    assert(!(await page.textContent("body")).includes("an unshared secret"), "a block outside the share stays hidden");
+    await account.api(`/api/blocks/${note.id}`, { method: "DELETE" });
+    await account.api(`/api/blocks/${elsewhere.id}`, { method: "DELETE" });
     await page.locator(".blockRow", { hasText: "figure" }).locator(".blockBody").click();
     await sleep(400); // a negative check: nothing to wait for, so give an editor time to (not) appear
     assert((await page.$(".blockEditorCm")) == null, "no editor opens on a view-only share");

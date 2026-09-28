@@ -44,8 +44,10 @@ so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
 model — the cheap utility model), else the entry's first model. A failed probe
-carries an `auth` flag on 401/403 so the row renders
-"sign-in expired — reconnect" instead of the upstream body. Upstream error
+carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
+has none picked) and an `auth` flag on 401/403, so the row renders the chat
+error card's headline and fix ("OpenAI rejected the API key — Update key"),
+the upstream body only on hover. Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -149,8 +151,8 @@ Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
 for a sign-in). It holds an API key, or a ChatGPT subscription the admin
-signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`
-and `complete`, the account flow's `begin_chatgpt_signin` /
+signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`,
+`status` and `complete`, the account flow's `begin_chatgpt_signin` /
 `redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
 neither flow's state redeems on the other. `provider_id` on `complete`
 reconnects an entry. The same helpers validate both lists (`new_key_entry`,
@@ -224,9 +226,8 @@ from AnyIO's 40 to `app.THREAD_TOKENS` (100) at startup.
 
 A third protocol, `chatgpt`, holds OAuth tokens instead of a key (Codex CLI's
 PKCE flow in `gamma/chatgpt_oauth.py`; entries created only via
-`POST /api/ai/oauth/chatgpt/start`+`complete` — the user pastes the
-localhost:1455 callback URL since nothing listens there; access tokens refresh
-lazily in `ai_runtime`). Its wire is the Responses API on
+`POST /api/ai/oauth/chatgpt/start`, `status` and `complete`; access tokens
+refresh lazily in `ai_runtime`). Its wire is the Responses API on
 `chatgpt.com/backend-api/codex` (stream-only SSE; non-stream callers join
 deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them. That retry applies to
@@ -247,6 +248,39 @@ started it. Token refreshes are serialized per account and re-read the
 entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
 tokens, so of two parallel refreshes the second would fail and save stale
 tokens over the fresh ones.
+
+**How a sign-in reaches the server.** Codex CLI's client id has one
+registered redirect, `http://localhost:1455/auth/callback`, which only works
+where something listens on the browser's own machine. `chatgpt_oauth.begin`
+keeps each sign-in in memory (15 minutes, bound to its owner) until the first
+of three endings:
+
+- **Caught.** When the page runs at a loopback address and the request came
+  from loopback (the desktop app's own server, a localhost install; a
+  reverse proxy on the same host passes only the second test), the server
+  listens on `127.0.0.1:1455` for the redirect and exchanges its code. The
+  listener takes the port only while such a sign-in waits and never with
+  `SO_REUSEADDR` on Windows, so Codex CLI's own login or another Gamma
+  server holding the port makes it fall back to the other two.
+- **Device code.** Otherwise `start` also asks OpenAI for a one-time code
+  (Codex CLI's `--device-auth`: `POST /api/accounts/deviceauth/usercode`,
+  then `/token` until the user enters it at `auth.openai.com/codex/device`,
+  the answer's code exchanged with its own verifier and the redirect
+  `https://auth.openai.com/deviceauth/callback`). There is no poller thread:
+  each `status` call polls when OpenAI's interval is up, so polling stops
+  when the form stops asking. The account has to turn device code sign-in on
+  in ChatGPT's security settings (a workspace's admin, for Edu and
+  Enterprise), which is why it is offered next to the paste, not instead of it.
+- **Pasted.** The redirect page fails to load and the user pastes its
+  address; a paste that doesn't parse leaves the sign-in waiting.
+
+The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+while the server may catch the sign-in, and calls `complete` with an empty
+`callback` once it is `ready`. A paste of a callback address connects without
+the Connect button, and in Chromium the address is also picked up from the
+clipboard when the tab regains focus (the browser asks once). Both are
+unofficial OpenAI endpoints, like the rest of this flow, so they may need
+maintenance.
 
 ## Chat endpoint
 
@@ -287,16 +321,19 @@ stream, the provider's wording:
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
 `detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
-`{"error"}` line. It adds the upstream `status` and the connection
-(`provider_id`, `provider_name`, `provider_auth`). The login check
-(`/api/ai/health`) and the Test probe carry the same `kind`.
+`{"error"}` line. It adds the connection (`provider_id`, `provider_name`,
+`provider_auth`); an upstream status needs no field of its own, since the
+detail already opens with it ("upstream 529: …"). The login check
+(`/api/ai/health`) and the Test probe carry the same `kind`, and the probe
+one more: `no_model`, an entry with no model picked.
 
 The client saves the classification on the reply (`errorKind`,
-`errorDetail`, `errorStatus`, `errorProvider`, `errorProviderId`,
-`errorAuth`) and renders a card instead of the raw text. `chat/chatErrors.js`
+`errorDetail`, `errorProvider`, `errorProviderId`, `errorAuth`) and
+renders a card instead of the raw text. `chat/chatErrors.js`
 holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
 the connection to Gamma" for the browser's own `TypeError`), one sentence,
-and the fix. The login check's warning strip shows the same headlines.
+and the fix. The login check's warning strip and the Test result on a
+Settings connection row show the same headlines.
 Update key / Sign in again / Edit connection open Settings → Connections on
 that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
 your own key open the pane; New chat starts over. On the latest reply,
@@ -315,30 +352,58 @@ Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
 → `page_report_section`): each page contributes its title, a properties line
 (folders, labels, cached metadata, web source, attachment) and its notes
 tree; a page that carries a PDF adds the document's extracted text (a head
-excerpt labelled as such when the document doesn't fit — see
-[ai_context.md](ai_context.md)), or the PDF itself as a native document/file
-content part when the request sets `attach_pdf`, and shows its notes only
-with `include_notes`. A page without an attachment IS its notes, so they
-always go — `include_notes` only means "also add my notes/highlights for PDF
-pages". The built-in chat system prompt frames the model as working inside
-that knowledge base and grounds claims about the pages in text actually read
-(look details up or say they're absent, never fill gaps from memory; cite a
-PDF by page number, say when something comes from the user's notes). With a
-document in context, `_CITATION_PROMPT` is appended, custom prompt or not.
-It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links built from the
-`[PDF page N]` labels and the `Gamma page ID` each context section carries
-([pdf_citations.md](pdf_citations.md)).
+excerpt labelled with the pages it reaches when the document doesn't fit —
+see [ai_context.md](ai_context.md)), or the PDF itself as a native
+document/file content part when the request sets `attach_pdf`, and shows its
+notes only with `include_notes`. A page without an attachment IS its notes,
+so they always go — `include_notes` only means "also add my notes/highlights
+for PDF pages". An area highlight among them (a Ctrl+drag rectangle, no
+text) is named with its page and its region goes along as a picture, up
+to `MAX_AREA_CROPS` per page ([ai_tools.md](ai_tools.md) read_page — the
+same for the tools). The built-in chat system prompt frames the model as working
+inside that knowledge base and grounds claims about the pages in text
+actually read (look details up or say they're absent, never fill gaps from
+memory; cite a PDF by page number, say when something comes from the user's
+notes). With a document in context, `_CITATION_PROMPT` is appended, custom
+prompt or not. It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links
+built from the `[PDF page N]` labels and the `Gamma page ID` each context
+section carries ([pdf_citations.md](pdf_citations.md)).
+
+`gather_inputs` returns the context in two parts, and `build_messages`
+places them apart on purpose. The **document part** (the pages' sections:
+excerpt, notes, the document map) is glued to the *oldest* user turn, so it
+reads the same on every turn of a conversation while its pages and
+settings stand; the **message part** — the text around the passages this
+message selected, the cursor block, attached chips
+(`notes_focus_section`) — goes in front of the question itself under a
+"Context for this message" line. The stable head is what the providers'
+prompt caches key on (see "Prompt caching" below); the moving part stays
+small.
 
 Whatever went to the model is reported back: the stream's first line is
 `{"context": [...]}` (non-stream: a `context` field) with one entry per
-page — `title`, `doc_id` (`""` for a page without a PDF), `native` (the file
-itself was sent), `native_requested`, `partial`, `chars`, `pages`,
-`pages_shown` (uploaded `files` are reported the same way, and get the
-single-page budget when they fall back to text). The chat saves it on the
-reply and shows a pill (`.chatPill`, the agent-steps pill's look) only when
-it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
-accepted — sent as text" when the file was requested but the provider took
-text instead. `/api/ai/models` marks each model `native_pdf` (false for
+page — `title`, `page_id`, `doc_id` (`""` for a page without a PDF),
+`native` (the file itself was sent), `native_requested`, `partial`,
+`chars`, `pages`, `pages_shown`, `notes` (the page's notes are in the
+context) (uploaded `files` are reported the same way, and get the
+single-page budget when they fall back to text). The same report rides in
+the tool scope as `coverage`: `agent_system` names the pages the context
+holds and where to read on (`coverage_lines`), and `read_page` never
+repeats them ([ai_tools.md](ai_tools.md)). The chat saves it on the reply
+and shows a pill (`.chatPill`, the agent-steps pill's look) only when it
+matters: "Model saw pages 1–9 of 22" for a truncated paper — with what the
+reply's tools read folded in ("· read 10–12 with tools", from the read
+actions' `pdf_pages`) and, unfolded, the pages nobody saw, a rough token
+figure, and advice that depends on whether the reply had tools
+(`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
+was requested but the provider took text instead. Two more pills per
+reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
+line, see "Fitting the window") and "Reply cut off at the output limit"
+(`{"truncated": true}`: the provider's stop reason was `max_tokens`,
+`length` or the Responses API's `incomplete` — `Protocol.events` ends every
+stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
+it; the agent loop stops there rather than run a half-written tool call).
+`/api/ai/models` marks each model `native_pdf` (false for
 ChatGPT sign-in entries: their wire is the Codex backend, which refuses
 `input_file` parts). The composer's Full PDF switch, shown only while a PDF
 is in context, doesn't default on for such a model. Switching it on by hand
@@ -352,6 +417,76 @@ PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
 invisible to search AND read_page, so keep it far above real documents).
+
+### Exporting the context
+
+The chat header's download button saves what the model would be sent right
+now as a Markdown file. ChatDock builds the body with the same
+`chatRequest(text, history)` a send uses, with the composer's draft as the
+prompt. `POST /api/ai/chat/context` runs it through `_chat_prompt`, the one
+step `/ai/chat` also uses for its turns and system prompt, and
+`ai_context.context_markdown` writes the result: the pages in context (the
+coverage report), the system prompt, the tool specs, then every turn as
+sent, each in a fence longer than any backtick run inside it. The document
+context sits on the oldest question and the draft is the last turn. Two
+things differ from a live send. PDFs always go as extracted text (the file
+is meant to be read or pasted somewhere else, so `attach_pdf` is ignored),
+and pictures are counted but not embedded. Nothing is trimmed to fit a
+window, and no provider is called.
+
+### Prompt caching
+
+Every request re-sends the whole conversation (no wire keeps state:
+`store` stays off on the Responses API, and there is no
+`previous_response_id` — the conversation is Gamma's to keep). What makes
+that cheap is the providers' prefix caches, which every adapter now asks
+for. The chat sends `chat_key` (the bucket: a page id, `home`,
+`home:<folder>`); `_cache_key` in `routers/ai.py` hashes it with the
+account and workspace into one opaque id per conversation that
+`ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
+
+- Anthropic (`anthropic.py` `_with_breakpoints`): `cache_control:
+  {type: "ephemeral"}` on the last tool spec, the system prompt (sent as a
+  content block then) and the last two user turns — the API's four
+  breakpoints; the one a turn back keeps the lookup within reach when a
+  reply's tool rounds add many blocks after it. Only on `api.anthropic.com`
+  (`is_anthropic_platform`): a service speaking the API behind another
+  host may reject the field.
+- OpenAI: `prompt_cache_key` on Chat Completions and on `/v1/responses`,
+  again only on the platform itself (`is_openai_platform`), never on a
+  compatible server.
+- The Codex backend: the same `prompt_cache_key` in the body and the
+  `session_id` header, one per conversation like Codex CLI's (a fresh
+  uuid per request, as before, missed every time).
+
+The usage line's `cache_read` / `cache_write` counts (and "% cached" under
+a reply) show whether it works. The document context glued to the oldest
+user turn is the cached head; it changes only when the pages, the notes,
+the map or the context settings change.
+
+### Fitting the window
+
+Nothing is trimmed by turn count or summarized. Before a call the router
+estimates the prompt (`ai_context.prompt_tokens`: four ASCII characters or
+one other character — CJK, symbols — per token, 1,600 per picture; native
+PDF files are not counted) against the model's window
+(`ai_catalog.context_window`, the same lookup as the header's ring) less
+`_WINDOW_RESERVE` for the reply, and leaves the oldest history items out
+(`build_messages(drop_turns=)`: two, then doubling; the kept history opens
+on a question, the document context moves to the oldest kept one) until it
+fits. A provider that still answers `too_long` (no source knew the window,
+or the estimate fell short) is retried the same way. The stream says
+`{"trimmed": {"turns": N}}` after the model line and the chat shows the
+pill. Within one reply, the rounds' tool results share
+`ai_context.LIVE_RESULT_BUDGET` (60,000 chars, a picture counting
+`_IMAGE_CHARS`): a valve, not a per-round trim — rewriting an earlier turn
+costs the cache the rest of the prefix, so nothing is touched until the
+results outgrow the budget, then `elide_live_results` turns the oldest
+rounds' results into the replay's stub, the last `LIVE_KEEP_ROUNDS`
+rounds always whole; a `too_long` mid-reply keeps only the last round's
+results and retries once. The native-PDF fallback (a 4xx on a request
+with file parts is retried as text) no longer remembers a provider as
+refusing files when the failure was the size.
 
 ### Reasoning effort
 
@@ -424,9 +559,13 @@ start of the paper (`selection_context`):
 The question labels each passage "Selected passage (PDF page 7; section
 "Methods › Noise model"; a picture … is attached)" (`final_prompt`, from the
 located entries `gather_inputs` puts in the open paper's coverage as
-`selection: {passages: [{page, section, found, crop}]}`). The reply's chip
-reads "Model saw text around p. 7 · Methods › Noise model", plus "Picture of
-the selection sent" when one went. Nothing placed at all falls back to the
+`selection: {passages: [{page, section, found, crop, box}]}`, `box` only
+with a picture: the grown crop box, rounded). The reply's chip reads "Model
+saw text around p. 7 · Methods › Noise model", plus "Picture of the selection
+sent" when one went; opening that pill shows the picture, drawn again from the
+saved page and box by `GET /api/ai/selection-crop/{doc_id}` through the same
+`render_selection_crop`. Replies saved before the box was kept show the pill
+without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
@@ -511,7 +650,8 @@ saying what it is in words, with its icon: "Block at your cursor · added
 automatically, × to leave out", "Selection in this note", "PDF passage ·
 p. 7", "Attached block", "Selected note text". The second previews the text
 with the markdown dropped and inline math typeset (`chat/chipText.js`,
-KaTeX). A dashed border marks what rode along by itself (the cursor block
+KaTeX; the words between formulas go through search's `plainSnippet`, the
+same rule as the search rows and the `[[` picker). A dashed border marks what rode along by itself (the cursor block
 and the editor's selection in it); what the user attached keeps a solid
 one. They clear on send and on a page switch, since the ids belong to the
 page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
@@ -595,8 +735,8 @@ includes the two web tools and the page viewer. Plus:
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
 - **Read window** (`gamma-ai-read-chars` → request `read_char_limit`, default
-  20 000) — the most document text one `read_page` call may return; long
-  papers are read in windows of this size.
+  20 000) — the most document text one `read_page` call may return, and the
+  cap on the notes it shows; long papers are read in windows of this size.
 
 Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 
@@ -610,9 +750,9 @@ answers. Each adapter's `request` maps the tool defs and the
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs. Its `args` are only the short ones a label needs (`page_id`,
-`query`, `title`, `folder`, `source`, `pdf_page`, …), never a note's
-content. Once it ran, the call streams back as an
+it runs. Its `args` are only the short ones the running label reads
+(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
+`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -630,8 +770,11 @@ notes". Each entry is a link that opens the page or the block
 (`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
 the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
-place of the "Thinking" pill. Only applied mutations count against
-`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
+place of the "Thinking" pill, from those arguments (`runningLabel`):
+"Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
+note…", "Reading notes of “A”…" when `read_block` names a page. Only
+applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 with the page's live socket up the tools' ops already arrived through it and
@@ -689,7 +832,9 @@ request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
-preceding tool_result turn to keep roles alternating. Plain chats never replay
+preceding tool_result turn to keep roles alternating. The client sends
+only what is replayed — each turn's `role`, `text` and `actions`, never
+the pictures, coverage and counts saved with it. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

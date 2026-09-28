@@ -51,7 +51,8 @@ def test_sse_events_report_usage_last():
         {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 9}},
     )
     assert list(sse_events(anthropic, "anthropic")) == [
-        ("text", "hi"), ("usage", {"input": 112, "output": 9, "cache_read": 100, "cache_write": 0})]
+        ("text", "hi"), ("usage", {"input": 112, "output": 9, "cache_read": 100, "cache_write": 0}),
+        ("stop", "end_turn")]  # the provider's stop reason closes every stream
 
     openai = sse(
         {"choices": [{"delta": {"content": "hi"}}]},
@@ -66,7 +67,8 @@ def test_sse_events_report_usage_last():
                                                     "usage": {"input_tokens": 3, "output_tokens": 2}}},
     )
     assert list(sse_events(responses, "chatgpt")) == [
-        ("text", "hi"), ("usage", {"input": 3, "output": 2, "cache_read": 0, "cache_write": 0})]
+        ("text", "hi"), ("usage", {"input": 3, "output": 2, "cache_read": 0, "cache_write": 0}),
+        ("stop", "completed")]
 
     # No report from the provider: no event, and nothing else changes.
     assert list(sse_events(sse({"choices": [{"delta": {"content": "x"}}]}), "openai")) == [("text", "x")]

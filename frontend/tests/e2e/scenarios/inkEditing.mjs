@@ -146,8 +146,9 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const beforeA = decodeStroke((await stored()).strokes[0])[0];
     const beforeB = decodeStroke((await stored(secondId)).strokes[0])[0];
     await dragTouch(await point(140, 245), await point(170, 280), assertHandlesFollowSelection);
-    await until(async () => decodeStroke((await stored()).strokes[0])[0].y > beforeA.y + 30);
-    assert(decodeStroke((await stored(secondId)).strokes[0])[0].y > beforeB.y + 30, "both groups moved");
+    // The groups commit one after another: wait for both (as the resize step does).
+    await until(async () => decodeStroke((await stored()).strokes[0])[0].y > beforeA.y + 30
+      && decodeStroke((await stored(secondId)).strokes[0])[0].y > beforeB.y + 30, { what: "both groups moved" });
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
     await until(async () => decodeStroke((await stored()).strokes[0])[0].y === beforeA.y
       && decodeStroke((await stored(secondId)).strokes[0])[0].y === beforeB.y);
@@ -174,12 +175,14 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertEq(await menu().count(), 0, "menu hides during transform preview");
     await assertHandlesFollowSelection();
     await page.mouse.up();
-    await until(async () => (await stored()).strokes[0].size > beforeA.strokes[0].size);
-    assert((await stored(secondId)).strokes[0].size > beforeB.strokes[0].size, "both notes resized");
+    // The groups commit one after another (flushInk uploads each in turn):
+    // wait for both, never assert the second right after the first landed.
+    await until(async () => (await stored()).strokes[0].size > beforeA.strokes[0].size
+      && (await stored(secondId)).strokes[0].size > beforeB.strokes[0].size, { what: "both notes resized" });
     assertEq(decodeStroke((await stored()).strokes[0])[4].p, decodeStroke(beforeA.strokes[0])[4].p);
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
-    await until(async () => JSON.stringify((await stored()).strokes) === JSON.stringify(beforeA.strokes));
-    assertEq(JSON.stringify((await stored(secondId)).strokes), JSON.stringify(beforeB.strokes));
+    await until(async () => JSON.stringify((await stored()).strokes) === JSON.stringify(beforeA.strokes)
+      && JSON.stringify((await stored(secondId)).strokes) === JSON.stringify(beforeB.strokes), { what: "undo restores both notes" });
     // Toolbar undo dismisses selection; select both notes again.
     await selectBoth();
     await rotate.focus(); await page.keyboard.press("ArrowRight");

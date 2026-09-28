@@ -1,6 +1,7 @@
 """AI chat, provider settings, model discovery, and ChatGPT OAuth routes."""
 
 import hashlib
+import ipaddress
 import json
 import queue
 import re
@@ -13,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
@@ -51,11 +52,16 @@ from ..ai_context import (
     build_messages as _build_messages,
     canonical_tool as _canonical_tool,
     MAX_CONTEXT_BLOCKS,
+    context_markdown,
+    elide_live_results,
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
+    prompt_tokens,
+    render_selection_crop,
     request_note_selections,
 )
+from ..ai_protocols.base import truncated_stop
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
@@ -115,6 +121,10 @@ class AIChatRequest(BaseModel):
     doc_id: str = ""
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model") from /ai/models
+    # The conversation's key (the chat bucket: a page id, "home" or
+    # "home:<folder>"), hashed with the account and workspace into the
+    # provider's prompt-cache routing hint — never sent as it is.
+    chat_key: str = ""
     # PDF passages the user selected — focus the answer on them:
     # `selections` = [{text, page (1-based, where the viewer saw it start),
     # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]; the
@@ -191,14 +201,12 @@ def _failure(error: Exception, what: str = "AI call failed") -> str:
 
 
 def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
-    """What the chat shows a failure as, beside the raw ``detail`` string:
-    its ``kind`` (ai_client.failure_kind), the upstream ``status`` when there
-    was one, and the connection it went through (``provider_id``,
-    ``provider_name``, ``provider_auth`` = "key" | "oauth") so the error card
-    can name it and open its settings."""
+    """What the chat shows a failure as, beside the raw ``detail`` string
+    (which already names an upstream status, "upstream 529: …"): its
+    ``kind`` (ai_client.failure_kind) and the connection it went through
+    (``provider_id``, ``provider_name``, ``provider_auth`` = "key" |
+    "oauth") so the error card can name it and open its settings."""
     info = {"kind": failure_kind(error)}
-    if isinstance(error, UpstreamError):
-        info["status"] = error.status
     conf = (rt or {}).get("providers", {}).get((entry or {}).get("provider"))
     if conf:
         info.update(provider_id=entry["provider"], provider_name=conf.get("name") or "",
@@ -206,10 +214,12 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
     return info
 
 
-# The arguments a {"step"} line repeats: the short ones a "now running"
-# label needs (never a note's content).
-_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
-              "source", "pdf_page", "mode")
+# The arguments a {"step"} line repeats: the short ones the chat's "now
+# running" label reads (chat/agentSteps.js runningLabel), never a note's
+# content — the page a call reads, views, renames or moves; read_block's
+# block (a page id names the page); the query or source; the PDF page; the
+# new title or folder; list_pages' label filter; edit_block's mode.
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "pdf_page", "mode")
 
 
 def _step_event(name: str, call: dict) -> dict:
@@ -263,6 +273,30 @@ def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     except Exception as e:
         log.warning(f"[pdf-text-status] {e}")
         return {"found": True, "ok": False, "chars": 0, **index}
+
+
+# Sync def: pdfium renders in the threadpool.
+@router.get("/ai/selection-crop/{doc_id}")
+def selection_crop(doc_id: str, request: Request, page: int, box: str):
+    """The picture of a selected region a chat message sent the model, drawn
+    again from the page and crop box saved on the reply's context report
+    (``selection.passages[].box``, ``x0,y0,x1,y1`` page fractions) so the
+    chat can show it. A document's file never changes under its id, so the
+    picture caches."""
+    ws = require_ws(request)
+    if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):
+        raise HTTPException(status_code=400, detail="invalid document id")
+    try:
+        x0, y0, x1, y1 = (float(v) for v in box.split(","))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid box")
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1) or page < 1:
+        raise HTTPException(status_code=400, detail="invalid box")
+    path = _pdf_path(ws, doc_id)
+    image = render_selection_crop(path, page, (x0, y0, x1, y1)) if path else None
+    if not image:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(image[0], media_type=image[1], headers={"Cache-Control": "private, max-age=86400"})
 
 
 # The grounding clause is deliberate: a PDF's text below this prompt is
@@ -503,9 +537,9 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
-    `auth` marks a broken credential (expired sign-in / rejected key) so the
-    UI can say "reconnect" instead of dumping the upstream body, and `kind`
-    is ai_client.failure_kind (absent when no model is picked)."""
+    `auth` marks a broken credential (expired sign-in / rejected key), and
+    `kind` is ai_client.failure_kind, or ``no_model`` for an entry with no
+    model picked — the UI words the failure by its kind."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -517,7 +551,7 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
         return _no_credential(entry)
     model = _probe_model(entry, fallback_model)
     if not model:
-        return {"ok": False, "model": "", "auth": False,
+        return {"ok": False, "model": "", "auth": False, "kind": "no_model",
                 "error": "no model picked — edit the connection and choose one"}
     started = time.time()
     try:
@@ -1186,44 +1220,49 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 
 
 # --- ChatGPT subscription sign-in (OAuth PKCE, Codex CLI's flow) --------------
-# start → the browser opens auth.openai.com; after login it is redirected to
-# http://localhost:1455/auth/callback (which fails to load — nothing listens
-# there when Gamma runs remotely). The user pastes that URL into complete,
-# which redeems the code with the stashed PKCE verifier and stores the tokens
-# on a provider entry. See gamma/chatgpt_oauth.py.
+# start → the browser opens auth.openai.com, and gamma/chatgpt_oauth.py keeps
+# the sign-in until the server has its code: caught from the redirect on this
+# machine, or through the device code the form's status calls poll — else the
+# user pastes the address the redirect failed to load. complete then stores
+# the tokens on a provider entry.
 
-_OAUTH_STATES: dict = {}  # state -> {"verifier", "owner", "at"} — in-memory, 15 min TTL
-_OAUTH_STATES_LOCK = threading.Lock()  # the endpoints run in the threadpool
-_OAUTH_STATE_TTL = 900
+class ChatGPTAuthStart(BaseModel):
+    local: bool = False   # the page runs at a loopback address
+    device: bool = False  # also ask for a device code (the form shows it)
 
 
-def begin_chatgpt_signin(owner) -> dict:
+class ChatGPTAuthStatus(BaseModel):
+    state: str = ""
+
+
+def _same_machine(request: Request, claimed: bool) -> bool:
+    """Whether the browser runs on this server's machine: the page says it is
+    at a loopback address, and the request came from loopback too. (A reverse
+    proxy on the same host passes the second test, never the first.)"""
+    try:
+        ip = ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return claimed and (ip.is_loopback or bool(mapped and mapped.is_loopback))
+
+
+def begin_chatgpt_signin(owner, request: Request, payload: ChatGPTAuthStart | None) -> dict:
     """Start a sign-in for ``owner``: an account name (its own entry), or
     ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
-    {auth_url, state}."""
-    now = time.time()
-    state, verifier, url = chatgpt_oauth.start_auth()
-    with _OAUTH_STATES_LOCK:
-        for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
-            del _OAUTH_STATES[k]
-        _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
-    return {"auth_url": url, "state": state}
+    {auth_url, state, local, device}."""
+    payload = payload or ChatGPTAuthStart()
+    return chatgpt_oauth.begin(owner, local=_same_machine(request, payload.local), device=payload.device)
 
 
 def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
-    """The tokens of a sign-in ``owner`` started (400 otherwise): the pasted
-    redirect URL's code redeemed with the stashed PKCE verifier. The state
-    belongs to whoever started it — another account, or the same admin's
-    own-entry form, can't redeem it (and so can't attach that login's
-    tokens elsewhere)."""
-    with _OAUTH_STATES_LOCK:
-        st = _OAUTH_STATES.pop(state, None)
-    if not st or st.get("owner") != owner or time.time() - st["at"] > _OAUTH_STATE_TTL:
-        raise HTTPException(status_code=400,
-                            detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
+    """The tokens of a sign-in ``owner`` started (400 otherwise): the ones the
+    server caught, else the pasted redirect URL's code. The state belongs to
+    whoever started it — another account, or the same admin's own-entry
+    form, can't redeem it (and so can't attach that login's tokens
+    elsewhere)."""
     try:
-        code = chatgpt_oauth.parse_callback(callback, state)
-        return chatgpt_oauth.exchange_code(code, st["verifier"])
+        return chatgpt_oauth.redeem(owner, state, callback)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1257,14 +1296,21 @@ def seeded_chatgpt_models(user: str, entry_id: str) -> str:
     return ", ".join(live[:2])[:MAX_MODELS_LEN]
 
 
+# Sync def: asking for a device code is a network round trip.
 @router.post("/ai/oauth/chatgpt/start")
-def chatgpt_auth_start(request: Request):
-    return begin_chatgpt_signin(_require_editor(request))
+def chatgpt_auth_start(request: Request, payload: ChatGPTAuthStart | None = None):
+    return begin_chatgpt_signin(_require_editor(request), request, payload)
+
+
+# Sync def: a due device code is polled with OpenAI.
+@router.post("/ai/oauth/chatgpt/status")
+def chatgpt_auth_status(payload: ChatGPTAuthStatus, request: Request):
+    return chatgpt_oauth.status(_require_editor(request), payload.state)
 
 
 class ChatGPTAuthComplete(BaseModel):
     state: str = ""
-    callback: str = ""      # pasted redirect URL (or a bare authorization code)
+    callback: str = ""      # pasted redirect URL (or a bare code); "" once status is ready
     provider_id: str = ""   # existing entry to reconnect; "" creates a new one
     name: str = ""
     models: str = ""
@@ -1310,6 +1356,101 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
 # upload on later requests. In-memory: a restart retries native once.
 _NATIVE_PDF_REJECTED: set = set()
 
+# Room left for the reply (and the estimate's error) when a conversation is
+# fitted to the model's window before it is sent.
+_WINDOW_RESERVE = 8192 + 2048
+
+
+def _cache_key(user: str, ws: str, payload) -> str:
+    """One opaque id per conversation for the providers' prompt caches: the
+    chat bucket under the account and workspace, hashed so neither reaches
+    the provider."""
+    bucket = payload.chat_key or payload.page_id or "home"
+    return hashlib.sha256(f"{user}\0{ws}\0{bucket}".encode()).hexdigest()[:32]
+
+
+def _next_drop(drop: int, history: int) -> int:
+    """The next larger number of oldest turns to leave out: two more, then
+    doubling, never past the history's length."""
+    return min(history, max(drop + 2, drop * 2))
+
+
+def _chat_scope(request: Request, user: str, payload) -> dict:
+    """The tool scope of a chat request: what its tools reach and what the
+    agent prompt names."""
+    return {"type": payload.agent_scope, "folder": payload.folder,
+            "page_id": payload.page_id, "read_chars": payload.read_char_limit,
+            "context_pages": list(payload.pages),
+            # The agent prompt names the cursor block / attached chips so
+            # "this block" resolves without a read_block round-trip.
+            "focus_block_id": (payload.focus_block_id or "").strip()[:64],
+            "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
+            # What edit_block mode "selection" rewrites (labels S1, S2…).
+            "note_selections": request_note_selections(payload),
+            "actor": user, "can_write": can_write(request),
+            # This turn's reads, {block_id: full text}: what an edit_block
+            # replace merges from (ai_tools.notes_seen).
+            "read_texts": {}}
+
+
+def _chat_tools(payload, writable: bool) -> list | None:
+    """The armed tool specs: the scope decides which tools exist, the
+    permission toggles pick the subset — None (or no scope) is a plain chat.
+    Without ``writable`` (a viewer, a read-scope token) no mutating tool is
+    armed."""
+    valid_scope = payload.agent_scope in ("folder", "page") and (
+        payload.agent_scope != "page" or payload.page_id)
+    return (agent_tools(payload.agent_scope, payload.permissions,
+                        payload.read_char_limit, can_write=writable) or None) if valid_scope else None
+
+
+def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
+    """The request's turns, system prompt and native files, with the
+    ``drop`` oldest history items left out — what /ai/chat sends and
+    /ai/chat/context exports. Returns ``(pdf_b64s, messages, system,
+    coverage, crops)``; ``crops`` are the pictures of selected regions whose
+    text is unreliable, riding with the user's own images."""
+    crops = []
+    pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native, crops=crops,
+                                                                  notes_seen=scope.get("read_texts"))
+    # The tools and the agent prompt know what the context already holds
+    # (read_page never repeats it; the prompt names the pages to read).
+    scope["coverage"] = coverage
+    located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
+    # Agent chats replay each saved reply's tool calls/results so the
+    # model keeps what it already listed/read/changed across turns.
+    messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
+                               message_context=message_context, drop_turns=drop)
+    # A custom prompt always applies; the built-in one only when there's a document
+    system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
+    if context or pdf_b64s:
+        system += _CITATION_PROMPT
+    if tools:
+        system = ((system + "\n\n" if system else "")
+                  + agent_system(scope, payload.permissions,
+                                 (payload.agent_system or "").strip()[:8000]))
+    return pdf_b64s, messages, system, coverage, crops
+
+
+class AIChatContextRequest(AIChatRequest):
+    title: str = ""  # the conversation's name, the export's heading
+
+
+@router.post("/ai/chat/context")
+def ai_chat_context(payload: AIChatContextRequest, request: Request):
+    """What /ai/chat would send the model for this request, as a Markdown
+    file: the system prompt, the tools and every turn — the draft in the
+    composer as the last one. PDFs go as their extracted text (a file to
+    read or paste elsewhere); no provider is called, none needs to be set up."""
+    user = require_user(request)
+    ws = require_ws(request)
+    scope = _chat_scope(request, user, payload)
+    tools = _chat_tools(payload, scope["can_write"])
+    _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
+    text = context_markdown(payload.title, system, messages, tools, coverage,
+                            _parse_images(payload.images) + crops)
+    return Response(text, media_type="text/markdown; charset=utf-8")
+
 
 # Sync endpoint on purpose: the AI call can take minutes; FastAPI's threadpool
 # keeps the event loop free for other requests meanwhile.
@@ -1318,10 +1459,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
     user = require_user(request)
     # The chat reads (and its tools edit) the request's workspace; the AI
     # providers are the account's own. A viewer, or a read-scope integration
-    # token, gets no mutating tools (auth.can_write — the rule every write
-    # endpoint applies).
+    # token, gets no mutating tools (_chat_scope: auth.can_write, the rule
+    # every write endpoint applies).
     ws = require_ws(request)
-    writable = can_write(request)
     try:
         rt = require_ai_runtime(user)
     except HTTPException as e:
@@ -1329,53 +1469,44 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
-    # Which model answers, at what effort — the reply's footer names them.
-    answered = {"id": entry["id"], "name": entry["model"], "effort": effort}
     images = _parse_images(payload.images)
-    custom_system = (payload.system or "").strip()[:8000]
-    # The scope decides which tools exist; the permission toggles pick the
-    # armed subset — an empty result (or no scope) is a plain chat.
-    scope = {"type": payload.agent_scope, "folder": payload.folder,
-             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
-             "context_pages": list(payload.pages),
-             # The agent prompt names the cursor block / attached chips so
-             # "this block" resolves without a read_block round-trip.
-             "focus_block_id": (payload.focus_block_id or "").strip()[:64],
-             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
-             # What edit_block mode "selection" rewrites (labels S1, S2…).
-             "note_selections": request_note_selections(payload),
-             "actor": user, "can_write": writable,
-             # This turn's reads, {block_id: full text}: what an edit_block
-             # replace merges from (ai_tools.notes_seen).
-             "read_texts": {}}
-    valid_scope = payload.agent_scope in ("folder", "page") and (
-        payload.agent_scope != "page" or payload.page_id)
-    tools = (agent_tools(payload.agent_scope, payload.permissions,
-                         payload.read_char_limit, can_write=writable) or None) if valid_scope else None
+    scope = _chat_scope(request, user, payload)
+    tools = _chat_tools(payload, scope["can_write"])
+    # Which model answers, at what effort, with tools or not — the reply's
+    # footer names them, and the coverage chip's advice depends on the tools.
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
     # The conversation the agent loop grows across tool rounds (agent mode).
-    state = {}
+    state = {"drop": 0}
     count_usage = ai_usage.recorder("chat", entry, rt)
+    cache_key = _cache_key(user, ws, payload)
+    history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
+    conf = rt["providers"].get(entry["provider"]) or {}
+    window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
 
-    def prepared(allow_native):
-        # Pictures of selected regions whose text is unreliable ride with
-        # the user's own images.
-        crops = []
-        pdf_b64s, context, coverage = _gather_inputs(ws, payload, allow_native, crops=crops,
-                                                     notes_seen=scope["read_texts"])
+    def open_upstream(messages, system, pdf_b64s, stream):
+        return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, timeout=180,
+                        images=state["images"], stream=stream, tools=tools, cache_key=cache_key)
+
+    def prepared(allow_native, drop=0):
+        """_chat_prompt, keeping the coverage report and the pictures."""
+        pdf_b64s, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native, drop)
         state["coverage"] = coverage
         state["images"] = images + crops
-        located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
-        # Agent chats replay each saved reply's tool calls/results so the
-        # model keeps what it already listed/read/changed across turns.
-        messages = _build_messages(payload, context, with_tools=bool(tools), located=located)
-        # A custom prompt always applies; the built-in one only when there's a document
-        system = custom_system or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
-        if context or pdf_b64s:
-            system += _CITATION_PROMPT
-        if tools:
-            system = ((system + "\n\n" if system else "")
-                      + agent_system(scope, payload.permissions,
-                                     (payload.agent_system or "").strip()[:8000]))
+        return pdf_b64s, messages, system
+
+    def fitted(allow_native):
+        """prepared(), with the oldest turns left out until the estimate fits
+        the model's window (when a source knows it) — before the provider
+        has to refuse the request."""
+        drop = state["drop"]
+        pdf_b64s, messages, system = prepared(allow_native, drop)
+        while (window and drop < history_len
+               and prompt_tokens(messages, system, tools, state["images"]) > window - _WINDOW_RESERVE):
+            drop = _next_drop(drop, history_len)
+            pdf_b64s, messages, system = prepared(allow_native, drop)
+        if drop != state["drop"]:
+            log.info(f"[ai_chat] {drop} oldest turns left out to fit the {window}-token window")
+            state["drop"] = drop
         return pdf_b64s, messages, system
 
     def open_with_fallback(stream):
@@ -1384,24 +1515,34 @@ def ai_chat(payload: AIChatRequest, request: Request):
         servers may), retry with extracted text. Auth and rate-limit failures
         aren't about the PDF and are raised as they are. A provider that
         rejected native parts and then succeeded as text is remembered, so
-        later requests skip the wasted multi-MB upload."""
+        later requests skip the wasted multi-MB upload. A prompt the
+        provider calls too long is retried with more of the oldest turns
+        left out (a window no source knew, or an estimate that fell short)."""
         attempts = (False,) if entry["provider"] in _NATIVE_PDF_REJECTED else (True, False)
         for native in attempts:
-            pdf_b64s, messages, system = prepared(native)
-            try:
-                resp = _open_ai(messages, system, entry, rt, pdf_b64s,
-                                effort=effort, timeout=180, images=state["images"], stream=stream,
-                                tools=tools)
-                if not native and True in attempts:
-                    _NATIVE_PDF_REJECTED.add(entry["provider"])
-                state.update(messages=messages, system=system, pdf_b64s=pdf_b64s)
-                return resp
-            except UpstreamError as e:
-                if not (native and pdf_b64s and 400 <= e.status < 500
-                        and e.status not in (401, 403, 429)):
-                    raise
-                log.warning(f"[ai_chat] {_protocol(rt, entry)} provider rejected native PDF parts, "
-                            f"retrying as text: {e}")
+            too_long = False
+            while True:
+                pdf_b64s, messages, system = fitted(native)
+                try:
+                    resp = open_upstream(messages, system, pdf_b64s, stream)
+                    if not native and True in attempts and not too_long:
+                        _NATIVE_PDF_REJECTED.add(entry["provider"])
+                    state.update(messages=messages, system=system, pdf_b64s=pdf_b64s)
+                    return resp
+                except UpstreamError as e:
+                    if failure_kind(e) == "too_long" and state["drop"] < history_len:
+                        too_long = True
+                        state["drop"] = _next_drop(state["drop"], history_len)
+                        log.info(f"[ai_chat] prompt too long for the provider, retrying with "
+                                 f"{state['drop']} oldest turns left out")
+                        continue
+                    if not (native and pdf_b64s and 400 <= e.status < 500
+                            and e.status not in (401, 403, 429)):
+                        raise
+                    too_long = failure_kind(e) == "too_long"
+                    log.warning(f"[ai_chat] {_protocol(rt, entry)} provider rejected native PDF parts, "
+                                f"retrying as text: {e}")
+                    break
 
     def agent_events(first_resp):
         """Organizer tool loop: yield ("delta", text) / ("action", dict) /
@@ -1421,11 +1562,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
         for round_no in range(max_rounds):
             calls, text_parts = [], []
             last_preview = {}  # call id -> content previewed so far (dedup)
+            stop = ""
             try:
                 for kind, data in _sse_events(resp, proto):
                     if kind == "text":
                         text_parts.append(data)
                         yield ("delta", data)
+                    elif kind == "stop":
+                        stop = data
                     elif kind == "tool_delta":
                         name = _canonical_tool(data.get("name") or "")
                         if name not in _PREVIEW_TOOLS or name not in armed:
@@ -1473,6 +1617,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         yield ("usage", data)
             finally:
                 resp.close()
+            if truncated_stop(stop):
+                # The output cap ended the round: say so rather than pass a
+                # cut-off reply (or a half-written tool call) as finished.
+                yield ("truncated", True)
+                return
             if not calls:
                 return
             messages.append({"role": "assistant", "content": "".join(text_parts),
@@ -1506,8 +1655,19 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 yield ("delta", "\n\n*(stopped: tool-round limit reached — "
                                 "raise it in Settings → Assistant)*")
                 return
-            resp = _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort,
-                            timeout=180, images=state["images"], stream=True, tools=tools)
+            # The valve on a long reply: once the rounds' results outgrow
+            # their budget, the oldest become stubs (the last rounds stay).
+            elide_live_results(messages)
+            try:
+                resp = open_upstream(messages, system, pdf_b64s, True)
+            except UpstreamError as e:
+                if failure_kind(e) != "too_long":
+                    raise
+                # Over the window mid-reply: keep only the last round's
+                # results and try once more.
+                elide_live_results(messages, keep_rounds=1, budget=0)
+                log.info("[ai_chat] tool round too long for the provider, retrying with earlier results elided")
+                resp = open_upstream(messages, system, pdf_b64s, True)
 
     try:
         if payload.stream:
@@ -1521,6 +1681,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
             # then which model answers, at what effort.
             head = (json.dumps({"context": state["coverage"]}) + "\n") if state.get("coverage") else ""
             head += json.dumps({"model": answered}) + "\n"
+            if state["drop"]:
+                # Oldest turns left out to fit the window — the chat says so.
+                head += json.dumps({"trimmed": {"turns": state["drop"]}}) + "\n"
 
             if tools:
                 def agent_ndjson():
@@ -1541,8 +1704,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 try:
                     if head:
                         yield head
-                    for text in _sse_deltas(resp, _protocol(rt, entry), usage.append):
-                        yield json.dumps({"delta": text}) + "\n"
+                    for kind, data in _sse_events(resp, _protocol(rt, entry)):
+                        if kind == "text":
+                            yield json.dumps({"delta": data}) + "\n"
+                        elif kind == "usage":
+                            usage.append(data)
+                        elif kind == "stop" and truncated_stop(data):
+                            yield json.dumps({"truncated": True}) + "\n"
                     # The provider's token report closes the stream.
                     for u in usage:
                         count_usage(u)
@@ -1558,7 +1726,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         if tools:
             # The tool loop is SSE-based on every protocol; join it for
             # non-stream callers and return the actions alongside the text.
-            parts, actions, usage = [], [], None
+            parts, actions, usage, truncated = [], [], None, False
             for kind, data in agent_events(open_with_fallback(True)):
                 if kind == "delta":
                     parts.append(data)
@@ -1566,17 +1734,22 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     actions.append(data)
                 elif kind == "usage":
                     usage = _add_usage(usage, data)
+                elif kind == "truncated":
+                    truncated = True
                 # "progress" previews only matter to a live UI
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
-                    **({"usage": usage} if usage else {})}
+                    **({"usage": usage} if usage else {}),
+                    **({"truncated": True} if truncated else {}),
+                    **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
         usage = []
         with open_with_fallback(False) as resp2:
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
             count_usage(u)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
-                **({"usage": usage[0]} if usage else {})}
+                **({"usage": usage[0]} if usage else {}),
+                **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
     except CallRefused as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
     except HTTPException:

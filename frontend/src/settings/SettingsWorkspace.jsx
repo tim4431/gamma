@@ -268,7 +268,7 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
           </Field>
         ) : null}
         {byCloud ? (
-          <Field label={t("Gamma Cloud username")} hint={t("they join on their first sign-in here")}>
+          <Field label={t("Gamma Cloud username")} hint={t("They join on their first sign-in here")}>
             <input
               className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
               placeholder="username" value={cloudName}
@@ -277,11 +277,11 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
             />
           </Field>
         ) : (
-          <Field label={t("Account")} hint={t("anyone with an account on this server")}>
+          <Field label={t("Account")} hint={t("Anyone with an account on this server")}>
             <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus />
           </Field>
         )}
-        <Field label={t("Role")} hint={byCloud ? t("editors write; viewers read") : t("owners manage members; editors write; viewers read")}>
+        <Field label={t("Role")} hint={byCloud ? t("Editors write; viewers read") : t("Owners manage members; editors write; viewers read")}>
           <MenuSelect value={role} label={t("Role")} options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
@@ -722,7 +722,7 @@ export function WorkspacesSettings({ value, onServer }) {
 
       {creating ? (
         <NameDialog title={t("New personal workspace")} label={t("Name")}
-          hint={t("a separate library of your own — work, life, play")}
+          hint={t("A separate library of your own — work, life, play")}
           submitLabel={t("Create and open")} busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
       ) : null}
     </>

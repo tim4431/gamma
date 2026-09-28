@@ -64,7 +64,7 @@ test("moveObject: within one block; onto itself is a no-op", () => {
   assert.equal(moveObject(c, obj, c.indexOf(TABLE) - 1), null);
 });
 
-const block = (id, content, children = []) => ({ id, content, properties: {}, collapsed: false, editMode: false, children });
+const block = (id, content, children = []) => ({ id, content, properties: {}, children });
 
 test("moveObjectInTree: one tree edit for a cross-block move, a new block for a sibling drop", () => {
   const src = `intro\n\n${TABLE}\n\nafter`;

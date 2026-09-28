@@ -20,7 +20,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `sharing/` | The Share popover (`SharePopover.jsx`, a page or a folder as its target): link, access, invited people, stop sharing; the share view's access pill (`ShareAccess.jsx`) |
 | `support/` | Report a problem: the dialog (`ReportProblem.jsx`) and the pure report builder it and the tests share (`problemReport.js`) |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |
-| `shared/model/` | Block tree helpers (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |
+| `shared/model/` | Block tree helpers and the viewer's `view` beside the tree — open editor, folding (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |
 | `shared/i18n/` | Interface language: `i18n.js` (`t`, `tn`, `T`, the locale store, `fmtDate`), `locales.js` (the language list, pure), `locales/<code>.json` (one catalog per language) — [docs/dev/i18n.md](../../docs/dev/i18n.md); `tools/i18n.mjs` keeps the catalogs complete |
 | `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, canvas sizing, published pages' slugs and page hosts (`slug.js`), and keyboard chords + the shortcut dispatcher (`hotkeys.js`) |
 | `shared/ui/` | Reused widgets, menus, icons, menu hover intent, key caps, the brand mark (`BrandMark.jsx`) and the wheel-to-sideways pan of a strip (`wheelPan.js`) |

@@ -1,5 +1,6 @@
 // The workspace search's result text (search/snippets.js): markdown to a
-// plain line, and query matches mapped back through the normalized view.
+// plain line — the one rule, also the [[ picker's rows and the chat chip's
+// words — and query matches mapped back through the normalized view.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { markedParts, matchRanges, plainSnippet } from "../src/search/snippets.js";
@@ -19,6 +20,34 @@ test("plainSnippet drops the markdown a reader never sees", () => {
 test("plainSnippet leaves ordinary punctuation alone", () => {
   assert.equal(plainSnippet("snake_case_name and 2 * 3 * 4"), "snake_case_name and 2 * 3 * 4");
   assert.equal(plainSnippet("costs \\$5 or $6"), "costs \\$5 or $6");
+});
+
+test("plainSnippet: nested quotes, image sizes, aliased embeds, any inline tag", () => {
+  assert.equal(plainSnippet("> > [!warning]- Folded\n> > nested line"), "Folded nested line");
+  assert.equal(plainSnippet("> - quoted item\n> ## quoted heading"), "quoted item quoted heading");
+  assert.equal(plainSnippet("      - [ ] deep item"), "deep item");
+  assert.equal(plainSnippet("![[Target|shown]] and ![[Plain]]"), "shown and Plain");
+  assert.equal(plainSnippet("![old](/api/uploads/a.png){:width 300} and ![wide|300x200](/api/uploads/b.png)"), "old and wide");
+  assert.equal(plainSnippet("<mark>kept</mark> a<br>b <u>under</u>"), "kept a b under");
+  assert.equal(plainSnippet("**bold across\nlines** and *a **b** c*"), "bold across lines and a b c");
+  assert.equal(plainSnippet("a < b and c > d, $x<y$"), "a < b and c > d, x<y");
+});
+
+// The chat chip's prose runs (chat/chipText.js): the math is cut out first,
+// so a $ left is literal and an escaped \$ reads as $; the run keeps the
+// spaces at its ends (a formula sits beside them).
+test("plainSnippet with mathApart: a chat chip's prose run", () => {
+  const chip = (src) => plainSnippet(src, { mathApart: true });
+  assert.equal(chip("**bold** and *italic*, ==marked== ~~gone~~ `code`"), "bold and italic, marked gone code");
+  assert.equal(chip("## Heading"), "Heading");
+  assert.equal(chip("> [!note] A callout"), "A callout");
+  assert.equal(chip("- [x] done item"), "done item");
+  assert.equal(chip("see [the paper](https://example.org) and [[Other page]]"), "see the paper and Other page");
+  assert.equal(chip("![a figure|300](/api/uploads/x.png) caption"), "a figure caption");
+  assert.equal(chip('<span style="color:red">red words</span>'), "red words");
+  assert.equal(chip("snake_case_name stays"), "snake_case_name stays");
+  assert.equal(chip("costs \\$5 or $6"), "costs $5 or $6");
+  assert.equal(chip(" keeps the  **variance** "), " keeps the variance ");
 });
 
 test("matchRanges finds the phrase, case-insensitively by default", () => {

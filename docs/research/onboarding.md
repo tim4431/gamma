@@ -40,9 +40,8 @@ Survey done September 2026 before designing Gamma's guide
 ## What Gamma took
 
 - VS Code's data-driven steps with completion events.
-- Figma's anchored spotlights with real interaction through the cutout, and an
-  inspector to read anchor ids.
-- Linear/Notion's persistent checklist counted from real actions.
+- Figma's anchored spotlights with real interaction through the cutout, and
+  its single tips on a tool, bound to a state (Gamma's hints).
 - Reader's first task: select text, highlight, see the note.
 - A seeded welcome page (already there for guests) upgraded to a markdown
   source plus a sample PDF rendered from it, so the sample content needs no
@@ -60,3 +59,9 @@ Survey done September 2026 before designing Gamma's guide
 - Forced linear onboarding before the app is usable (the Arc shape): wrong for
   a tool people install on their own server and often open with a paper in
   hand.
+- A persistent Getting-started checklist (Linear, Notion, Reader): designed,
+  then turned down in the September 2026 UI review. Triggered tours and hints
+  come after the user did the thing, and a hint's `doneOn` retires it once
+  the feature was found unaided.
+- An anchor inspector overlay (Figma's inspect): not built. The registry
+  describes every id, and the tests name each step whose anchor went away.

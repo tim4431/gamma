@@ -9,10 +9,12 @@
 // read the same list, so a key, a menu entry and the cheat sheet can never
 // disagree.
 //
-// ctx: { block, tree (the page's blocks), row (BlockTree's rowProps —
-// onMoveBlock, onDuplicate, onDelete, …), editor (the open editor's facade:
-// value, selectionStart/End, setSelectionRange, view — or null when run
-// from the palette on the focused row), readOnly }. A command that must
+// ctx: { block, tree (the page's blocks), view (the viewer's editing /
+// folding state, blockModel's `view`), folded (whether this block's
+// children are folded), row (BlockTree's rowProps — onMoveBlock,
+// onDuplicate, onDelete, …), editor (the open editor's facade: value,
+// selectionStart/End, setSelectionRange, view — or null when run from the
+// palette on the focused row), readOnly }. A command that must
 // have an editor says so with `needsEditor`; `edits` ones are skipped on a
 // read-only page. `run` returning false declines the key.
 import { t } from "../shared/i18n/i18n.js";
@@ -91,7 +93,7 @@ export const BLOCK_COMMANDS = [
         view.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: "delete" });
         return true;
       }
-      const prev = visibleNeighbor(c.tree, c.block.id, -1);
+      const prev = visibleNeighbor(c.tree, c.block.id, -1, c.view);
       c.row.onDelete?.(c.block.id, { keepChildren: true, focus: prev?.id || null });
       return true;
     },
@@ -110,12 +112,12 @@ export const BLOCK_COMMANDS = [
   },
   {
     id: "block.fold", label: t("Collapse children"), group: GROUP_NOTES, keys: null,
-    when: (c) => (c.block.children?.length || 0) > 0 && !c.block.collapsed,
+    when: (c) => (c.block.children?.length || 0) > 0 && !c.folded,
     run: (c) => { c.row.onToggle?.(c.block.id); },
   },
   {
     id: "block.unfold", label: t("Expand children"), group: GROUP_NOTES, keys: null,
-    when: (c) => (c.block.children?.length || 0) > 0 && !!c.block.collapsed,
+    when: (c) => (c.block.children?.length || 0) > 0 && !!c.folded,
     run: (c) => { c.row.onToggle?.(c.block.id); },
   },
   {

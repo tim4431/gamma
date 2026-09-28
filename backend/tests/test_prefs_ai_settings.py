@@ -181,7 +181,7 @@ def test_second_provider_adds_its_models(alice):
     assert alice.get("/api/ai/models").json()["transcribe"] is True
     pid = r.json()["providers"][1]["id"]
     body = alice.post(f"/api/ai/providers/{pid}/test").json()
-    assert body["ok"] is False and "no model" in body["error"]
+    assert body["ok"] is False and body["kind"] == "no_model" and "no model" in body["error"]
 
 
 def test_deepseek_service_preset(alice, monkeypatch):

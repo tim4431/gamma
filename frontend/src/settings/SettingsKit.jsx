@@ -3,12 +3,12 @@
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
 // PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
-// PasswordInput, AccountPicker, LogBox, Stat/StatText, Empty,
+// PasswordInput, CopyField, AccountPicker, LogBox, Stat/StatText, Empty,
 // WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
@@ -294,15 +294,49 @@ export function Step({ n, title, hint, children }) {
 }
 
 // One labeled control: the label on its own line, one muted hint line under
-// it, the control below.
-export function Field({ label, hint, children }) {
+// it, the control below. A `group` holds several controls (a CopyField and
+// a link), so it is a named group rather than a <label>.
+export function Field({ label, hint, group = false, children }) {
+  const Frame = group ? "div" : "label";
   return (
-    <label className="setField">
+    <Frame className="setField" {...(group ? { role: "group", "aria-label": label } : {})}>
       <span className="setFieldLabel">{label}</span>
       {hint ? <span className="settingDesc setFieldHint">{hint}</span> : null}
       {children}
-    </label>
+    </Frame>
   );
+}
+
+const COPIED = t("Copied. You can paste it now.");
+const COPY_MANUALLY = t("Select the text above and copy it manually.");
+
+// A read-only code box with the copy button in its corner. A successful copy
+// swaps the icon for a check; the status text is visible only when the
+// clipboard was refused (the check already says the rest, but the sentence
+// stays in the DOM for assistive tech).
+export function CopyField({ label, value, action, rows = 2 }) {
+  const [status, setStatus] = React.useState("");
+  React.useEffect(() => setStatus(""), [value]);
+  React.useEffect(() => {
+    if (status !== COPIED) return undefined;
+    const timer = setTimeout(() => setStatus(""), 2000);
+    return () => clearTimeout(timer);
+  }, [status]);
+  const copy = async () => {
+    try { setStatus(await copyText(value) ? COPIED : COPY_MANUALLY); }
+    catch { setStatus(COPY_MANUALLY); }
+  };
+  const copied = status === COPIED;
+  return <div className="integrationDetails">
+    <div className="integrationCode">
+      <textarea className="aiKeyInput" aria-label={label} readOnly rows={rows} value={value}
+        onFocus={(event) => event.target.select()} />
+      <button type="button" className={`uiBtn sm iconSq integrationCopy${copied ? " on" : ""}`} aria-label={action} title={action} onClick={copy}>
+        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+      </button>
+    </div>
+    <span className={`settingDesc integrationCopyStatus${copied ? " srOnly" : ""}`} role="status">{status}</span>
+  </div>;
 }
 
 // An editor dialog's footer: its buttons on the right and, while the
@@ -351,10 +385,12 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
   const [draft, setDraft] = React.useState(null); // non-null only while editing deferred
   // The draft stays on screen until the commit settles (an async save), then
   // the stored value shows — the parent never needs a `key` remount to reset
-  // the box, which would drop a value typed while the save was landing.
+  // the box, which would drop a value typed while the save was landing. A
+  // value typed after this commit started stays: it is the next commit.
   const commit = async () => {
     if (draft == null) return;
-    try { await onCommit(draft); } finally { setDraft(null); }
+    const sent = draft;
+    try { await onCommit(sent); } finally { setDraft((now) => (now === sent ? null : now)); }
   };
   return (
     <span className="unitInput">

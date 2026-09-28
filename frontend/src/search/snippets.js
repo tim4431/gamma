@@ -9,29 +9,48 @@
 // unmarked: no mark beats a wrong one.
 
 import { buildSearchRegex, normalizeChars, normalizeQuery } from "../shared/lib/textnorm.js";
+import { scanImageSyntax } from "../editor/mdMarks.js";
 
-// A note's markdown → one line of what a reader sees: heading hashes,
-// quote and callout markers, list bullets and to-do boxes, [[refs]] and
-// links (their text stays), emphasis marks, inline code ticks, colour
-// spans and $ math delimiters dropped.
-export function plainSnippet(src) {
+// A note's markdown → the words a reader sees, as one line: fence lines,
+// heading hashes, quote and callout markers (nested ones too), list bullets
+// and to-do boxes go; [[refs]] and ![[embeds]] keep their alias or target,
+// links their text, images their alt text (without a `|300` or Logseq
+// `{:width 300}` size); inline HTML tags (the colour spans, <mark>, <br>)
+// go and their content stays; emphasis, highlight, strike and inline-code
+// marks go. Math: by default the $ delimiters go and the TeX stays (search
+// rows, the [[ picker). `mathApart` is the chat chip's prose run
+// (chat/chipText.js): the caller cut the math out already, so any $ left is
+// literal — \$ reads as $ — and the run is not trimmed (a space beside a
+// formula matters).
+export function plainSnippet(src, { mathApart = false } = {}) {
   let s = String(src || "");
   s = s.replace(/^[ \t]*```[^\n]*$/gm, " ");
   s = s.replace(/^[ \t]*(?:>[ \t]*)+\[![\w-]+\][+-]?[ \t]*/gm, "");
   s = s.replace(/^[ \t]*(?:>[ \t]*)+/gm, "");
   s = s.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "");
   s = s.replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, "");
-  s = s.replace(/!\[\[([^\]]*)\]\]/g, "$1");
-  s = s.replace(/\[\[([^\]|]*)(?:\|([^\]]*))?\]\]/g, (_, target, alias) => alias || target);
-  s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => alt.replace(/\|\s*\d+\s*$/, ""));
+  s = s.replace(/!?\[\[([^\]|]*)(?:\|([^\]]*))?\]\]/g, (_, target, alias) => alias || target);
+  s = withoutImages(s);
   s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
-  s = s.replace(/<\/?span\b[^>]*>/gi, "");
-  s = s.replace(/(\*\*|__|~~|==)(?=\S)(.+?)(?<=\S)\1/g, "$2");
+  s = s.replace(/<br\s*\/?>/gi, " ");
+  s = s.replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/gi, "");
+  s = s.replace(/(\*\*|__|~~|==)(?=\S)([\s\S]*?\S)\1/g, "$2");
   s = s.replace(/(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])/g, "$1");
   s = s.replace(/(?<![\w_])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w_])/g, "$1");
   s = s.replace(/`([^`\n]*)`/g, "$1");
+  if (mathApart) return s.replace(/\\\$/g, "$").replace(/\s+/g, " ");
   s = s.replace(/(?<!\\)\$\$?([^$\n]+?)\$\$?/g, "$1");
   return s.replace(/\s+/g, " ").trim();
+}
+
+// Every image (the notes' own scanner, editor/mdMarks.js) → its alt text.
+function withoutImages(s) {
+  let out = "", at = 0;
+  for (const im of scanImageSyntax(s)) {
+    out += s.slice(at, im.from) + im.alt;
+    at = im.to;
+  }
+  return out + s.slice(at);
 }
 
 // [start, end) UTF-16 ranges of `text` that `query` matches, merged and in

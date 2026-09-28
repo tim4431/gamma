@@ -8,6 +8,7 @@ const STORAGE_KEY = () => `gamma-session:${scope}`;
 
 export function setSessionScope(user, ws) {
   clearTimeout(saveTimer);
+  pendingWrite = null; // it belonged to the scope being left
   scope = user && ws ? `${user}@${ws}` : "";
 }
 
@@ -24,6 +25,18 @@ const SESSION_FIELDS = [
 ];
 
 let saveTimer = null;
+let pendingWrite = null; // the debounced write, run early when the page is leaving
+
+// The debounce would lose a change made within 300 ms of a reload or a
+// navigation away: write it now instead.
+export function flushSession() {
+  if (!pendingWrite) return;
+  clearTimeout(saveTimer);
+  const write = pendingWrite;
+  pendingWrite = null;
+  write();
+}
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushSession);
 
 export function loadSession() {
   if (!scope) return {};
@@ -38,8 +51,10 @@ export function loadSession() {
 
 export function saveSession(state) {
   clearTimeout(saveTimer);
+  pendingWrite = null;
   if (!scope) return;
-  saveTimer = setTimeout(() => {
+  const write = () => {
+    pendingWrite = null;
     try {
       const merged = { ...loadSession(), ...state };
       // Only keep known fields
@@ -51,11 +66,14 @@ export function saveSession(state) {
     } catch {
       // localStorage full or blocked; silently ignore
     }
-  }, 300);
+  };
+  pendingWrite = write;
+  saveTimer = setTimeout(write, 300);
 }
 
 export function clearSession() {
   clearTimeout(saveTimer);
+  pendingWrite = null;
   if (!scope) return;
   try {
     localStorage.removeItem(STORAGE_KEY());

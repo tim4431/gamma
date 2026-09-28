@@ -351,7 +351,9 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // inkPenTool what a stylus draws with when nothing is armed, inkFlash
 // {id, nonce} outlines a group after a jump; strokes and erasures report
 // back through onInkStroke / onInkErase, a click on ink through onInkJump.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+// flashHighlightId: the highlight a jump just landed on, which pulses once
+// (.pdfHlFlash; App's triggerFlash sets it for about a second).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, flashHighlightId = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -660,12 +662,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // with the note — clicking the rectangle later re-crops it, rendered
   // offscreen straight from the document, so it works even while the page
   // isn't on screen (e.g. a click in the notes window before scrolling).
+  // Only from the document the viewer is asked to show: during a paper
+  // switch pdfDoc is still the previous paper's until the new one commits
+  // (it stays on screen meanwhile), and a crop taken then would be that
+  // paper's page — the caller retries once the new document is rendered.
+  const urlRef = useRef(url);
+  urlRef.current = url;
   useEffect(() => {
     if (!captureRef) return;
     captureRef.current = pdfDoc ? async (h) => {
       const r = h?.position?.boundingRect;
       const pn = r?.pageNumber || h?.position?.pageNumber;
       if (!r || !pn) return null;
+      if (docUrlRef.current !== urlRef.current) return null;
       try {
         const page = await pdfDoc.getPage(pn);
         const vpBase = page.getViewport({ scale: 1 });
@@ -740,6 +749,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // teardown on unmount: documents belong to DOC_CACHE, which is what makes
   // coming back to a paper instant.
   const displayedDocRef = useRef(null);
+  const docUrlRef = useRef(""); // the url pdfDoc belongs to (lags `url` during a load)
 
   // The three ways a document reaches the screen (docs/dev/pdf_loading.md).
   // Every commit lands heights, page tree and document in ONE render, so the
@@ -765,6 +775,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
   const commitDoc = (url, doc, heights, widths, exact) => {
     displayedDocRef.current = doc;
+    docUrlRef.current = url;
     commitLayout(heights, widths, exact);
     if (skeletonRef.current !== url) setDocSeq((s) => s + 1);
     skeletonRef.current = null;
@@ -1626,6 +1637,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       {Array.from({ length: numPages }, (_, i) => (
         <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} scale={scale}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump} onHighlightJump={stableCbs.onHighlightJump}
+          flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
           onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
@@ -1849,7 +1861,7 @@ function TransPending({ lines, busy }) {
   );
 }
 
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, inkBlocks = EMPTY_MARKS, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, inkSelection, inkFlash, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, inkBlocks = EMPTY_MARKS, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, inkSelection, inkFlash, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
@@ -2224,6 +2236,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const elements = [];
         for (const r of rects) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+            className={flashId === h.id ? "pdfHlFlash" : undefined}
             data-hl-color={palette >= 0 ? palette : undefined} style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
             left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,

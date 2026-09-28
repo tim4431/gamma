@@ -45,7 +45,8 @@ import secrets
 
 from fractional_indexing import generate_key_between
 
-from .ai_context import DEPRECATED_TOOLS, canonical_tool, page_report_section, pdf_path
+from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
+                         page_report_section, pdf_path, render_area_crops)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import connect_data_db, connect_pages_db, page_now
 from .ops import after_commit, apply_ops, note_reload, record_ops
@@ -397,16 +398,81 @@ def _window_args(scope: dict, args: dict) -> tuple[int, int, int]:
     return budget, offset, page
 
 
+def context_cover(scope: dict, page_id: str) -> dict | None:
+    """What the conversation context already holds of a page (the chat's
+    coverage report, riding in the scope): ``{pages_shown, pages, partial,
+    notes, native}`` — the head-excerpt span of its PDF text (none when the
+    file went natively, or the page has no PDF) and whether its notes are
+    there. None for a page not in context."""
+    for entry in scope.get("coverage") or ():
+        if entry.get("page_id") == page_id:
+            return entry
+    return None
+
+
 def _run_read_page(conn, ws: str, scope: dict, args: dict):
+    """A page's text in windows — minus what the conversation already
+    holds: PDF pages the head excerpt shows in full are never sent again (a
+    read of them continues from the page the excerpt cut short), a
+    document the excerpt holds whole is not re-read at all, and the notes
+    come once — with the first window of a read, or on ``notes: true`` —
+    and not when the chat's context already carries them."""
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
         return error, None
-    page_id, title, _, _ = loaded
+    page_id, title, props, _ = loaded
     budget, offset, page = _window_args(scope, args)
-    section = page_report_section(conn, ws, page_id, budget, offset, page, notes_seen=notes_seen(scope))
+    first_window = offset == 0 and page == 1
+    cover = context_cover(scope, page_id)
+    notes_wanted = bool(args.get("notes")) or first_window
+    lead = []
+    if cover and cover.get("pages_shown") and cover.get("doc_id") and not cover.get("native"):
+        shown, total = cover["pages_shown"], cover.get("pages") or 0
+        if not cover.get("partial"):
+            lead.append(f'The whole PDF text of "{title}" is in the conversation context above '
+                        f"({total or shown} pages) — answer from it; nothing more to read.")
+            budget = 0
+        elif offset == 0 and page < shown:
+            lead.append(f"PDF pages 1–{shown - 1} of \"{title}\" are in the conversation context "
+                        f"above and are not repeated; this read continues from page {shown}, "
+                        f"the page the excerpt cut short.")
+            page = shown
+    notes_in_context = bool(cover and cover.get("notes"))
+    include_notes = notes_wanted and not notes_in_context
+    report: dict = {}
+    section = page_report_section(conn, ws, page_id, budget, offset, page,
+                                  include_notes=include_notes,
+                                  notes_budget=_read_cap(scope.get("read_chars")), report=report,
+                                  notes_seen=notes_seen(scope))
     if not section:
         return f'"{title}" has no readable content', None
-    return section, {"kind": "read", "page_id": page_id, "summary": f"Read “{title[:60]}”"}
+    if notes_wanted and notes_in_context:
+        lead.append("(The page's notes and highlights are in the conversation context above.)")
+    elif not include_notes:
+        lead.append("(Notes and highlights come with the first window of a read, or with notes: true.)")
+    text = ("\n".join(lead) + "\n\n" + section) if lead else section
+    chip = {"kind": "read", "page_id": page_id, "summary": f"Read “{title[:60]}”"}
+    first, last = report.get("pdf_pages") or (0, 0)
+    if last:
+        chip["pdf_pages"] = [first, last]
+        chip["summary"] = f"Read “{title[:60]}” p. {first}" + (f"–{last}" if last > first else "")
+    # The area highlights' pictures go with the result (the loop moves
+    # them onto the tool message, like view_pdf_page's page).
+    attachment = page_attachment(props)
+    images = (render_area_crops(ws, attachment["id"], report["areas"])
+              if attachment and report.get("areas") else [])
+    if images:
+        chip["images"] = images
+    return text, chip
+
+
+def _page_doc_id(conn, page_id: str) -> str:
+    row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    try:
+        attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
+    except ValueError:
+        attachment = None
+    return attachment["id"] if attachment else ""
 
 
 def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
@@ -460,6 +526,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     for children in by_parent.values():
         children.sort(key=lambda row: row[2])
 
+    areas: list = []  # (page, box) of the area highlights whose picture goes along
+    per_page: dict = {}
+
     def line(block_id, content, props, depth, full=False):
         quote = (props.get("quote") or "").strip()
         text = (content or "").strip()
@@ -468,6 +537,15 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         bits = [f"[{block_id}]"]
         if quote:
             bits.append(f'(highlight: "{quote[:200]}")')
+        elif props.get("highlight_id") and (area := area_highlight(props)):
+            page, box = area
+            per_page[page] = per_page.get(page, 0) + 1
+            if per_page[page] <= MAX_AREA_CROPS:
+                areas.append((page, box))
+                bits.append(f"(area highlight: a rectangle on PDF page {page}; picture {len(areas)} attached)")
+            else:
+                bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
+                            "the limit on this page)")
         if props.get("ink_url"):
             bits.append(f"(handwriting on p. {props.get('pdf_page')}, {props.get('ink_strokes', 0)} strokes; "
                         "the text is its caption)")
@@ -515,8 +593,12 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     what = f'“{page_title[:60]}”' if is_page else f'a block in “{page_title[:60]}”'
     # block_id lets the notes panel light up the block (or, for a page id,
     # the whole outline) the agent is reading.
-    return out, {"kind": "read", "page_id": page_id, "block_id": block["id"],
-                 "summary": f"Read notes of {what}"}
+    chip = {"kind": "read", "page_id": page_id, "block_id": block["id"],
+            "summary": f"Read notes of {what}"}
+    images = render_area_crops(ws, _page_doc_id(conn, page_id), areas) if areas else []
+    if images:
+        chip["images"] = images
+    return out, chip
 
 
 def _chat_bucket(conn, scope: dict, args: dict):
@@ -1137,12 +1219,19 @@ TOOLS = [
                 "search_library hit's page number to read around the match — and "
                 "`pdf_offset` starts it that many characters further in; when more "
                 "text remains the excerpt ends by naming the next offset, so keep "
-                "calling to read as far as you need."),
+                "calling to read as far as you need. What the conversation context "
+                "already holds is not repeated: PDF pages shown there in full are "
+                "skipped (a read of them continues from the first page not in context) "
+                "and the notes come once, with the first window of a read, or with "
+                "`notes: true`."),
             "parameters": {
                 "type": "object",
                 "properties": {**_PAGE_ID_ARG, "pdf_chars": {"type": "integer"},
                                "pdf_offset": {"type": "integer"},
-                               "pdf_page": {"type": "integer"}},
+                               "pdf_page": {"type": "integer"},
+                               "notes": {"type": "boolean",
+                                         "description": "include the page's notes and highlights "
+                                                        "with this window"}},
                 "required": ["page_id"],
             },
         },
@@ -1437,6 +1526,30 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
     return specs
 
 
+def coverage_lines(coverage: list, can_read: bool) -> str:
+    """The prompt lines naming what the conversation context already holds
+    of each page's PDF (the chat's coverage report), so the model reads the
+    pages that are missing instead of the ones it has: "pages 1–5 of 19 are
+    in context; read pages 5–19 with read_page(pdf_page=N)"."""
+    lines = []
+    for entry in coverage:
+        if not entry.get("doc_id") or entry.get("native"):
+            continue
+        title, page_id = entry.get("title") or "Untitled", entry.get("page_id") or ""
+        shown, total = entry.get("pages_shown") or 0, entry.get("pages") or 0
+        if not entry.get("partial"):
+            lines.append(f'The context holds the whole PDF text of "{title}" (page_id "{page_id}"'
+                         f"{f', {total} pages' if total else ''}); no read_page is needed for it.")
+        elif shown:
+            where = f"pages 1–{shown} of {total}" if total else f"pages 1–{shown}"
+            lines.append(f'The context holds PDF {where} of "{title}" (page_id "{page_id}"; '
+                         f"page {shown} cut short)."
+                         + (f" Read from page {shown} on with read_page(page_id, pdf_page=N) — "
+                            "pages already in context are never repeated; the document map "
+                            "says what each remaining page is about." if can_read else ""))
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     """System-prompt addendum: the (user-editable) base role prompt plus
     mechanical lines describing this chat's scope and armed tools."""
@@ -1476,6 +1589,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += ("The user attached these note blocks to the message (text in the "
                  "context, ids in brackets): " + ", ".join(f'"{b}"' for b in chips)
                  + ". A request to change/rewrite/expand them means those ids.\n")
+    text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
     if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
         # The chat renders /?page=<id> links as open-in-place; the ids come
@@ -1489,10 +1603,10 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     if "read_page" in names or "search_library" in names:
         text += (
             "\nFor any question about what a page or its PDF says — a number, a "
-            "parameter, a method, a figure — look the answer up with the tools before "
-            "answering, even if you think you know it: the context in this "
-            "conversation is only part of the user's pages, and a PDF excerpt is "
-            "only part of the document.")
+            "parameter, a method, a figure — answer from the text in the context when "
+            "it is there, and look it up with the tools before answering when it is "
+            "not: the context holds only the pages and PDF pages it names, never the "
+            "rest of the user's library, and never fill a gap from memory.")
         if "search_library" in names:
             text += (
                 " search_library is literal keyword matching over the notes and the "

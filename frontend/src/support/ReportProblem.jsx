@@ -190,11 +190,11 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
   return (
     <SubDialog title={t("Report a problem")} onClose={onClose} className="reportProblem"
       draft={description || steps || recordingName}>
-      <Field label={t("What happened")} hint={t("what you did, what you expected, what you saw")}>
+      <Field label={t("What happened")} hint={t("What you did, what you expected, what you saw")}>
         <textarea className="reportProblemText" rows={3} autoFocus value={description}
           onChange={(e) => setDescription(e.target.value)} placeholder={t("A blue line stays on the notes after…")} />
       </Field>
-      <Field label={t("How to reproduce")} hint={t("the steps that bring it back, if you found them")}>
+      <Field label={t("How to reproduce")} hint={t("The steps that bring it back, if you found them")}>
         <textarea className="reportProblemText" rows={3} value={steps}
           onChange={(e) => setSteps(e.target.value)} placeholder={t("1. Open a page with notes\n2. Drag a block by its handle…\n3. …")} />
       </Field>

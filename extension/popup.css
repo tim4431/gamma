@@ -1,112 +1,112 @@
-/* Popup + options. Mirrors the app's theme tokens and control recipes
-   (app.css: uiBtn / uiSelectBtn, the aiKeyInput field recipe, the ctxMenu
-   menu surface) so the extension reads as part of Gamma. The app's pinned
-   theme isn't knowable here, so light/dark follows the OS. */
-:root {
-  --bg-surface: #ffffff; --bg-elevated: #ffffff; --bg-input: #ffffff;
-  --bg-hover: #e0e0e0; --bg-active: #d5d5d5; --bg-raised: #e8e8e8;
-  --text-primary: #1a1a1a; --text-secondary: #333333; --text-muted: #888888; --text-dim: #999999;
-  --border: #dddddd; --border-subtle: #e0e0e0;
-  --accent: #3a7bd5; --accent-dark: #3a7bd5; --accent-bright: #2b6bcb;
-  --accent-bg: rgba(74, 144, 226, 0.12);
-  --danger: #c23b3b; --danger-bg: rgba(194, 59, 59, 0.1); --danger-border: rgba(194, 59, 59, 0.38);
-  --ok: #2e8b5e; --ok-bg: rgba(46, 139, 94, 0.12);
-  --warn: #b8791a; --warn-bg: rgba(217, 147, 30, 0.14);
-  --radius-control: 6px; --radius-surface: 10px;
-  --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.18);
-  color-scheme: light;
+/* Popup + options, on Gamma's design tokens: tokens.css (linked before this
+   file) is a copy of the app's frontend/src/shared/styles/tokens.css
+   (`npm run copy-tokens` in frontend/ refreshes it, frontend/tests/
+   themes.test.mjs checks it), and the controls below repeat the app's
+   recipes (app.css: uiBtn / uiSelectBtn, the field recipe, the ctxMenu
+   surface, the switch, the focus ring) so the extension reads as part of
+   Gamma. The app's pinned theme isn't knowable here: theme.js sets Light
+   or Dark from the OS. */
+
+/* Gamma's interface face, the Latin subset (fonts/, copied with the tokens;
+   SIL Open Font License in fonts/OFL.txt). Other scripts fall through
+   --font-sans to the system face. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(fonts/inter-latin-wght-normal.woff2) format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-surface: #1a1a1a; --bg-elevated: #232323; --bg-input: #222222;
-    --bg-hover: #333333; --bg-active: #3a3a3a; --bg-raised: #2a2a2a;
-    --text-primary: #eeeeee; --text-secondary: #dddddd; --text-muted: #888888; --text-dim: #666666;
-    --border: #333333; --border-subtle: #3f3f3f;
-    --accent: #5b9bd5; --accent-dark: #3a7bd5; --accent-bright: #7ab8f5;
-    --accent-bg: rgba(42, 79, 122, 0.3);
-    --danger: #e05c5c; --danger-bg: rgba(224, 92, 92, 0.14); --danger-border: rgba(224, 92, 92, 0.45);
-    --ok: #4caf7d; --ok-bg: rgba(76, 175, 125, 0.14);
-    --warn: #d9931e; --warn-bg: rgba(217, 147, 30, 0.16);
-    --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
-    color-scheme: dark;
-  }
-}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg-surface); color: var(--text-primary); }
 body {
-  font: 13.5px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans); font-size: var(--fs-sm); line-height: var(--lh-ui);
   width: 360px; min-height: 120px;
 }
 body.options { width: auto; min-width: 380px; max-width: 520px; padding: 4px 0; }
 .hidden { display: none !important; }
 a { color: var(--accent-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button, input { font: inherit; color: inherit; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button, input { font-family: inherit; font-size: inherit; color: inherit; }
+code, kbd { font-family: var(--font-mono); }
+
+/* Keyboard focus: Gamma's one ring, shown only for keyboard focus; menu
+   rows draw it inside. Fields take the accent border and a halo instead. */
+:where(button, a[href], summary, [role="button"], input:is([type="checkbox"], [type="radio"]), [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 .head { display: flex; gap: 10px; padding: 14px 16px 12px; border-bottom: 1px solid var(--border-subtle); }
 .head .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); margin-top: 6px; flex: none; }
 .head .dot.on { background: var(--accent); }
 .head .dot.ok { background: var(--ok); }
 .head .dot.bad { background: var(--danger); }
-.head .t { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.head .s { color: var(--text-muted); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+.head .t { font-weight: 600; line-height: var(--lh-tight); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.head .s { color: var(--text-muted); font-size: var(--fs-xs); margin-top: 3px; overflow-wrap: anywhere; }
 .head .s .meta { color: var(--text-secondary); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; padding: 0 7px; border-radius: 999px; background: var(--accent-bg); color: var(--accent-bright); vertical-align: 1px; margin-right: 5px; }
-.chip.ok { background: var(--ok-bg); color: var(--ok); }
+/* What the detection rests on (PDF, arXiv, DOI): a kind label, so no
+   uppercase or letter-spacing (the text keeps its own case). */
+.chip { display: inline-block; font-size: var(--fs-2xs); font-weight: 600; padding: 0 7px; border-radius: var(--radius-full); background: var(--accent-bg); color: var(--accent-bright); vertical-align: 1px; margin-right: 5px; }
+.chip.ok { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); }
 .chip.muted { background: var(--bg-hover); color: var(--text-muted); }
 
 .form { padding: 10px 16px 4px; display: grid; gap: 8px; }
 .row { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px; }
-.row label, .row .lbl { color: var(--text-muted); font-size: 12px; }
+.row label, .row .lbl { color: var(--text-muted); font-size: var(--fs-xs); }
 .row.stack { grid-template-columns: 1fr; gap: 4px; }
-/* Text fields — the app's aiKeyInput recipe. */
+/* Text fields — the app's field recipe. */
 .field {
   width: 100%; background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: var(--radius-control); color: var(--text-primary);
-  font-size: 12.5px; padding: 6px 9px; outline: none;
+  border-radius: var(--radius-md); color: var(--text-primary);
+  font-size: var(--fs-sm); padding: 6px 9px; outline: none;
 }
-.field:focus { border-color: var(--text-dim); }
+.field:focus, .tagField:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 .field::placeholder { color: var(--text-dim); }
-/* Labels — the app's categoryTag chip input (app.css .categoryTagInputWrap / .categoryTag / .uiClose). */
-.tagField { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; min-height: 30px; cursor: text; }
-/* The focus ring belongs to the box, not the inner input — its flexible width
-   would make the ring resize as chips are added. */
-.tagField:focus-within { border-color: var(--text-dim); outline: 2px solid var(--accent); outline-offset: 1px; }
-.tagField .tagInput:focus-visible { outline: none; }
+/* Labels — the app's categoryTag chip input (app.css .categoryTagInputWrap /
+   .categoryTag / .uiClose). The halo belongs to the box (:focus-within
+   above), not the inner input. */
+.tagField { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; min-height: 32px; cursor: text; }
 .categoryTag {
   display: inline-flex; align-items: center; gap: 2px;
   background: var(--bg-raised); color: var(--accent);
-  padding: 1px 4px 1px 8px; border-radius: 4px;
-  font-size: 11px; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap;
+  padding: 1px 2px 1px 8px; border-radius: var(--radius-xs);
+  font-size: var(--fs-2xs); font-weight: 500; white-space: nowrap;
 }
+/* The round × (an X glyph): 24 px, .uiCloseSm 20 for chips and rows. */
 .uiClose {
-  padding: 0; width: 16px; height: 16px; flex-shrink: 0; background: none; border: none;
-  border-radius: 50%; font-size: 12px; line-height: 1; color: var(--text-dim); cursor: pointer;
+  padding: 0; width: 24px; height: 24px; flex-shrink: 0; background: none; border: none;
+  border-radius: 50%; line-height: 1; color: var(--text-dim); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
-.uiClose:hover { background: var(--bg-hover); color: var(--text-primary); }
+.uiClose.uiCloseSm { width: 20px; height: 20px; }
+.uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
-.tagInput { flex: 1; min-width: 60px; background: transparent; border: none; outline: none; font-size: 12.5px; padding: 1px 2px; color: var(--text-primary); }
+.tagInput { flex: 1; min-width: 60px; background: transparent; border: none; outline: none; font-size: var(--fs-sm); padding: 1px 2px; color: var(--text-primary); }
 .tagInput::placeholder { color: var(--text-dim); }
-.check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12.5px; padding: 2px 16px; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--fs-sm); padding: 2px 16px; }
 .check input { margin: 0; accent-color: var(--accent); }
 
-/* Buttons — the app's uiBtn recipe (VS-Code-settings-style rounded rects). */
+/* Buttons — the app's uiBtn recipe: the secondary (a bordered rect with a
+   faint lift), .primary the one solid accent action; 32 px, .sm 28. */
 .uiBtn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 9px;
-  color: var(--text-secondary); font-size: 12px; font-weight: 500; padding: 5px 14px;
-  cursor: pointer; font-family: inherit; line-height: 1.4; white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-3);
+  min-height: 32px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md);
+  color: var(--text-secondary); font-size: var(--fs-sm); font-weight: 500; padding: var(--space-2) 14px;
+  cursor: pointer; font-family: inherit; line-height: var(--lh-ui); white-space: nowrap;
+  box-shadow: var(--shadow-1);
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .uiBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
-.uiBtn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
-.uiBtn.sm { min-height: 28px; font-size: 11.5px; padding: 4px 12px; border-radius: 8px; }
-.uiBtn.primary { background: var(--accent-dark); border-color: transparent; color: #fff; font-weight: 600; }
-.uiBtn.primary:hover:not(:disabled) { background: #3568a0; color: #fff; }
+.uiBtn:disabled { color: var(--text-dim); cursor: default; box-shadow: none; }
+.uiBtn.sm { min-height: 28px; font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
+.uiBtn.primary { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
+.uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
+.uiBtn.primary:disabled { color: var(--on-accent); opacity: 0.45; }
 /* A primary button that is busy or just finished stays solid while disabled. */
 .uiBtn.primary.busy:disabled { opacity: 0.85; }
 .uiBtn.primary.done:disabled { opacity: 1; background: var(--ok); }
@@ -119,7 +119,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .uiSelectBtn .ctxMenuIcon { margin-left: 0; }
 .linkBtn { border: none; background: none; color: var(--accent-bright); padding: 0; font-weight: 500; cursor: pointer; }
 .linkBtn:hover { text-decoration: underline; }
-.linkBtn.quiet { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.linkBtn.quiet { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 500; }
 .linkBtn.quiet:hover:not(:disabled) { color: var(--text-primary); text-decoration: none; }
 .linkBtn.quiet:disabled { opacity: 0.5; cursor: default; }
 /* Side actions under the main ones: one quiet link, centered. */
@@ -129,37 +129,40 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 /* Menu surface + rows — the app's ctxMenu / ctxMenuItem recipe. */
 .selectWrap { position: relative; min-width: 0; }
 .ctxMenu {
-  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
-  background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: var(--radius-surface); box-shadow: var(--shadow-surface);
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: var(--z-dropdown);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-2);
   padding: 4px 0; max-height: 200px; overflow-y: auto;
 }
 .ctxMenuItem {
   display: block; width: 100%; padding: 7px 12px; background: none; border: none;
-  text-align: left; cursor: pointer; font: inherit; font-size: 12.5px; color: var(--text-primary);
+  text-align: left; cursor: pointer; font-family: inherit; font-size: var(--fs-sm); color: var(--text-primary);
 }
 .ctxMenuItem:hover, .ctxMenuItem.selected { background: var(--bg-hover); }
+.ctxMenuItem:focus-visible { outline-offset: -2px; }
 .ctxMenuItemIconed { display: flex; align-items: center; gap: 8px; }
-.ctxMenuIcon { display: inline-flex; align-items: center; justify-content: center; width: 15px; color: var(--text-muted); flex-shrink: 0; }
+.ctxMenuIcon { display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--text-muted); flex-shrink: 0; }
 .ctxMenuText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctxMenuCheck { margin-left: auto; flex-shrink: 0; color: var(--text-primary); }
 
-.msg { margin: 0 16px 10px; padding: 8px 11px; border-radius: 8px; font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.msg { margin: 0 16px 10px; padding: 8px 11px; border-radius: var(--radius-md); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 /* A notice that opens a section sits clear of the head's rule. */
 #existing .msg, #nothing .msg { margin-top: 14px; }
-.msg.ok { background: var(--ok-bg); color: var(--ok); }
+.msg.ok { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); }
 .msg.err { background: var(--danger-bg); color: var(--danger); }
-.msg.warn { background: var(--warn-bg); color: var(--warn); }
+/* The amber is one value in every theme; as text on its tint it leans
+   toward the ink to stay readable. */
+.msg.warn { background: var(--warn-bg); color: color-mix(in oklab, var(--warn) 70%, var(--ink)); }
 .msg.info { background: var(--accent-bg); color: var(--accent-bright); }
 .msg a { color: inherit; font-weight: 600; text-decoration: underline; }
-.progress { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); padding: 6px 16px 10px; font-size: 12.5px; }
+.progress { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); padding: 6px 16px 10px; font-size: var(--fs-sm); }
 .spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
-.spinner.light { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; margin-right: 6px; }
+.spinner.light { border-color: color-mix(in srgb, var(--on-accent) 35%, transparent); border-top-color: var(--on-accent); margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 
-/* Footer: connection dot · host · user, gear on the right. */
-.foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 12px; }
+/* Footer: connection dot · host · user, icon buttons on the right. */
+.foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: var(--fs-xs); }
 .footStatus { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .footStatus span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connDot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex: none; }
@@ -167,31 +170,32 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .connDot.warn { background: var(--warn); }
 .connDot.bad { background: var(--danger); }
 .footBtns { display: inline-flex; align-items: center; gap: 2px; flex: none; }
-.footBtn, .gearBtn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; background: none; border: none; color: var(--text-muted); padding: 3px; border-radius: 6px; flex: none; transition: color 0.15s ease, background 0.15s ease; }
-.footBtn:hover, .gearBtn:hover { color: var(--text-primary); background: var(--bg-hover); }
+/* The app's ctlBtn: a frameless 26 px icon button with a 16 px icon. */
+.footBtn, .gearBtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; cursor: pointer; background: none; border: none; color: var(--text-tertiary); padding: 0; border-radius: var(--radius-sm); flex: none; transition: color var(--dur-fast) ease, background var(--dur-fast) ease; }
+.footBtn:hover, .gearBtn:hover { color: var(--text-primary); background: var(--bg-active); }
 
 /* The cookie button — publisher sessions. Its class names the state of THIS
    tab's journal host (popup.js `cookieState`): off · ready · connected ·
    saving · done · err. The glyph sits inside a ring that only spins while a
    snapshot uploads; the badge at its corner is the status pip. */
-.cookieBtn { position: relative; width: 26px; height: 26px; padding: 0; }
-.cookieBtn .cookieGlyph { display: inline-flex; transition: transform 0.2s ease, color 0.2s ease; }
+.cookieBtn { position: relative; }
+.cookieBtn .cookieGlyph { display: inline-flex; transition: transform var(--dur-base) ease, color var(--dur-base) ease; }
 .cookieBtn.ready { color: var(--accent-bright); }
 .cookieBtn.connected, .cookieBtn.done { color: var(--ok); }
 .cookieBtn.err { color: var(--danger); }
 .cookieBtn.saving { color: var(--accent-bright); }
 .cookieBtn.saving .cookieGlyph { animation: cookieNibble 0.9s ease-in-out infinite; }
-.cookieBtn[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.cookieBtn[aria-expanded="true"] { background: var(--bg-active); color: var(--text-primary); }
 .cookieBtn[aria-expanded="true"].connected { color: var(--ok); }
 .cookieRing {
   position: absolute; inset: 1px; border-radius: 50%; pointer-events: none;
-  border: 2px solid transparent; opacity: 0; transition: opacity 0.2s ease;
+  border: 2px solid transparent; opacity: 0; transition: opacity var(--dur-base) ease;
 }
 .cookieBtn.saving .cookieRing { opacity: 1; border-top-color: var(--accent); border-right-color: var(--accent); animation: spin 0.8s linear infinite; }
 .cookieBadge {
   position: absolute; right: 2px; bottom: 2px; width: 8px; height: 8px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--bg-surface); pointer-events: none;
-  transform: scale(0); transition: transform 0.2s ease, background 0.2s ease;
+  transform: scale(0); transition: transform var(--dur-base) ease, background var(--dur-base) ease;
 }
 .cookieBtn.ready .cookieBadge { transform: scale(1); animation: cookiePulse 1.8s ease-in-out infinite; }
 .cookieBtn.connected .cookieBadge { transform: scale(1); background: var(--ok); }
@@ -218,52 +222,53 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .drawer {
   border-top: 1px solid var(--border-subtle); background: var(--bg-raised);
   padding: 10px 16px 12px; display: grid; gap: 10px;
-  animation: drawerIn 0.18s ease-out;
+  animation: drawerIn var(--dur-base) ease-out;
 }
 @keyframes drawerIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
 .drawerHead { display: flex; align-items: center; gap: 8px; }
 .drawerIcon { display: inline-flex; color: var(--text-muted); }
-.drawerTitle { flex: 1; font-weight: 600; font-size: 12.5px; }
+.drawerTitle { flex: 1; font-weight: 600; font-size: var(--fs-sm); }
 .pubCard {
-  background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-surface);
+  background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
   padding: 10px 12px; display: grid; gap: 6px;
 }
-.pubHost { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12.5px; min-width: 0; }
+.pubHost { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-sm); min-width: 0; }
 .pubHost > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pubHost .chip { margin: 0; flex: none; }
-.pubMeta { color: var(--text-muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.pubMeta { color: var(--text-muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .pubCard .uiBtn { margin-top: 4px; }
 .pubList { display: grid; gap: 2px; }
-.pubRow { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 8px; }
+.pubRow { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-radius: var(--radius-sm); }
 .pubRow:hover { background: var(--bg-hover); }
 .pubRowText { flex: 1; min-width: 0; display: grid; }
-.pubRowHost { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pubRowMeta { font-size: 11px; color: var(--text-muted); }
-.pubNote { margin: 0; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+.pubRowHost { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pubRowMeta { font-size: var(--fs-2xs); color: var(--text-muted); }
+.pubNote { margin: 0; font-size: var(--fs-2xs); color: var(--text-dim); line-height: var(--lh-ui); }
 .drawer .msg { margin: 0; }
 
 /* Setting row + switch — the app's settingRow / .switch recipe (app.css). */
-.settingRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; border-radius: 8px; cursor: pointer; }
+.settingRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; border-radius: var(--radius-sm); cursor: pointer; }
 .settingRow:hover { background: var(--bg-hover); }
 .settingText { display: grid; gap: 1px; min-width: 0; }
-.settingLabel { font-size: 12.5px; color: var(--text-primary); }
-.settingDesc { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
+.settingLabel { font-size: var(--fs-sm); color: var(--text-primary); }
+.settingDesc { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.35; }
 .switch { position: relative; display: inline-flex; flex-shrink: 0; width: 34px; height: 20px; }
 .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.switchTrack { position: relative; width: 34px; height: 20px; border-radius: 999px; background: var(--bg-active); transition: background 0.15s ease; pointer-events: none; }
-.switchTrack::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); transition: transform 0.15s ease; }
-.switch input:checked + .switchTrack { background: var(--accent-dark); }
+.switchTrack { position: relative; width: 34px; height: 20px; border-radius: var(--radius-full); background: var(--bg-subtle); transition: background var(--dur-base) ease; pointer-events: none; }
+.switchTrack::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); transition: transform var(--dur-base) ease; }
+.switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
-.switch input:focus-visible + .switchTrack { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch input:focus-visible + .switchTrack { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .section { padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
 .section:last-child { border-bottom: none; }
-.section h2 { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 10px; font-weight: 600; }
-.section p { margin: 0 0 8px; color: var(--text-secondary); font-size: 12.5px; }
+/* Section labels: Gamma's (sentence case, the text keeps its own case). */
+.section h2 { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); margin: 0 0 10px; }
+.section p { margin: 0 0 8px; color: var(--text-secondary); font-size: var(--fs-sm); }
 .inline { display: flex; gap: 8px; align-items: center; }
 .inline input { flex: 1; }
-.status { font-size: 12.5px; color: var(--text-secondary); margin-top: 6px; overflow-wrap: anywhere; }
+.status { font-size: var(--fs-sm); color: var(--text-secondary); margin-top: 6px; overflow-wrap: anywhere; }
 .status.ok { color: var(--ok); }
 .status.err { color: var(--danger); }
-kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+kbd { font-size: var(--fs-2xs); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 0 4px; }

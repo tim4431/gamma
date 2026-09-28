@@ -54,8 +54,11 @@ def responses_tools(tools) -> list:
              "parameters": t["parameters"], "strict": False} for t in (tools or [])]
 
 
-def responses_body(messages, model, pdf_b64s, images, tools, effort) -> dict:
-    """The request body both Responses backends share."""
+def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="") -> dict:
+    """The request body both Responses backends share. ``store`` stays off
+    — the conversation is Gamma's to keep, not the provider's — and
+    ``prompt_cache_key`` (one id per chat) is what makes the re-sent prefix
+    a cache hit instead."""
     body = {
         "model": model,
         "input": responses_input(messages, pdf_b64s, images),
@@ -69,6 +72,8 @@ def responses_body(messages, model, pdf_b64s, images, tools, effort) -> dict:
     }
     if effort:
         body["reasoning"] = {"effort": effort}
+    if cache_key:
+        body["prompt_cache_key"] = cache_key
     return body
 
 
@@ -108,7 +113,9 @@ class ResponsesWire(Protocol):
                 yield ("tool", {"id": item.get("call_id") or item.get("id") or "",
                                 "name": item.get("name") or "",
                                 "arguments": parse_tool_args(item.get("arguments"))})
-        elif kind == "response.completed":
+        elif kind in ("response.completed", "response.incomplete"):
+            # incomplete: the output cap or the window stopped it — the
+            # counts still count, and the stop reason says it was cut off.
             response = event.get("response") or {}
             state["stop"] = response.get("status") or "completed"
             state["usage"] = self.usage(response.get("usage")) or state["usage"]
@@ -128,8 +135,8 @@ class OpenAIResponses(ResponsesWire):
     entry = False
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None):
-        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort),
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
+        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key),
                 "max_output_tokens": max_tokens}
         if system:
             body["instructions"] = system

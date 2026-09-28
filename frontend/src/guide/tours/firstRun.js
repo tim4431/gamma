@@ -1,4 +1,4 @@
-import { t, T } from "../../shared/i18n/i18n.js";
+import { T } from "../../shared/i18n/i18n.js";
 // The first-run tour. Data only: anchors from guide/anchors.js, events from
 // guide/events.js. A step with no anchor is a centred card. A step with `do`
 // is a demo: the guide performs the actions itself (click / type / press /
@@ -114,7 +114,7 @@ export default {
       placement: "left",
       title: T("Add a note"),
       body: T("Gamma writes a note under your highlights. Click any note to edit it."),
-      do: [{ note: t("Attention compares queries with keys, then uses those scores to combine the values. Scaling keeps the scores stable.") }],
+      do: [{ note: T("Attention compares queries with keys, then uses those scores to combine the values. Scaling keeps the scores stable.") }],
     },
     {
       id: "label",

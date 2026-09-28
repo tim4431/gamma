@@ -4,10 +4,10 @@
    index.html links this file as the first stylesheet, so its values paint
    the very first frame (the pre-paint script only sets data-theme and
    data-scheme); app.css and every other stylesheet read the custom
-   properties. The desktop shell loads an identical copy
-   (desktop/ui/tokens.css, `npm run desktop-tokens`; tests/themes.test.mjs
-   keeps the two equal). Only custom properties and color-scheme belong
-   here, no component rules. */
+   properties. The desktop shell and the browser extension load identical
+   copies (desktop/ui/tokens.css, extension/tokens.css; `npm run
+   copy-tokens`, and tests/themes.test.mjs keeps them equal). Only custom
+   properties and color-scheme belong here, no component rules. */
 
 /* ---- Scales: the same in every theme ------------------------------------ */
 :root {
@@ -104,6 +104,9 @@
    under the seeds, wherever the recipe would land visibly elsewhere (more
    than 0.006 in oklab); drop one to take the derived shade instead. The
    recipes have zero specificity (:where), so any value a theme names wins.
+   They match any element carrying the attributes, not only the root, so a
+   subtree can show another theme in its own colours (the Appearance pane's
+   theme swatches).
    `node tools/themes.mjs` prints every theme's text contrast;
    tests/themes.test.mjs fails when a change makes one worse. */
 
@@ -115,7 +118,7 @@
    (popovers, menus, tips), --bg-field a text box that must stand out on
    the content (the chat composer): toward white in a light theme, toward
    the ink in a dark one. */
-:where(:root) {
+:where(:root, [data-theme]) {
   /* Seed defaults. */
   --accent-fill: var(--accent);
   --on-accent: #fff;
@@ -131,7 +134,6 @@
   /* Straight from the seeds, in either scheme. */
   --bg-surface: var(--ground);
   --text-primary: var(--ink);
-  --accent-dark: var(--accent-fill);
   --drag-accent: var(--accent);
   /* The PDF page ground where a theme tints pages (sepia, solarized, gray,
      the Gamma pair). Not a --bg-* token: it is the paper, not a surface,
@@ -171,6 +173,10 @@
      and the tinted hover/backdrop behind it. */
   --danger-bg: color-mix(in srgb, var(--danger) 14%, transparent);
   --danger-border: color-mix(in srgb, var(--danger) 45%, transparent);
+  /* The warning amber (a conflict to resolve, a warning tag or log level, a
+     nearly full quota): one value in every theme, and its tint. */
+  --warn: #d9822b;
+  --warn-bg: color-mix(in srgb, var(--warn) 14%, transparent);
   --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
   --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 68%, var(--ink));
   /* Depth: raised controls (buttons, chips, the find box); what floats

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from . import backup_schedule, cloud_sync, config, guests, migrations
@@ -204,6 +204,8 @@ def create_app() -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str, request: Request):
+            if "\x00" in path:  # a scanner's NUL byte: not a file, never a crash
+                raise HTTPException(status_code=404)
             candidate = (static_dir / path).resolve()
             # Path-traversal guard: only serve files inside the static dir
             if path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):

@@ -3,7 +3,10 @@
 The file organization is in place ([source map](../../frontend/src/README.md):
 functional folders directly under `src/`, alongside `app/` and `shared/`,
 without an extra `features/` layer). The state decomposition below is a
-proposal: modules have moved, their state ownership has not been redesigned.
+proposal: modules have moved, their state ownership has not been redesigned —
+with one step taken: the block tree holds the document only, and the
+viewer's own state (the open editor, their folding) is App's `view` beside
+it (`shared/model/blockModel.js`, [collab.md](collab.md)).
 
 ## Goal and current constraints
 

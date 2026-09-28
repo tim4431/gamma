@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateNKeysBetween } from "fractional-indexing";
-import { applyOps, diffTrees, keepUiFlags, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
+import { applyOps, diffTrees, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
 
 const PAGE = "page1";
 const N = (id, content = "", children = [], properties = {}, extra = {}) =>
-  ({ id, content, properties, children, collapsed: false, editMode: false, ...extra });
+  ({ id, content, properties, children, ...extra });
 
 // A tree as the server sends it: every node carries a position.
 function served(tree, pos = new Map()) {
@@ -45,9 +45,9 @@ test("content and property patches", () => {
   assert.deepEqual(propsPatch({ a: 1, b: { x: 1 } }, { a: 1, b: { x: 1 } }), {});
 });
 
-test("ui flags never travel", () => {
+test("a node's extra fields (a flattening's depth and parent) never travel", () => {
   const { tree, pos } = served([N("a", "x")]);
-  const next = [{ ...tree[0], editMode: true, collapsed: true, depth: 3, parentId: null }];
+  const next = [{ ...tree[0], depth: 3, parentId: null }];
   assert.deepEqual(diffTrees(tree, next, PAGE, pos), []);
 });
 
@@ -114,7 +114,7 @@ test("applyOps: remote insert lands sorted, unknown ids are no-ops, re-insert re
   const { tree, pos } = served([N("a", "a"), N("c", "c")]);
   let t = applyOps(tree, [{ op: "insert", id: "b", parent: PAGE, position: "a0V", content: "b", props: { k: 1 } }], PAGE, pos);
   assert.deepEqual(t.map((n) => n.id), ["a", "b", "c"]);
-  assert.equal(t[1].editMode, false);
+  assert.deepEqual(t[1], { id: "b", content: "b", properties: { k: 1 }, position: "a0V", children: [] });
   t = applyOps(t, [{ op: "move", id: "zzz", parent: PAGE, position: "a9" }, { op: "delete", id: "nope" },
                    { op: "set", id: "ghost", content: "x" }], PAGE, pos);
   assert.deepEqual(t.map((n) => n.id), ["a", "b", "c"]);
@@ -125,11 +125,10 @@ test("applyOps: remote insert lands sorted, unknown ids are no-ops, re-insert re
   assert.equal(applyOps(t, [{ op: "set", id: PAGE, content: "title" }], PAGE, pos), t);
 });
 
-test("applyOps: set patches properties but leaves the personal folding flag alone", () => {
+test("applyOps: set patches properties (a stored fold included — the viewer's own folding is beside the tree)", () => {
   const { tree, pos } = served([N("a", "a", [N("b")], { collapsed: false })]);
   const t = applyOps(tree, [{ op: "set", id: "a", props: { collapsed: true, color: "c" } }], PAGE, pos);
   assert.deepEqual(t[0].properties, { collapsed: true, color: "c" });
-  assert.equal(t[0].collapsed, false);
 });
 
 test("applyOps: untouched subtrees keep their identity", () => {
@@ -155,16 +154,6 @@ test("pushOp coalesces consecutive sets of one block", () => {
   pushOp(q, { op: "move", id: "a", parent: PAGE, position: "a5" });
   pushOp(q, { op: "set", id: "a", content: "after move" });
   assert.equal(q.length, 4);
-});
-
-test("keepUiFlags carries editor / folding state onto a fresh tree", () => {
-  const cur = [N("a", "old", [N("b", "", [], {}, { editMode: true })], {}, { collapsed: true })];
-  const fresh = [N("a", "new", [N("b", "b2"), N("c", "c")]), N("d")];
-  const out = keepUiFlags(fresh, cur);
-  assert.equal(out[0].collapsed, true);
-  assert.equal(out[0].children[0].editMode, true);
-  assert.equal(out[0].children[1].editMode, false);
-  assert.equal(out[1].editMode, false);
 });
 
 test("a diff of a large flat reorder stays minimal", () => {

@@ -1,33 +1,37 @@
 import React from "react";
 
 // Small, abstract reading scenes: the same shapes make palettes easy to compare.
-// `dark` is the Dark row of the same table, for the System card's right half.
-export function ThemePreview({ theme, dark }) {
-  const [id, , , ground, paper, ink, accent] = theme;
+// Each scene is painted from its theme's own tokens: it carries the theme's
+// data-theme / data-scheme, and tokens.css resolves the colours inside any
+// element that does (illustrations.css picks the roles: chrome, content,
+// text, accent). System is Light with Dark over its right half.
+function ThemeScene({ theme, scheme }) {
+  return (
+    <g className="themeScene" data-theme={theme} data-scheme={scheme}>
+      <rect className="themeChrome" width="180" height="72" />
+      <rect className="themeContent" x="19" y="14" width="142" height="64" rx="5" />
+      <path className="themeInk" d="M48 14v64" opacity=".1" />
+      <g className="themeInk" strokeWidth="3" strokeLinecap="round" opacity=".25">
+        <path d="M28 25h10M28 34h7M28 43h10M61 49h38M61 56h49M61 63h32" />
+      </g>
+      <path className="themeInk" d="M61 29h35" strokeWidth="4" strokeLinecap="round" opacity=".8" />
+      <path className="themeAccentLine" d="M61 38h23" strokeWidth="4" strokeLinecap="round" opacity=".55" />
+      <circle className="themeAccent" cx="134" cy="37" r="12" opacity=".18" />
+      <path className="themeAccent" d="M119 56l13-19 16 19z" opacity=".48" />
+    </g>
+  );
+}
+
+export function ThemePreview({ theme, scheme }) {
   const clipId = React.useId();
+  if (theme !== "system") {
+    return <svg className="setPicturePreview" viewBox="0 0 180 72" aria-hidden="true"><ThemeScene theme={theme} scheme={scheme} /></svg>;
+  }
   return (
     <svg className="setPicturePreview" viewBox="0 0 180 72" aria-hidden="true">
       <defs><clipPath id={clipId}><path d="M90 0h90v72H90z" /></clipPath></defs>
-      <rect width="180" height="72" fill={ground} />
-      <rect x="19" y="14" width="142" height="64" rx="5" fill={paper} />
-      <path d="M48 14v64" stroke={ink} opacity=".1" />
-      <g stroke={ink} strokeWidth="3" strokeLinecap="round" opacity=".25">
-        <path d="M28 25h10M28 34h7M28 43h10M61 49h38M61 56h49M61 63h32" />
-      </g>
-      <path d="M61 29h35" stroke={ink} strokeWidth="4" strokeLinecap="round" opacity=".8" />
-      <path d="M61 38h23" stroke={accent} strokeWidth="4" strokeLinecap="round" opacity=".55" />
-      <circle cx="134" cy="37" r="12" fill={accent} opacity=".18" />
-      <path d="M119 56l13-19 16 19z" fill={accent} opacity=".48" />
-      {id === "system" && dark ? <g clipPath={`url(#${clipId})`}>
-        <rect width="180" height="72" fill={dark[3]} />
-        <rect x="19" y="14" width="142" height="64" rx="5" fill={dark[4]} />
-        <g stroke={dark[5]} strokeWidth="3" strokeLinecap="round" opacity=".3">
-          <path d="M61 49h38M61 56h49M61 63h32" />
-        </g>
-        <path d="M61 29h35" stroke={dark[5]} strokeWidth="4" strokeLinecap="round" opacity=".8" />
-        <circle cx="134" cy="37" r="12" fill={dark[6]} opacity=".3" />
-        <path d="M119 56l13-19 16 19z" fill={dark[6]} opacity=".6" />
-      </g> : null}
+      <ThemeScene theme="light" scheme="light" />
+      <g clipPath={`url(#${clipId})`}><ThemeScene theme="dark" scheme="dark" /></g>
     </svg>
   );
 }

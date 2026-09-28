@@ -7,8 +7,21 @@
 import { t } from "../shared/i18n/i18n.js";
 import { APP_COMMANDS, GROUP_LIBRARY, GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW } from "./appCommands.js";
 import { BLOCK_COMMANDS, GROUP_FORMAT, GROUP_NOTES } from "../editor/blockCommands.js";
+import { effectiveKeys } from "../shared/lib/hotkeys.js";
 
 export const ALL_COMMANDS = Object.freeze([...APP_COMMANDS, ...BLOCK_COMMANDS]);
+
+const BY_ID = new Map(ALL_COMMANDS.map((cmd) => [cmd.id, cmd]));
+export const commandById = (id) => BY_ID.get(id) || null;
+
+// The chord a command answers to under these bindings (the account's
+// `keybindings`: rebound in Settings → Keyboard), the first when it has
+// several; "" when it is unbound or no such command exists. What a menu
+// row's key hint and the guide's {key:…} tokens show.
+export function commandChord(id, bindings) {
+  const cmd = BY_ID.get(id);
+  return (cmd && effectiveKeys(cmd, bindings)[0]) || "";
+}
 
 // The pane's order.
 export const GROUPS = Object.freeze([GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW, GROUP_LIBRARY, GROUP_NOTES, GROUP_FORMAT]);

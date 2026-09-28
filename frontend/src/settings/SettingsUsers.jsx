@@ -200,14 +200,14 @@ export function UsersSettings({ value, selfOnly = false }) {
     return (
       <SubDialog title={t("Edit {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
-          <Field label={t("Username")} hint={t("renaming keeps sessions and share links working")}>
+          <Field label={t("Username")} hint={t("Renaming keeps sessions and share links working")}>
             <input
               className="aiKeyInput" type="text" spellCheck={false}
               value={edit.username}
               onChange={(e) => setEdit((f) => ({ ...f, username: e.target.value }))}
             />
           </Field>
-          <Field label={t("New password")} hint={t("blank keeps the current one")}>
+          <Field label={t("New password")} hint={t("Blank keeps the current one")}>
             <PasswordInput
               autoComplete="new-password"
               value={edit.password}
@@ -251,14 +251,14 @@ export function UsersSettings({ value, selfOnly = false }) {
       <SubDialog title={t("Storage limits — {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
-          <Field label={t("Max upload size")} hint={t("largest single PDF or image · blank inherits")}>
+          <Field label={t("Max upload size")} hint={t("Largest single PDF or image · blank inherits")}>
             <UnitInput
               unit="MB" min={1} placeholder={defUpload}
               value={edit.max_upload_mb}
               onChange={(max_upload_mb) => setEdit((f) => ({ ...f, max_upload_mb }))}
             />
           </Field>
-          <Field label={t("Storage quota")} hint={t("total for all uploads · blank inherits · 0 = unlimited")}>
+          <Field label={t("Storage quota")} hint={t("Total for all uploads · blank inherits · 0 = unlimited")}>
             <UnitInput
               unit="MB" min={0} placeholder={defQuota}
               value={edit.quota_mb}
@@ -358,7 +358,7 @@ export function UsersSettings({ value, selfOnly = false }) {
       {!isAdmin || selfOnly ? null : addForm ? (
         <SubDialog title={t("Add user")} draft={addForm} onClose={() => { setAddForm(null); setError(""); }}>
           <div className="settingsForm">
-          <Field label={t("Username")} hint={t("letters, digits, _ . -")}>
+          <Field label={t("Username")} hint={t("Letters, digits, _ . -")}>
             <input
               className="aiKeyInput" type="text" spellCheck={false} autoFocus
               value={addForm.username}

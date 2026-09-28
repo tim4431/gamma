@@ -254,13 +254,55 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: manual OAuth connection automatically fetches models", async () => {
+  await step("settings: a failed Test says what failed in the chat error card's words, and its fix opens the connection", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The probe's answers are faked; their kinds are the backend's (test_ai_failures.py).
+      let probe = { ok: false, auth: true, kind: "auth", model: "test-model-a", error: "upstream 401: Incorrect API key provided" };
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: probe }));
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
+      await conn.getByRole("button", { name: "Test", exact: true }).click();
+      const result = conn.locator(`[title="${probe.error}"]`);
+      await result.waitFor();
+      assertEq(await result.innerText(), "✗ Test connection rejected the API key — Update key");
+      await result.getByRole("button", { name: "Update key", exact: true }).click();
+      const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
+      await edit.waitFor();
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await until(() => edit.count().then((n) => n === 0));
+      probe = { ok: false, auth: false, kind: "no_model", model: "", error: "no model picked — edit the connection and choose one" };
+      await conn.getByRole("button", { name: "Test", exact: true }).click();
+      const noModel = conn.locator(`[title="${probe.error}"]`);
+      await noModel.waitFor();
+      assertEq(await noModel.innerText(), "✗ No model picked for Test connection — Edit connection");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a pasted ChatGPT sign-in address connects at once, a device code is offered", async () => {
     const { ctx, page } = await setup();
     try {
       await page.evaluate(() => {
         window.open = (url) => { window.testSignInUrl = url; return null; };
       });
+      // OpenAI's side is faked: the start (a remote browser, so a device code
+      // and no listener), the waits (nothing caught yet) and the exchange.
+      let started = null;
+      await page.route("**/api/ai/oauth/chatgpt/start", async (route) => {
+        started = route.request().postDataJSON();
+        await route.fulfill({ json: { auth_url: "https://auth.openai.com/oauth/authorize?state=e2e-state", state: "e2e-state",
+          local: false, device: { user_code: "ABCD-1234", verification_url: "https://auth.openai.com/codex/device" } } });
+      });
+      let waits = 0;
+      await page.route("**/api/ai/oauth/chatgpt/status", async (route) => {
+        waits++;
+        await route.fulfill({ json: { ready: false, error: "" } });
+      });
+      let completed = null;
       await page.route("**/api/ai/oauth/chatgpt/complete", async (route) => {
+        completed = route.request().postDataJSON();
         const info = await user.api("/api/ai/settings");
         info.providers.push({ id: "oauth-test", protocol: "chatgpt", name: "Test sign-in", models: "gpt-test", oauth_connected: true });
         await route.fulfill({ json: info });
@@ -277,13 +319,22 @@ export async function settingsScenarios(env) {
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl));
-      const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
+      assertEq(started?.device, true, "a device code is asked for");
+      assertEq(await dialog.getByRole("textbox", { name: "One-time code", exact: true }).inputValue(), "ABCD-1234");
+      await until(() => waits > 0, { what: "the form waiting for the device code" });
       const callback = dialog.getByRole("textbox", { name: /Callback URL/ });
       assertEq(await callback.inputValue(), "", "callback remains a manual input");
-      await callback.fill(`http://localhost:1455/auth/callback?code=test&state=${state}`);
-      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      // Pasting the address connects: no Connect click.
+      const address = "http://localhost:1455/auth/callback?code=test&state=e2e-state";
+      await callback.evaluate((input, text) => {
+        input.focus();
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      }, address);
       const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
       await edit.getByRole("button", { name: "2 usable" }).waitFor();
+      assertEq(completed?.callback, address, "the pasted address is redeemed");
       assertEq(catalogCalls, 1);
       await edit.getByRole("combobox", { name: "Add a model" }).click();
       await page.getByRole("option", { name: "gpt-new-model", exact: true }).waitFor();
@@ -1083,14 +1134,19 @@ export async function settingsScenarios(env) {
   });
 
   await step("settings: a ChatGPT subscription can be the server's shared connection", async () => {
-    // The admin signs in from Settings → Server; the code exchange with
-    // OpenAI is the one thing faked (the backend's side is
-    // tests/test_shared_chatgpt.py).
+    // The admin signs in from Settings → Server on the server's own machine,
+    // so the server catches the redirect and the form connects by itself.
+    // OpenAI's side is faked: the start (no port bound), the wait and the
+    // exchange (the backend's side is tests/test_shared_chatgpt.py and
+    // tests/test_chatgpt_oauth.py).
     const { ctx, page } = await setup();
     try {
       await page.evaluate(() => {
         window.open = (url) => { window.testSignInUrl = url; return null; };
       });
+      await page.route("**/api/admin/ai-providers/chatgpt/start", (route) => route.fulfill({ json: {
+        auth_url: "https://auth.openai.com/oauth/authorize?state=e2e-shared", state: "e2e-shared", local: true, device: null } }));
+      await page.route("**/api/admin/ai-providers/chatgpt/status", (route) => route.fulfill({ json: { ready: true, error: "" } }));
       let completed = null;
       await page.route("**/api/admin/ai-providers/chatgpt/complete", async (route) => {
         completed = route.request().postDataJSON();
@@ -1107,13 +1163,12 @@ export async function settingsScenarios(env) {
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl), { what: "the sign-in page opened" });
-      const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
-      await dialog.getByRole("textbox", { name: /Callback URL/ }).fill(`http://localhost:1455/auth/callback?code=test&state=${state}`);
-      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      await dialog.getByText("Did not connect? Paste the address instead", { exact: true }).waitFor();
       // Connected: the form stays open on the entry with the account's live list.
       const edit = page.getByRole("dialog", { name: "Edit shared key", exact: true });
       await edit.getByRole("button", { name: "2 usable" }).waitFor();
-      assertEq(completed?.state, state, "the shared flow's own state is redeemed");
+      assertEq(completed?.state, "e2e-shared", "the shared flow's own state is redeemed");
+      assertEq(completed?.callback, "", "nothing was pasted");
       assertEq(completed?.provider_id, "", "a new entry, not a reconnect");
       await edit.getByRole("button", { name: "Cancel", exact: true }).click();
       const shared = page.locator(".settingsPane .aiProvRow").filter({ hasText: "signed in as lab@example.com" });

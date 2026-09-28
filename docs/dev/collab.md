@@ -297,9 +297,10 @@ state. The session owns:
   unsaved edits of that page over it (the batch out, then the queue; ops
   apply idempotently). The base the load makes then already holds them while
   they are still queued, which is what the base means: what the server will
-  hold once the queue has landed. `keepUiFlags` carries only the open editor
-  and the folding onto the fetched tree, never the screen's text: a screen
-  copy of unsent text would become the base and never be sent. A page left
+  hold once the queue has landed. Nothing is taken from the screen's tree:
+  a screen copy of unsent text would become the base and never be sent. The
+  open editor and the folding live beside the tree (App's `view`), so a
+  refetch leaves them alone. A page left
   with edits unsaved keeps its session. Back on it, `commit` resumes that
   session (its queue and retries go on, its acks land on the new visit's
   tree) instead of starting one beside it.
@@ -387,8 +388,8 @@ state. The session owns:
   client fetches `…/ops?since=10` before advancing. A hello with a higher
   sequence triggers the same recovery. Only one catch-up request runs at a
   time; old-page responses are ignored. A 410 or a `reload` message
-  refetches the subtree with `keepUiFlags` (the open editor and the folding
-  survive the swap) and `overlay` (the unsaved edits do). App's refetch
+  refetches the subtree through `overlay` (the unsaved edits survive the
+  swap; the view beside the tree is untouched). App's refetch
   (`loadBlocksForBlock`) carries a token and the page id: an answer
   overtaken by a newer refetch or arriving for a page no longer open is
   dropped. A failed refetch keeps the tree on screen (never an empty page),
@@ -416,10 +417,15 @@ known id under another parent, or out of order — the longest increasing run
 of existing keys stays, the rest are re-keyed), sets (content / property
 patches), and deletes of the top-most removed subtrees last (a block that
 escaped a deleted parent is moved out first). `applyOps` is idempotent and
-keeps siblings sorted by key. UI-only fields (`editMode`, the `collapsed`
-flag) never travel; a remote `collapsed` *property* updates the stored value
-but not the viewer's own folding — folding stays personal, the stored value
-is the default for the next open.
+keeps siblings sorted by key. The tree is the document only: the block
+whose editor is open and the viewer's own folding live beside it in App's
+`view` (`{editingId, folds}`, `shared/model/blockModel.js` — `withEditing`,
+`toggleFold`, `revealBlock`), so opening an editor or unfolding to reveal a
+block changes no tree and produces no op, and the tree's every transition
+is a document change. Folding a block writes its stored `collapsed`
+property too (the default every viewer opens the page with) and the
+viewer's own fold; a block the viewer never touched follows the stored
+value, a remote change included.
 
 Ops on the page root (a rename, page properties) update the title / page
 state in App instead of the tree.

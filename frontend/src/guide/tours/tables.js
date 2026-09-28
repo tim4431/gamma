@@ -3,7 +3,8 @@ import { T } from "../../shared/i18n/i18n.js";
 // html table) and it first renders — never for opening a page that has one.
 // Started from the Tours menu on a page without one, the first step has the
 // user add a table. It starts with what they came to do, typing in a cell;
-// tables are edited in place, never as markdown.
+// tables are edited in place, never as markdown. Its anchors pick the table
+// the user just made when the page has several (anchors.js, pick: "recent").
 export default {
   id: "tables",
   version: 2,
@@ -17,11 +18,12 @@ export default {
       title: T("Type /table in a note, then click outside it"), advanceOn: { event: "table.shown" } },
     { id: "table-cell", anchor: "notes.table", placement: "bottom",
       title: T("Click any cell and type: {key:Tab} moves to the next, {key:Enter} saves"), advanceOn: { event: "table.edited" } },
-    { id: "table-add", anchor: "notes.tableAdd", placement: "bottom",
+    // Both cards keep clear of the whole table (`avoid`): the add strip sits
+    // under it and the corner on its top-left, so a card flipped onto the
+    // strip or the corner's other side would cover the table they describe.
+    { id: "table-add", anchor: "notes.tableAdd", avoid: "notes.table", placement: "bottom",
       title: T("+ adds a row or column; hover a row or column for its handle: drag to move, click for options") },
-    // Above the corner: it sits on the table's top-left, so a card to its
-    // right or below would cover the table it describes.
-    { id: "table-whole", anchor: "notes.tableCorner", placement: "top",
+    { id: "table-whole", anchor: "notes.tableCorner", avoid: "notes.table", placement: "top",
       title: T("The corner selects the whole table: copy, move or delete it"), next: T("Done") },
   ],
 };

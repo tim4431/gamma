@@ -101,8 +101,10 @@ def _block_kind(parent_id: str, properties: str) -> str:
     return "note"
 
 
-def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int, skip) -> tuple[list, bool]:
-    """The ``limit`` most recently edited blocks (none of ``skip``) whose
+def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int, skip,
+                 reach: set | None = None) -> tuple[list, bool]:
+    """The ``limit`` most recently edited blocks (none of ``skip``; only
+    ones in ``reach`` when a share token limits what is seen) whose
     text the fuzzy ``pattern`` matches, as ``(rows, partial)``. Its
     separator-tolerant rules ("3000" hits "3,000-qubit") can't be SQL, but
     every match contains the query's literal ``runs``
@@ -125,7 +127,7 @@ def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int, skip) -
         for n, r in enumerate(conn.execute(
                 "SELECT id, content, parent_id, properties FROM unified_blocks "
                 f"WHERE content != ''{where} ORDER BY updated_at DESC", args)):
-            if r[0] not in skip and pattern.search(r[1]):
+            if r[0] not in skip and (reach is None or r[0] in reach) and pattern.search(r[1]):
                 rows.append(r)
                 if len(rows) >= limit:
                     break
@@ -153,9 +155,14 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
         raise HTTPException(status_code=400, detail="regex search is not supported")
     results = []
     partial = False
-    with connect_pages_db(require_ws(request)) as conn:
-        # Recently deleted is out of reach: a [[ref]] to a trashed block
-        # resolves to nothing, and no search lists one.
+    # Through a share token: the blocks it reaches, silently — a ref chip or
+    # link title in the share view resolves when its target is shared, and
+    # nothing reveals whether anything else exists. Recently deleted is out
+    # of everyone's reach: a [[ref]] to a trashed block resolves to nothing,
+    # and no search lists one.
+    scope = share_scope(request)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        reach = scope.block_ids(conn) if scope is not None else None
         gone = trashed_ids(conn)
         if ids:
             id_list = [i.strip() for i in ids.split(",") if i.strip()]
@@ -172,14 +179,20 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
             # user types a filter.
             rows = [r for r in conn.execute(
                 "SELECT id, content, parent_id, properties FROM unified_blocks "
-                "WHERE content != '' AND id != 'root' ORDER BY updated_at DESC LIMIT ?",
-                (limit + len(gone),),
-            ) if r[0] not in gone][:limit]
+                "WHERE content != '' AND id != 'root' ORDER BY updated_at DESC"
+                + (" LIMIT ?" if reach is None else ""),
+                (limit + len(gone),) if reach is None else (),
+            ) if r[0] not in gone]
         else:
             pattern = fuzzy_pattern(q, bool(case), bool(whole))
             if pattern is None:
                 return {"blocks": [], "error": "empty query"}
-            rows, partial = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case), limit, gone)
+            rows, partial = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case), limit,
+                                         gone, reach)
+        if reach is not None:
+            rows = [r for r in rows if r[0] in reach]
+        if not ids:
+            rows = rows[:limit]
         if not rows:
             return {"blocks": [], "partial": True} if partial else {"blocks": []}
 

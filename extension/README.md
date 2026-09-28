@@ -86,7 +86,9 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 | `detect.js` | content script: identifier extraction (meta tags, URL, JSON-LD, DOI fallback) |
 | `api.js` | settings in `chrome.storage.sync` + the fetch wrapper (cookie session, error parsing) |
 | `publisherSessions.js` | publisher-host validation, connection flow, automatic-refresh rules and session status text |
-| `popup.html/js/css` | the popup (setup → offline → sign-in → save); styling mirrors the app's theme tokens and control recipes |
+| `popup.html/js/css` | the popup (setup → offline → sign-in → save); styling reads the app's design tokens and repeats its control recipes |
+| `tokens.css`, `fonts/` | committed copies of the app's design tokens and the Latin subset of Inter; `npm run copy-tokens` in `frontend/` refreshes them |
+| `theme.js` | sets Light or Dark (the tokens' `data-theme` / `data-scheme`) from the OS before the stylesheets paint |
 | `options.html/js` | server, account, saving defaults |
 | `assets/icons/` | enabled/disabled toolbar icons, manifest icons, and notification icon |
 
