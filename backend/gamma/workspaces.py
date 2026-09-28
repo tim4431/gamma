@@ -633,12 +633,20 @@ def keep_final_copies(ws_ids, *, by: str = "") -> list[str]:
         try:
             done.append(ws_backup.keep_final_copy(ws, by=by))
         except ws_backup.BackupError as e:
-            for name in done:
-                if name:
-                    (ws_backup.deleted_dir() / name).unlink(missing_ok=True)
+            _drop_final_copies(done)
             label = (get(ws) or {}).get("name") or ws
             raise FinalCopyError(f"nothing was deleted — workspace “{label}”: {e}") from e
     return done
+
+
+def _drop_final_copies(names) -> None:
+    """Remove final copies ``keep_final_copies`` wrote for a delete that
+    then did not happen."""
+    from . import ws_backup  # local: ws_backup imports seed → db
+
+    for name in names:
+        if name:
+            (ws_backup.deleted_dir() / name).unlink(missing_ok=True)
 
 
 def delete(ws: str, *, by: str = "") -> dict:
@@ -654,15 +662,20 @@ def delete(ws: str, *, by: str = "") -> dict:
         _other_personal(conn, ws)
     final_copy = keep_final_copies([ws], by=by)[0]
     with connect_users_db() as conn:
-        # checked again under the write lock: two of an account's last two
-        # personal workspaces deleted at once must not both go
-        conn.execute("BEGIN IMMEDIATE")
-        owner, others = _other_personal(conn, ws)
-        if owner:
-            conn.execute("UPDATE users SET default_workspace = ? WHERE username = ? AND default_workspace = ?",
-                         (others[0], owner, ws))
-        _delete_rows(conn, ws)
-        conn.commit()
+        try:
+            # checked again under the write lock: two of an account's last
+            # two personal workspaces deleted at once must not both go
+            conn.execute("BEGIN IMMEDIATE")
+            owner, others = _other_personal(conn, ws)
+            if owner:
+                conn.execute("UPDATE users SET default_workspace = ? WHERE username = ? AND default_workspace = ?",
+                             (others[0], owner, ws))
+            _delete_rows(conn, ws)
+            conn.commit()
+        except Exception:
+            # refused after all (or not written): no copy of a delete that never happened
+            _drop_final_copies([final_copy])
+            raise
     return {"warning": remove_files(ws), "final_copy": final_copy}
 
 

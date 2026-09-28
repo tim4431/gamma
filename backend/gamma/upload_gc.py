@@ -37,13 +37,10 @@ Who notices what:
 Docs: docs/dev/user_db.md "Stored files".
 """
 
-import re
 import threading
 import time
-from datetime import datetime
 
-from . import config
-from .db import connect_pages_db, page_now, ws_dir, ws_uploads_dir
+from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir, ws_uploads_dir
 from .logbuf import log
 from .storage import upload_refs
 
@@ -59,8 +56,6 @@ PARTIAL_MAX_AGE_S = 86400     # a temp file of storage.write_atomic older than t
 PURGE_MAX = 100
 PURGE_FLOOR = 10
 PURGE_SHARE = 0.2
-
-_WS_DIR_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # db.safe_ws_id's rule: anything else is no workspace
 
 
 # --- references ----------------------------------------------------------------------
@@ -109,10 +104,8 @@ def _stored(ws: str) -> dict:
 
 
 def _since_s(since: str, now: float) -> float:
-    try:
-        return datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
-        return now  # unreadable: the clock starts now
+    t = parse_stamp(since)
+    return t.timestamp() if t else now  # unreadable: the clock starts now
 
 
 def _sweep_partial(ws: str) -> None:
@@ -315,13 +308,6 @@ def _ensure_thread() -> None:
         _thread.start()
 
 
-def _workspaces() -> list[str]:
-    root = config.WORKSPACES_DIR
-    if not root.is_dir():
-        return []
-    return sorted(d.name for d in root.iterdir() if d.is_dir() and _WS_DIR_RE.match(d.name))
-
-
 def _guarded(what: str, fn, ws: str, *args) -> None:
     # one broken workspace (a damaged pages.db) never stops the others
     try:
@@ -333,7 +319,7 @@ def _guarded(what: str, fn, ws: str, *args) -> None:
 def reconcile_all() -> None:
     """The full pass: ``reconcile`` for every workspace; one that fails is
     logged as an error and the pass goes on."""
-    for w in _workspaces():
+    for w in workspace_ids():
         _guarded("the upload reconciliation", reconcile, w)
 
 

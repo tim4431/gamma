@@ -148,9 +148,11 @@ would be counted but missing from the tree).
 
 ## Commit listeners
 
-`ops.commit_listeners` is a list of `fn(ws, client, page_id)` called after
-every committed write: a batch (`after_commit`), a page deletion, trashing
-or restore, a cross-page move's `record_ops`, a `note_reload`. Two register
+`ops.commit_listeners` is a list of `fn(ws, client, page_id)` that
+`ops.notify_commit` calls after every committed write: a batch
+(`after_commit`), a page deletion, trashing or restore, a cross-page move's
+`record_ops`, a `note_reload`, and a backup restore (`page_id` "",
+`ws_backup._announce`). Two register
 at import: an offline copy's engine (`sync_engine._on_commit`, its
 sync-on-change) and the notes index (`block_index.page_changed`, from
 routers/search.py: the page is re-indexed in the background once it has

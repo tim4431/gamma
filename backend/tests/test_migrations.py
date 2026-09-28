@@ -2,8 +2,8 @@
 against a hand-built pre-workspace layout (schema version 0): every account
 directory becomes a workspace, personal prefs move to users.db, shares are
 re-keyed, a snapshot is taken first, a second run is a no-op, and a newer
-data directory is refused. Runs in its own temp data directory so the
-suite's shared one is never touched."""
+data directory is refused. Runs in its own temp data directory (the
+``data_dir`` fixture) so the suite's shared one is never touched."""
 
 import json
 import sqlite3
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-import gamma.app as app_mod  # noqa: F401  (builds the app on the suite's data dir, before any fixture repoints it)
+import gamma.app as app_mod
 from gamma import backups, config, migrations
 from gamma.db import PAGES_SCHEMA, SCHEMA_VERSION, SchemaOutdated, connect_users_db
 
@@ -242,27 +242,6 @@ def test_v15_writes_the_old_default_into_modelless_ai_entries(data_dir):
             "SELECT value FROM user_prefs WHERE key = 'ai-settings'").fetchone()[0])["providers"]
     assert [p["models"] for p in stored] == ["claude-haiku-4-5-20251001", "gpt-x, gpt-y", "gpt-5.1"]
     assert migrations.ensure_current()["applied"] == []
-
-
-@pytest.fixture
-def data_dir(tmp_path, monkeypatch):
-    """Point every module that caches a data-directory path at tmp_path."""
-    import gamma.auth as auth_mod
-    import gamma.db as db_mod
-    import gamma.seed as seed_mod
-    import gamma.workspaces as ws_mod
-
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
-    monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(config, "LEGACY_USERS_DIR", tmp_path / "users")
-    monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
-    monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
-    monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(auth_mod, "USERS_DB", tmp_path / "users.db")
-    monkeypatch.setattr(seed_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(ws_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
-    return tmp_path
 
 
 def _legacy_pages_db(path: Path, blocks):

@@ -2,7 +2,7 @@
 // text layer, creating a highlight from a text selection (overlay + block
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
-import { tree, same } from "./notes.mjs";
+import { tree, same, partialBlockSearch } from "./notes.mjs";
 import { fakeAiModels } from "../harness.mjs";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -234,6 +234,28 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.waitForSelector('[data-page="2"] .pdfFindMark', { timeout: 15000 });
     await page.keyboard.press("Escape");
     assertNoProblems(page);
+  });
+
+  // /block-search stops scanning at its time budget and answers `partial`:
+  // the notes group says the list is incomplete instead of "No matches.".
+  await step("pdf: a notes search the server cut short says so in the notes group", async () => {
+    const unroute = await partialBlockSearch(page);
+    try {
+      await page.click("button[aria-label='Search']");
+      await page.waitForSelector(".searchPopover .searchInput");
+      const details = page.locator("button[aria-label='Toggle result details']");
+      if (!/\bon\b/.test(await details.getAttribute("class"))) await details.click();
+      const answered = page.waitForResponse((r) => r.url().includes("/api/block-search?q=zebrafish"));
+      await page.fill(".searchPopover .searchInput", "zebrafish");
+      await answered;
+      const notice = page.locator(".searchPopover .searchHint", { hasText: "Stopped early — refine the search to see more." });
+      await notice.waitFor();
+      await until(async () => (await page.locator(".searchPopover .searchHint", { hasText: "Searching…" }).count()) === 0, { what: "the search settles" });
+      assertEq(await page.locator(".searchPopover .searchSection", { hasText: "Other notes" }).count(), 1, "under the notes group");
+      assertEq(await page.locator(".searchPopover .searchHint", { hasText: "No matches." }).count(), 0, "an incomplete search claims no \"No matches.\"");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally { await unroute(); }
   });
 
   await step("pdf: AI citation aligns with text and dismisses on outside clicks without creating a note", async () => {

@@ -48,7 +48,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, Literal, Union
 
 from fractional_indexing import FIError, generate_key_between, validate_order_key
@@ -58,7 +58,7 @@ from . import block_index, collab, textmerge, upload_gc
 from .blocks_store import (
     BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, last_child_position,
     subtree_refs, trashed_page, valid_block_id, write_lock)
-from .db import connect_pages_db, page_now
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
 from .storage import upload_refs
 
@@ -401,8 +401,7 @@ def _prune(conn, page_id: str, now: str) -> None:
     age or KEEP_OPS_BYTES of payload, keeping the newest row whatever its
     size. Only a prefix of the log goes, so ``ops_since`` still tells a gap
     by the lowest seq left."""
-    cutoff = (datetime.strptime(now, "%Y-%m-%dT%H:%M:%S.%fZ")
-              - timedelta(hours=KEEP_OPS_HOURS)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    cutoff = format_stamp(parse_stamp(now) - timedelta(hours=KEEP_OPS_HOURS))
     # length() of the ASCII JSON payload (json.dumps escapes the rest) is its byte count
     rows = conn.execute(
         "SELECT seq, at, length(ops) FROM page_ops WHERE page_id = ? ORDER BY seq DESC", (page_id,)).fetchall()
@@ -538,7 +537,9 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
 commit_listeners: list = []
 
 
-def _notify(ws: str, client: str = "", page_id: str = "") -> None:
+def notify_commit(ws: str, client: str = "", page_id: str = "") -> None:
+    """Tell the commit listeners a write committed (``page_id`` "" for a
+    write across the workspace, such as a restore)."""
     for fn in commit_listeners:
         try:
             fn(ws, client, page_id)
@@ -559,7 +560,7 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     upload_gc.schedule(ws, result["dropped_uploads"])
     if result["deleted_ids"]:
         block_index.purge_page_data(ws, conn, result["deleted_ids"], library=result["doc_deleted"])
-    _notify(ws, result.get("client") or "", result.get("page_id") or "")
+    notify_commit(ws, result.get("client") or "", result.get("page_id") or "")
     return result
 
 
@@ -612,7 +613,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
     upload_gc.schedule(ws, dropped)
     block_index.purge_page_data(ws, conn, deleted_ids)
     collab.publish_reload(ws, page_id)
-    _notify(ws, client, page_id)
+    notify_commit(ws, client, page_id)
     return {"deleted_ids": deleted_ids, "dropped_uploads": dropped}
 
 
@@ -645,7 +646,7 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
         conn.rollback()
         raise
     collab.publish_reload(ws, page_id)
-    _notify(ws, client, page_id)
+    notify_commit(ws, client, page_id)
     return trashed_page(page_id, row[1], props)
 
 
@@ -672,7 +673,7 @@ def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
     except BaseException:
         conn.rollback()
         raise
-    _notify(ws, client, page_id)
+    notify_commit(ws, client, page_id)
     return block_to_dict(conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone())
 
@@ -686,7 +687,7 @@ def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> i
     conn.commit()
     collab.publish(ws, page_id, {"t": "ops", "seq": seq, "at": now, "actor": actor,
                                    "client": "", "ops": ops})
-    _notify(ws, "", page_id)
+    notify_commit(ws, "", page_id)
     return seq
 
 
@@ -696,7 +697,7 @@ def note_reload(ws: str, conn, page_id: str, actor: str) -> int:
     seq = log_reload(conn, page_id, actor)
     conn.commit()
     collab.publish_reload(ws, page_id, seq)
-    _notify(ws, "", page_id)
+    notify_commit(ws, "", page_id)
     return seq
 
 

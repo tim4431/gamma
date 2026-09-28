@@ -676,6 +676,31 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // A replace restore first keeps the workspace as it is (ws_backup's
+  // automatic pre-restore snapshot); restoring a workspace other than the
+  // open one reloads its list in place, where that snapshot shows its tag.
+  await step("settings: a replace restore lists the state before it as a \"Before restore\" snapshot", async () => {
+    const lab = await user.api("/api/workspaces", { method: "POST", body: { name: "Restore lab" } });
+    await user.api(`/api/workspaces/${lab.id}/backups`, { method: "POST", body: { label: "e2e-restore", uploads: false } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const snapshot = page.locator(".aiProvRow", { hasText: "e2e-restore" });
+      await snapshot.waitFor();
+      const beforeRestore = page.locator(".aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "Before restore" }) });
+      assertEq(await beforeRestore.count(), 0, "no pre-restore snapshot yet");
+      await snapshot.getByRole("button", { name: "Restore", exact: true }).click();
+      await page.getByRole("button", { name: "Replace…", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Replace", exact: true }).click();
+      await beforeRestore.waitFor({ timeout: 15000 });
+      assertEq(await beforeRestore.count(), 1, "one pre-restore snapshot");
+      const kept = (await user.api(`/api/workspaces/${lab.id}/backups`)).backups.filter((b) => b.auto);
+      assertEq(kept.length, 1, "the server keeps it as an automatic snapshot");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: prompt and connection drafts have save, cancel, and dismissal protection", async () => {
     const { ctx, page } = await setup();
     try {

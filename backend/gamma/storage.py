@@ -203,7 +203,15 @@ def write_atomic(path: Path, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        try:
+            os.replace(tmp, path)
+        except PermissionError:
+            # Windows refuses a rename over a name another thread is renaming
+            # into place at the same moment. The name is the content's hash,
+            # so a stored copy of the same size already is these bytes.
+            if not (path.is_file() and path.stat().st_size == len(data)):
+                raise
+            os.unlink(tmp)
     except BaseException:
         try:
             os.unlink(tmp)

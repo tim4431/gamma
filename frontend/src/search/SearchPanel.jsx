@@ -48,6 +48,7 @@ export default function SearchPanel({
   const [labels, setLabels] = useState([]); // confirmed filter chips
   const [sugIdx, setSugIdx] = useState(0);
   const [noteHits, setNoteHits] = useState([]); // /api/block-search
+  const [notesPartial, setNotesPartial] = useState(false); // its scan stopped at the server's time budget
   const [libHits, setLibHits] = useState([]);   // /api/pdf-search (FTS over all papers)
   const [libIndexing, setLibIndexing] = useState(0);
   const [pdfMatches, setPdfMatches] = useState([]); // pdf.js matches in the open document
@@ -150,15 +151,17 @@ export default function SearchPanel({
   // pinned searches follow navigation)
   useEffect(() => {
     if (!q || !(open || pinned)) {
-      setNoteHits([]); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
+      setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
       return;
     }
     const timer = setTimeout(() => {
       setBusy(true);
       const flags = `&case=${caseSensitive ? 1 : 0}&whole=${wholeWord ? 1 : 0}`;
+      // `partial`: the server's scan ran out of time, so the notes found
+      // are only some of them (the notes group says so).
       const notesReq = apiJson(`${API}/block-search?q=${encodeURIComponent(q)}&limit=20${flags}`)
-        .then((d) => setNoteHits(d.blocks || []))
-        .catch(() => setNoteHits([]));
+        .then((d) => { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); })
+        .catch(() => { setNoteHits([]); setNotesPartial(false); });
       // Full-text over every paper's PDF (server-side FTS index; normalized
       // word matching — the Aa/ab toggles only apply to notes and the
       // open document)
@@ -270,8 +273,10 @@ export default function SearchPanel({
   const linkHits = scopedNotes.filter((r) => r.kind === "link" && !inPage(r));
   const libElsewhere = libHits.filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
   const showPdfMatches = inScope(focusedBlockId);
+  // An incomplete notes scan is no "No matches.": the notes group says why.
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
-    || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length;
+    || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
+    || notesPartial;
 
   // One switch for the whole detail area (all the result lists). Its default
   // comes from Settings → Search via the detailsDefault prop (App owns the
@@ -449,7 +454,8 @@ export default function SearchPanel({
                     <span className="searchResultText">…{marked(m.snippet)}…</span>
                   </button>
                 ))}
-                {notesElsewhere.length ? section(notesElsewhereLabel, notesElsewhere.length) : null}
+                {notesElsewhere.length || notesPartial ? section(notesElsewhereLabel, notesElsewhere.length) : null}
+                {notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
                 {notesElsewhere.map(noteRow)}
                 {linkHits.length ? section(t("Reference links"), linkHits.length) : null}
                 {linkHits.map(noteRow)}

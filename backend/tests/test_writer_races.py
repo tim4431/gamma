@@ -1,20 +1,20 @@
 """Writers that must not overwrite or duplicate what someone else wrote
 meanwhile: an embed card's edit of a source block changed elsewhere, an AI
 replace while the user types, concurrent get-or-create of a PDF's page, a
-Logseq import into an existing page, and the writers that must tell the
-page's open tabs (docs/dev/collab.md)."""
+Logseq import into an existing page, a PDF's embedded annotations imported
+twice at once, and the writers that must tell the page's open tabs
+(docs/dev/collab.md)."""
 
 import io
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_user, workspace_of
+from conftest import login, make_user, recv, slowed, together, workspace_of
 from gamma import blocks_store
 from gamma.ai_context import notes_focus_section
 from gamma.ai_tools import _NOTE_SNIPPET, run_agent_tool
@@ -51,14 +51,6 @@ def _type(c, page_id, block_id, content, base):
     r = c.post(f"/api/pages/{page_id}/ops", json={
         "client": "browser", "ops": [{"op": "set", "id": block_id, "content": content, "base": base}]})
     assert r.status_code == 200, r.text
-
-
-def _recv(sock, kind):
-    for _ in range(20):
-        msg = sock.receive_json()
-        if msg["t"] == kind:
-            return msg
-    raise AssertionError(f"no {kind} message")
 
 
 def _pdf(tag: str) -> bytes:
@@ -173,35 +165,6 @@ def test_what_the_chat_showed_counts_as_read(owner):
 
 # --- one page per PDF ---------------------------------------------------------
 
-def _slowly(monkeypatch, module, name, delay=0.15):
-    """Widen a get-or-create's window between its lookup and its insert."""
-    real = getattr(module, name)
-
-    def slow(*args, **kwargs):
-        time.sleep(delay)
-        return real(*args, **kwargs)
-    monkeypatch.setattr(module, name, slow)
-
-
-def _together(n, fn):
-    barrier = threading.Barrier(n)
-    out, errors = [], []
-
-    def run():
-        barrier.wait()
-        try:
-            out.append(fn())
-        except Exception as e:  # noqa: BLE001 — reported below
-            errors.append(e)
-    threads = [threading.Thread(target=run) for _ in range(n)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(30)
-    assert not errors, errors
-    return out
-
-
 def _pages_carrying(ws, doc_id):
     with connect_pages_db(ws) as conn:
         return [r[0] for r in conn.execute(
@@ -212,12 +175,12 @@ def _pages_carrying(ws, doc_id):
 def test_concurrent_get_or_create_makes_one_page_per_pdf(owner, monkeypatch):
     c, ws = owner
     doc_id = _upload(c, "race")
-    _slowly(monkeypatch, blocks_store, "create_page")
+    slowed(monkeypatch, blocks_store, "create_page", 0.15, before=True)  # between the lookup and the insert
 
     def create():
         with connect_pages_db(ws) as conn:
             return blocks_store.get_or_create_doc_page(conn, doc_id, "Race paper", ws=ws, actor=USER)["id"]
-    ids = _together(5, create)
+    ids = together(5, create)
     assert len(set(ids)) == 1
     assert _pages_carrying(ws, doc_id) == [ids[0]]
 
@@ -225,7 +188,7 @@ def test_concurrent_get_or_create_makes_one_page_per_pdf(owner, monkeypatch):
 def test_concurrent_first_clip_notes_make_one_web_clips_page(owner, monkeypatch):
     import gamma.routers.clip as clip_mod
     c, ws = owner
-    _slowly(monkeypatch, clip_mod, "create_page")
+    slowed(monkeypatch, clip_mod, "create_page", 0.15, before=True)  # between the lookup and the insert
     clients = [TestClient(app, cookies=c.cookies) for _ in range(4)]
     for tc in clients:
         tc.headers["X-Gamma-Workspace"] = ws
@@ -238,7 +201,7 @@ def test_concurrent_first_clip_notes_make_one_web_clips_page(owner, monkeypatch)
         r = tc.post("/api/clip/note", json={"text": "a selection", "source_url": "https://x.test/"})
         assert r.status_code == 200, r.text
         return r.json()["page_id"]
-    ids = _together(4, note)
+    ids = together(4, note)
     assert len(set(ids)) == 1
     with connect_pages_db(ws) as conn:
         pages = conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root' "
@@ -253,7 +216,7 @@ def test_concurrent_attach_of_one_pdf_gives_it_one_page(owner, monkeypatch):
     c, ws = owner
     doc_id = _upload(c, "attach-race")
     targets = iter([_page(c, "Attach A"), _page(c, "Attach B")])
-    _slowly(monkeypatch, pages_mod, "attachment_props")
+    slowed(monkeypatch, pages_mod, "attachment_props", 0.15, before=True)  # between the check and the write
     clients = iter([TestClient(app, cookies=c.cookies) for _ in range(2)])
     lock = threading.Lock()
 
@@ -262,7 +225,7 @@ def test_concurrent_attach_of_one_pdf_gives_it_one_page(owner, monkeypatch):
             tc, page_id = next(clients), next(targets)
         tc.headers["X-Gamma-Workspace"] = ws
         return tc.post(f"/api/pages/{page_id}/attachment", json={"doc_id": doc_id}).status_code
-    assert sorted(_together(2, attach)) == [200, 409]
+    assert sorted(together(2, attach)) == [200, 409]
     assert len(_pages_carrying(ws, doc_id)) == 1
 
 
@@ -303,11 +266,11 @@ def test_logseq_import_into_an_existing_page_tells_the_page_and_never_duplicates
 
     with TestClient(app, cookies=c.cookies) as sc, \
             sc.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=lg") as sock:
-        _recv(sock, "hello")
+        recv(sock, "hello")
         r = do_import()
         assert r.status_code == 200, r.text
         assert r.json()["block_id"] == page_id and r.json()["imported"] == 4
-        assert _recv(sock, "reload")
+        assert recv(sock, "reload")
     batches = c.get(f"/api/pages/{page_id}/ops?since=0").json()["batches"]
     assert batches[-1]["actor"] == USER and batches[-1]["ops"] == [{"op": "reload"}]
     children = [b["content"] for b in c.get(f"/api/blocks/{page_id}/children").json()["children"]]
@@ -330,39 +293,58 @@ def test_clip_of_a_saved_paper_files_it_through_the_page_room(owner):
     page_id = r.json()["block_id"]
     with TestClient(app, cookies=c.cookies) as sc, \
             sc.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=cl") as sock:
-        _recv(sock, "hello")
+        recv(sock, "hello")
         r = c.post("/api/clip", json={**body, "folder": "to-read", "labels": ["qec"]})
         assert r.status_code == 200 and r.json()["existed"], r.text
-        msg = _recv(sock, "ops")
+        msg = recv(sock, "ops")
         assert msg["actor"] == USER
         assert msg["ops"][0]["props"]["folder"] == "to-read"
 
 
-def test_embedded_annotations_under_a_nested_block_reload_its_page(owner, monkeypatch):
+def _annotated_pdf(ws, name, monkeypatch):
+    """A stored PDF whose one embedded highlight the importer finds."""
     from PyPDF2 import PdfWriter
 
     import gamma.routers.imports as imports_mod
-    c, ws = owner
-    page_id = _page(c, "Annotated paper")
-    nested = _block(c, page_id, "a section")
     buf = io.BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)
     writer.write(buf)
-    path = ws_uploads_dir(ws) / "writer-races-annots.pdf"
+    path = ws_uploads_dir(ws) / name
     path.write_bytes(buf.getvalue())
     position = {"pageNumber": 1, "boundingRect": {"x1": 1, "y1": 1, "x2": 9, "y2": 9,
                                                   "width": 200, "height": 200, "pageNumber": 1}, "rects": []}
     monkeypatch.setattr(imports_mod, "_extract_pdf_annotations", lambda reader: [
         {"key": "1:/Highlight:1:1:9", "page": 1, "content": "", "quote": "q",
          "color": "rgba(255, 226, 143, 0.65)", "position": position}])
+    return path
+
+
+def test_embedded_annotations_under_a_nested_block_reload_its_page(owner, monkeypatch):
+    import gamma.routers.imports as imports_mod
+    c, ws = owner
+    page_id = _page(c, "Annotated paper")
+    nested = _block(c, page_id, "a section")
+    path = _annotated_pdf(ws, "writer-races-annots.pdf", monkeypatch)
     with TestClient(app, cookies=c.cookies) as sc, \
             sc.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=an") as sock:
-        _recv(sock, "hello")
+        recv(sock, "hello")
         result = imports_mod.import_embedded_annotations(ws, nested, path, False, actor=USER)
         assert result["imported"] == 1
-        assert _recv(sock, "reload")
+        assert recv(sock, "reload")
     batches = c.get(f"/api/pages/{page_id}/ops?since=0").json()["batches"]
     assert batches[-1]["ops"] == [{"op": "reload"}] and batches[-1]["actor"] == USER
     with connect_pages_db(ws) as conn:
         assert not conn.execute("SELECT 1 FROM page_ops WHERE page_id = ?", (nested,)).fetchone()
+
+
+def test_embedded_annotations_imported_twice_at_once_land_once(owner, monkeypatch):
+    import gamma.routers.imports as imports_mod
+    c, ws = owner
+    page_id = _page(c, "Annotated twice")
+    path = _annotated_pdf(ws, "writer-races-annots-twice.pdf", monkeypatch)
+    slowed(monkeypatch, imports_mod, "last_child_position", 0.15)  # between the lookup and the insert
+    results = together(2, lambda: imports_mod.import_embedded_annotations(ws, page_id, path, False, actor=USER))
+    assert sorted(r["imported"] for r in results) == [0, 1]
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM unified_blocks WHERE parent_id = ?", (page_id,)).fetchone()[0] == 1

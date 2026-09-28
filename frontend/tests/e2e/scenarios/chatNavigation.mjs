@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
-  const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
+  const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
   const target = await alice.api("/api/pages", { method: "POST", body: { title: "Linked paper" } });
   const upload = await alice.upload("/api/uploads", makePdf([["Chat navigation paper"]]), "chat-navigation.pdf", "application/pdf");
@@ -254,6 +254,53 @@ export async function chatNavigationScenarios(env) {
     } finally {
       for (const { ctx } of tabs) await ctx.close();
     }
+  });
+
+  // Chats are the workspace's and only its editors write them: a viewer asks
+  // the AI too, but the conversation stays in the tab (ChatDock's canSave,
+  // App's chat session saving nothing).
+  await step("chat navigation: a workspace viewer's chat is not saved — the tag shows, no History, New chat stays in the tab", async () => {
+    const out = server.manage("create-workspace", "Chat readers", "alice", "shared");
+    const labId = (out.match(/workspace (\S+)/) || [])[1];
+    assert(labId, `shared workspace id from: ${out}`);
+    server.manage("set-member", labId, "bob", "viewer");
+    const owner = Object.assign(Object.create(Object.getPrototypeOf(alice)), alice, { ws: labId });
+    const pg = await owner.api("/api/pages", { method: "POST", body: { title: "Read-only chat page" } });
+    const kept = [{ role: "user", text: "The owner's question" }, { role: "ai", text: "The owner's stored answer." }];
+    await owner.api(`/api/chats/${pg.id}`, { method: "PUT", body: { messages: kept } });
+    const storedTexts = async () => ((await owner.api(`/api/chats/${pg.id}`)).messages || []).map((m) => m.text).join(" | ");
+    const ctx = await bob.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/chat", (route) => route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"An answer for the viewer."}\n' }));
+    const writes = []; // every chat write the viewer's tab sends
+    ctx.on("request", (r) => {
+      if (r.method() !== "GET" && /\/api\/chat(s|-history)\b/.test(r.url())) writes.push(`${r.method()} ${r.url()}`);
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${labId}&page=${pg.id}`);
+    try {
+      const panel = page.locator(".chatPanel");
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await until(async () => (await panel.innerText()).includes("The owner's stored answer."), { what: "the stored conversation shows" });
+      await page.locator(".uiTag", { hasText: "Not saved" }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Chat history", exact: true }).count(), 0, "no History for a viewer");
+      await input.fill("A viewer's question");
+      await input.press("Enter");
+      await until(async () => (await panel.innerText()).includes("An answer for the viewer."), { what: "the reply" });
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()), { what: "the reply ends" });
+      assertEq(await page.getByTestId("chat-save-error").count(), 0, "no save error: nothing was tried");
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await until(async () => !(await panel.innerText()).includes("The owner's stored answer."), { what: "New chat starts over in the tab" });
+      assertEq(await storedTexts(), "The owner's question | The owner's stored answer.", "the stored conversation is untouched");
+      assertEq(writes.join("\n"), "", "no chat save or archive was sent");
+      // The server's copy is what a reload shows.
+      await page.reload();
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("The owner's stored answer."), { what: "the stored conversation after a reload" });
+      assert(!(await page.locator(".chatPanel").innerText()).includes("An answer for the viewer."), "the viewer's exchange is gone");
+      assertEq(writes.join("\n"), "", "still nothing written");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   await step("chat navigation: the page picker's keys — Enter ticks the best match, arrows walk, Ctrl+F stays in the picker", async () => {

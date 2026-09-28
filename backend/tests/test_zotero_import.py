@@ -331,3 +331,34 @@ def test_preview_collapses_same_pdf_into_one_destination(guest):
     again = _send(guest, data, preview=True).json()
     assert len([p for p in again["pages"] if p["kind"] == "pdf"]) == 1
     assert all(p["action"] == "merge" for p in again["pages"])
+
+
+def test_one_export_imported_twice_at_once_makes_each_page_once(guest, monkeypatch):
+    """A double-clicked import, or two tabs: each item's page is looked for
+    again under the write lock before it is made, so the later import merges
+    into it, and the PDF's annotations land once."""
+    from fastapi.testclient import TestClient
+    from conftest import at_once, slowed, workspace_of
+    from gamma.app import app
+    from gamma.db import connect_pages_db
+    from gamma.routers import imports
+    from gamma.storage import store_pdf
+
+    ws = workspace_of(guest_name())
+    about, preprint = "https://example.org/raced-import", "https://arxiv.org/abs/1707.99999"
+    rdf = (RDF.replace("https://www.nature.com/articles/s41586-000-00000-0", about)
+           .replace("https://arxiv.org/abs/1707.06347", preprint))
+    pdf = _annotated_pdf(b"Imported twice at once")
+    data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": pdf})
+    store_pdf(ws, pdf)  # stored before: the race under test is the page's, not the file's
+    slowed(monkeypatch, imports, "_zotero_folders", 0.3)  # between the lookup and the insert
+    results = at_once([lambda c=c: _send(c, data) for c in (TestClient(app, cookies=guest.cookies) for _ in range(2))])
+    assert [r.status_code for r in results] == [200, 200], results
+    bodies = [r.json() for r in results]
+    assert sum(b["pages_created"] for b in bodies) == 2 and sum(b["pages_merged"] for b in bodies) == 2
+    assert sum(b["annotations_imported"] for b in bodies) == 1
+    with connect_pages_db(ws) as conn:
+        keys = [r[0] for r in conn.execute(
+            "SELECT json_extract(properties, '$.zotero_key') FROM unified_blocks WHERE parent_id = 'root' "
+            "AND json_extract(properties, '$.zotero_key') IN (?, ?)", (about, preprint))]
+    assert sorted(keys) == sorted([about, preprint])

@@ -965,18 +965,22 @@ function BlockRow({
   const [pasteMenu, setPasteMenu] = useState(null);
   const [pasteIdx, setPasteIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
+  // The server's block scan ran out of time: the picker keeps what it found
+  // and its footer says to type more.
+  const [searchPartial, setSearchPartial] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
   const uploadingRef = useRef(false);
 
   useEffect(() => {
-    if (!refPopup) { setSearchResults([]); return; }
+    if (!refPopup) { setSearchResults([]); setSearchPartial(false); return; }
     const q = refPopup.query;
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(q)}&limit=12`));
         const data = await res.json();
         setSearchResults((data.blocks || []).filter((b) => b.id !== block.id));
-      } catch (_) { setSearchResults([]); }
+        setSearchPartial(!!data.partial);
+      } catch (_) { setSearchResults([]); setSearchPartial(false); }
     }, 120);
     return () => clearTimeout(timer);
   }, [refPopup?.query, block.id]);
@@ -1827,7 +1831,7 @@ function BlockRow({
       ) : null}
       {refSearchShown ? (
         <RefPickerPopup rows={refRows} selected={refSelected} anchor={refPopup.anchor}
-          query={refPopup.query} onPick={insertRef} />
+          query={refPopup.query} partial={searchPartial} onPick={insertRef} />
       ) : null}
     </div>
   );

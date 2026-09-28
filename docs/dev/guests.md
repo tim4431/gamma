@@ -55,9 +55,10 @@ existing guests at once. Two places enforce it:
   cookie. A tab that still sends `X-Gamma-User: guest-…` gets the usual 409
   "reload the tab". `auth.session_lookup` (the websocket handshake) answers
   None for an expired guest;
-- the sweeper `gamma/guests.py` runs in the app lifespan (every 10 minutes,
-  shaped like `backup_schedule.lifespan`) deletes the expired guest
-  accounts nobody came back for.
+- the sweeper `guests.delete_expired`, which the app lifespan runs at
+  startup and every 10 minutes (`app.every`, like the trash's and the
+  grant check's rounds), deletes the expired guest accounts nobody came
+  back for.
 
 Both call `workspaces.delete_account(username)`, the one account deletion:
 sessions, identities and the cloud grant, integration tokens, publisher

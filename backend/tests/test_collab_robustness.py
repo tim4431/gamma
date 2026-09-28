@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import guest_name, login, make_page, make_user, workspace_of
+from conftest import guest_name, login, make_page, make_user, recv, workspace_of
 from gamma import collab, ops
 from gamma.app import app
 
@@ -164,13 +164,7 @@ def _hello(ws):
     return msg
 
 
-def _next(ws, kind, skip=("join", "leave", "cursor")):
-    for _ in range(20):
-        msg = ws.receive_json()
-        if msg["t"] == kind:
-            return msg
-        assert msg["t"] in skip, msg
-    raise AssertionError(f"no {kind} message")
+PRESENCE = ("join", "leave", "cursor")  # all that may come before the message a test waits for
 
 
 def test_a_tab_reconnecting_keeps_its_place_and_the_others_room(client, guest):
@@ -195,13 +189,13 @@ def test_a_tab_reconnecting_keeps_its_place_and_the_others_room(client, guest):
                 old.__exit__(None, None, None)
             time.sleep(0.2)
             assert sorted(collab.room_for(ws_id, page["id"]).peers) == ["OTHER", "TAB1"]
-            assert _next(watcher, "join")["peer"]["client"] == "TAB1"  # the reconnect, not a leave
+            assert recv(watcher, "join", PRESENCE)["peer"]["client"] == "TAB1"  # the reconnect, not a leave
             assert _ops(guest, page["id"], [{"op": "insert", "id": "rcA", "parent": page["id"], "content": "x"}],
                         client_id="W").status_code == 200
-            assert _next(new, "ops")["ops"][0]["id"] == "rcA"
-            assert _next(watcher, "ops")["ops"][0]["id"] == "rcA"
+            assert recv(new, "ops", PRESENCE)["ops"][0]["id"] == "rcA"
+            assert recv(watcher, "ops", PRESENCE)["ops"][0]["id"] == "rcA"
         # a plain leave still announces
-        assert _next(watcher, "leave")["client"] == "TAB1"
+        assert recv(watcher, "leave", PRESENCE)["client"] == "TAB1"
 
 
 def test_a_stale_room_never_takes_the_current_one_down(client, guest):
@@ -225,7 +219,7 @@ def test_a_stale_room_never_takes_the_current_one_down(client, guest):
         assert collab.room_for(ws_id, page["id"]) is current
         assert _ops(guest, page["id"], [{"op": "insert", "id": "csA", "parent": page["id"], "content": "x"}],
                     client_id="W").status_code == 200
-        assert _next(z, "ops")["ops"][0]["id"] == "csA"
+        assert recv(z, "ops", PRESENCE)["ops"][0]["id"] == "csA"
 
 
 def test_the_hello_counts_a_batch_committed_while_joining(client, guest, monkeypatch):
@@ -259,14 +253,14 @@ def test_revoking_access_closes_the_open_socket(client):
         with ow.websocket_connect(f"/api/ws/page/{page['id']}?client=OWN") as o, \
                 anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
             _hello(o), _hello(v)
-            assert _next(o, "join")["peer"]["client"] == "VIS"
+            assert recv(o, "join", PRESENCE)["peer"]["client"] == "VIS"
             # upgrading the link to edit re-announces the visitor with its new right
             assert ow.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone", "role": "edit"}).status_code == 200
-            peer = _next(o, "join")["peer"]
+            peer = recv(o, "join", PRESENCE)["peer"]
             assert (peer["client"], peer["can_edit"]) == ("VIS", True)
             # stop sharing: the visitor is dropped and its socket closed
             assert ow.delete(f"/api/share-settings/{page['id']}").status_code == 200
-            assert _next(o, "leave")["client"] == "VIS"
+            assert recv(o, "leave", PRESENCE)["client"] == "VIS"
             with pytest.raises(WebSocketDisconnect) as closed:
                 while True:
                     msg = v.receive_json()
@@ -274,7 +268,7 @@ def test_revoking_access_closes_the_open_socket(client):
             assert closed.value.code == collab.CLOSE_REVOKED
             assert ow.post(f"/api/pages/{page['id']}/ops", json={"client": "OWN", "ops": [
                 {"op": "insert", "id": "rvA", "parent": page["id"], "content": "private again"}]}).status_code == 200
-            assert _next(o, "ops")["ops"][0]["id"] == "rvA"
+            assert recv(o, "ops", PRESENCE)["ops"][0]["id"] == "rvA"
 
 
 def test_a_removed_member_is_closed_and_a_new_viewer_loses_edit(client):
@@ -292,12 +286,12 @@ def test_a_removed_member_is_closed_and_a_new_viewer_loses_edit(client):
         with ad.websocket_connect(url + "&client=ADM") as a, mem.websocket_connect(url + "&client=MEM") as m:
             _hello(a)
             assert next(p for p in _hello(m)["peers"] if p["client"] == "MEM")["can_edit"] is True
-            assert _next(a, "join")["peer"]["client"] == "MEM"
+            assert recv(a, "join", PRESENCE)["peer"]["client"] == "MEM"
             assert ad.put(f"/api/workspaces/{ws_id}/members/cr_member", json={"role": "viewer"}).status_code == 200
-            peer = _next(a, "join")["peer"]
+            peer = recv(a, "join", PRESENCE)["peer"]
             assert (peer["client"], peer["can_edit"]) == ("MEM", False)
             assert ad.delete(f"/api/workspaces/{ws_id}/members/cr_member").status_code == 200
-            assert _next(a, "leave")["client"] == "MEM"
+            assert recv(a, "leave", PRESENCE)["client"] == "MEM"
             with pytest.raises(WebSocketDisconnect) as closed:
                 while True:
                     m.receive_json()

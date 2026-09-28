@@ -44,7 +44,22 @@ class SchemaOutdated(RuntimeError):
 
 def page_now() -> str:
     # UTC ISO string with Z suffix so clients parse it correctly.
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    return format_stamp(datetime.now(timezone.utc))
+
+
+def format_stamp(t: datetime) -> str:
+    """A UTC datetime in the ``page_now`` shape."""
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+def parse_stamp(stamp) -> datetime | None:
+    """A stored time (the ``page_now`` shape, or any ISO time) as a
+    datetime; None when it cannot be read — what that means (expired, due,
+    now) is the caller's call."""
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 # Identifiers that become a single path segment. Both exclude '/' and '\', so
@@ -558,11 +573,10 @@ def stamp_after(stored: str) -> str:
     stamp = page_now()
     if not stored or stored < stamp:
         return stamp
-    try:
-        t = datetime.fromisoformat(stored.replace("Z", "+00:00"))
-    except ValueError:
+    t = parse_stamp(stored)
+    if t is None:
         return stamp
-    return (t + timedelta(milliseconds=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    return format_stamp((t + timedelta(milliseconds=1)).astimezone(timezone.utc))
 
 
 # The preference profile: every account-scoped setting of the web app in one
@@ -621,6 +635,16 @@ def patch_profile(username: str, changes: dict) -> tuple[dict, str]:
 
 def ws_dir(ws: str) -> Path:
     return WORKSPACES_DIR / safe_ws_id(ws)
+
+
+def workspace_ids() -> list[str]:
+    """The workspaces on disk, sorted: every directory under workspaces/
+    whether or not users.db still names it (an orphaned directory, one being
+    deleted). A name ``safe_ws_id`` refuses is no workspace and is left
+    out."""
+    if not WORKSPACES_DIR.is_dir():
+        return []
+    return sorted(d.name for d in WORKSPACES_DIR.iterdir() if d.is_dir() and _WS_ID_RE.match(d.name))
 
 
 def ws_db_path(ws: str, db_name: str) -> str:

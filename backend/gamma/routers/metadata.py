@@ -287,7 +287,7 @@ def _book_search(title: str, author: str = "") -> list[dict]:
     gq = f'intitle:"{title[:200]}"' + (f' inauthor:"{author[:100]}"' if author else "")
     try:
         items = json.loads(_http_get(
-            "https://www.googleapis.com/books/v1/volumes?maxResults=%d&q=%s" % (rows, urllib.parse.quote(gq)),
+            "https://www.googleapis.com/books/v1/volumes?maxResults=5&q=" + urllib.parse.quote(gq),
             timeout=_BOOK_API_TIMEOUT,
         )).get("items") or []
     except Exception as e:

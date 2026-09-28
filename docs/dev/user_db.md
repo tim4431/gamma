@@ -142,7 +142,11 @@ All state is SQLite + files on disk under a data directory (env
 
 Workspace ids are random tokens (`workspaces.new_workspace_id`), so renaming
 an account or a workspace never moves files. `db.safe_ws_id` / `safe_doc_id`
-guard every path built from one.
+guard every path built from one. The background passes over every workspace
+(startup's schema pass, the trash sweeper, the stored-file reconciliation)
+walk `db.workspace_ids()`: the directories on disk whose name is a
+workspace id, whether or not users.db still lists them. The migration steps
+keep their own walk.
 
 **Connections are closed deterministically.** `connect_users_db`,
 `connect_pages_db` and `connect_data_db` return `db.Connection`: its `with`

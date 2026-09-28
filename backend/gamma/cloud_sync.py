@@ -4,8 +4,8 @@
 and the account has a linked identity holding a token: a self-hosted
 server without cloud sign-in makes no call from here.
 
-- **The grant check** (``check_all``, at startup and hourly from
-  ``lifespan``): every identity holding a refresh token is refreshed. A
+- **The grant check** (``check_all``, at startup and hourly from the app
+  lifespan): every identity holding a refresh token is refreshed. A
   refusal (``invalid_grant``) ends the sessions its cloud sign-ins minted
   (``cloud_auth._grant_refused``); a refresh that fails for any other reason
   is tried again an hour later and does nothing else, so a laptop without
@@ -35,20 +35,18 @@ server without cloud sign-in makes no call from here.
 Failures here are warnings in the server log, never errors to the person.
 """
 
-import asyncio
 import json
 import threading
 import time
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 from . import cloud_auth
 from .cloud_auth import PROVIDER, CloudAuthError
-from .db import (PROFILE_BASE_PREF_KEY, PROFILE_PREF_KEY, connect_users_db, get_pref, page_now, replace_profile_if,
-                 restamp_pref, set_pref)
+from .db import (PROFILE_BASE_PREF_KEY, PROFILE_PREF_KEY, connect_users_db, format_stamp, get_pref, page_now,
+                 parse_stamp, replace_profile_if, restamp_pref, set_pref)
 from .logbuf import log
 
-CHECK_INTERVAL = 3600   # seconds between grant checks
+CHECK_INTERVAL = 3600   # seconds between grant checks (the app lifespan runs check_all)
 PUSH_DELAY = 5.0        # seconds a profile change settles before it is pushed
 SIGN_IN_TIMEOUT = 5     # the pull a sign-in, or a browser reading the profile, waits for
 READ_SYNC_EVERY = 60    # seconds: a browser reading the profile syncs it at most this often
@@ -82,17 +80,11 @@ def _ms(ts) -> datetime | None:
     """An ISO time cut to the millisecond, the account server's precision."""
     if not isinstance(ts, str) or not ts:
         return None
-    try:
-        t = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
-    except ValueError:
+    t = parse_stamp(ts.strip())
+    if t is None:
         return None
     t = t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t.astimezone(timezone.utc)
     return t.replace(microsecond=t.microsecond // 1000 * 1000)
-
-
-def _local_form(t: datetime) -> str:
-    """The form ``db.page_now`` writes, so stored times compare as strings."""
-    return t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
 # --- the sync status -------------------------------------------------------------
@@ -260,13 +252,13 @@ def _reconcile(username: str, token: str, timeout: float, resolve: str, defaults
 
     if resolve != "push" and cloud is not None and _same(target, cloud):
         # the cloud's copy as it stands: nothing to send
-        if changes_here and not replace_profile_if(username, target, local_at, _local_form(cloud_at)):
+        if changes_here and not replace_profile_if(username, target, local_at, format_stamp(cloud_at)):
             return None
         _agreed(username, target)
         return "pulled" if changes_here else "same"
 
     try:
-        answer = _call("PUT", PROFILE_PATH, token, {"value": target, "updated_at": _local_form(_stamp_past(cloud_at))},
+        answer = _call("PUT", PROFILE_PATH, token, {"value": target, "updated_at": format_stamp(_stamp_past(cloud_at))},
                        timeout=timeout)
     except CloudAuthError as e:
         if e.status == 409:  # another server pushed meanwhile
@@ -276,7 +268,7 @@ def _reconcile(username: str, token: str, timeout: float, resolve: str, defaults
         return ""
     # keep the account server's time here too (clamped, or cut to the
     # millisecond), so both copies carry one version
-    stored_at = _local_form(_ms(answer.get("updated_at")) or _stamp_past(cloud_at))
+    stored_at = format_stamp(_ms(answer.get("updated_at")) or _stamp_past(cloud_at))
     if changes_here:
         if not replace_profile_if(username, target, local_at, stored_at):
             return None  # a change landed here meanwhile: merge it against the old base
@@ -463,27 +455,3 @@ def check_all() -> dict:
             _note_failure(username, e)
             done[username] = ""
     return done
-
-
-@asynccontextmanager
-async def lifespan():
-    """The grant check at startup, then every ``CHECK_INTERVAL`` seconds."""
-    stop = asyncio.Event()
-
-    async def loop():
-        while not stop.is_set():
-            try:
-                await asyncio.to_thread(check_all)
-            except Exception:
-                log.exception("cloud: the grant check failed")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=CHECK_INTERVAL)
-            except asyncio.TimeoutError:
-                pass
-
-    task = asyncio.create_task(loop())
-    try:
-        yield
-    finally:
-        stop.set()
-        await task

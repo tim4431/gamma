@@ -7,6 +7,9 @@ import os
 import socket
 import sys
 import tempfile
+import threading
+import time
+import traceback
 from pathlib import Path
 
 # Must happen BEFORE importing gamma — config reads the environment at import.
@@ -163,6 +166,31 @@ def login(username, password):
     return c
 
 
+@pytest.fixture
+def data_dir(tmp_path, monkeypatch):
+    """A data directory of the test's own (tmp_path): every module that
+    caches a data-directory path is pointed at it, so the suite's shared one
+    is never touched. The app is built on the suite's directory first."""
+    import gamma.app  # noqa: F401
+    import gamma.auth as auth_mod
+    import gamma.db as db_mod
+    import gamma.seed as seed_mod
+    import gamma.workspaces as ws_mod
+    from gamma import config
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
+    monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
+    monkeypatch.setattr(config, "LEGACY_USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
+    monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
+    monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
+    monkeypatch.setattr(auth_mod, "USERS_DB", tmp_path / "users.db")
+    monkeypatch.setattr(seed_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
+    monkeypatch.setattr(ws_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
+    return tmp_path
+
+
 def make_page(guest, title="Test page", properties=None):
     r = guest.post("/api/blocks", json={"parent_id": "root", "content": title})
     assert r.status_code == 200, r.text
@@ -183,3 +211,68 @@ def require_math_renderer():
     except ImportError:
         pytest.fail("ziamath is not importable — run the tests with backend/venv's python "
                     "(pip install -r requirements.txt)")
+
+
+# --- races and sockets ----------------------------------------------------------
+
+def at_once(calls):
+    """Run the callables in threads started together on a barrier; their
+    results (or the exceptions they raised, noted with where and when) in
+    order."""
+    barrier = threading.Barrier(len(calls))
+    results = [None] * len(calls)
+
+    def run(i, fn):
+        barrier.wait()
+        started = time.monotonic()
+        try:
+            results[i] = fn()
+        except Exception as e:  # noqa: BLE001 — the test reads it; the note says where and when
+            where = traceback.extract_tb(e.__traceback__)[-4:]
+            e.add_note(f"after {time.monotonic() - started:.2f} s at " +
+                       " <- ".join(f"{Path(f.filename).name}:{f.lineno} {f.line}" for f in reversed(where)))
+            results[i] = e
+
+    threads = [threading.Thread(target=run, args=(i, fn)) for i, fn in enumerate(calls)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    return results
+
+
+def together(n, fn):
+    """``fn`` in ``n`` threads started together (``at_once``); its results,
+    failing the test when one raised."""
+    results = at_once([fn] * n)
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert not errors, errors
+    return results
+
+
+def slowed(monkeypatch, module, name, seconds=0.05, *, before=False):
+    """Make ``module.name`` take a moment, after its work (or ``before``
+    it): the window between a writer's check and its write, wide enough for
+    the others to walk into."""
+    real = getattr(module, name)
+
+    def slow(*args, **kwargs):
+        if before:
+            time.sleep(seconds)
+        out = real(*args, **kwargs)
+        if not before:
+            time.sleep(seconds)
+        return out
+    monkeypatch.setattr(module, name, slow)
+
+
+def recv(sock, kind, skip=None):
+    """The next message of ``kind`` on a page socket (within 20). With
+    ``skip``, only messages of those kinds may come before it; without,
+    anything else is passed over."""
+    for _ in range(20):
+        msg = sock.receive_json()
+        if msg["t"] == kind:
+            return msg
+        assert skip is None or msg["t"] in skip, msg
+    raise AssertionError(f"no {kind} message")

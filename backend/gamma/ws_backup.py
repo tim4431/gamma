@@ -338,7 +338,7 @@ def _announce(ws: str, pages: list[str] | None = None) -> None:
     else:
         for page in pages:
             collab.publish_reload(ws, page)
-    ops._notify(ws)
+    ops.notify_commit(ws)
 
 
 def _review_import(root, tdir, upload_names):

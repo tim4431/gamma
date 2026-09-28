@@ -321,8 +321,12 @@ That folder is outside the ones that go with the workspace. It is the same
 zip format, so an administrator restores it into any workspace through
 Import (`/import-data`). Copies older than 90 days are removed when the next
 one is written (`DELETED_KEEP_DAYS`); an admin may delete them by hand
-before that. When a copy cannot be written, nothing is deleted (507). A
-guest's workspace keeps no copy.
+before that. When a copy cannot be written, nothing is deleted (507). The
+copy is written before the delete's checks run again under the users.db
+write lock; when they refuse after all (the account's other personal
+workspace went meanwhile, so this one is its last), the copy goes again —
+no copy is kept of a delete that did not happen. A guest's workspace keeps
+no copy.
 
 **Scheduled tasks** (`gamma/backup_schedule.py`, API in [api.md](api.md)):
 a task belongs to an account, names the owned workspaces it snapshots

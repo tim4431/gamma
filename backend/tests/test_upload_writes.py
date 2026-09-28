@@ -50,6 +50,24 @@ def test_a_write_that_dies_half_way_leaves_nothing(cam, monkeypatch):
     assert c.get(r.json()["source_url"]).content == data
 
 
+def test_a_rename_refused_over_the_same_bytes_counts_as_stored(tmp_path, monkeypatch):
+    # Windows: two threads storing one file at once — the second rename is
+    # refused while the first lands. The name is the content's hash, so the
+    # copy already there is the same bytes.
+    path = tmp_path / f"{storage.content_digest(PDF)}.pdf"
+    path.write_bytes(PDF)
+
+    def refused(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(storage.os, "replace", refused)
+    storage.write_atomic(path, PDF)
+    assert path.read_bytes() == PDF
+    assert not any((tmp_path / ".partial").iterdir())
+    with pytest.raises(PermissionError):  # a refusal with nothing like it stored is still an error
+        storage.write_atomic(tmp_path / "other.pdf", PDF)
+
+
 def test_a_dedup_hit_repairs_a_copy_cut_short(cam):
     c, ws = cam
     uploads = ws_uploads_dir(ws)

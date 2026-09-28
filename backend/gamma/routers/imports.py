@@ -573,7 +573,9 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
         page_id = page_root_id(conn, block_id)
         if not page_id:
             raise HTTPException(status_code=404, detail="page block not found")
-        # Idempotent: each embedded annotation carries a stable key
+        # Idempotent: each embedded annotation carries a stable key, looked
+        # up under the write lock (two imports of one PDF add each once)
+        write_lock(conn)
         existing = {r[0] for r in conn.execute(
             "SELECT json_extract(properties,'$.imported_annot') FROM unified_blocks WHERE parent_id=?",
             (block_id,)).fetchall() if r[0]}
@@ -685,7 +687,8 @@ def _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor):
     """Store the item's PDF (if any), find-or-create its page, merge metadata,
     labels and notes. The file is stored first, outside any transaction, so
     a long import never holds the workspace's write lock. A new page and its
-    notes are then one short transaction, stamped at its commit; a merge
+    notes are then one short transaction, stamped at its commit, that looks
+    for the page again first (two imports of one item make one page); a merge
     into an existing page is an op batch by ``actor`` (``apply_ops``), which
     its open tabs and the workspace's mirrors see. Returns (block_id,
     pdf_path) when embedded annotations should be imported afterwards, else
@@ -734,6 +737,11 @@ def _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor):
 
     if created:
         write_lock(conn)
+        if _zotero_existing_page(conn, item) is not None:
+            # Another import of this item made its page since the lookup
+            # above: merge into that one, as a re-run would.
+            conn.rollback()
+            return _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor)
         try:
             now = page_now()
             pos = generate_key_between(last_child_position(conn, "root"), None)

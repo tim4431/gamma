@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 from . import guests, publisher_sessions
 from .blocks_store import page_root_id
 from .config import USERS_DB
-from .db import BUSY_TIMEOUT_S, Connection
+from .db import BUSY_TIMEOUT_S, Connection, parse_stamp
 from .foldertags import clean_path, parse_tags, path_within
 from .logbuf import log
 
@@ -42,9 +42,8 @@ _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
 def _session_expired(created_at: str) -> bool:
     """True if a session row is older than SESSION_MAX_AGE. Unparseable
     timestamps are treated as expired (fail closed)."""
-    try:
-        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+    created = parse_stamp(created_at)
+    if created is None:
         return True
     return (datetime.now(timezone.utc) - created).total_seconds() > SESSION_MAX_AGE
 

@@ -117,6 +117,13 @@ tests need `ziamath` from `requirements.txt`, and a system/conda `python`
 without it fails them with "ziamath is not importable" rather than a
 puzzling path count.
 
+`conftest.py` also holds what several files share: the `data_dir` fixture
+(a data directory of the test's own, for the migration, backup and startup
+tests that must not touch the worker's shared one), `at_once` / `together`
+(callables in threads started on one barrier), `slowed` (widens a writer's
+window between its check and its write, so a race test fails without the
+lock) and `recv` (the next message of a kind on a page socket).
+
 The AI agent's tests are split by area — `test_ai_tools_registry.py`
 (scopes, permissions, the system prompt), `test_ai_tools_pages.py`,
 `test_ai_tools_blocks.py`, `test_ai_tools_search.py` (the executors),
@@ -483,3 +490,6 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
+  `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
+  back (None when unreadable — whether that means expired, due or now is
+  the caller's decision).

@@ -211,7 +211,11 @@ exported PDFs; `strip` follows the client's embedded-annotations preference).
 Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
 Each item is its own short transaction (`_zotero_item_page`). Its PDF is
 stored first, outside any transaction; a new page and its notes are then
-inserted under the write lock and stamped at that commit. A merge into an
+inserted under the write lock and stamped at that commit. The page is
+looked for again once the lock is held: when another import of the same
+item made it meanwhile (a double-click, two tabs), this one merges into it
+instead of making a second. The embedded annotations are likewise checked
+against the page's `imported_annot` keys under the lock. A merge into an
 existing page is an op batch by the importing account (a `set` of the
 changed properties plus an `insert` per new note, through `apply_ops`),
 which the page's open tabs and the workspace's mirrors see like any edit.

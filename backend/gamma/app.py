@@ -1,5 +1,6 @@
 """FastAPI application assembly: middleware, routers, startup maintenance, SPA serving."""
 
+import asyncio
 import mimetypes
 import sys
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from . import sync_engine, trash, upload_gc, version
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
-from .db import connect_data_db, connect_pages_db, connect_users_db
+from .db import connect_data_db, connect_pages_db, connect_users_db, workspace_ids, ws_dir
 from .logbuf import log, setup_logging
 from .mcp_lazy import LazyMCP
 from .mcp_oauth import router as mcp_oauth_router
@@ -104,12 +105,8 @@ def _startup_maintenance():
                  f"to {done['to']} ({', '.join(done['applied'])}); snapshot: {done['backup']}")
     connect_users_db().close()
     ensure_admin_seed()
-    if not config.WORKSPACES_DIR.exists():
-        return
-    for ws_root in config.WORKSPACES_DIR.iterdir():
-        if not ws_root.is_dir():
-            continue
-        ws_id = ws_root.name
+    for ws_id in workspace_ids():
+        ws_root = ws_dir(ws_id)
         try:
             if (ws_root / "pages.db").exists():
                 # connect_pages_db also switches the file to WAL and adds any
@@ -121,6 +118,32 @@ def _startup_maintenance():
             log.error(f"[startup] workspace {ws_id} could not be opened, the others are served: {e}")
 
 
+@asynccontextmanager
+async def every(seconds: float, fn, failed: str):
+    """While the app runs: ``fn`` in a worker thread at startup, then every
+    ``seconds``. A round that raises is logged (``failed``) and the next
+    one comes anyway."""
+    stop = asyncio.Event()
+
+    async def loop():
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(fn)
+            except Exception:
+                log.exception(failed)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=seconds)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(loop())
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
+
+
 def create_app() -> FastAPI:
     setup_logging()
     _silence_windows_connection_reset()
@@ -130,8 +153,10 @@ def create_app() -> FastAPI:
         anyio.to_thread.current_default_thread_limiter().total_tokens = THREAD_TOKENS
         # The MCP lifespan's yield is request state (its runtime, read by the
         # /mcp route from scope["state"]) — it must pass through here.
-        async with mcp.lifespan(app) as state, backup_schedule.lifespan(), cloud_sync.lifespan(), \
-                guests.lifespan(), trash.lifespan():
+        async with mcp.lifespan(app) as state, backup_schedule.lifespan(), \
+                every(cloud_sync.CHECK_INTERVAL, cloud_sync.check_all, "cloud: the grant check failed"), \
+                every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
+                every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"):
             yield state
 
     app = FastAPI(title="Gamma PDF Annotator", lifespan=lifespan)

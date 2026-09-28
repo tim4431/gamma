@@ -6,7 +6,7 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import login, make_page, make_user, workspace_of, guest_name
+from conftest import guest_name, login, make_page, make_user, recv, workspace_of
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -251,15 +251,6 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
 
 # --- the websocket -------------------------------------------------------------
 
-def _recv(ws, kind):
-    """Next message of a kind (skipping presence chatter)."""
-    for _ in range(20):
-        msg = ws.receive_json()
-        if msg["t"] == kind:
-            return msg
-    raise AssertionError(f"no {kind} message")
-
-
 def _hello(ws):
     """The hello a fresh socket receives; its seq is the page's log position,
     the base every later sequence number is checked against."""
@@ -277,15 +268,15 @@ def test_socket_hello_and_fanout(guest):
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
             hb = _hello(b)
             assert hb["color"] != hello["color"] and {p["client"] for p in hb["peers"]} == {"aa", "bb"}
-            assert _recv(a, "join")["peer"]["client"] == "bb"
+            assert recv(a, "join")["peer"]["client"] == "bb"
             # a write reaches both, tagged with the writer's client id and the next seq
             r = _ops(guest, page["id"], [{"op": "insert", "id": "wsA", "parent": page["id"], "content": "hi"}], client_id="aa")
             assert r.status_code == 200
             for ws in (a, b):
-                m = _recv(ws, "ops")
+                m = recv(ws, "ops")
                 assert m["seq"] == hello["seq"] + 1 and m["client"] == "aa" and m["actor"] == guest_name()
                 assert m["ops"][0]["id"] == "wsA" and m["ops"][0]["position"]
-        assert _recv(a, "leave")["client"] == "bb"
+        assert recv(a, "leave")["client"] == "bb"
 
 
 def test_socket_link_visitor_joins_under_its_display_name(owner):
@@ -300,13 +291,13 @@ def test_socket_link_visitor_joins_under_its_display_name(owner):
             hv = _hello(v)
             me = next(p for p in hv["peers"] if p["client"] == "vis")
             assert (me["user"], me["name"], me["can_edit"]) == ("", "Otter the Bold", True)
-            joined = _recv(o, "join")["peer"]
+            joined = recv(o, "join")["peer"]
             assert (joined["user"], joined["name"]) == ("", "Otter the Bold")
             # the visitor's write fans out under the same label
             r = anon.post(f"/api/pages/{page['id']}/ops", params={"share": token}, headers={"X-Gamma-Name": "Otter the Bold"},
                           json={"client": "vis", "ops": [{"op": "insert", "id": "visA", "parent": page["id"], "content": "hi"}]})
             assert r.status_code == 200, r.text
-            assert _recv(o, "ops")["actor"] == "link:Otter the Bold"
+            assert recv(o, "ops")["actor"] == "link:Otter the Bold"
         # a view-only link still joins, presence-only, and without a name it is Anonymous
         _share(owner, page["id"], audience="anyone", role="view")
         with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=v2&share={token}") as v:
@@ -322,11 +313,11 @@ def test_socket_cursor_presence(guest):
         _hello(a), _hello(b)
         # a cursor travels to the others only
         a.send_json({"t": "cursor", "block": "wsC", "anchor": 1, "head": 2})
-        assert _recv(b, "cursor") == {"t": "cursor", "client": "aa", "block": "wsC", "anchor": 1, "head": 2}
+        assert recv(b, "cursor") == {"t": "cursor", "client": "aa", "block": "wsC", "anchor": 1, "head": 2}
         # a later joiner sees it in the hello
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=cc") as c:
             assert next(p for p in _hello(c)["peers"] if p["client"] == "aa")["block"] == "wsC"
-        assert _recv(a, "leave")["client"] == "cc"
+        assert recv(a, "leave")["client"] == "cc"
 
 
 def test_socket_cursor_rides_on_a_batch(guest):
@@ -343,15 +334,15 @@ def test_socket_cursor_rides_on_a_batch(guest):
             "cursor": {"block": "wsR", "anchor": 8, "head": 8}})
         assert r.status_code == 200
         for ws in (a, b):
-            m = _recv(ws, "ops")
+            m = recv(ws, "ops")
             assert m["client"] == "aa" and m["cursor"] == {"block": "wsR", "anchor": 8, "head": 8}
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=cc") as c:
             pa = next(p for p in _hello(c)["peers"] if p["client"] == "aa")
             assert (pa["block"], pa["anchor"], pa["head"]) == ("wsR", 8, 8)
-        assert _recv(a, "leave")["client"] == "cc"
+        assert recv(a, "leave")["client"] == "cc"
         # a batch without one changes nothing about presence
         assert _ops(guest, page["id"], [{"op": "set", "id": "wsR", "content": "hi"}], client_id="aa").status_code == 200
-        assert "cursor" not in _recv(b, "ops")
+        assert "cursor" not in recv(b, "ops")
 
 
 def test_socket_server_side_writers_reach_the_room(guest):
@@ -362,15 +353,15 @@ def test_socket_server_side_writers_reach_the_room(guest):
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=dd") as d:
         seq = _hello(d)["seq"]
         assert guest.put("/api/blocks/wsD", json={"content": "edited", "properties": {"x": 1}}).status_code == 200
-        m = _recv(d, "ops")
+        m = recv(d, "ops")
         assert m["seq"] == seq + 1
         assert m["ops"] == [{"op": "set", "id": "wsD", "content": "edited", "props": {"x": 1}}]
         assert guest.put(f"/api/blocks/{page['id']}", json={"content": "Renamed socket page"}).status_code == 200
-        assert _recv(d, "ops")["ops"][0] == {"op": "set", "id": page["id"], "content": "Renamed socket page"}
+        assert recv(d, "ops")["ops"][0] == {"op": "set", "id": page["id"], "content": "Renamed socket page"}
         assert guest.delete("/api/blocks/wsD").status_code == 200
-        assert _recv(d, "ops")["ops"] == [{"op": "delete", "id": "wsD"}]
+        assert recv(d, "ops")["ops"] == [{"op": "delete", "id": "wsD"}]
         assert guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [{"content": "bulk"}]}).status_code == 200
-        reload = _recv(d, "reload")
+        reload = recv(d, "reload")
         assert reload["seq"] == seq + 4  # one batch per write above
         log = guest.get(f"/api/pages/{page['id']}/ops", params={"since": reload["seq"] - 1}).json()
         assert log["batches"][0]["ops"] == [{"op": "reload"}]
@@ -385,8 +376,8 @@ def test_socket_cross_page_move_and_ai_edit(guest):
         s.receive_json(), d.receive_json()
         r = guest.post(f"/api/blocks/{blk['id']}/reorder", json={"parent_id": dst["id"], "before": None, "after": None})
         assert r.status_code == 200
-        assert _recv(s, "ops")["ops"] == [{"op": "delete", "id": blk["id"]}]
-        assert _recv(d, "reload")
+        assert recv(s, "ops")["ops"] == [{"op": "delete", "id": blk["id"]}]
+        assert recv(d, "reload")
         # an AI tool edit runs in a worker thread; its op still lands in the room
         from gamma.ai_tools import run_agent_tool
         scope = {"type": "page", "page_id": dst["id"]}
@@ -394,7 +385,7 @@ def test_socket_cross_page_move_and_ai_edit(guest):
         text, action = run_agent_tool(workspace_of(guest_name()), scope, "edit_block",
                                       {"block_id": blk["id"], "content": "travelled, edited by ai"})
         assert action["kind"] == "edit", text
-        m = _recv(d, "ops")
+        m = recv(d, "ops")
         assert m["client"] == "ai" and m["ops"] == [{"op": "set", "id": blk["id"], "content": "travelled, edited by ai"}]
 
 
@@ -471,11 +462,11 @@ def test_merged_batch_remaps_the_writers_caret(guest):
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=w") as w:
         w.receive_json()
         assert _ops(guest, page["id"], [{"op": "set", "id": blk["id"], "content": "hello brave world", "base": "hello world"}], client_id="a").status_code == 200
-        _recv(w, "ops")
+        recv(w, "ops")
         r = guest.post(f"/api/pages/{page['id']}/ops", json={
             "client": "b", "ops": [{"op": "set", "id": blk["id"], "content": "hello world!", "base": "hello world"}],
             "cursor": {"block": blk["id"], "anchor": 12, "head": 12}})
         assert r.status_code == 200
-        m = _recv(w, "ops")
+        m = recv(w, "ops")
         assert m["ops"][0]["content"] == "hello brave world!"
         assert m["cursor"] == {"block": blk["id"], "anchor": 18, "head": 18}

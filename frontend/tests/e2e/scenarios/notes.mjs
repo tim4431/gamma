@@ -71,6 +71,19 @@ async function startDrag(page, from, ontoText) {
   };
 }
 
+// Make every notes search (/api/block-search with a query) on `page` answer
+// as if the server's scan ran out of time: the real hits plus
+// `partial: true`. Returns the undo.
+export async function partialBlockSearch(page) {
+  const match = (url) => url.pathname.endsWith("/api/block-search") && !!url.searchParams.get("q");
+  const handler = async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), partial: true } });
+  };
+  await page.route(match, handler);
+  return () => page.unroute(match, handler);
+}
+
 export async function newPageViaUi(page, title) {
   await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
   await page.click(".folderNewBtn");
@@ -508,13 +521,14 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
-  await step("notes: the [[ picker lists pages by title first; a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
+  await step("notes: the [[ picker lists pages by title first (a block search cut short says so); a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
     const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Linkable Target" } });
     const other = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Scratch" } });
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Picker source" } });
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "pkblock", parent: src.id, position: "a0", content: "start" }] } });
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    const unroute = await partialBlockSearch(p2);
     try {
       await editRow(p2, "start");
       await p2.keyboard.type(" [[linkable");
@@ -523,6 +537,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(await picker.locator(".refPopupHead").first().textContent(), "Pages", "pages come first");
       assertEq(await picker.locator(".refPopupItem.selected .refPopupText").innerText(), "Quantum Linkable Target");
       assertEq(await picker.locator(".refPopupItem.selected .refPopupText mark.searchMark").innerText(), "Linkable", "the typed text is marked");
+      await until(async () => (await picker.locator(".refPopupFooter").innerText()).startsWith("Block search stopped early"),
+        { what: "the footer says the block search stopped early" });
+      await unroute();
       await p2.keyboard.press("Enter");
       await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
       // "]]" typed after the exact title of one page links it; an unknown title stays text.
@@ -533,6 +550,35 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const r = row(p2, "start");
       assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()), JSON.stringify(["Quantum Linkable Target", "Quantum Scratch"]));
       assertEq(await r.locator(".unlinkedRef").innerText(), "Nothing By This Name", "the unknown title is an unlinked chip");
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // Text over the server's limit (collabSession's MAX_CONTENT, 200,000
+  // characters) is held back: the notice says why, and the editor stays open
+  // on it (App's onStartEdit) until it is short enough to save.
+  await step("notes: a note over the length limit says so, is not saved, and keeps its editor open until shortened", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Long note" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "longnote", parent: pg.id, position: "a0", content: "short" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    try {
+      await editRow(p2, "short");
+      await p2.keyboard.insertText(" " + "word ".repeat(40001));
+      const notice = p2.getByText(/^A note is too long to save \(at most 200,000 characters\)/);
+      await notice.waitFor();
+      await p2.evaluate(() => document.activeElement?.blur());
+      await sleep(300);
+      assertEq(await p2.locator(".blockEditorCm").count(), 1, "the editor stays open on the long text");
+      assertEq((await tree(alice2, pg.id))[0].content, "short", "the long text is not saved");
+      await p2.locator(".blockEditorCm .cm-content").click();
+      await p2.keyboard.press("Control+a");
+      await p2.keyboard.insertText("short again");
+      await notice.waitFor({ state: "detached" });
+      await until(async () => (await tree(alice2, pg.id))[0].content === "short again", { what: "the shortened text saved" });
+      await closeEditor(p2);
       assertNoProblems(p2);
     } finally {
       await p2.close();

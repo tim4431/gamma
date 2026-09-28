@@ -23,7 +23,7 @@ from conftest import login, make_user
 from gamma import backup_schedule as tasks
 from gamma import backups, config, integrity, migrations, notices, workspaces, ws_backup
 from gamma.db import SCHEMA_VERSION, connect_users_db, ws_dir, ws_uploads_dir
-from test_migrations import build_v0, data_dir  # noqa: F401  (data_dir: a throwaway data directory)
+from test_migrations import build_v0
 
 PW = "bs-pass-12345"
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -57,7 +57,7 @@ def _damage(path: Path) -> None:
 
 
 @pytest.fixture
-def noop_steps(data_dir, monkeypatch):  # noqa: F811
+def noop_steps(data_dir, monkeypatch):
     """A current data directory whose upgrade steps do nothing: the runner's
     snapshot policy is what is under test."""
     connect_users_db().close()
@@ -174,7 +174,7 @@ def test_an_interrupted_snapshot_directory_is_never_listed_or_pruned(noop_steps)
 
 # --- migration step 2 resumes into the workspace it recorded -------------------------
 
-def test_step_2_resumes_into_the_recorded_workspace(data_dir, monkeypatch):  # noqa: F811
+def test_step_2_resumes_into_the_recorded_workspace(data_dir, monkeypatch):
     build_v0(data_dir)
     real = migrations._move_prefs
     calls = {"n": 0}
@@ -352,7 +352,7 @@ def test_every_snapshot_records_the_check_of_its_database_copies():
     assert manifest["integrity"] == {"pages.db": "ok", "data.db": "ok"}
 
 
-def test_a_server_backup_of_a_damaged_workspace_records_it_and_tells_admins(data_dir):  # noqa: F811
+def test_a_server_backup_of_a_damaged_workspace_records_it_and_tells_admins(data_dir):
     build_v0(data_dir)
     migrations.ensure_current()
     with connect_users_db() as conn:
@@ -428,6 +428,28 @@ def test_a_workspace_is_not_deleted_when_its_final_copy_fails(monkeypatch):
     assert r.status_code == 507 and "nothing was deleted" in r.json()["detail"]
     assert c.get(f"/api/workspaces/{doomed}").status_code == 200 and ws_dir(doomed).is_dir()
     assert set(ws_backup.deleted_dir().glob("*")) == before
+
+
+def test_a_delete_refused_after_its_final_copy_leaves_no_copy(monkeypatch):
+    """The account's other personal workspace goes while this one's final
+    copy is being written: the locked re-check refuses (it is the last one
+    now) and the copy of the delete that never happened goes too."""
+    home, c = _account("bs_race")
+    other = c.post("/api/workspaces", json={"name": "Other half"}).json()["id"]
+    real = ws_backup.keep_final_copy
+
+    def copy_while_the_other_goes(ws, **kw):
+        name = real(ws, **kw)
+        monkeypatch.setattr(ws_backup, "keep_final_copy", real)
+        workspaces.delete(other, by="bs_race")
+        return name
+
+    monkeypatch.setattr(ws_backup, "keep_final_copy", copy_while_the_other_goes)
+    r = c.delete(f"/api/workspaces/{home}")
+    assert r.status_code == 400 and "last personal workspace" in r.json()["detail"]
+    assert workspaces.get(home) and ws_dir(home).is_dir() and not workspaces.get(other)
+    assert not list(ws_backup.deleted_dir().glob(f"{home}-*.zip"))
+    assert list(ws_backup.deleted_dir().glob(f"{other}-*.zip"))  # the delete that happened keeps its copy
 
 
 def test_account_deletion_keeps_every_workspace_it_takes_all_or_nothing(monkeypatch):

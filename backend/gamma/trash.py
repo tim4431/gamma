@@ -13,32 +13,22 @@ that drops a page's chats and indexes; "Delete permanently" and Empty take
 the same path at once.
 """
 
-import asyncio
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import config
 from .blocks_store import TRASH, trashed_page, write_lock
-from .db import connect_pages_db
+from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .ops import delete_page
 
 KEEP_DAYS = 30
-SWEEP_INTERVAL_S = 3600
-
-
-def _parse(ts: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
+SWEEP_INTERVAL_S = 3600  # the app lifespan runs ``sweep`` at startup and this often
 
 
 def purge_at(deleted_at: str) -> str:
     """When a page deleted at ``deleted_at`` is deleted for good (the
     ``page_now`` shape); "" for an unparseable time."""
-    at = _parse(deleted_at)
-    return (at + timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z" if at else ""
+    at = parse_stamp(deleted_at)
+    return format_stamp(at + timedelta(days=KEEP_DAYS)) if at else ""
 
 
 def list_trash(conn) -> list[dict]:
@@ -81,7 +71,7 @@ def purge_expired(ws: str, *, now: datetime | None = None) -> list[str]:
     now = now or datetime.now(timezone.utc)
     gone = []
     for page in _trashed(ws):
-        at = _parse(page["deleted_at"])
+        at = parse_stamp(page["deleted_at"])
         if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and purge(ws, page["id"]) is not None:
             gone.append(page["id"])
     return gone
@@ -92,43 +82,16 @@ def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
     for the ones that lost pages. A workspace that cannot be read (deleted
     meanwhile) is skipped."""
     out = {}
-    if not config.WORKSPACES_DIR.is_dir():
-        return out
-    for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
-        if not (ws_root / "pages.db").is_file():
+    for ws in workspace_ids():
+        if not (ws_dir(ws) / "pages.db").is_file():
             continue
         try:
-            gone = purge_expired(ws_root.name, now=now)
+            gone = purge_expired(ws, now=now)
         except Exception as e:  # noqa: BLE001 — one workspace never stops the sweep
-            log.warning(f"[trash] workspace {ws_root.name}: {e}")
+            log.warning(f"[trash] workspace {ws}: {e}")
             continue
         if gone:
-            out[ws_root.name] = gone
-            log.info(f"[trash] deleted {len(gone)} page(s) of workspace {ws_root.name} "
+            out[ws] = gone
+            log.info(f"[trash] deleted {len(gone)} page(s) of workspace {ws} "
                      f"after {KEEP_DAYS} days in Recently deleted")
     return out
-
-
-@asynccontextmanager
-async def lifespan():
-    """The sweeper: ``sweep`` at startup and every ``SWEEP_INTERVAL_S``
-    while the app runs."""
-    stop = asyncio.Event()
-
-    async def loop():
-        while not stop.is_set():
-            try:
-                await asyncio.to_thread(sweep)
-            except Exception:
-                log.exception("[trash] sweep failed")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=SWEEP_INTERVAL_S)
-            except asyncio.TimeoutError:
-                pass
-
-    task = asyncio.create_task(loop())
-    try:
-        yield
-    finally:
-        stop.set()
-        await task

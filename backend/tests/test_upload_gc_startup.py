@@ -2,7 +2,7 @@
 per-workspace migration steps (9, 12, 13, 22) and the background upload
 reconciliation log it and go on. Step 22 gives every workspace's pages.db
 its ``upload_orphans`` table; the startup path does not touch uploads.
-Runs in its own temp data directory, like tests/test_migrations.py."""
+Runs in its own temp data directory (the ``data_dir`` fixture)."""
 
 import sqlite3
 from contextlib import closing
@@ -12,7 +12,6 @@ from gamma import migrations, upload_gc
 from gamma.db import connect_users_db
 from gamma.logbuf import tail
 from gamma.seed import create_workspace_files
-from test_migrations import data_dir  # noqa: F401  (fixture: a throwaway data directory)
 
 
 def _workspaces(root):
@@ -34,7 +33,7 @@ def _last_seq():
     return seen[-1]["seq"] if seen else 0
 
 
-def test_step_22_adds_upload_orphans_and_skips_a_damaged_workspace(data_dir):  # noqa: F811
+def test_step_22_adds_upload_orphans_and_skips_a_damaged_workspace(data_dir):
     _workspaces(data_dir)
     for ws in ("wsgood1", "wsgood2"):  # files from before the step
         with closing(sqlite3.connect(str(data_dir / "workspaces" / ws / "pages.db"))) as conn:
@@ -54,7 +53,7 @@ def test_step_22_adds_upload_orphans_and_skips_a_damaged_workspace(data_dir):  #
             step(conn)
 
 
-def test_startup_serves_the_others_when_one_workspace_is_damaged(data_dir, monkeypatch):  # noqa: F811
+def test_startup_serves_the_others_when_one_workspace_is_damaged(data_dir, monkeypatch):
     connect_users_db().close()
     _workspaces(data_dir)
 
@@ -67,7 +66,7 @@ def test_startup_serves_the_others_when_one_workspace_is_damaged(data_dir, monke
     assert any("wsbroken" in m for m in _errors_since(seq))
 
 
-def test_the_background_pass_goes_on_past_a_damaged_workspace(data_dir, monkeypatch):  # noqa: F811
+def test_the_background_pass_goes_on_past_a_damaged_workspace(data_dir, monkeypatch):
     connect_users_db().close()
     _workspaces(data_dir)
     seen = []
