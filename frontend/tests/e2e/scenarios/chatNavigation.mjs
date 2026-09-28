@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
@@ -97,6 +98,37 @@ export async function chatNavigationScenarios(env) {
       });
     }
   }
+
+  await step("chat navigation: the header exports the context the model is sent", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [
+      { role: "user", text: "What is this paper about?" },
+      { role: "ai", text: "It is about chat navigation." },
+    ] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("It is about chat navigation."));
+      await input.fill("A draft question");
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export chat context", exact: true }).click();
+      const download = await downloadEvent;
+      assert(download.suggestedFilename().endsWith(" - context.md"), download.suggestedFilename());
+      const text = await readFile(await download.path(), "utf8");
+      assert(text.includes("## System prompt"), "the system prompt is in the export");
+      assert(text.includes(`Gamma page ID: ${pdf.id}`), "the page's context is in the export");
+      assert(text.includes("User question: What is this paper about?"), "the context rides on the oldest question");
+      assert(text.trimEnd().endsWith("A draft question\n```"), "the draft is the last turn");
+      assertEq(await input.inputValue(), "A draft question", "exporting keeps the draft");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
 
   await step("chat navigation: two papers answer at once, each with its own Stop", async () => {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });

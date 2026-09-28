@@ -68,6 +68,16 @@ def attach_index(messages) -> int:
     return len(messages) - 1
 
 
+# The stop reasons that mean the reply hit the output cap (Anthropic,
+# Chat Completions, the Responses API's incomplete status) rather than
+# ending on its own.
+TRUNCATED_STOPS = {"max_tokens", "length", "incomplete", "max_output_tokens"}
+
+
+def truncated_stop(reason: str) -> bool:
+    return (reason or "") in TRUNCATED_STOPS
+
+
 def parse_tool_args(raw) -> dict:
     try:
         parsed = json.loads(raw or "{}")
@@ -166,7 +176,11 @@ class Protocol:
         return self
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None) -> URLRequest:
+                max_tokens=8192, images=None, stream=False, tools=None,
+                cache_key="") -> URLRequest:
+        """The provider call. ``cache_key`` names the conversation (one
+        opaque id per chat) for the provider's prompt cache: the wires that
+        take a routing hint send it, the others ignore it."""
         raise NotImplementedError
 
     def reply_text(self, data) -> str:
@@ -205,8 +219,10 @@ class Protocol:
         consumer can preview a long argument while the model is still
         writing it; the ``tool`` event with the parsed arguments always
         follows. A last ``("usage", {...})`` event reports the turn's token
-        counts when the provider sent them. Raises on a fully empty response
-        (neither text nor tool calls) with the stop reason attached."""
+        counts when the provider sent them, and ``("stop", reason)`` the
+        provider's stop reason (``truncated_stop`` says whether it means
+        the reply was cut off). Raises on a fully empty response (neither
+        text nor tool calls) with the stop reason attached."""
         state = {"got": False, "stop": "", "usage": None}
         seen = False
         for event in sse_json(response):
@@ -219,6 +235,8 @@ class Protocol:
             yield out
         if state["usage"]:
             yield ("usage", state["usage"])
+        if state["stop"] and state["got"]:
+            yield ("stop", state["stop"])
         if not state["got"] and not seen:
             raise NotAnAIStream("the endpoint answered without any AI stream events — check the connection's base URL")
         if not state["got"]:

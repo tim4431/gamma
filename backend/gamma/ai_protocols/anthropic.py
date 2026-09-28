@@ -2,11 +2,47 @@
 (Kimi, GLM, … behind their own base URL)."""
 
 import json
+import urllib.parse
 from urllib.request import Request as URLRequest
 
 from .base import Protocol, as_int, attach_index, parse_tool_args
 
 API_VERSION = "2023-06-01"
+_CACHE = {"type": "ephemeral"}
+
+
+def is_anthropic_platform(base_url: str) -> bool:
+    host = urllib.parse.urlparse(base_url or "").hostname or ""
+    return host == "anthropic.com" or host.endswith(".anthropic.com")
+
+
+def _mark_cached(message: dict) -> None:
+    """Put a cache breakpoint on a turn's last content block (a string
+    content becomes a one-block list first)."""
+    content = message["content"]
+    if isinstance(content, str):
+        content = message["content"] = [{"type": "text", "text": content}]
+    if content:
+        content[-1] = {**content[-1], "cache_control": _CACHE}
+
+
+def _with_breakpoints(body: dict) -> dict:
+    """Anthropic's prompt cache is opt-in, at most four breakpoints: the
+    last tool spec (the specs never change within a chat), the system
+    prompt, and the last two user turns — the prefix up to the previous
+    turn is what the next request shares, and a breakpoint one turn back
+    keeps the lookup within reach when a reply's tool rounds add many
+    blocks after it. Everything before a breakpoint is cached, so the
+    conversation's stable head (the document context on the oldest user
+    turn) is read from the cache from the second message on."""
+    if body.get("tools"):
+        body["tools"][-1] = {**body["tools"][-1], "cache_control": _CACHE}
+    if body.get("system"):
+        body["system"] = [{"type": "text", "text": body["system"], "cache_control": _CACHE}]
+    user_turns = [m for m in body["messages"] if m["role"] == "user"]
+    for message in user_turns[-2:]:
+        _mark_cached(message)
+    return body
 
 
 def _messages(messages) -> list:
@@ -56,7 +92,7 @@ class Anthropic(Protocol):
     key_url = "https://console.anthropic.com/settings/keys"
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None):
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
         messages = [dict(m) for m in messages]  # attachment injection must not mutate the caller's turn list
         if pdf_b64s or images:
             last = messages[attach_index(messages)]
@@ -79,6 +115,10 @@ class Anthropic(Protocol):
             body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
         if stream:
             body["stream"] = True
+        if is_anthropic_platform(conf.get("base_url", "")):
+            # Only Anthropic itself is known to take the markers; a service
+            # speaking its API behind another host may reject the field.
+            _with_breakpoints(body)
         return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers={
             "x-api-key": conf["api_key"],
             "anthropic-version": API_VERSION,

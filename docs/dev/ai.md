@@ -331,30 +331,58 @@ Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
 → `page_report_section`): each page contributes its title, a properties line
 (folders, labels, cached metadata, web source, attachment) and its notes
 tree; a page that carries a PDF adds the document's extracted text (a head
-excerpt labelled as such when the document doesn't fit — see
-[ai_context.md](ai_context.md)), or the PDF itself as a native document/file
-content part when the request sets `attach_pdf`, and shows its notes only
-with `include_notes`. A page without an attachment IS its notes, so they
-always go — `include_notes` only means "also add my notes/highlights for PDF
-pages". The built-in chat system prompt frames the model as working inside
-that knowledge base and grounds claims about the pages in text actually read
-(look details up or say they're absent, never fill gaps from memory; cite a
-PDF by page number, say when something comes from the user's notes). With a
-document in context, `_CITATION_PROMPT` is appended, custom prompt or not.
-It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links built from the
-`[PDF page N]` labels and the `Gamma page ID` each context section carries
-([pdf_citations.md](pdf_citations.md)).
+excerpt labelled with the pages it reaches when the document doesn't fit —
+see [ai_context.md](ai_context.md)), or the PDF itself as a native
+document/file content part when the request sets `attach_pdf`, and shows its
+notes only with `include_notes`. A page without an attachment IS its notes,
+so they always go — `include_notes` only means "also add my notes/highlights
+for PDF pages". An area highlight among them (a Ctrl+drag rectangle, no
+text) is named with its page and its region goes along as a picture, up
+to `MAX_AREA_CROPS` per page ([ai_tools.md](ai_tools.md) read_page — the
+same for the tools). The built-in chat system prompt frames the model as working
+inside that knowledge base and grounds claims about the pages in text
+actually read (look details up or say they're absent, never fill gaps from
+memory; cite a PDF by page number, say when something comes from the user's
+notes). With a document in context, `_CITATION_PROMPT` is appended, custom
+prompt or not. It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links
+built from the `[PDF page N]` labels and the `Gamma page ID` each context
+section carries ([pdf_citations.md](pdf_citations.md)).
+
+`gather_inputs` returns the context in two parts, and `build_messages`
+places them apart on purpose. The **document part** (the pages' sections:
+excerpt, notes, the document map) is glued to the *oldest* user turn, so it
+reads the same on every turn of a conversation while its pages and
+settings stand; the **message part** — the text around the passages this
+message selected, the cursor block, attached chips
+(`notes_focus_section`) — goes in front of the question itself under a
+"Context for this message" line. The stable head is what the providers'
+prompt caches key on (see "Prompt caching" below); the moving part stays
+small.
 
 Whatever went to the model is reported back: the stream's first line is
 `{"context": [...]}` (non-stream: a `context` field) with one entry per
-page — `title`, `doc_id` (`""` for a page without a PDF), `native` (the file
-itself was sent), `native_requested`, `partial`, `chars`, `pages`,
-`pages_shown` (uploaded `files` are reported the same way, and get the
-single-page budget when they fall back to text). The chat saves it on the
-reply and shows a pill (`.chatPill`, the agent-steps pill's look) only when
-it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
-accepted — sent as text" when the file was requested but the provider took
-text instead. `/api/ai/models` marks each model `native_pdf` (false for
+page — `title`, `page_id`, `doc_id` (`""` for a page without a PDF),
+`native` (the file itself was sent), `native_requested`, `partial`,
+`chars`, `pages`, `pages_shown`, `notes` (the page's notes are in the
+context) (uploaded `files` are reported the same way, and get the
+single-page budget when they fall back to text). The same report rides in
+the tool scope as `coverage`: `agent_system` names the pages the context
+holds and where to read on (`coverage_lines`), and `read_page` never
+repeats them ([ai_tools.md](ai_tools.md)). The chat saves it on the reply
+and shows a pill (`.chatPill`, the agent-steps pill's look) only when it
+matters: "Model saw pages 1–9 of 22" for a truncated paper — with what the
+reply's tools read folded in ("· read 10–12 with tools", from the read
+actions' `pdf_pages`) and, unfolded, the pages nobody saw, a rough token
+figure, and advice that depends on whether the reply had tools
+(`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
+was requested but the provider took text instead. Two more pills per
+reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
+line, see "Fitting the window") and "Reply cut off at the output limit"
+(`{"truncated": true}`: the provider's stop reason was `max_tokens`,
+`length` or the Responses API's `incomplete` — `Protocol.events` ends every
+stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
+it; the agent loop stops there rather than run a half-written tool call).
+`/api/ai/models` marks each model `native_pdf` (false for
 ChatGPT sign-in entries: their wire is the Codex backend, which refuses
 `input_file` parts). The composer's Full PDF switch, shown only while a PDF
 is in context, doesn't default on for such a model. Switching it on by hand
@@ -368,6 +396,76 @@ PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
 invisible to search AND read_page, so keep it far above real documents).
+
+### Exporting the context
+
+The chat header's download button saves what the model would be sent right
+now as a Markdown file. ChatDock builds the body with the same
+`chatRequest(text, history)` a send uses, with the composer's draft as the
+prompt. `POST /api/ai/chat/context` runs it through `_chat_prompt`, the one
+step `/ai/chat` also uses for its turns and system prompt, and
+`ai_context.context_markdown` writes the result: the pages in context (the
+coverage report), the system prompt, the tool specs, then every turn as
+sent, each in a fence longer than any backtick run inside it. The document
+context sits on the oldest question and the draft is the last turn. Two
+things differ from a live send. PDFs always go as extracted text (the file
+is meant to be read or pasted somewhere else, so `attach_pdf` is ignored),
+and pictures are counted but not embedded. Nothing is trimmed to fit a
+window, and no provider is called.
+
+### Prompt caching
+
+Every request re-sends the whole conversation (no wire keeps state:
+`store` stays off on the Responses API, and there is no
+`previous_response_id` — the conversation is Gamma's to keep). What makes
+that cheap is the providers' prefix caches, which every adapter now asks
+for. The chat sends `chat_key` (the bucket: a page id, `home`,
+`home:<folder>`); `_cache_key` in `routers/ai.py` hashes it with the
+account and workspace into one opaque id per conversation that
+`ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
+
+- Anthropic (`anthropic.py` `_with_breakpoints`): `cache_control:
+  {type: "ephemeral"}` on the last tool spec, the system prompt (sent as a
+  content block then) and the last two user turns — the API's four
+  breakpoints; the one a turn back keeps the lookup within reach when a
+  reply's tool rounds add many blocks after it. Only on `api.anthropic.com`
+  (`is_anthropic_platform`): a service speaking the API behind another
+  host may reject the field.
+- OpenAI: `prompt_cache_key` on Chat Completions and on `/v1/responses`,
+  again only on the platform itself (`is_openai_platform`), never on a
+  compatible server.
+- The Codex backend: the same `prompt_cache_key` in the body and the
+  `session_id` header, one per conversation like Codex CLI's (a fresh
+  uuid per request, as before, missed every time).
+
+The usage line's `cache_read` / `cache_write` counts (and "% cached" under
+a reply) show whether it works. The document context glued to the oldest
+user turn is the cached head; it changes only when the pages, the notes,
+the map or the context settings change.
+
+### Fitting the window
+
+Nothing is trimmed by turn count or summarized. Before a call the router
+estimates the prompt (`ai_context.prompt_tokens`: four ASCII characters or
+one other character — CJK, symbols — per token, 1,600 per picture; native
+PDF files are not counted) against the model's window
+(`ai_catalog.context_window`, the same lookup as the header's ring) less
+`_WINDOW_RESERVE` for the reply, and leaves the oldest history items out
+(`build_messages(drop_turns=)`: two, then doubling; the kept history opens
+on a question, the document context moves to the oldest kept one) until it
+fits. A provider that still answers `too_long` (no source knew the window,
+or the estimate fell short) is retried the same way. The stream says
+`{"trimmed": {"turns": N}}` after the model line and the chat shows the
+pill. Within one reply, the rounds' tool results share
+`ai_context.LIVE_RESULT_BUDGET` (60,000 chars, a picture counting
+`_IMAGE_CHARS`): a valve, not a per-round trim — rewriting an earlier turn
+costs the cache the rest of the prefix, so nothing is touched until the
+results outgrow the budget, then `elide_live_results` turns the oldest
+rounds' results into the replay's stub, the last `LIVE_KEEP_ROUNDS`
+rounds always whole; a `too_long` mid-reply keeps only the last round's
+results and retries once. The native-PDF fallback (a 4xx on a request
+with file parts is retried as text) no longer remembers a provider as
+refusing files when the failure was the size.
 
 ### Reasoning effort
 
@@ -610,8 +708,8 @@ includes the two web tools and the page viewer. Plus:
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
 - **Read window** (`gamma-ai-read-chars` → request `read_char_limit`, default
-  20 000) — the most document text one `read_page` call may return; long
-  papers are read in windows of this size.
+  20 000) — the most document text one `read_page` call may return, and the
+  cap on the notes it shows; long papers are read in windows of this size.
 
 Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 
@@ -707,7 +805,9 @@ request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
-preceding tool_result turn to keep roles alternating. Plain chats never replay
+preceding tool_result turn to keep roles alternating. The client sends
+only what is replayed — each turn's `role`, `text` and `actions`, never
+the pictures, coverage and counts saved with it. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

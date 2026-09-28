@@ -259,6 +259,25 @@ whatever ships, and add the numbers: the eval harness that produced the
 2026-08 table is the right tool to show that recall didn't move while
 input tokens per question fell.
 
+## What shipped from this (September 2026)
+
+Tier 1 whole, Tier 2's steps 5–6 and 8, and step 10 from Tier 3:
+`cache_control` breakpoints on Anthropic, `prompt_cache_key` on OpenAI's
+platform and the Codex backend with a per-conversation `session_id`; the
+context split into the document part on the oldest turn and the message
+part with the question; `elide_live_results` as the in-turn valve;
+`prompt_tokens` against the catalog's window with `drop_turns`, and a
+retry on `too_long`; `read_page` skipping the pages and notes the context
+holds, with `coverage_lines` in the agent prompt and the excerpt label
+naming its pages; the map from the cut-short page; the client sending
+`{role, text, actions}` only; the stop reason surfaced as `truncated`.
+The coverage pill now folds in what the tools read and which pages
+nobody saw. Still open: quoting a selection twice (step 7), compaction
+(9), token-aware budgets and the multi-page split (11), a per-model
+output cap (12). The mechanics are in [ai.md](../dev/ai.md) "Prompt
+caching" and "Fitting the window", [ai_context.md](../dev/ai_context.md)
+and [ai_tools.md](../dev/ai_tools.md).
+
 ## What was not measured
 
 This is a reading of the code, not a measurement. The one live number

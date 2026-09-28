@@ -662,12 +662,13 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
 
 // Area-highlight crops shown on note cards. Nothing is stored with the block —
 // the region is re-cropped from the loaded document (App's pdfCaptureRef) and
-// cached here per session, keyed by the rect, so scrolling the notes doesn't
-// re-render the same crop and an edited rect gets a fresh one.
+// cached here per session, keyed by the document and the rect, so scrolling
+// the notes doesn't re-render the same crop, an edited rect gets a fresh one,
+// and a crop never serves another paper's highlight at the same rect.
 const _areaSnapCache = new Map();
-function AreaSnapshot({ block, captureArea, docNonce }) {
+function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
   const r = block.position?.boundingRect;
-  const key = `${block.highlightId}:${r?.pageNumber}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
+  const key = `${docKey || ""}|${block.highlightId}:${r?.pageNumber}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
   const [src, setSrc] = useState(() => _areaSnapCache.get(key) || null);
   useEffect(() => {
     const cached = _areaSnapCache.get(key);
@@ -730,6 +731,7 @@ function BlockRow({
   onBlockDrop,
   captureArea,
   docNonce,
+  docKey,
   aiMarks,
   aiLive,
   aiScan,
@@ -1760,7 +1762,7 @@ function BlockRow({
             </div>
           ) : null}
           {block.position?.area && captureArea ? (
-            <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} />
+            <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
           {isInk ? <InkCard block={block} onJump={onInkJump} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (

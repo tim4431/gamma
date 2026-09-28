@@ -82,7 +82,7 @@ def test_pdf_location_and_quote_are_preserved(client, connection, monkeypatch):
     page = make_page(c, "Paper with location")
     # Exercise the normal dispatcher, substituting only document extraction.
     seen = []
-    def report(conn, workspace, page_id, budget, offset, pdf_page):
+    def report(conn, workspace, page_id, budget, offset, pdf_page, **kw):
         seen.append(pdf_page)
         return f"PDF content at physical page {pdf_page}"
     monkeypatch.setattr("gamma.ai_tools.page_report_section", report)

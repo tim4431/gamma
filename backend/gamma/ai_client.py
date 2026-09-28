@@ -151,15 +151,17 @@ def upstream_detail(error: urllib.error.HTTPError, cap: int = 500) -> str:
 def open_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="",
     max_tokens=8192, timeout=60, images=None, stream=False, tools=None,
+    cache_key="",
 ):
     """Open a provider call without consuming response bytes. The one door
     every token-spending call goes through (call_ai too): a shared entry's
-    allowance is checked here (AllowanceExhausted, a 429)."""
+    allowance is checked here (AllowanceExhausted, a 429). ``cache_key``
+    names the conversation for the provider's prompt cache."""
     conf = runtime["providers"][entry["provider"]]
     check_allowance(conf)
     wire = ai_protocols.of(conf).wire(conf, tools)
     request = wire.request(conf, messages, system, entry["model"], pdf_b64s,
-                           effort, max_tokens, images, stream, tools)
+                           effort, max_tokens, images, stream, tools, cache_key)
     try:
         return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:
