@@ -31,8 +31,9 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import backup_schedule, cloud_sync, logbuf, server_settings, sync_engine, translate_engines, version
-from .db import NOTICES_SEEN_PREF_KEY, get_pref, set_pref
+from . import (backup_schedule, cloud_sync, integrity, logbuf, server_settings, sync_engine, translate_engines,
+               version)
+from .db import NOTICES_SEEN_PREF_KEY, get_pref, update_pref
 from .server_settings import MB
 
 TONES = ("info", "warn", "error")
@@ -92,6 +93,24 @@ def log_errors(_username):
         return None
     started = version.STARTED_AT.isoformat()
     return notice("log-errors", f"{started}:{seq}", "error", "server", "New errors in the server log")
+
+
+@source(admin_only=True)
+def database_damage(_username):
+    """Database files whose latest integrity check failed — a snapshot's,
+    or the admin's "Check databases" (gamma/integrity.py: one small JSON
+    file). Fingerprint: the files and when each was found, so a new
+    finding brings it back; a file that passes a later check drops out."""
+    bad = integrity.failures()
+    if not bad:
+        return None
+    mark = hashlib.sha1(",".join(f"{rel}:{v.get('at', '')}" for rel, v in sorted(bad.items()))
+                        .encode("utf-8")).hexdigest()[:16]
+    if len(bad) == 1:
+        return notice("db-damage", mark, "error", "server", "A database check found damage in {file}",
+                      file=next(iter(bad)))
+    return notice("db-damage", mark, "error", "server", "A database check found damage in {n} database files",
+                  n=len(bad))
 
 
 @source()
@@ -255,8 +274,11 @@ def mark_seen(username: str, notice_id: str, fingerprint: str) -> None:
     """Record that the account has seen this fingerprint of the notice."""
     if not _ID_RE.match(notice_id or "") or not isinstance(fingerprint, str) or len(fingerprint) > 200:
         raise ValueError("invalid notice")
-    seen = seen_map(username)
-    seen[notice_id] = fingerprint
-    if len(seen) > _MAX_SEEN:  # never grows past the sources that exist; a guard, not a policy
-        seen = dict(list(seen.items())[-_MAX_SEEN:])
-    set_pref(username, NOTICES_SEEN_PREF_KEY, seen)
+
+    def change(value):  # one transaction: two panes marked at once both stay seen
+        seen = value if isinstance(value, dict) else {}
+        seen[notice_id] = fingerprint
+        if len(seen) > _MAX_SEEN:  # never grows past the sources that exist; a guard, not a policy
+            seen = dict(list(seen.items())[-_MAX_SEEN:])
+        return seen
+    update_pref(username, NOTICES_SEEN_PREF_KEY, change)

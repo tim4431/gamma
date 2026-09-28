@@ -19,8 +19,10 @@
 //   delete — the top-most removed subtrees, last (so a block that escaped
 //            a deleted parent is moved out before the parent goes).
 // applyOps is idempotent: inserting a known id re-parents it, moving or
-// deleting an unknown one is a no-op; siblings stay sorted by key.
+// deleting an unknown one is a no-op, and a parent the tree lacks leaves
+// the block where it is (a new one stays out); siblings stay sorted by key.
 import { generateKeyBetween } from "fractional-indexing";
+import { findBlock } from "./blockModel.js";
 
 const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
@@ -188,9 +190,13 @@ function insertSorted(siblings, node, pos) {
 
 function placeUnder(tree, parent, node, pageId, pos) {
   if (parent === pageId) return insertSorted(tree, node, pos);
-  const out = findAndUpdate(tree, parent, (p) => ({ ...p, children: insertSorted(p.children, node, pos) }));
-  return out; // unknown parent: unchanged (the op is for a subtree we don't hold)
+  return findAndUpdate(tree, parent, (p) => ({ ...p, children: insertSorted(p.children, node, pos) }));
 }
+
+// A parent this tree lacks (an undo snapshot taken before the parent was
+// made, a subtree we don't hold): a block already here stays where it is —
+// it must never vanish with the op — and a new one stays out.
+const placeable = (tree, parent, pageId) => parent === pageId || !!findBlock(tree || [], parent);
 
 export function applyOps(tree, ops, pageId, pos) {
   let out = tree;
@@ -203,8 +209,12 @@ export function applyOps(tree, ops, pageId, pos) {
         ...(op.props ? { properties: applyPatch(b.properties, op.props) } : {}),
       }));
     } else if (op.op === "insert") {
-      pos.set(op.id, op.position);
       const ex = extract(out, op.id);
+      if (!placeable(ex ? ex.rest : out, op.parent, pageId)) {
+        if (ex) out = findAndUpdate(out, op.id, (b) => ({ ...b, content: op.content ?? "", properties: op.props || {} }));
+        continue;
+      }
+      pos.set(op.id, op.position);
       const node = ex
         ? { ...ex.node, content: op.content ?? "", properties: op.props || {}, position: op.position }
         : { id: op.id, content: op.content ?? "", properties: op.props || {}, position: op.position,
@@ -212,7 +222,7 @@ export function applyOps(tree, ops, pageId, pos) {
       out = placeUnder(ex ? ex.rest : out, op.parent, node, pageId, pos);
     } else if (op.op === "move") {
       const ex = extract(out, op.id);
-      if (!ex) continue;
+      if (!ex || !placeable(ex.rest, op.parent, pageId)) continue;
       pos.set(op.id, op.position);
       out = placeUnder(ex.rest, op.parent, { ...ex.node, position: op.position }, pageId, pos);
     } else if (op.op === "delete") {
@@ -225,7 +235,8 @@ export function applyOps(tree, ops, pageId, pos) {
 
 // Coalesce a queue of ops: a `set` for a block folds into the last `set`
 // for the same block when nothing structural about it sits in between.
-// Returns true when the op was merged (nothing new appended).
+// Returns the queued op it was folded into (as it was before), or null when
+// it was appended.
 export function pushOp(queue, op) {
   if (op.op === "set") {
     for (let i = queue.length - 1; i >= 0; i--) {
@@ -241,28 +252,25 @@ export function pushOp(queue, op) {
       }
       if (op.props) merged.props = { ...(q.props || {}), ...op.props };
       queue[i] = merged;
-      return true;
+      return q;
     }
   }
   queue.push(op);
-  return false;
+  return null;
 }
 
 // Carry the per-viewer UI flags (open editor, folding) from the tree on
 // screen onto a freshly fetched one, so a reload never closes an editor.
-// The block being edited also keeps ITS text: the editor is the source of
-// truth for it, and the next commit sends that text on (the fresh tree is
-// the new base).
+// The text is the fetched tree's: what this tab has not saved yet is laid
+// over it by the collab session (collabSession's `overlay`), never taken
+// from the screen — a screen copy would become the base and never be sent.
 export function keepUiFlags(fresh, current) {
   const flags = new Map();
   const walk = (list) => { for (const n of list || []) { flags.set(n.id, n); walk(n.children); } };
   walk(current);
   const apply = (list) => (list || []).map((n) => {
     const old = flags.get(n.id);
-    const node = old
-      ? { ...n, editMode: !!old.editMode, collapsed: !!old.collapsed,
-          ...(old.editMode ? { content: old.content } : {}) }
-      : n;
+    const node = old ? { ...n, editMode: !!old.editMode, collapsed: !!old.collapsed } : n;
     return n.children?.length ? { ...node, children: apply(n.children) } : node;
   });
   return apply(fresh);

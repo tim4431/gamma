@@ -167,13 +167,17 @@ export function UsersSettings({ value, selfOnly = false }) {
   function deleteAccount(u) {
     confirm({
       title: T("Delete user"),
-      message: t("Delete \"{username}\" and ALL their data (notes, PDFs, settings)? This can't be undone.", { username: u.username }),
+      message: u.is_guest // a guest's workspace keeps nothing (docs/dev/guests.md)
+        ? t("Delete \"{username}\" and ALL their data (notes, PDFs, settings)? This can't be undone.", { username: u.username })
+        : t("Delete \"{username}\" and ALL their data (notes, PDFs, settings)? The server keeps a final copy of each workspace that goes with the account, in backups/deleted/.", { username: u.username }),
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
         const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
         if (!d) return;
-        setStatus(d.warning || t("Deleted {name}.", { name: u.username }));
+        setStatus(d.warning || (d.deleted_workspaces?.length && !u.is_guest
+          ? t("Deleted {name}. A final copy of each of their workspaces is in backups/deleted/.", { name: u.username })
+          : t("Deleted {name}.", { name: u.username })));
         setEdit(null);
       },
     });
@@ -220,7 +224,7 @@ export function UsersSettings({ value, selfOnly = false }) {
           {u.username !== myName ? (
             <Section title={t("Danger zone")} tone="danger">
               <Row icon={Trash2Icon} label={t("Delete account")}
-                hint={t("Deletes {username} with every page, PDF and setting of theirs. Can't be undone.", { username: u.username })}>
+                hint={t("Deletes {username} with every page, PDF and setting of theirs; a final copy of their workspaces stays on the server.", { username: u.username })}>
                 <button className="uiBtn sm danger" disabled={busy} onClick={() => deleteAccount(u)}>{t("Delete…")}</button>
               </Row>
             </Section>

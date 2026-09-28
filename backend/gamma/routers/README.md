@@ -9,6 +9,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `admin.py`    | `/api/admin/*`                      | accounts, server settings, every workspace, the server log |
 | `blocks.py`   | `/api/blocks/*`                     | the block tree (CRUD, children, subtree, by-doc) |
 | `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/{id}/attachment` | page-first endpoints: create a page, attach/detach its document, which pages carry which PDFs |
+| `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |
 | `uploads.py`  | `/api/uploads/*`, `/upload-file`    | PDF / image / any-file upload + serving (content-addressed; executables refused) |
 | `pdf.py`      | `/api/resolve-pdf`                  | find a real PDF url (arXiv → meta tag → Unpaywall OA) |
 | `metadata.py` | `/api/metadata/fetch`, `/cite`      | paper metadata + BibTeX + PPT citation (cached on the page) |
@@ -23,4 +24,4 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 Gotchas:
 - **Route order** for `/api/blocks/*`: static prefixes (`by-doc`, `children`, `subtree`) must register **before** `/{block_id}`.
 - Every data endpoint resolves its WORKSPACE (`require_ws` / `resolve_ws` / `require_ws_writer` in `gamma/auth.py` — `?ws=`, the `X-Gamma-Workspace` header, a `?share=` token, else the account's personal workspace) and passes the id to the data helpers; `request.state.user` is the actor. Identity-only endpoints use `require_user`.
-- Slow endpoints (downloads, AI, PyPDF2) are intentionally sync `def` — FastAPI threadpools them. Don't make them `async`.
+- Endpoints that touch a database or files, and slow ones (downloads, AI, PyPDF2), are sync `def` — FastAPI threadpools them, so nothing waits on SQLite on the event loop. `async def` only when the handler must await (a body stream, a socket, an SDK handler), its database work in `run_in_threadpool`. They run side by side: a check-then-write takes the write lock first (`BEGIN IMMEDIATE` / `blocks_store.write_lock`) or lets a constraint decide. `tests/test_event_loop.py` checks it (docs/dev/debugging.md "Gotchas").

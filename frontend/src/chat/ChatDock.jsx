@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, copyText, isPdfFile, makeId, readNdjson } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
@@ -354,6 +354,10 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
 export default function ChatDock({
   session,
   readOnly = false,
+  // A workspace viewer asks the AI too, but chats are the workspace's and
+  // only editors change them: the conversation stays in this tab (no
+  // history, New chat starts over locally). App's session saves nothing then.
+  canSave = true,
   docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
   // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
@@ -401,6 +405,9 @@ export default function ChatDock({
   // A reply is streaming into THIS conversation. Other buckets stream on
   // their own — asking one paper never waits for another's answer.
   const busyHere = session.isActive(chatKey);
+  // The conversation's saves keep failing (chatSession retried what was
+  // worth retrying): it lives only in this tab until one goes through.
+  const saveError = session.saveError(chatKey);
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
@@ -592,11 +599,16 @@ export default function ChatDock({
         const latest = session.getSnapshot().replies.get(chatKey);
         // Once a reply was saved before this GET, the server is authoritative
         // again (another tab or a folder rename may have changed the bucket).
+        // Whenever the stored copy is what's shown, later saves are
+        // conditional on its version (chatSession); a copy of our own that
+        // isn't saved yet keeps the version its last save left.
         if (reloadSaved && latest === reply && session.isSaved(chatKey)) {
           showLoaded(data.messages || [], data.title);
           session.forget(chatKey);
+          session.seen(chatKey, data.messages || [], data.updated_at);
         } else {
           showLoaded(latest?.messages || data.messages || [], data.title);
+          if (!latest) session.seen(chatKey, data.messages || [], data.updated_at);
         }
       })
       .catch((err) => { if (!cancelled && !session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message })); });
@@ -642,17 +654,25 @@ export default function ChatDock({
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
     ? [...chatMessages, { role: "ai", text: "", partial: true }]
     : chatMessages;
-  const currentPayload = () => ({ bucket: chatKey, messages: chatMessages, title: chatTitle });
+  // The conversation as this tab holds it — after a flush, which may have
+  // merged in what another tab saved — and the version it is based on, so
+  // the server archives a newer stored copy instead of dropping it.
+  const currentPayload = () => ({
+    bucket: chatKey, title: chatTitle, updated_at: session.version(chatKey),
+    messages: session.getSnapshot().replies.get(chatKey)?.messages ?? chatMessages,
+  });
 
   async function newChat() {
     if (busyHere) return;
-    const payload = currentPayload();
-    try {
-      await session.flush(chatKey);
-      await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
-    } catch (err) {
-      setStatus(t("Couldn't keep the conversation in history: {message}", { message: err.message }));
-      return;
+    // A viewer's conversation was never saved: starting over is local.
+    if (canSave) {
+      try {
+        await session.flush(chatKey);
+        await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
+      } catch (err) {
+        setStatus(t("Couldn't keep the conversation in history: {message}", { message: err.message }));
+        return;
+      }
     }
     session.forget(chatKey);
     if (chatKeyRef.current !== chatKey) return;
@@ -673,6 +693,7 @@ export default function ChatDock({
       const data = await apiJson(`${API}/chat-history/${id}/open`,
         { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
       session.forget(chatKey);
+      session.seen(chatKey, data.messages || [], data.updated_at);
       if (chatKeyRef.current !== chatKey) return;
       showLoaded(data.messages || [], data.title);
       setHistory(null);
@@ -692,10 +713,11 @@ export default function ChatDock({
     const title = edit.text.trim();
     try {
       if (edit.id === "") {
+        // The title alone: the messages go through the session's saves.
         setChatTitle(title);
         await session.flush(chatKey);
         await apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`,
-          { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ messages: chatMessages, title }) });
+          { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       } else {
         setHistory((prev) => (prev || []).map((s) => (s.id === edit.id ? { ...s, title } : s)));
         await apiJson(`${API}/chat-history/${edit.id}`,
@@ -866,7 +888,11 @@ export default function ChatDock({
       ...(sendingPdf ? pdfPages.map((p) => p.title) : []),
     ];
     const contextPages = selectedDocs.map((id) => ({ id, title: homeBlocks.find((b) => b.id === id)?.content || t("Untitled") }));
+    // Messages carry an id: two copies of one conversation (another tab, a
+    // member) merge by it (chatSession.mergeChats), a streamed reply's
+    // versions included.
     const userMsg = {
+      id: makeId(),
       contextPages,
       includeNotes,
       role: "user",
@@ -897,8 +923,9 @@ export default function ChatDock({
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
+    const replyId = makeId(); // every version of this reply, partial or final, is one message
     const aiMsg = (extra = {}) => ({
-      role: "ai", text: acc,
+      id: replyId, role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}) } : {}),
@@ -1313,7 +1340,7 @@ export default function ChatDock({
           <SlidersIcon size={16} />
         </button>
         {findBtn}
-        <span data-popover="chathistory" className="popoverAnchor">
+        {canSave ? <span data-popover="chathistory" className="popoverAnchor">
           <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
@@ -1375,9 +1402,14 @@ export default function ChatDock({
               </div>
             </div>
           ) : null}
-        </span>
+        </span> : (
+          <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
+            {t("Not saved")}
+          </span>
+        )}
         <button type="button" className="ctlBtn" onClick={newChat} disabled={busyHere}
-          title={t("New chat — keeps this conversation in history and starts a fresh one")} aria-label={t("New chat")}>
+          title={canSave ? t("New chat — keeps this conversation in history and starts a fresh one") : t("New chat")}
+          aria-label={t("New chat")}>
           <PlusIcon size={16} />
         </button>
       </div>
@@ -1405,6 +1437,12 @@ export default function ChatDock({
           </span>
           <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
+        </div>
+      ) : null}
+      {saveError ? (
+        <div className="chatHealthStrip" role="alert" data-testid="chat-save-error" title={saveError}>
+          <span className="chatHealthText">{t("This conversation isn't saved: {message}", { message: saveError })}</span>
+          <button className="uiBtn sm" onClick={() => session.flush(chatKey).catch(() => {})}>{t("Retry")}</button>
         </div>
       ) : null}
       {chatFindOpen ? (

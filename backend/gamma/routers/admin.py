@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, cloud_auth, workspaces
+from .. import ai_settings, backup_schedule, backups, cloud_auth, integrity, publisher_sessions, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, begin_chatgpt_signin, new_chatgpt_entry,
                  reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -115,7 +115,7 @@ async def get_logs(request: Request, after: int = 0):
 
 
 @router.get("/settings")
-async def get_settings(request: Request):
+def get_settings(request: Request):
     """Server-wide default storage limits (per-user overrides live on the
     users list), the public URL, the cloud sign-in and the guest settings
     (lifetime, demo mode — each with its source) for the admin rows in the
@@ -143,7 +143,7 @@ class SettingsUpdateRequest(BaseModel):
 
 
 @router.put("/settings")
-async def update_settings(payload: SettingsUpdateRequest, request: Request):
+def update_settings(payload: SettingsUpdateRequest, request: Request):
     require_admin(request)
     try:
         if payload.public_url is not None:
@@ -303,14 +303,14 @@ def delete_ai_provider(provider_id: str, request: Request):
 
 
 @router.get("/users")
-async def list_users(request: Request):
+def list_users(request: Request):
     me = require_admin(request)
     with connect_users_db() as conn:
         return {"users": _user_list(conn, with_usage=True), "me": me}
 
 
 @router.get("/workspaces")
-async def list_workspaces(request: Request):
+def list_workspaces(request: Request):
     """Every workspace on the server with its members and upload size, plus
     directories under workspaces/ that no row names (leftovers to inspect)."""
     require_admin(request)
@@ -320,9 +320,10 @@ async def list_workspaces(request: Request):
 # --- server backups (gamma/backups.py) ---------------------------------------
 
 @router.get("/backups")
-async def list_backups(request: Request):
+def list_backups(request: Request):
     """Every snapshot under backups/ (name, time, label, schema version,
-    files, size, whether uploads were included)."""
+    files, size, whether uploads were included, ``auto``, ``integrity`` and
+    ``damaged`` — ``backups.info``)."""
     require_admin(request)
     return {"backups": backups.list_backups()}
 
@@ -340,6 +341,8 @@ def create_backup(payload: BackupCreateRequest, request: Request):
         return backups.create(payload.label.strip() or "manual", uploads=payload.uploads)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:  # a full disk: nothing of the half-written copy is left
+        raise HTTPException(status_code=507, detail=f"the backup could not be written: {e}")
 
 
 def _named_backup(name: str) -> dict:
@@ -360,11 +363,23 @@ def download_backup(name: str, request: Request):
 
 
 @router.delete("/backups/{name}")
-async def delete_backup(name: str, request: Request):
+def delete_backup(name: str, request: Request):
     require_admin(request)
     _named_backup(name)
     backups.delete(name)
     return {"ok": True}
+
+
+# Sync def: reads every database of the server.
+@router.post("/check-databases")
+def check_databases(request: Request):
+    """SQLite's quick_check of users.db and every workspace's pages.db and
+    data.db as they are now (Settings → Server → Databases): ``{ok,
+    checked_at, files: [{file, workspace, name, result, ok}]}``. A failed
+    file raises the admins' ``db-damage`` notice until a later check of it
+    passes (gamma/integrity.py)."""
+    require_admin(request)
+    return integrity.check_all()
 
 
 class UserCreateRequest(BaseModel):
@@ -374,7 +389,7 @@ class UserCreateRequest(BaseModel):
 
 
 @router.post("/users")
-async def create_user(payload: UserCreateRequest, request: Request):
+def create_user(payload: UserCreateRequest, request: Request):
     require_admin(request)
     username = payload.username.strip()
     if not _USERNAME_RE.match(username):
@@ -384,7 +399,10 @@ async def create_user(payload: UserCreateRequest, request: Request):
     with connect_users_db() as conn:
         if _get_user(conn, username):
             raise HTTPException(status_code=409, detail="user already exists")
-    create_account(username, password, is_admin=payload.is_admin)
+    try:
+        create_account(username, password, is_admin=payload.is_admin)
+    except sqlite3.IntegrityError:  # created by another request since the check
+        raise HTTPException(status_code=409, detail="user already exists")
     with connect_users_db() as conn:
         return {"users": _user_list(conn)}
 
@@ -399,7 +417,7 @@ class UserUpdateRequest(BaseModel):
 
 
 @router.put("/users/{username}")
-async def update_user(username: str, payload: UserUpdateRequest, request: Request):
+def update_user(username: str, payload: UserUpdateRequest, request: Request):
     require_admin(request)
     with connect_users_db() as conn:
         row = _get_user(conn, username)
@@ -418,6 +436,10 @@ async def update_user(username: str, payload: UserUpdateRequest, request: Reques
             conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
             conn.execute("DELETE FROM integration_tokens WHERE username = ?", (username,))
         if payload.is_admin is not None:
+            if not conn.in_transaction:
+                # the count and the write as one step: two admins demoting
+                # each other at once must not both pass the last-admin check
+                conn.execute("BEGIN IMMEDIATE")
             if not payload.is_admin and row[2] and _admin_count(conn) <= 1:
                 raise HTTPException(status_code=400, detail="cannot demote the last admin")
             conn.execute("UPDATE users SET is_admin = ? WHERE username = ?",
@@ -439,10 +461,24 @@ class UserRenameRequest(BaseModel):
     new_username: str
 
 
+def rename_account(conn: sqlite3.Connection, old: str, new: str) -> None:
+    """Rename an account (shared by the GUI and manage.py): its rows
+    (``rename_account_rows``) and the owner of its backup tasks, which are
+    files (``backup_schedule.renaming``). Commits. Raises
+    ``backup_schedule.TaskBusy``, with nothing renamed, while one of its
+    tasks runs."""
+    with backup_schedule.renaming(old, new):
+        rename_account_rows(conn, old, new)
+        conn.commit()
+
+
 def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
-    """Every row that names an account (shared by the GUI and manage.py).
-    Sessions and share tokens keep working — nobody is logged out, including
-    the renamed user. Workspace directories are named by id, so no files move."""
+    """Every row that names an account. Sessions and share tokens keep
+    working — nobody is logged out, including the renamed user. Workspace
+    directories are named by id, so no files move. What the account
+    controls follows it — its offline copies, its usage record, its
+    publisher connections, the invitations it sent — so nothing of it
+    passes to a later account that takes the old name."""
     conn.execute("UPDATE users SET username = ? WHERE username = ?", (new, old))
     conn.execute("UPDATE sessions SET username = ? WHERE username = ?", (new, old))
     conn.execute("UPDATE integration_tokens SET username = ? WHERE username = ?", (new, old))
@@ -453,6 +489,10 @@ def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
     conn.execute("UPDATE workspaces SET created_by = ? WHERE created_by = ?", (new, old))
     conn.execute("UPDATE workspaces SET name = ? WHERE name = ? AND created_by = ?", (new, old, new))
     conn.execute("UPDATE user_prefs SET username = ? WHERE username = ?", (new, old))
+    conn.execute("UPDATE mirrors SET owner = ? WHERE owner = ?", (new, old))
+    conn.execute("UPDATE ai_usage SET username = ? WHERE username = ?", (new, old))
+    conn.execute("UPDATE pending_memberships SET invited_by = ? WHERE invited_by = ?", (new, old))
+    publisher_sessions.rename_account(conn, old, new)
     # Invited-people lists on shares ("carol:edit,dave:view") name accounts too.
     for token, allowed in conn.execute("SELECT token, allowed_users FROM shares WHERE allowed_users != ''").fetchall():
         parts = [p.strip() for p in allowed.split(",") if p.strip()]
@@ -461,10 +501,12 @@ def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
             conn.execute("UPDATE shares SET allowed_users = ? WHERE token = ?", (",".join(changed), token))
 
 
+# Sync def: it rewrites the account's backup task files.
 @router.post("/users/{username}/rename")
-async def rename_user(username: str, payload: UserRenameRequest, request: Request):
+def rename_user(username: str, payload: UserRenameRequest, request: Request):
     """Rename an account (sessions and share tokens keep working — nobody is
-    logged out, including the renamed user)."""
+    logged out, including the renamed user). 409 while one of its backup
+    tasks runs."""
     require_admin(request)
     new = payload.new_username.strip()
     if not _USERNAME_RE.match(new):
@@ -480,17 +522,21 @@ async def rename_user(username: str, payload: UserRenameRequest, request: Reques
             return {"users": _user_list(conn)}
         if _get_user(conn, new):
             raise HTTPException(status_code=409, detail="user already exists")
-        rename_account_rows(conn, username, new)
-        conn.commit()
+        try:
+            rename_account(conn, username, new)
+        except backup_schedule.TaskBusy as e:
+            raise HTTPException(status_code=409, detail=str(e))
         return {"users": _user_list(conn), "renamed": {"from": username, "to": new}}
 
 
+# Sync def: each deleted workspace is zipped to backups/deleted/ first.
 @router.delete("/users/{username}")
-async def delete_user(username: str, request: Request):
+def delete_user(username: str, request: Request):
     """Delete an account (a guest account too) through
     ``workspaces.delete_account``. Its memberships go; the workspaces it
     alone owned (its personal one included) are deleted with their files —
-    the response names them."""
+    the response names them — after a final copy of each went to
+    backups/deleted/ (507, nothing deleted, when one cannot be written)."""
     me = require_admin(request)
     if username == me:
         raise HTTPException(status_code=400, detail="cannot delete your own account")
@@ -500,7 +546,10 @@ async def delete_user(username: str, request: Request):
             raise HTTPException(status_code=404, detail="user not found")
         if row[2] and _admin_count(conn) <= 1:
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
-    deleted = workspaces.delete_account(username)
+    try:
+        deleted = workspaces.delete_account(username, by=me)
+    except workspaces.FinalCopyError as e:
+        raise HTTPException(status_code=507, detail=str(e))
     with connect_users_db() as conn:
         users = _user_list(conn)
     return {"users": users, "deleted_workspaces": deleted, "warning": ""}

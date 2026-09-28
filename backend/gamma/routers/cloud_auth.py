@@ -45,7 +45,7 @@ router = APIRouter()
 
 
 @router.get("/api/server-config")
-async def server_config():
+def server_config():
     cfg = cloud_auth.settings()
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
@@ -127,7 +127,7 @@ def _back(path: str, **params) -> RedirectResponse:
 
 
 @router.get("/api/auth/cloud/status")
-async def cloud_status(request: Request):
+def cloud_status(request: Request):
     user = require_user(request)
     cfg = cloud_auth.settings()
     # the issuer is the portal's address too: Settings → Account & sync opens it from here;
@@ -171,7 +171,7 @@ def cloud_sync_now(payload: SyncRequest, request: Request):
 
 
 @router.post("/api/auth/cloud/unlink")
-async def cloud_unlink(request: Request):
+def cloud_unlink(request: Request):
     """Detach the cloud identity. An account the cloud provisioned has no
     password, so unlinking would lock it out: refused until a password is
     set."""

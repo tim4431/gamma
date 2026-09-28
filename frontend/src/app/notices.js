@@ -14,6 +14,8 @@ import { t, T } from "../shared/i18n/i18n.js";
 export const NOTICE_MESSAGES = [
   T("Gamma v{version} is available — this server runs v{current}"),
   T("New errors in the server log"),
+  T("A database check found damage in {file}"),
+  T("A database check found damage in {n} database files"),
   T("The backup task “{name}” failed"),
   T("{n} backup tasks failed"),
   T("{n} sync conflict to look at in your clones"),
@@ -40,6 +42,7 @@ export function noticeText(notice) {
 const ACTIONS = {
   update: T("See the update"),
   "log-errors": T("Open the server log"),
+  "db-damage": T("Check the databases"),
   "backup-failed": T("Review backups"),
   "mirror-conflicts": T("Resolve the conflicts"),
   "publish-conflicts": T("Resolve the conflicts"),

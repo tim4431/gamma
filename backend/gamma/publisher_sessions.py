@@ -149,6 +149,29 @@ def disconnect(username: str, host: str) -> None:
         conn.commit()
 
 
+def rename_account(conn, old: str, new: str) -> None:
+    """Carry an account's connections over to its new name (the account
+    rename, ``routers/admin.rename_account_rows``). Every snapshot is sealed
+    with the name it belongs to (``cookie_jar`` checks it), so each is
+    re-sealed under the new one; a snapshot that no longer opens is dropped
+    (it could never be used again). Caller commits."""
+    rows = conn.execute("SELECT host, encrypted FROM publisher_sessions WHERE username=?",
+                        (old,)).fetchall()
+    if not rows:
+        return
+    box = cipher()
+    for host, encrypted in rows:
+        try:
+            payload = json.loads(box.decrypt(encrypted.encode("ascii")))
+        except (InvalidToken, ValueError):
+            conn.execute("DELETE FROM publisher_sessions WHERE username=? AND host=?", (old, host))
+            continue
+        payload["user"] = new
+        sealed = box.encrypt(json.dumps(payload).encode()).decode("ascii")
+        conn.execute("UPDATE publisher_sessions SET username=?, encrypted=? WHERE username=? AND host=?",
+                     (new, sealed, old, host))
+
+
 class _PublisherPolicy(DefaultCookiePolicy):
     def __init__(self):
         super().__init__(strict_ns_domain=DefaultCookiePolicy.DomainStrictNonDomain)

@@ -24,7 +24,16 @@ export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `pdf_page` /
 `pdf_position`; a Gamma export's private `/GammaInk` key restores pressure
 and time, foreign ink is polylines at the annotation's width
-([handwriting.md](handwriting.md)).
+([handwriting.md](handwriting.md)). The blocks land under the `block_id`
+asked for, which may be a block inside the page; the reload and the log
+entry go to the page.
+
+The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
+.md) goes into the page carrying that PDF, made when there is none, under
+the write lock like every lookup by attachment. Highlights already on the
+page are skipped by their quote and notes by their text (a note written
+twice in the .md stays twice), so running it again adds nothing. Into an
+existing page it logs one `reload` under the importing account.
 
 Because imported annotations would otherwise render twice (pdf.js paints them
 into the canvas AND the blocks draw as overlays), the Settings → Reading → PDF
@@ -166,6 +175,13 @@ folder of notes, because they only differ in naming and link conventions
 - **Idempotent**: a `.md` already imported (same bytes — `markdown_import`
   digest — or the same `notion_id`) is skipped, and links to it resolve to
   the existing page, so re-importing an export adds nothing.
+- **Page by page**: a page's bundled files are stored while its links are
+  rewritten, outside any transaction. Its rows then go in as one short
+  transaction: `insert_note_page` takes the write lock and stamps the page,
+  and the import commits. Other writers are never shut out for the length
+  of an import, the change feed lists each page as it lands
+  ([collab.md](collab.md) "The change feed"), and an import that fails half
+  way keeps the pages it finished.
 
 The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
 `links_resolved`, `notion`) and warnings appear in the shared dialog. `pages`
@@ -193,6 +209,13 @@ tags→`category`, notes→child blocks (`properties.zotero_note`), then runs th
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
+Each item is its own short transaction (`_zotero_item_page`). Its PDF is
+stored first, outside any transaction; a new page and its notes are then
+inserted under the write lock and stamped at that commit. A merge into an
+existing page is an op batch by the importing account (a `set` of the
+changed properties plus an `insert` per new note, through `apply_ops`),
+which the page's open tabs and the workspace's mirrors see like any edit.
+A re-import that changes nothing writes nothing.
 
 Choosing the ZIP opens the shared import review dialog. Its two trees show
 the archive (including empty directories and unused files) and the destination
@@ -277,11 +300,14 @@ routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 `gamma-backup-1` layout as `/api/export` (`gamma/ws_backup.py`) — a `pages.db` holding just the
 selected page subtrees verbatim (same block ids), a `data.db` with their AI
 chats (plus the folder view's own `home:<path>` chat buckets on a folder
-export), `uploads/` with just the referenced files (doc_id PDFs + anything
-matching `UPLOAD_RE` in content/properties — the orphan-cleanup reference
-rule), and a `manifest.json`. **There is no new import code**: any Gamma
+export), `uploads/` with just the referenced files (`storage.upload_refs`,
+the reference rule the orphan check uses: doc_id PDFs + `/api/uploads/…`
+in content/properties), and a `manifest.json`. **There is no new import code**: any Gamma
 imports it through the existing `/api/import-data?mode=merge` — additive,
-deduped by block id / doc id / content hash, so re-importing adds nothing. The
+deduped by block id / doc id / content hash, so re-importing adds nothing.
+A page it adds comes in whole and stamped now (the change feed sees it); a
+block whose id the workspace already uses on another page gets a fresh id
+([workspaces.md](workspaces.md) "Export and backups"). The
 ⋮ Import dialog's "Gamma export (.zip)" source feeds the zip to that endpoint
 via the same upload/progress path as Settings → Restore backup (guests can't
 import). A Gamma export is a complete copy, so the Export dialog has no

@@ -33,6 +33,7 @@ import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
 import LibraryEmpty from "../library/LibraryEmpty";
+import RecentlyDeleted from "../library/RecentlyDeleted";
 import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -40,7 +41,7 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "../shared/ui/Icons";
 
@@ -90,6 +91,7 @@ import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
+import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
@@ -465,15 +467,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Auth state: null=loading, false=logged out, {user, is_guest}=logged in
   const [authUser, setAuthUser] = useState(shareMode ? {user:"_public"} : null);
-  const chatSession = useMemo(() => createChatSession((key, messages) => {
+  // Chats and the recents covers are the workspace's, and only its editors
+  // and owners write them: a viewer's conversation stays in the tab (ChatDock
+  // `canSave`), its covers in this browser.
+  const canWriteWorkspace = !shareMode && workspace?.role !== "viewer";
+  const chatSession = useMemo(() => createChatSession((key, messages, updatedAt) => {
     if (getExpectedUser() !== authUser?.user || getCurrentWorkspace() !== wsId) {
       throw new Error("The account or workspace changed.");
     }
+    if (!canWriteWorkspace) return Promise.resolve({ updated_at: updatedAt });
+    // Conditional on the version this tab's copy is based on: a 409 brings
+    // the stored conversation for the session to merge (chat/chatSession.js).
     return apiJson(`${API}/chats/${encodeURIComponent(key)}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, updated_at: updatedAt }),
     });
-  }), [authUser?.user, wsId]);
+  }), [authUser?.user, wsId, canWriteWorkspace]);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState(""); // a message, or {text, field} (LoginPage)
@@ -766,7 +775,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Restore an exported zip into a workspace (`wsId` — any of mine; the open
   // one by default). mode "replace": pages + chats are replaced by the
-  // backup, uploaded files are merged in. mode "merge": only pages/chats
+  // backup (the server keeps the replaced state as a "Before restore"
+  // snapshot), the backup's files come back. mode "merge": only pages/chats
   // missing there are added, existing data wins. Restoring into the OPEN
   // workspace reloads afterwards — every piece of in-memory state (home
   // feed, tabs, chats) is stale — while another workspace's restore leaves
@@ -791,10 +801,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } : {
         title: T("Replace all data"),
         message: (
-          <>{t("Restore “{file}” ({size}) into the workspace “{workspace}”? {replaced} Uploaded PDFs are merged in (nothing is deleted). {final}", {
+          <>{t("Restore “{file}” ({size}) into the workspace “{workspace}”? {replaced} Files the backup holds come back; files only the current notes use are cleaned up later. {final}", {
             file: f.name, size: fmtBytes(f.size), workspace: who,
             replaced: <b>{t("ALL of that workspace's notes and chats will be REPLACED by the backup.")}</b>,
-            final: <b>{t("This cannot be undone.")}</b> })}</>
+            final: <b>{t("The current state is saved first as a “Before restore” snapshot in Settings → Backups.")}</b> })}</>
         ),
         confirmLabel: t("Replace"),
         danger: true,
@@ -1201,14 +1211,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Deep-copy a page: new root block + a subtree clone with fresh block ids
-  // (highlight ids regenerated and same-page references remapped).
+  // (highlight ids regenerated and same-page references remapped). The copy
+  // shows the same PDF through its source_url but doesn't carry its doc_id:
+  // a PDF has one page, the one "by-doc" lookups and the extension find.
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
+    const { doc_id: pdfId, ...properties } = src.properties || {};
+    if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parent_id: "root", content: `${src.content || "Untitled"} (copy)`, properties: src.properties || {} }),
+      body: JSON.stringify({ parent_id: "root", content: `${src.content || "Untitled"} (copy)`, properties }),
     });
     const hlMap = new Map();
     const clone = (list) => (list || []).map((b) => {
@@ -1251,8 +1265,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function deletePages(ids) {
     setConfirmBox({
       title: ids.length === 1 ? t("Delete page") : t("Delete {n} pages", { n: ids.length }),
-      message: ids.length === 1 ? t("Delete this page and all its notes? This can't be undone.")
-        : t("Delete these {n} pages and all their notes? This can't be undone.", { n: ids.length }),
+      message: ids.length === 1 ? t("Move this page to Recently deleted? You can restore it from there for 30 days.")
+        : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -1262,9 +1276,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         updateTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
         clearSelection();
         await fetchHomeBlocks();
-        setStatus(t("Deleted {n} page{_s}.", { n: ids.length, _s: ids.length === 1 ? "" : "s" }));
+        setStatus(t("Moved {n} page{_s} to Recently deleted.", { n: ids.length, _s: ids.length === 1 ? "" : "s" }));
       },
     });
+  }
+  // The missing-page notice's Restore: the link named a page (or a block of
+  // one) in Recently deleted — bring the page back and open what was linked.
+  async function restoreMissingPage() {
+    const { id, trashed } = missingPage;
+    setMissingPage(null);
+    try {
+      await apiJson(`${API}/trash/${encodeURIComponent(trashed.id)}/restore`, { method: "POST" });
+    } catch (err) {
+      setStatus(t("Restore failed: {message}", { message: err.message }));
+      return;
+    }
+    fetchHomeBlocks();
+    if (id !== trashed.id) pendingBlockScrollRef.current = id;
+    openBlock(trashed.id, { link: true });
   }
 
   // Pinned folders — [{path, at}], most recently pinned first, shown in the
@@ -1534,7 +1563,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
       title: T("Delete folder"),
-      message: t("Delete “{path}”? It contains {papers}. Keep {them} in the library (only the folder goes away), or delete {their} notes too — pages linked into other folders are deleted as well.", { path, papers, them: n === 1 ? t("it") : t("them"), their: n === 1 ? t("it and its") : t("them and their") }),
+      message: t("Delete “{path}”? It contains {papers}. Keep {them} in the library (only the folder goes away), or delete {them} too — pages linked into other folders as well. Deleted pages can be restored from Recently deleted for 30 days.", { path, papers, them: n === 1 ? t("it") : t("them") }),
       confirmLabel: t("Keep pages"),
       onConfirm: async () => {
         for (const b of members) {
@@ -1550,7 +1579,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           try { await apiJson(`${API}/blocks/${id}`, { method: "DELETE" }); } catch {}
         }
         updateTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
-        await cleanupAfter(t("Folder “{path}” and its {papers} deleted.", { path, papers }));
+        await cleanupAfter(t("Folder “{path}” deleted — its {papers} moved to Recently deleted.", { path, papers }));
       },
     });
   }
@@ -2124,16 +2153,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Page snapshots — a small JPEG of the viewer at the last-read spot,
   // captured from the already-rendered pdf.js canvases and shown as the
-  // recents-card cover ({pageId: {img, at}}). Stored server-side per account
-  // (/api/page-snaps, per-page newest-`at` wins) so covers follow the synced
-  // recents strip across devices; localStorage is the instant-paint cache,
-  // capped so its footprint stays bounded. All writes go through
-  // setSnapsState so the ref, the state and the cache never diverge.
+  // recents-card cover ({pageId: {img, at}}). Stored server-side with the
+  // workspace (/api/page-snaps, per-page newest-`at` wins) so covers follow
+  // the synced recents strip across devices; localStorage is the
+  // instant-paint cache, capped so its footprint stays bounded. A viewer
+  // pushes nothing (the server refuses its writes) and keeps its captures in
+  // that cache. All writes go through setSnapsState so the ref, the state
+  // and the cache never diverge.
   const [pageSnaps, setPageSnaps] = useState({});
   const pageSnapsRef = useRef({});
   const snapsSyncedRef = useRef(false); // first server copy merged (gates the prune)
   const snapPendingRef = useRef({});    // {id: {img, at}} awaiting push
   const snapPushTimerRef = useRef(null);
+  const snapsWritableRef = useRef(canWriteWorkspace);
+  snapsWritableRef.current = canWriteWorkspace;
   function setSnapsState(next) {
     pageSnapsRef.current = next;
     setPageSnaps(next);
@@ -2150,7 +2183,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       snapPushTimerRef.current = null;
       const pending = snapPendingRef.current;
       snapPendingRef.current = {};
-      if (!prefsUserRef.current) return;
+      if (!prefsUserRef.current || !snapsWritableRef.current) return;
       for (const [pid, snap] of Object.entries(pending)) {
         apiJson(`${API}/page-snaps/${encodeURIComponent(pid)}`, {
           method: "PUT",
@@ -2179,6 +2212,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setSnapsState(next);
     }
     delete snapPendingRef.current[id];
+    if (!snapsWritableRef.current) return;
     apiJson(`${API}/page-snaps/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
   }
   // Merge a server copy in (per-page newest-`at` wins). With `heal` (the full
@@ -2411,9 +2445,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // pages, ">" the commands (Ctrl+Shift+P).
   const [quickOpen, setQuickOpen] = useState(null);
   // A link (the boot deep link, a page or block link clicked in the app)
-  // named a page that isn't in this workspace: its id, while the notice under
-  // the topbar says so. Cleared by Dismiss, Search the library or the next open.
-  const [missingPage, setMissingPage] = useState("");
+  // named a page that isn't in this workspace: {id, trashed} (trashed: the
+  // page's Recently deleted entry when that is where it went — the notice
+  // then offers Restore), while the notice under the topbar says so.
+  // Cleared by Dismiss, Search the library, Restore or the next open.
+  const [missingPage, setMissingPage] = useState(null);
+  // The Recently deleted dialog (library/RecentlyDeleted.jsx).
+  const [trashOpen, setTrashOpen] = useState(false);
   // A query handed to the workspace search as it opens (the listing's
   // "Search inside notes and PDFs"); cleared whenever the search is closed,
   // so a later plain open keeps whatever was typed in it.
@@ -3831,8 +3869,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Trees that did not come from an edit here: "load" (fetched from the
   // server — it becomes the collab base as is) or "remote" (another client's
   // ops applied — the base already has them, so the diff sends only our own
-  // edits in the same render). Neither is an undo step. Kept on the tree
-  // VALUE, never a flag beside setBlocks: a flag outlived a load React
+  // edits in the same render). Neither is an undo step, and a load empties
+  // the undo stack. Kept on the tree VALUE, never a flag beside setBlocks:
+  // a flag outlived a load React
   // skipped (nothing changed) or was set by an effect that runs before the
   // autosave one, and the edit committed with it was taken for a load and
   // never sent — the server later refused the block as unknown.
@@ -3846,7 +3885,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const caretBeforeRef = useRef(null);   // {id, from, to} of the last editor change
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   const blockHistory = useBlockHistory(blocks, setBlocks, {
-    isLoad: (tree) => treeOriginRef.current.has(tree),
+    originOf: (tree) => treeOriginRef.current.get(tree),
     pageId: focusedBlockId,
     enabled: !readOnly && !!focusedBlockId,
     caretRef,
@@ -4040,6 +4079,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (pageId === focusedBlockIdRef.current) loadBlocksForBlock(pageId, { keepUi: true });
     },
     onStatus: (msg) => setStatus(msg),
+    // Lasting, unlike the status line: edits waiting ("pending") stay up
+    // until they are saved; a dropped batch ("rejected") stays a while.
+    onSaveNotice: (msg, kind) => {
+      if (kind === "rejected") postPill("saveRejected", { msg, error: true }, { after: [20000, null] });
+      else postPill("save", msg ? { msg, error: true } : null);
+    },
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
@@ -4199,6 +4244,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // cached ref, so this must overwrite (while keeping fields the caller
     // didn't send, e.g. page_title).
     setRefCache((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...blockData } }));
+  }
+
+  // Embed cards and [[ref]] chips show a cached copy of a block on another
+  // page, fetched once (the rows fetch what isn't cached). Opening a page
+  // fetches the copies it shows again, so a card shows what its source says
+  // now, not what it said on an earlier visit — the source may have been
+  // edited on its own page since.
+  const refCacheRef = useRef(refCache);
+  refCacheRef.current = refCache;
+  function refreshRefs(tree) {
+    const ids = new Set();
+    const walk = (list) => {
+      for (const b of list || []) {
+        for (const m of (b.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) ids.add(m[1]);
+        walk(b.children);
+      }
+    };
+    walk(tree);
+    const cached = [...ids].filter((id) => refCacheRef.current[id]);
+    for (let i = 0; i < cached.length; i += 50) onFetchRefs(cached.slice(i, i + 50));
   }
 
   function triggerFlash(highlightId) {
@@ -4404,20 +4469,48 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { if (timer) clearTimeout(timer); };
   }, [pdfUrl, pdfHidden, focusedBlockId, shareMode, recentThumbs]);
 
-  // `keepUi`: a refetch under a live page — the open editor (and its text)
-  // and the folding survive the swap.
+  // A refetch of the open page (`keepUi`: under a live page — the open
+  // editor and the folding survive the swap). This tab's unsaved edits are
+  // laid over the fetched tree (collab.overlay): never lost from the screen,
+  // never taken as saved. An answer for a page no longer open, or overtaken
+  // by a newer refetch, is dropped (the token); a failed refetch keeps the
+  // tree on screen and tries again, ever longer apart.
+  const refreshRef = useRef({ token: 0, timer: null, tries: 0 });
   async function loadBlocksForBlock(blockId, { keepUi = false } = {}) {
+    const r = refreshRef.current;
+    const token = ++r.token;
+    clearTimeout(r.timer);
+    const current = () => token === r.token && blockId === focusedBlockIdRef.current;
     try {
       const data = await apiJson(`${API}/blocks/${blockId}/subtree`);
-      let children = normalizeBlocks((data.block?.children) || []);
+      if (!current()) return;
+      let children = collabRef.current.overlay(blockId, normalizeBlocks((data.block?.children) || []));
       if (keepUi) children = keepUiFlags(children, blocksRef.current);
       loadedSeqRef.current = data.seq ?? null;
       setBlocks(loaded(children));
-      return children;
-    } catch {
-      setBlocks(loaded([]));
-      return [];
+      r.tries = 0;
+      postPill("refresh", null);
+    } catch (err) {
+      if (!current()) return;
+      collabRef.current.reloadFailed(blockId);
+      const again = retryableStatus(err?.status || 0);
+      postPill("refresh", {
+        msg: again ? t("Couldn't refresh the page — retrying…") : t("Couldn't refresh the page: {message}", { message: err.message }),
+        error: true,
+      });
+      if (again) {
+        r.timer = setTimeout(() => { if (current()) loadBlocksForBlock(blockId, { keepUi: true }); },
+          Math.min(2000 * 2 ** r.tries++, 30000));
+      }
     }
+  }
+  // Drop a pending refetch (and its retry) of the page being left.
+  function cancelRefresh() {
+    const r = refreshRef.current;
+    r.token++;
+    clearTimeout(r.timer);
+    r.tries = 0;
+    postPill("refresh", null);
   }
 
   // --- The AI agent's live footprint on the open page -----------------------
@@ -5033,7 +5126,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (block) {
       try {
         const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree`);
-        childBlocks = normalizeBlocks(subtreeData.block?.children || []);
+        // with what this tab has not saved of it yet (back on a page just left)
+        childBlocks = collabRef.current.overlay(block.id, normalizeBlocks(subtreeData.block?.children || []));
         loadedSeqRef.current = subtreeData.seq ?? null;
       } catch {}
     }
@@ -5104,10 +5198,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
       const props = block.properties || {};
-      const childBlocks = normalizeBlocks(block.children || []);
+      // Back on a page left with edits still unsaved (their save may be
+      // retrying): they are laid over the fetched tree, and the page's
+      // session resumes (collabSession's commit).
+      const childBlocks = collabRef.current.overlay(blockId, normalizeBlocks(block.children || []));
       loadedSeqRef.current = subtreeData.seq ?? null;
+      refreshRefs(childBlocks);
 
-      setMissingPage("");
+      setMissingPage(null);
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
       setPageTitle(block.content || t("Untitled"));
@@ -5189,10 +5287,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return openedPdfUrl;
     } catch (err) {
       if (err.status === 404 && opts?.link) {
-        // Not a failure to report as one: the page is gone, or lives in
-        // another workspace. The notice says so; a dead deep link leaves the
-        // address bar (a tab restore, which has no `link`, just clears it).
-        setMissingPage(blockId);
+        // Not a failure to report as one: the page is gone (or in Recently
+        // deleted), or lives in another workspace. The notice says so; a dead
+        // deep link leaves the address bar (a tab restore, which has no
+        // `link`, just clears it).
+        setMissingPage({ id: blockId, trashed: err.data?.trashed || null });
         postPill("status", null); // take down "Opening..."
         const url = new URL(window.location.href);
         if (url.searchParams.get("block") === blockId || url.searchParams.get("page") === blockId) {
@@ -5281,12 +5380,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Everything owed to the page being navigated away from: persist queued
   // edits, remember its scroll position + window layout, and kill any
-  // in-flight scroll restore so it can't touch the next document.
+  // in-flight scroll restore (or refetch of its tree) so it can't touch the
+  // next document.
   function leaveCurrentPage() {
     flushPendingSave();
     seedBlockIdRef.current = null;
     captureScrollPos();
     cancelPdfRestore();
+    cancelRefresh();
   }
   // Scroll the viewer back to an exact position. Two gates, both required:
   // the TARGET document must be the one rendered (the old document stays in
@@ -6376,36 +6477,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [attachModeBlockId]);
 
-  async function linkHighlightToBlock(blockId, highlight) {
+  // Both are tree edits like any other (ops, undo). A write of their own
+  // plus a refetch would replace the tree under edits not yet saved.
+  function linkHighlightToBlock(blockId, highlight) {
     // Store a pointer to the existing highlight's id, NOT a copy of its position.
     // Copying the position would create a duplicate visual highlight on the PDF at the same spot.
     // The jump logic resolves linked_highlight_id → scrolls to the real highlight.
-    await fetch(`/api/blocks/${blockId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        properties: {
-          linked_highlight_id: highlight.id,
-          pdf_page: highlight.position.pageNumber,
-        },
-      }),
-    });
-    await loadBlocksForBlock(focusedBlockId);
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
+      ...b,
+      properties: applyPatch(b.properties, { linked_highlight_id: highlight.id, pdf_page: highlight.position.pageNumber }),
+    })));
     setAttachModeBlockId(null);
     setAttachContextMenu(null);
   }
 
-  async function unlinkHighlightFromBlock(blockId) {
-    await fetch(`/api/blocks/${blockId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        properties: {
-          linked_highlight_id: null,
-        },
-      }),
-    });
-    await loadBlocksForBlock(focusedBlockId);
+  function unlinkHighlightFromBlock(blockId) {
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
+      ...b, properties: applyPatch(b.properties, { linked_highlight_id: null }),
+    })));
   }
 
   // Entering AI settings initializes prompt drafts; navigation guards protect
@@ -6574,6 +6663,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     homePick,
     homePicks: homeMode && lib.organize ? selectedPages.size : 0,
     deletePages: () => deletePages([...selectedPages]),
+    organize: lib.organize,
+    recentlyDeleted: () => { setOpenPopover(null); setTrashOpen(true); },
     toggleChat: () => setChatHidden((v) => !v),
     togglePdf: () => setPdfHidden((v) => !v),
     toggleNotes: () => setNotesVisible((v) => !v),
@@ -7963,7 +8054,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   disabled={readOnly}
                   onClick={() => setConfirmBox({
                     title: T("Delete page"),
-                    message: t("Delete \"{page}\" and all its notes? This can't be undone.", { page: pageTitle || t("this page") }),
+                    message: t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page: pageTitle || t("this page") }),
                     confirmLabel: t("Delete"),
                     danger: true,
                     onConfirm: async () => {
@@ -8165,6 +8256,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   />
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
+                {lib.organize && !folderFilter && !categoryFilter ? (
+                  <button type="button" className="ctlBtn" title={t("Recently deleted")}
+                    aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}>
+                    <Trash2Icon size={16} />
+                  </button>
+                ) : null}
               </div>
             ) : null}
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
@@ -8525,6 +8622,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       // effect puts the caret back.
                       keepEditRef.current = null;
                       return;
+                    } else if (collab.tooLong(id)) {
+                      // Its text is too long to save (the notice says so):
+                      // the editor stays open on it until it is shortened.
+                      return;
                     } else {
                       saveNowRef.current = true;
                       if (caretRef.current?.id === id) caretRef.current = null;
@@ -8802,6 +8903,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {...common}
           session={chatSession}
           readOnly={shareMode}
+          canSave={canWriteWorkspace}
           onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
@@ -9490,13 +9592,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <div className="missingPageNotice" role="status">
           <AlertCircleIcon size={16} aria-hidden="true" />
           <span className="missingPageText">
-            <b>{t("That page isn't here.")}</b> {t("It may have been deleted, or it lives in another workspace.")}
+            {missingPage.trashed ? (
+              <><b>{t("“{title}” is in Recently deleted.", { title: missingPage.trashed.title })}</b> {lib.organize ? t("Restore it to open it again.") : t("Someone who can edit this workspace can restore it.")}</>
+            ) : (
+              <><b>{t("That page isn't here.")}</b> {t("It may have been deleted, or it lives in another workspace.")}</>
+            )}
           </span>
-          <button type="button" className="uiBtn sm"
-            onClick={() => { setMissingPage(""); setOpenPopover(null); setQuickOpen({ prefix: "" }); }}>
-            {t("Search the library")}
-          </button>
-          <button type="button" className="uiBtn sm" onClick={() => setMissingPage("")}>{t("Dismiss")}</button>
+          {missingPage.trashed && lib.organize ? (
+            <button type="button" className="uiBtn sm primary" onClick={restoreMissingPage}>{t("Restore")}</button>
+          ) : (
+            <button type="button" className="uiBtn sm"
+              onClick={() => { setMissingPage(null); setOpenPopover(null); setQuickOpen({ prefix: "" }); }}>
+              {t("Search the library")}
+            </button>
+          )}
+          <button type="button" className="uiBtn sm" onClick={() => setMissingPage(null)}>{t("Dismiss")}</button>
         </div>
       ) : null}
       {attachModeBlockId && (
@@ -9862,6 +9972,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         />
       ) : null}
       {importReview ? <ImportReviewDialog {...importReview} onClose={() => setImportReview(null)} onComplete={completeLibraryImport} /> : null}
+      {trashOpen ? (
+        <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}
+          onRestored={() => fetchHomeBlocks()} />
+      ) : null}
       {exportOpen ? (
         <ExportDialog
           opts={exportOpts}

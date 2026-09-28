@@ -1,4 +1,14 @@
-"""Named backup tasks with UTC cron, task-specific retention and OS locking."""
+"""Named backup tasks with UTC cron, task-specific retention and OS locking.
+
+Every run is a full copy, so the limits below bound what an account can
+make the server keep: a task runs at most hourly, keeps at most
+``MAX_RETENTION`` days or snapshots, an account has at most ``MAX_TASKS``
+tasks, and each snapshot passes ``ws_backup.create``'s checks (at most
+``ws_backup.MAX_SCHEDULED_PER_WORKSPACE`` scheduled snapshots per workspace,
+none while the disk has less than ``ws_backup.MIN_FREE_BYTES`` free). A task
+saved before a limit existed fails its next run with the reason in
+``last_error`` (the ``backup-failed`` notice) until it is edited.
+"""
 import asyncio
 import hashlib
 import json
@@ -6,12 +16,15 @@ import os
 import re
 import time
 import uuid
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 
 from . import config, workspaces, ws_backup
 from .db import connect_users_db
 from .logbuf import log
+
+MAX_TASKS = 5         # per account
+MAX_RETENTION = 90    # days, or snapshots per workspace
 
 
 class TaskError(ValueError):
@@ -78,6 +91,23 @@ def next_run(expression, after):
                 if candidate > after:
                     return candidate.isoformat()
     raise TaskError("This schedule has no run in the next five years. Check the date fields.")
+
+
+def check_schedule(expression):
+    """At most one run an hour. One minute value puts every run in a
+    different hour; two or more make two runs within one hour."""
+    _, (minutes, *_rest) = cron_fields(expression)
+    if len(minutes) != 1:
+        raise TaskError("A backup task runs at most once an hour: give the schedule a single minute.")
+
+
+def check_limits(task):
+    """The task's schedule (``check_schedule``) and its retention, at most
+    MAX_RETENTION days or snapshots."""
+    check_schedule(task['cron'])
+    if not 1 <= int(task['retention_value']) <= MAX_RETENTION:
+        unit = "snapshots" if task['retention_mode'] == 'count' else "days"
+        raise TaskError(f"A backup task keeps at most {MAX_RETENTION} {unit}.")
 
 
 def root():
@@ -182,6 +212,29 @@ def list_tasks(owner):
     return sorted(result, key=lambda t: (t['created_at'], t['id']))
 
 
+@contextmanager
+def renaming(old, new):
+    """Rename the owner of ``old``'s tasks to ``new`` around an account
+    rename (``routers/admin.rename_account``): every task is held under its lock
+    while the ``with`` body renames the account's rows, and gets its new
+    owner when the body finishes without an error. Raises TaskBusy before
+    the body when one of them is running — its round writes the task back
+    when it ends and would bring the old name back — so nothing changes."""
+    with ExitStack() as stack:
+        ids = [task['id'] for task in list_tasks(old)]
+        for task_id in ids:
+            if not stack.enter_context(locked(task_id)):
+                raise TaskBusy("A backup task of this account is running. Rename the account when it finishes.")
+        yield
+        for task_id in ids:
+            try:
+                task = read(task_id)
+            except TaskError:
+                continue
+            if task['owner'] == old:
+                _write({**task, 'owner': new})
+
+
 def save(owner, data, task_id=None):
     data = {**data, 'cron': ' '.join(data['cron'].split())}
     if task_id:
@@ -195,8 +248,8 @@ def save(owner, data, task_id=None):
             if task['owner'] != owner:
                 raise TaskError("Backup task not found.")
         else:
-            if len(list_tasks(owner)) >= 100:
-                raise TaskError("You can keep up to 100 backup tasks.")
+            if len(list_tasks(owner)) >= MAX_TASKS:
+                raise TaskError(f"You can keep up to {MAX_TASKS} backup tasks.")
             task = dict(id=uuid.uuid4().hex, owner=owner, created_at=now().isoformat(),
                         last_run=None, last_success=None, last_error=None, state='pending', requested=False)
         name = data['name'].strip()
@@ -204,8 +257,10 @@ def save(owner, data, task_id=None):
             raise TaskError("Give this task a name.")
         next_time = next_run(data['cron'], now())
         updated = {**task, **data, 'name': name}
-        # Owners can still pause a task after losing access to a target.
+        # Owners can still pause a task after losing access to a target, or
+        # one saved before the limits.
         if updated['enabled'] or not task_id:
+            check_limits(updated)
             targets(updated)  # Recheck permissions again at execution.
         changed = not task_id or any(task.get(k) != updated[k] for k in ('cron', 'enabled'))
         updated['next_run'] = (next_time if changed else task.get('next_run')) if updated['enabled'] else None
@@ -263,6 +318,7 @@ def run_due(at=None):
                 task.update(state='running', last_run=at.isoformat())
                 _write(task)
                 try:
+                    check_limits(task)  # a task saved before the limits
                     ids = targets(task)
                     # Publish all selected snapshots before retention removes anything.
                     for ws in ids:

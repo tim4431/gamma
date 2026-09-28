@@ -16,6 +16,9 @@ const days = [[1, t("Mon")], [2, t("Tue")], [3, t("Wed")], [4, t("Thu")], [5, t(
 const SCOPES = [["all_owned", t("All I own")], ["selected", t("Selected")]];
 const FREQUENCIES = [["hourly", t("Hourly")], ["daily", t("Daily")], ["weekly", t("Weekly")], ["monthly", t("Monthly")], ["custom", t("Custom schedule (cron)")]];
 const UNITS = [["days", t("Days")], ["weeks", t("Weeks")], ["months", t("Months (30 days)")], ["count", t("Snapshots per workspace")]];
+// The server's bound on a task's retention, in days or snapshots
+// (backup_schedule.MAX_RETENTION).
+const MAX_RETENTION = 90;
 
 // This browser's offset from UTC and its zone's short name ("PDT"): what a
 // daily, weekly or hourly schedule is entered and shown in (backupSchedule.js).
@@ -168,7 +171,7 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
         <Section title={t("Retention")} />
         <div className="backupTaskGrid">
           <Field label={unit === "count" ? t("Keep latest") : t("Keep for")}><input className="aiKeyInput" type="number" required min="1"
-            max={Math.floor(3650 / ({ weeks: 7, months: 30 }[unit] || 1))} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+            max={Math.floor(MAX_RETENTION / ({ weeks: 7, months: 30 }[unit] || 1))} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
           <Field label={t("Retention unit")}><MenuSelect block label={t("Retention unit")} value={unit} onChange={setUnit} options={UNITS} /></Field>
         </div>
         <p className="settingsPaneHint">{t("Only this task’s snapshots expire, after a successful run. The newest snapshot is always kept. Deleting a task keeps its snapshots.")}</p>

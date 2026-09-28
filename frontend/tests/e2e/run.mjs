@@ -49,6 +49,7 @@ import { pdfLoadScenarios } from "./scenarios/pdfload.mjs";
 import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
+import { trashScenarios } from "./scenarios/trash.mjs";
 import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
 import { i18nScenarios } from "./scenarios/i18n.mjs";
@@ -82,6 +83,7 @@ const RUNNERS = {
   "cloud-sign-in": cloudSignInScenarios,
   "auth": authScenarios,
   "quick-open": quickOpenScenarios,
+  "trash": trashScenarios,
   "ipad": ipadScenarios,
 };
 

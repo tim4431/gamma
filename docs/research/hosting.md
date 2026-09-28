@@ -111,8 +111,8 @@ so R2 serves the Range requests (the bucket needs CORS that allows the
 `Range` header).
 
 The storage change itself: `store_pdf` / `store_file` write to R2 via the
-S3 API and keep a cached copy; `cleanup_orphan_uploads` deletes the object
-too; `ws_backup` writes snapshots to R2; new `GAMMA_R2_*` variables in
+S3 API and keep a cached copy; the orphan purge (`upload_gc`) deletes the
+object too; `ws_backup` writes snapshots to R2; new `GAMMA_R2_*` variables in
 `config.py`, with the pure-local behaviour kept when they are unset so
 self-hosters are untouched. Quotas, hashing and dedup do not change.
 
@@ -162,9 +162,11 @@ Things that already hold and only need checking:
 - Outbound fetches (PDF resolution, link previews, the agent's web reach)
   go through `net_guard.guarded_urlopen`, which refuses private addresses
   and redirects to them; every new outbound path must too.
-- `ratelimit.client_ip` trusts the first `X-Forwarded-For` hop; behind
-  Cloudflare it must read `CF-Connecting-IP` or every visitor shares one
-  bucket and the limiter locks the whole site.
+- `ratelimit.client_ip` is the connection's peer. Uvicorn rewrites it from
+  `X-Forwarded-For`, but only for proxies in `FORWARDED_ALLOW_IPS`. Behind
+  Cloudflare the proxy in front of Gamma must put `CF-Connecting-IP` into
+  that header (as the demo's Caddy does), or every visitor shares one bucket
+  and the limiter locks the whole site.
 - Anyone-with-the-link edit shares allow anonymous writes (rate limited per
   IP) and are where phishing pages get hosted; a report path and an admin
   kill switch for a share are needed.

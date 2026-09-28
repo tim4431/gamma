@@ -10,7 +10,7 @@ import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, translateModelFor } from "../app/prefs";
+import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
 import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -116,13 +116,13 @@ function TranslationPerformance({ value }) {
     <Row
       icon={RefreshIcon}
       label={t("Parallel requests")}
-      hint={t("Translation calls in flight at once (1–32)")}
+      hint={t("Translation calls in flight at once (1–4)")}
       title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
     >
       <UnitInput value={value.translateParallel} unit="calls" min={1}
         onCommit={(raw) => {
           const n = Number.parseInt(raw, 10);
-          if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
+          if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(TRANSLATE_PARALLEL_MAX, n)));
         }} />
     </Row>
   </Section>;

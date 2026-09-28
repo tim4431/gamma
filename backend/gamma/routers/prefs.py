@@ -24,6 +24,10 @@ it is only reachable through /api/ai/settings, which masks the keys — these
 generic endpoints must never serve it raw. The same goes for
 `translate-engines` (the machine-translation keys, /api/translate/engines).
 
+Every endpoint here is a sync def: they read and write users.db (and
+data.db for the covers), which may wait on another connection's write lock
+— FastAPI's threadpool keeps the event loop free meanwhile.
+
 Also here: /api/page-snaps — the recents-card cover thumbnails (small JPEG
 data URLs the client captures from the rendered viewer). Same "UI state that
 follows the account" idea, but far over the prefs size cap, so they get their
@@ -36,7 +40,6 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .. import cloud_sync
@@ -89,19 +92,19 @@ def write_profile_entries(payload: ProfilePatchRequest, request: Request):
 
 
 @router.get("/prefs/{key}")
-async def read_pref(key: str, request: Request):
+def read_pref(key: str, request: Request):
     user = require_user(request)
     _check_key(key)
     out = {"key": key}
     if key == PROFILE_PREF_KEY:
-        await run_in_threadpool(cloud_sync.sync_if_stale, user)
+        cloud_sync.sync_if_stale(user)
         out["cloud_choice"] = cloud_sync.profile_status(user)["state"] == "choose"
     value, updated_at = get_pref(user, key, "" if key in USER_PREF_KEYS else require_ws(request))
     return {**out, "value": value, "updated_at": updated_at}
 
 
 @router.put("/prefs/{key}")
-async def write_pref(key: str, payload: PrefWriteRequest, request: Request):
+def write_pref(key: str, payload: PrefWriteRequest, request: Request):
     user = require_user(request)
     _check_key(key)
     if len(json.dumps(payload.value)) > MAX_VALUE_BYTES:
@@ -133,8 +136,6 @@ class SnapWriteRequest(BaseModel):
     at: str = ""  # capture time (ISO, client clock) — newest wins across devices
 
 
-# Sync endpoints: they move up-to-200KB blobs through sqlite — FastAPI's
-# threadpool keeps the event loop free (same rule as the other blocking routes).
 @router.get("/page-snaps")
 def read_page_snaps(request: Request, after: str = ""):
     """All stored covers, or (with ?after=<iso>) only ones newer than that —
@@ -142,9 +143,11 @@ def read_page_snaps(request: Request, after: str = ""):
     return {"snaps": get_page_snaps(require_ws(request), after=after)}
 
 
+# The covers are the workspace's, shared by its members: changing them takes
+# an editor (a viewer's captures stay in its own browser).
 @router.put("/page-snaps/{page_id}")
 def write_page_snap(page_id: str, payload: SnapWriteRequest, request: Request):
-    ws = require_ws(request)
+    ws = require_ws(request, write=True)
     _check_snap_id(page_id)
     img = payload.img or ""
     if not img.startswith("data:image/jpeg;base64,"):
@@ -157,7 +160,7 @@ def write_page_snap(page_id: str, payload: SnapWriteRequest, request: Request):
 
 @router.delete("/page-snaps/{page_id}")
 def remove_page_snap(page_id: str, request: Request):
-    ws = require_ws(request)
+    ws = require_ws(request, write=True)
     _check_snap_id(page_id)
     delete_page_snap(ws, page_id)
     return {"ok": True}

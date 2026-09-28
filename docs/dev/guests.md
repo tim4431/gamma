@@ -38,10 +38,11 @@ no cloud link, no integrations, no notices, no provider editing, the
 bounded default quota (`server_settings.user_limits` decides by `is_guest`,
 never by name), and the shared AI keys only while the admin's switch is on.
 `workspaces.is_guest_workspace` means "a personal workspace whose owner is
-a guest": backup import and the reviewed Gamma import refuse it, it keeps
-no snapshots, and scheduled backups skip it. Admins may set a guest's
-storage limits and delete it, but never give it a password, the admin flag
-or a new name.
+a guest": backup import and the reviewed Gamma import refuse it, and
+scheduled backups skip it. It keeps no snapshots: neither the final copy a
+deleted workspace leaves nor the "pre-restore" one a restore of
+`GAMMA_GUEST_SEED` would take. Admins may set a guest's storage limits and
+delete it, but never give it a password, the admin flag or a new name.
 
 **Expiry.** A guest account lives `guest_ttl_hours` after
 `users.created_at` (a server setting, default 24; `GAMMA_GUEST_TTL_HOURS`

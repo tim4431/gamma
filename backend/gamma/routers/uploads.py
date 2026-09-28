@@ -1,18 +1,21 @@
 """PDF / image / generic file uploads (content-hash deduped) and upload serving."""
 
+import threading
+import time
+from collections import OrderedDict
+
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
 from .. import pdf_meta
-from ..db import connect_pages_db, ws_uploads_dir
-from ..server_settings import check_upload_allowed, workspace_quota
+from ..db import connect_pages_db
+from ..server_settings import workspace_quota
 from ..storage import (
     ALLOWED_IMAGE_TYPES,
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
     SANDBOXED_EXTENSIONS,
-    content_digest,
     display_filename,
     find_upload_file,
     is_pdf,
@@ -30,7 +33,7 @@ router = APIRouter(prefix="/api", tags=["uploads"])
 
 
 @router.get("/quota")
-async def get_quota(request: Request):
+def get_quota(request: Request):
     """The storage limits that apply to uploads into the request's workspace
     (its billing account's) and that account's usage — feeds the client-side
     pre-upload size check and the Settings usage display. (Deliberately its
@@ -39,10 +42,13 @@ async def get_quota(request: Request):
     return workspace_quota(require_ws(request))
 
 
+# The upload endpoints are sync defs: hashing and writing the file (and the
+# quota's walk of the uploads) run in the threadpool, reading the spooled
+# upload through ``file.file``.
 @router.post("/uploads")
-async def upload_pdf(request: Request, file: UploadFile = File(...)):
+def upload_pdf(request: Request, file: UploadFile = File(...)):
     ws = require_ws(request, write=True)
-    contents = await file.read()
+    contents = file.file.read()
     if not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
     doc_id, source_url, already_existed = store_pdf(ws, contents)
@@ -55,32 +61,24 @@ async def upload_pdf(request: Request, file: UploadFile = File(...)):
 
 
 @router.post("/upload-image")
-async def upload_image(request: Request, file: UploadFile = File(...)):
+def upload_image(request: Request, file: UploadFile = File(...)):
     # Share editors' images land in the page's workspace (and count against
     # its billing account) — they are referenced from that workspace's page.
     ws = require_ws_writer(request)
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
-    uploads = ws_uploads_dir(ws)
-    uploads.mkdir(parents=True, exist_ok=True)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail=f"unsupported image type: {file.content_type}")
-    contents = await file.read()
-    digest = content_digest(contents)
-    ext = IMAGE_EXTENSIONS[file.content_type]
-    target = uploads / f"{digest}{ext}"
-    already_existed = target.exists()
-    if not already_existed:
-        check_upload_allowed(ws, len(contents))
-        target.write_bytes(contents)
+    contents = file.file.read()
+    filename, already_existed = store_file(ws, contents, IMAGE_EXTENSIONS[file.content_type])
     return {
-        "url": f"/api/uploads/{digest}{ext}",
+        "url": f"/api/uploads/{filename}",
         "size": len(contents),
         "already_existed": already_existed,
     }
 
 
 @router.post("/upload-file")
-async def upload_file(request: Request, file: UploadFile = File(...)):
+def upload_file(request: Request, file: UploadFile = File(...)):
     """Store any file except executables (``storage.BLOCKED_EXTENSIONS``)
     under its content hash for a block to reference as
     ``[name](/api/uploads/<hash>.<ext>)`` — a file block. The extension comes
@@ -99,7 +97,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             ext = upload_extension(name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-    contents = await file.read()
+    contents = file.file.read()
     if ext == ".pdf" and not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
     filename, already_existed = store_file(ws, contents, ext)
@@ -107,22 +105,59 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             "already_existed": already_existed}
 
 
+# A share's yes to a file is remembered for a while: a shared page's images
+# are fetched on every render, its PDF in dozens of range requests. Only a
+# yes — a file the page stops referencing stays readable this long at most
+# (the browser caches it for a month anyway) — and a stopped share is
+# refused before the question is asked.
+SHARE_READ_TTL_S = 300
+SHARE_READ_MAX = 4096
+_share_reads: OrderedDict = OrderedDict()  # (ws, page, folder, filename) -> monotonic expiry
+_share_reads_lock = threading.Lock()
+
+
 def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
     """A share link may read only its own pages' PDFs (``<doc_id>.pdf``) or a
     file one of their subtrees references (embedded images, file chips — any
-    extension, matched textually)."""
-    needle = f"/api/uploads/{filename}"
+    extension, matched textually). Reads the shared pages only, never the
+    rest of the workspace."""
+    key = (ws, scope.page, scope.folder, filename)
+    now = time.monotonic()
+    with _share_reads_lock:
+        if _share_reads.get(key, 0) > now:
+            return True
     with connect_pages_db(ws) as conn:
-        if filename.endswith(".pdf"):
-            docs = conn.execute(
-                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.doc_id') = ?", (filename[:-4],)).fetchall()
-            if any(scope.allows_page(conn, r[0]) for r in docs):
-                return True
-        refs = conn.execute(
-            "SELECT id FROM unified_blocks WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0",
-            (needle, needle)).fetchall()
-        return any(scope.allows_block(conn, r[0]) for r in refs)
+        found = _pages_reference(conn, scope.pages(conn), filename)
+    if found:
+        with _share_reads_lock:
+            _share_reads[key] = now + SHARE_READ_TTL_S
+            _share_reads.move_to_end(key)
+            while len(_share_reads) > SHARE_READ_MAX:
+                _share_reads.popitem(last=False)
+    return found
+
+
+def _pages_reference(conn, pages: list[str], filename: str) -> bool:
+    """Whether one of ``pages`` carries ``filename`` as its PDF or a block of
+    its subtree names it (500 pages per query)."""
+    needle = f"/api/uploads/{filename}"
+    for i in range(0, len(pages), 500):
+        chunk = pages[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        if filename.endswith(".pdf") and conn.execute(
+                f"SELECT 1 FROM unified_blocks WHERE id IN ({marks}) "
+                "AND json_extract(properties, '$.doc_id') = ?", (*chunk, filename[:-4])).fetchone():
+            return True
+        if conn.execute(
+                f"""WITH RECURSIVE tree(id, content, properties) AS (
+                        SELECT id, content, properties FROM unified_blocks WHERE id IN ({marks})
+                        UNION ALL
+                        SELECT ub.id, ub.content, ub.properties
+                        FROM unified_blocks ub JOIN tree t ON ub.parent_id = t.id)
+                    SELECT 1 FROM tree WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0 LIMIT 1""",
+                (*chunk, needle, needle)).fetchone():
+            return True
+    return False
 
 
 @router.get("/pdf-info/{doc_id}")
@@ -148,9 +183,10 @@ def pdf_info(doc_id: str, request: Request):
 
 # GET and HEAD: the viewer asks HEAD for a file's size before deciding how to
 # open it (FastAPI does not add HEAD to a GET route by itself; FileResponse
-# answers a HEAD with the headers alone).
+# answers a HEAD with the headers alone). Sync def: a share visitor's access
+# check reads the shared pages.
 @router.api_route("/uploads/{filename}", methods=["GET", "HEAD"])
-async def serve_upload(filename: str, request: Request):
+def serve_upload(filename: str, request: Request):
     # Sanitize: only allow [hex].ext pattern, no path traversal
     dot = filename.rfind(".")
     if dot < 0:

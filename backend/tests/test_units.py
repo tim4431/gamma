@@ -57,7 +57,7 @@ def test_fuzzy_pattern_separator_tolerance():
     assert fuzzy_pattern("Qubit").search("QUBIT")                       # case-insensitive default
     assert not fuzzy_pattern("qubit", case=True).search("QUBIT")
     assert not fuzzy_pattern("fine", whole=True).search("refined")
-    assert fuzzy_pattern("(", regex=True) is None                       # invalid regex reported
+    assert fuzzy_pattern("(").search("a (b)")                           # the query is text, never a pattern
     assert fuzzy_pattern("   ") is None
 
 

@@ -18,11 +18,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
 from ..ai_client import (
-    AllowanceExhausted,
+    CallRefused,
     UpstreamError,
     add_usage as _add_usage,
     call_ai as _call_ai,
     check_allowance as _check_allowance,
+    check_call_slot as _check_call_slot,
     failure_kind,
     open_ai as _open_ai,
     partial_json_object as _partial_json_object,
@@ -73,13 +74,13 @@ from ..ai_settings import (
     protocol_choices,
     provider_label,
     require_ai_runtime,
-    save_provider_entries,
     server_entries_for,
     shared_allowance,
     update_entry,
+    update_provider_entries,
 )
-from ..auth import require_user, require_ws, ws_role
-from ..db import page_now, ws_db_path
+from ..auth import can_write, require_user, require_ws
+from ..db import connect_data_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
@@ -183,9 +184,10 @@ def _resolve_effort(requested: str) -> str:
 
 
 def _failure(error: Exception, what: str = "AI call failed") -> str:
-    """The error line a stream ends with: a used-up shared allowance says so
-    in its own words (the 429's detail), anything else is "<what>: <error>"."""
-    return error.detail if isinstance(error, AllowanceExhausted) else f"{what}: {error}"
+    """The error line a stream ends with: a call Gamma refused (a used-up
+    shared allowance, too many calls at once) says so in its own words (the
+    429's detail), anything else is "<what>: <error>"."""
+    return error.detail if isinstance(error, CallRefused) else f"{what}: {error}"
 
 
 def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
@@ -227,7 +229,7 @@ def _search_index_status(ws: str, doc_id: str) -> dict:
     """Whether the search index covers this doc — same rules as
     /api/metadata/status (ver mismatch = stale, re-indexed lazily)."""
     try:
-        with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+        with connect_data_db(ws) as conn:
             row = conn.execute(
                 "SELECT ver FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,)
             ).fetchone()
@@ -432,44 +434,50 @@ def ai_usage_reset(request: Request):
 
 
 @router.get("/ai/settings")
-async def ai_settings_get(request: Request):
+def ai_settings_get(request: Request):
     require_user(request)
     return _masked_settings(request)
 
 
 @router.post("/ai/providers")
-async def ai_provider_add(payload: AIProviderRequest, request: Request):
+def ai_provider_add(payload: AIProviderRequest, request: Request):
     user = _require_editor(request)
-    entries = load_provider_entries(user)
-    if len(entries) >= MAX_PROVIDERS:
-        raise HTTPException(status_code=400, detail="too many providers")
     if _is_oauth_protocol(payload.protocol):
         raise HTTPException(status_code=400,
                             detail="sign-in connections are created by signing in — use the Connect button")
-    entries.append(new_key_entry(payload, new_provider_id()))
-    save_provider_entries(user, entries)
+    entry = new_key_entry(payload, new_provider_id())
+
+    def add(entries):
+        if len(entries) >= MAX_PROVIDERS:
+            raise HTTPException(status_code=400, detail="too many providers")
+        entries.append(entry)
+    update_provider_entries(user, add)
     return _masked_settings(request)
 
 
-@router.put("/ai/providers/{provider_id}")
-async def ai_provider_update(provider_id: str, payload: AIProviderRequest, request: Request):
-    # A sign-in entry stays a sign-in entry (name/models remain editable
-    # here); shared entries are edited under /api/admin/ai-providers.
-    user = _require_editor(request)
-    entries = load_provider_entries(user)
+def _own_entry(entries: list, provider_id: str) -> dict:
     entry = next((e for e in entries if e.get("id") == provider_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    update_entry(entry, payload)
-    save_provider_entries(user, entries)
+    return entry
+
+
+@router.put("/ai/providers/{provider_id}")
+def ai_provider_update(provider_id: str, payload: AIProviderRequest, request: Request):
+    # A sign-in entry stays a sign-in entry (name/models remain editable
+    # here); shared entries are edited under /api/admin/ai-providers.
+    user = _require_editor(request)
+    update_provider_entries(user, lambda entries: update_entry(_own_entry(entries, provider_id), payload))
     return _masked_settings(request)
 
 
 @router.delete("/ai/providers/{provider_id}")
-async def ai_provider_delete(provider_id: str, request: Request):
+def ai_provider_delete(provider_id: str, request: Request):
     user = _require_editor(request)
-    entries = [e for e in load_provider_entries(user) if e.get("id") != provider_id]
-    save_provider_entries(user, entries)
+
+    def drop(entries):
+        entries[:] = [e for e in entries if e.get("id") != provider_id]
+    update_provider_entries(user, drop)
     return _masked_settings(request)
 
 
@@ -1003,16 +1011,18 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     if not payload.stream:
         try:
             reply = call(miss_texts)
-        except AllowanceExhausted:
+        except CallRefused:
             raise
         except Exception as e:
             log.warning(f"[ai_translate] {e}")
             raise HTTPException(status_code=502, detail=f"translation failed: {e}")
         return finish(reply)
 
-    # Streamed: the call opens inside the stream, so a used-up shared
-    # allowance is refused here, while it can still be an HTTP 429.
+    # Streamed: the call opens inside the stream, so a call Gamma would
+    # refuse (a used-up shared allowance, too many open at once) is refused
+    # here, while it can still be an HTTP 429.
     _check_allowance(rt["providers"][entry["provider"]])
+    _check_call_slot(user)
     # Element j of the batch reply belongs to every request index sharing
     # its key (duplicates were collapsed into one upstream element).
     slots = {}
@@ -1183,6 +1193,7 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 # on a provider entry. See gamma/chatgpt_oauth.py.
 
 _OAUTH_STATES: dict = {}  # state -> {"verifier", "owner", "at"} — in-memory, 15 min TTL
+_OAUTH_STATES_LOCK = threading.Lock()  # the endpoints run in the threadpool
 _OAUTH_STATE_TTL = 900
 
 
@@ -1191,10 +1202,11 @@ def begin_chatgpt_signin(owner) -> dict:
     ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
     {auth_url, state}."""
     now = time.time()
-    for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
-        del _OAUTH_STATES[k]
     state, verifier, url = chatgpt_oauth.start_auth()
-    _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
+    with _OAUTH_STATES_LOCK:
+        for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
+            del _OAUTH_STATES[k]
+        _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
     return {"auth_url": url, "state": state}
 
 
@@ -1204,7 +1216,8 @@ def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
     belongs to whoever started it — another account, or the same admin's
     own-entry form, can't redeem it (and so can't attach that login's
     tokens elsewhere)."""
-    st = _OAUTH_STATES.pop(state, None)
+    with _OAUTH_STATES_LOCK:
+        st = _OAUTH_STATES.pop(state, None)
     if not st or st.get("owner") != owner or time.time() - st["at"] > _OAUTH_STATE_TTL:
         raise HTTPException(status_code=400,
                             detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
@@ -1245,7 +1258,7 @@ def seeded_chatgpt_models(user: str, entry_id: str) -> str:
 
 
 @router.post("/ai/oauth/chatgpt/start")
-async def chatgpt_auth_start(request: Request):
+def chatgpt_auth_start(request: Request):
     return begin_chatgpt_signin(_require_editor(request))
 
 
@@ -1262,23 +1275,34 @@ class ChatGPTAuthComplete(BaseModel):
 def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
     user = _require_editor(request)
     oauth = redeem_chatgpt_signin(user, payload.state, payload.callback)
-    entries = load_provider_entries(user)
+    # Every write below is a read-modify-write of the list as it is THEN
+    # (update_provider_entries): a key added in another tab during the
+    # network calls stays.
     if payload.provider_id:
-        entry = next((e for e in entries if e.get("id") == payload.provider_id), None)
-        if not entry or entry.get("protocol") != "chatgpt":
-            raise HTTPException(status_code=404, detail="provider not found")
-        reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
-    else:
+        def reconnect(entries):
+            entry = _own_entry(entries, payload.provider_id)
+            if entry.get("protocol") != "chatgpt":
+                raise HTTPException(status_code=404, detail="provider not found")
+            reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
+        update_provider_entries(user, reconnect)
+        return _masked_settings(request)
+    entry = new_chatgpt_entry(new_provider_id(), oauth, payload.name, payload.models)
+
+    def add(entries):
         if len(entries) >= MAX_PROVIDERS:
             raise HTTPException(status_code=400, detail="too many providers")
-        entry = new_chatgpt_entry(new_provider_id(), oauth, payload.name, payload.models)
         entries.append(entry)
-        if not entry["models"]:
-            # Seed the model list live from the account (the tokens stored
-            # first: the listing reads them back through ai_runtime).
-            save_provider_entries(user, entries)
-            entry["models"] = seeded_chatgpt_models(user, entry["id"])
-    save_provider_entries(user, entries)
+    update_provider_entries(user, add)
+    if not entry["models"]:
+        # Seed the model list live from the account (the tokens stored
+        # first: the listing reads them back through ai_runtime).
+        models = seeded_chatgpt_models(user, entry["id"])
+        if models:
+            def seed(entries):
+                for e in entries:
+                    if e.get("id") == entry["id"] and not e.get("models"):
+                        e["models"] = models
+            update_provider_entries(user, seed)
     return _masked_settings(request)
 
 
@@ -1293,8 +1317,11 @@ _NATIVE_PDF_REJECTED: set = set()
 def ai_chat(payload: AIChatRequest, request: Request):
     user = require_user(request)
     # The chat reads (and its tools edit) the request's workspace; the AI
-    # providers are the account's own. A viewer gets no mutating tools.
+    # providers are the account's own. A viewer, or a read-scope integration
+    # token, gets no mutating tools (auth.can_write — the rule every write
+    # endpoint applies).
     ws = require_ws(request)
+    writable = can_write(request)
     try:
         rt = require_ai_runtime(user)
     except HTTPException as e:
@@ -1317,11 +1344,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
              "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
              # What edit_block mode "selection" rewrites (labels S1, S2…).
              "note_selections": request_note_selections(payload),
-             "actor": user, "can_write": ws_role(request) != "viewer"}
+             "actor": user, "can_write": writable,
+             # This turn's reads, {block_id: full text}: what an edit_block
+             # replace merges from (ai_tools.notes_seen).
+             "read_texts": {}}
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
     tools = (agent_tools(payload.agent_scope, payload.permissions,
-                         payload.read_char_limit) or None) if valid_scope else None
+                         payload.read_char_limit, can_write=writable) or None) if valid_scope else None
     # The conversation the agent loop grows across tool rounds (agent mode).
     state = {}
     count_usage = ai_usage.recorder("chat", entry, rt)
@@ -1330,7 +1360,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
         # Pictures of selected regions whose text is unreliable ride with
         # the user's own images.
         crops = []
-        pdf_b64s, context, coverage = _gather_inputs(ws, payload, allow_native, crops=crops)
+        pdf_b64s, context, coverage = _gather_inputs(ws, payload, allow_native, crops=crops,
+                                                     notes_seen=scope["read_texts"])
         state["coverage"] = coverage
         state["images"] = images + crops
         located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
@@ -1546,7 +1577,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             count_usage(u)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {})}
-    except AllowanceExhausted as e:
+    except CallRefused as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
     except HTTPException:
         raise

@@ -12,12 +12,9 @@ order, so a parent always exists before its children arrive.
 """
 
 import json
-import re
 
+from . import storage
 from .ops import props_patch
-
-UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9a-f]{8,64}\.[a-z0-9]{1,8})")
-HEX_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
 
 def snapshot_from_rows(rows) -> dict:
@@ -133,15 +130,9 @@ def diff(base: dict, target: dict, page_id: str, *, with_base: bool = True) -> l
 
 def upload_refs(blocks) -> set[str]:
     """The upload file names a set of blocks (snapshot values or op dicts)
-    reference: ``/api/uploads/<hash>.<ext>`` in content or properties, and
-    a page's ``doc_id`` (its PDF, ``<hash>.pdf``)."""
+    reference: ``/api/uploads/<name>`` in content or properties, and a
+    page's ``doc_id`` (its PDF) — ``storage.upload_refs`` per block."""
     names = set()
     for b in blocks:
-        content = b.get("content") or ""
-        props = b.get("props") or {}
-        names.update(UPLOAD_REF_RE.findall(content))
-        names.update(UPLOAD_REF_RE.findall(json.dumps(props)))
-        doc = props.get("doc_id")
-        if isinstance(doc, str) and HEX_RE.match(doc):
-            names.add(f"{doc}.pdf")
+        names |= storage.upload_refs(b.get("content") or "", b.get("props") or {})
     return names

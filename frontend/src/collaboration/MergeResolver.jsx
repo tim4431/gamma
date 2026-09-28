@@ -16,7 +16,7 @@ import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
-  HardDriveIcon, MergeIcon, ServerIcon,
+  HardDriveIcon, MergeIcon, ServerIcon, TrashIcon,
 } from "../shared/ui/Icons";
 
 // Word-level tokens: runs of non-space and runs of space, so a diff never
@@ -117,11 +117,12 @@ function mergedParts(base, mine, theirs, result) {
 // The sync_conflicts kinds, in git's words (local = this clone, remote = origin).
 export const MERGE_KIND = {
   merged: { short: T("Auto-merged"), long: T("Both sides changed this block; the two edits were merged into one text."), Icon: MergeIcon },
-  diverged: { short: T("Diverged"), long: T("Local and remote differed when the clone was attached; one was taken, the other is here."), Icon: AlertCircleIcon },
+  diverged: { short: T("Diverged"), long: T("Local and remote differed with no common version to merge from; one was kept, the other is here."), Icon: AlertCircleIcon },
   kept_local_edit: { short: T("Kept local"), long: T("Remote deleted this, but it was edited here, so it stayed and was pushed back."), Icon: ArrowUpIcon },
   restored_remote_edit: { short: T("Restored remote"), long: T("This was deleted here, but remote edited it, so it was pulled back."), Icon: ArrowDownIcon },
-  page_restored: { short: T("Page restored on remote"), long: T("Remote deleted this page; it was edited here, so it was pushed back."), Icon: ArrowUpIcon },
+  page_restored: { short: T("Page restored on remote"), long: T("Remote deleted this page; it was edited or restored here, so it was pushed back."), Icon: ArrowUpIcon },
   page_restored_from_remote: { short: T("Page restored from remote"), long: T("This page was deleted here but edited on remote, so it was pulled back."), Icon: ArrowDownIcon },
+  dropped: { short: T("Removed"), long: T("A force or an attach made both sides the same; only the replaced side had this, so it was removed. Its text is kept here."), Icon: TrashIcon },
 };
 
 export function kindOf(conflict) {
@@ -225,15 +226,18 @@ function Versions({ conflict, busy, onUse }) {
   );
 }
 
-// A non-textual decision: the one text involved, to acknowledge.
+// A non-textual decision: the one text involved, to acknowledge. A removed
+// block or page carries the text of the side that lost it.
 function Decision({ conflict }) {
   const c = conflict;
-  const ours = c.kind === "kept_local_edit" || c.kind === "page_restored";
+  const dropped = c.kind === "dropped";
+  const ours = dropped ? Boolean(c.mine) : c.kind === "kept_local_edit" || c.kind === "page_restored";
   const text = ours ? c.mine : c.theirs;
   if (!text) return null;
+  const hint = dropped ? t("removed") : ours ? t("kept and pushed back") : t("pulled back");
   return (
     <div className="mergeVersions one">
-      <Version side={ours ? "mine" : "theirs"} parts={[{ text, tag: "same" }]} hint={ours ? t("kept and pushed back") : t("pulled back")} />
+      <Version side={ours ? "mine" : "theirs"} parts={[{ text, tag: "same" }]} hint={hint} />
     </div>
   );
 }
@@ -274,6 +278,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
   const kind = kindOf(conflict);
   const textual = isTextual(conflict);
   const many = nav && nav.total > 1;
+  const pageGone = conflict.kind === "dropped" && conflict.page_title == null; // a removed page: nothing to open
   return (
     <div className={`mergeCard kind-${conflict.kind}`}>
       <div className="mergeHead">
@@ -292,7 +297,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
             <button type="button" className="ctlBtn" onClick={() => nav.onStep(1)} aria-label={t("Next conflict")}><ChevronRightIcon size={16} /></button>
           </span>
         ) : null}
-        {onOpen ? (
+        {onOpen && !pageGone ? (
           <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label={t("Open the block")} title={t("Open the page on this block")}>
             <ExternalLinkIcon size={16} />
           </button>

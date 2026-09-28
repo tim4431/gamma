@@ -29,10 +29,14 @@ MAX_PAGES = 5000
 # pdfium is not thread-safe. Sync endpoints run in FastAPI's threadpool and the
 # search indexer parses in a background thread, so two extractions can overlap
 # — and when they do, pdfium fails BOTH with "Failed to load page", even for
-# different files. Every extraction therefore goes through one lock; the AI
+# different files. Every pdfium call therefore goes through one lock; the AI
 # context builder would otherwise hand the model "(PDF text extraction failed)"
-# and it would answer from memory. Callers of iter_page_texts must hold it —
-# extract_pages/extract_text/page_count do.
+# and it would answer from memory. Serialized calls are all pdfium needs;
+# documents may stay open in between. So the walks over every page
+# (iter_page_texts, page_sizes) take it once per page (_read_page), and once
+# each for the open and the close: indexing a 5,000-page book interleaves with
+# every other PDF read instead of holding them all off until the book is done.
+# The short walks (page_count, outline, render_page) hold it throughout.
 #
 # The lock alone is not enough. pypdfium2 closes a page or document it still
 # owns from a weakref finalizer, and its objects sit in reference cycles, so
@@ -76,7 +80,8 @@ def _open(src):
     pdfium can't open the file at all. src is a path str or PDF bytes."""
     try:
         import pypdfium2 as pdfium
-        return "pdfium", pdfium.PdfDocument(src)
+        with _lock:
+            return "pdfium", pdfium.PdfDocument(src)
     except Exception as e:
         log.warning(f"[pdf-text] pypdfium2 open failed ({e}), falling back to PyPDF2")
         from PyPDF2 import PdfReader
@@ -88,9 +93,29 @@ def _warn_truncated(total: int, max_pages: int):
         log.warning(f"[pdf-text] {total}-page PDF truncated to {max_pages} pages")
 
 
+def _read_page(pdf, i: int, read):
+    """``read(page)`` of page ``i`` (0-based), the page closed again — one
+    turn of the pdfium lock."""
+    with _lock:
+        page = pdf[i]
+        try:
+            return read(page)
+        finally:
+            page.close()
+
+
+def _text(page) -> str:
+    tp = page.get_textpage()
+    try:
+        return tp.get_text_bounded() or ""
+    finally:
+        tp.close()
+
+
 def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
     """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
-    src is a path str or PDF bytes. Hold ``_lock`` while consuming this."""
+    src is a path str or PDF bytes. Takes the pdfium lock per page, never
+    across the walk (nor while the consumer holds a page's text)."""
     kind, pdf = _open(src)
     if kind == "pypdf2":
         _warn_truncated(len(pdf.pages), max_pages)
@@ -105,23 +130,19 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
                 yield ""
         return
     try:
-        _warn_truncated(len(pdf), max_pages)
-        for i in range(max(0, start_page - 1), min(len(pdf), max_pages)):
-            page = pdf[i]
-            tp = page.get_textpage()
-            try:
-                yield tp.get_text_bounded() or ""
-            finally:
-                tp.close()
-                page.close()
+        with _lock:
+            total = len(pdf)
+        _warn_truncated(total, max_pages)
+        for i in range(max(0, start_page - 1), min(total, max_pages)):
+            yield _read_page(pdf, i, _text)
     finally:
-        pdf.close()
+        with _lock:
+            pdf.close()
 
 
 def extract_pages(src, max_pages: int = MAX_PAGES) -> list[str]:
     """All page texts as a list (the search indexer's shape)."""
-    with _lock:
-        return list(iter_page_texts(src, max_pages))
+    return list(iter_page_texts(src, max_pages))
 
 
 def extract_text(src, char_limit: int, empty_page_cap: int = 50,
@@ -149,21 +170,20 @@ def extract_text_pages(src, char_limit: int, empty_page_cap: int = 50,
     start_page, empty pages included) — what the chat's coverage report
     tells the user: "pages 1–9 of 22"."""
     parts, total, empties, pages = [], 0, 0, 0
-    with _lock:
-        for t in iter_page_texts(src, start_page=start_page):
-            pages += 1
-            if t.strip():
-                empties = 0
-                if label_pages:
-                    t = page_label(start_page + pages - 1) + t
-                parts.append(t)
-                total += len(t)
-                if total >= char_limit:
-                    break
-            else:
-                empties += 1
-                if empties >= empty_page_cap:
-                    break
+    for t in iter_page_texts(src, start_page=start_page):
+        pages += 1
+        if t.strip():
+            empties = 0
+            if label_pages:
+                t = page_label(start_page + pages - 1) + t
+            parts.append(t)
+            total += len(t)
+            if total >= char_limit:
+                break
+        else:
+            empties += 1
+            if empties >= empty_page_cap:
+                break
     return "\n\n".join(parts), pages
 
 
@@ -171,33 +191,28 @@ def page_sizes(src) -> list[tuple[float, float]]:
     """``(width, height)`` in PDF points of every page, rotation applied — the
     same box pdf.js measures its scale-1 viewport from, so a layout built
     from these is exact. Empty when the file is unreadable. No text
-    extraction; holds the pdfium lock like every other walk."""
-    with _lock:
+    extraction; takes the pdfium lock per page, like iter_page_texts."""
+    try:
+        kind, pdf = _open(src)
+        if kind == "pypdf2":
+            out = []
+            for pg in pdf.pages:
+                box = pg.mediabox
+                w, h = float(box.width), float(box.height)
+                if (int(pg.get("/Rotate") or 0) // 90) % 2:
+                    w, h = h, w
+                out.append((w, h))
+            return out
         try:
-            kind, pdf = _open(src)
-            if kind == "pypdf2":
-                out = []
-                for pg in pdf.pages:
-                    box = pg.mediabox
-                    w, h = float(box.width), float(box.height)
-                    if (int(pg.get("/Rotate") or 0) // 90) % 2:
-                        w, h = h, w
-                    out.append((w, h))
-                return out
-            try:
-                out = []
-                for i in range(len(pdf)):
-                    page = pdf[i]
-                    try:
-                        out.append(tuple(page.get_size()))
-                    finally:
-                        page.close()
-                return out
-            finally:
+            with _lock:
+                total = len(pdf)
+            return [_read_page(pdf, i, lambda page: tuple(page.get_size())) for i in range(total)]
+        finally:
+            with _lock:
                 pdf.close()
-        except Exception as e:
-            log.warning(f"[pdf-text] page sizes failed: {e}")
-            return []
+    except Exception as e:
+        log.warning(f"[pdf-text] page sizes failed: {e}")
+        return []
 
 
 def page_count(src) -> int:
@@ -287,8 +302,8 @@ def render_page(src, page_no: int, max_side: int = RENDER_MAX_SIDE, box=None):
     out of range; ``(None, 0)`` when the file can't be rendered (unreadable,
     or only PyPDF2 could open it). ``box`` = ``(x0, y0, x1, y1)`` as
     fractions of the page, top-left origin, renders just that region (its
-    longer side at ``max_side`` px, zoom capped). Holds the pdfium lock like
-    every walk."""
+    longer side at ``max_side`` px, zoom capped). Holds the pdfium lock
+    throughout, like the other short walks."""
     with _lock:
         try:
             kind, pdf = _open(src)

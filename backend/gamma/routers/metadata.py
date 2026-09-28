@@ -27,16 +27,17 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import ai_usage
-from ..ai_client import AllowanceExhausted, call_ai as _call_ai
+from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
 from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_ws
-from ..blocks_store import page_attachment
+from ..blocks_store import page_attachment, write_lock
 from ..ops import after_commit, apply_ops, props_patch
-from ..db import connect_pages_db, page_now, ws_db_path, ws_uploads_dir
+from ..db import connect_data_db, connect_pages_db, page_now, ws_uploads_dir
 from ..logbuf import log
+from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..textnorm import INDEX_VERSION, normalize_text
@@ -565,9 +566,10 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
         if not m:
             return None
         data = json.loads(m.group(0))
-    except AllowanceExhausted:
-        # Not "nothing found": the lookup answers 429 and leaves no negative
-        # cache, so it runs again once the allowance allows.
+    except CallRefused:
+        # Not "nothing found" (a used-up allowance, too many calls at once):
+        # the lookup answers 429 and leaves no negative cache, so it runs
+        # again later.
         raise
     except Exception as e:
         log.warning(f"[metadata] AI extraction failed: {e}")
@@ -637,7 +639,7 @@ def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", m
 def _load_page(ws: str, block_id: str):
     with connect_pages_db(ws) as conn:
         row = conn.execute(
-            "SELECT content, properties FROM unified_blocks WHERE id = ?", (block_id,)
+            "SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (block_id,)
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="page not found")
@@ -661,9 +663,9 @@ def _save_props(ws: str, block_id: str, updates: dict | None = None, remove: tup
         # Serialize the read/merge/write. Whichever wins the lock first is
         # safe: a later explicit rename wins after this commit, while a rename
         # that committed first is observed with auto_title already cleared.
-        conn.execute("BEGIN IMMEDIATE")
+        write_lock(conn)
         row = conn.execute(
-            "SELECT content, properties FROM unified_blocks WHERE id = ?", (block_id,)
+            "SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (block_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="page not found")
@@ -707,13 +709,10 @@ def metadata_status(request: Request):
         ).fetchall()
     index = {}
     try:
-        with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
-            for doc_id, ver, pages, chars in conn.execute(
-                "SELECT d.doc_id, d.ver, d.pages,"
-                " (SELECT COALESCE(SUM(LENGTH(content)), 0) FROM pdf_fts f WHERE f.doc_id = d.doc_id)"
-                " FROM pdf_fts_docs d"
-            ):
-                index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars or 0}
+        with connect_data_db(ws) as conn:
+            chars = doc_chars(conn)
+            for doc_id, ver, pages in conn.execute("SELECT doc_id, ver, pages FROM pdf_fts_docs"):
+                index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     except sqlite3.OperationalError:
         pass  # index tables don't exist yet — search has never run
     uploads = ws_uploads_dir(ws)
@@ -999,7 +998,7 @@ def metadata_cite(payload: CiteRequest, request: Request):
         raise HTTPException(status_code=409, detail="no metadata yet — fetch metadata first")
     try:
         citation = _make_ppt_cite(rt, meta, bibtex, payload.prompt, payload.model)
-    except AllowanceExhausted:
+    except CallRefused:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")

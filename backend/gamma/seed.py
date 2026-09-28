@@ -122,7 +122,7 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     if guest:
         tree = [*tree, {"content": _guest_note(), "children": []}]
     try:
-        with closing(connect_pages_db(ws)) as conn:
+        with connect_pages_db(ws) as conn:
             if conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
                 return None
             props = {"seeded": SEEDED_WELCOME}
@@ -173,9 +173,13 @@ def create_workspace_files(ws_id: str):
                 "VALUES ('root', NULL, 'a0', '', '{}', ?, ?)",
                 (nw, nw),
             )
+        from .blocks_store import ensure_trash  # local, like seed_welcome's
+
+        ensure_trash(pages_db)  # Recently deleted's reserved parent, beside root
         pages_db.commit()
 
     with closing(sqlite3.connect(str(target / "data.db"))) as data_db:
+        data_db.execute("PRAGMA journal_mode=WAL")  # likewise
         for stmt in DATA_SCHEMA:
             data_db.execute(stmt)
         data_db.commit()

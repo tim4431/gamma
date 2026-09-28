@@ -23,7 +23,7 @@ class FolderRenameRequest(BaseModel):
 
 
 @router.post("/folders/rename")
-async def rename_folder(payload: FolderRenameRequest, request: Request):
+def rename_folder(payload: FolderRenameRequest, request: Request):
     """Carry a folder's chat buckets and share links along a rename / move
     (``dst`` the new path) or drop them (``dst`` ""). Workspace editors; never
     through a share link."""

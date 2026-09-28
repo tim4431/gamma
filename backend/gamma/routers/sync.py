@@ -82,7 +82,7 @@ def changes(conn, since: str, limit: int) -> dict:
 
 
 @router.get("/sync/whoami")
-async def sync_whoami(request: Request):
+def sync_whoami(request: Request):
     """Who the credential is and what it may do here: ``{user, workspace:
     {id, name}, role, scope}`` — ``scope`` is the integration token's
     (``read`` / ``write``), ``session`` for a signed-in browser. A mirror
@@ -95,7 +95,7 @@ async def sync_whoami(request: Request):
 
 
 @router.get("/sync/changes")
-async def sync_changes(request: Request, since: str = "", limit: int = 500):
+def sync_changes(request: Request, since: str = "", limit: int = 500):
     """Pages changed and pages deleted since ``since`` (``""`` = everything),
     at most ``limit`` entries, with the cursor to continue from."""
     ws = require_ws(request)

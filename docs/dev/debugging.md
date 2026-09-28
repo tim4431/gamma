@@ -423,9 +423,40 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   workspace `guest_ttl_hours` (default 24) later or on logout
   ([guests.md](guests.md)) — don't park test data there. In backend tests
   the `guest` fixture's account name is `conftest.guest_name()`.
-- Slow endpoints (downloads, AI calls, PyPDF2) are deliberately **sync
-  `def`** so FastAPI's threadpool runs them; don't convert them to
-  `async def` while they hold blocking calls.
+- Every endpoint that touches a database or files, and every slow one
+  (downloads, AI calls, PyPDF2), is a **sync `def`**, so FastAPI's
+  threadpool runs it. One uvicorn process serves every request and page
+  socket from one event loop, and SQLite calls block: an `async def`
+  endpoint waiting on a workspace's write lock (`db.BUSY_TIMEOUT_S`, 10 s)
+  holds up everything else. `async def` is only for handlers that must
+  await something (a request body stream, the page socket, the MCP SDK's
+  OAuth handlers, the upload of an ink file); they hand their database work
+  to `run_in_threadpool`. The session middleware reads users.db through
+  `auth._off_loop`, a worker thread with its own token count, so a pool
+  full of slow requests never delays learning who is asking.
+  `tests/test_event_loop.py` fails on an async route handler that awaits
+  nothing, checks that the session read, an op batch and the socket
+  handshake run off the loop, and times a `GET /api/session` while a write
+  lock is held for two seconds.
+- Those endpoints run side by side, so a check followed by a write must be
+  one step: take the write lock before the check (`BEGIN IMMEDIATE`,
+  `blocks_store.write_lock`) or let a constraint decide (`INSERT OR
+  IGNORE`, `ON CONFLICT`). `tests/test_concurrent_writes.py` starts
+  several requests on a barrier (a page shared twice, one page id created
+  twice, two owners demoting each other, op batches, cover snapshots).
+  Module-level caches that threadpool code touches carry a lock.
+- The pool also runs streamed replies and file responses, so the app raises
+  it from AnyIO's 40 threads to `app.THREAD_TOKENS` (100) at startup: at
+  40, 45 slow PDF-proxy downloads in flight made a PDF range read time out.
+  Each account's AI calls open at once are capped too ([ai.md](ai.md)
+  "Calls open at once").
+- A connection is closed when its `with` block ends: the `db.connect_*`
+  helpers return `db.Connection`, whose `__exit__` commits (or rolls back)
+  and then closes. sqlite3's own only commits and leaves the closing to the
+  garbage collector, and on Windows an open connection keeps a deleted
+  workspace's directory on disk. Never use a connection after its `with`
+  block, and close a raw `sqlite3.connect` with `contextlib.closing`.
+  `tests/test_db_connections.py` runs with the collector off.
 - All state is SQLite + files under the data dir (`GAMMA_DATA_DIR`, default
   the repo's `data/`): global `users.db` (accounts, workspaces, memberships,
   shares, personal prefs), per-workspace `workspaces/<id>/pages.db`,

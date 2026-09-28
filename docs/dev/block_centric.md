@@ -14,7 +14,9 @@ Update it as stages land.
 **Page.** A block with `parent_id = 'root'`. Identity = block id. Title =
 `content`. Every feature (open, share, export, search, AI context, links,
 tabs, recents, snapshots, chats) keys on the page id and works on a page with
-nothing but text.
+nothing but text. A deleted page hangs under the reserved `trash` block for
+30 days and is no page meanwhile: every feature passes it by until it is
+restored ([home_library.md](home_library.md) "Recently deleted").
 
 **Files and documents.** "Attachment" means two different things, and the
 code keeps them apart (decided 2026-09-13, see *Files and documents* below):
@@ -22,8 +24,9 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
 - A **file** is content. A content-hashed blob in `uploads/`, referenced
   from a block as `[name](/api/uploads/<hash>.<ext>)` and rendered as a file
   chip (`frontend/src/transfers/FileChip.jsx`). Any type except executables, any number
-  per page, download or open in a tab, no semantics. Orphan cleanup follows
-  the textual reference.
+  per page, download or open in a tab, no semantics. Whether it is still in
+  use follows the textual reference; one nothing references is kept 30
+  days, then purged ([user_db.md](user_db.md) "Stored files").
 - A **document** is the ONE PDF a page *carries*: `properties.doc_id`
   (content hash → `uploads/<doc_id>.pdf`) plus `source_url` /
   `original_filename` / `web_url` describing where it came from. The viewer,
@@ -249,7 +252,8 @@ read-position map as `{page: 0, block}`.)*
   PDF from home = create page + attach, one code path. — **done (backend)**:
   `POST/DELETE /api/pages/{id}/attachment` (409s for "already has one" and
   "another page carries this doc_id" with that page's id; automatic title +
-  `auto_title` marker; detach sweeps the orphaned file).
+  `auto_title` marker; a detached file nothing else uses goes to the orphan
+  bookkeeping, kept 30 days).
 - Generic file uploads: `POST /uploads` accepts an allowlist beyond PDF
   (md/txt/csv/json/office/zip …) and blocks reference them as
   `[name](/api/uploads/<hash>.<ext>)` chips (the image path already works
@@ -271,7 +275,7 @@ title first → Enter into the first block; paperclip upload attaches and the
 viewer renders; duplicate attach opens the owning page; dropped `.txt`
 renders a file chip; cards say Page/PDF with text-preview covers; the chat
 picker lists every page. Found and fixed on the way: orphan-upload cleanup
-raced the upload→attach window (see `storage.UPLOAD_GRACE_S`).
+raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
 
 ### Stage 2 — search and AI read the whole knowledge base
 *(backend done 2026-09-02; frontend pending.)*

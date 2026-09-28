@@ -28,6 +28,7 @@ import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
+import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
@@ -1136,7 +1137,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const translateKeyRef = useRef(translateKey);
   translateKeyRef.current = translateKey;
   const translateParallelRef = useRef(3);
-  translateParallelRef.current = Math.min(32, Math.max(1, translateParallel || 3));
+  translateParallelRef.current = Math.min(TRANSLATE_PARALLEL_MAX, Math.max(1, translateParallel || 3));
   const curPageRef = useRef(1);
   curPageRef.current = curPage;
   const numPagesRef = useRef(0);

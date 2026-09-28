@@ -71,6 +71,7 @@ def test_snapshot_round_trip(owner, other):
     later2 = make_page(owner, "Merged back in")
     merge_snap = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "with-merge"}).json()
     assert owner.delete(f"/api/blocks/{later2['id']}").status_code == 200
+    assert owner.delete(f"/api/trash/{later2['id']}").status_code == 200  # gone for good, not in Recently deleted
     r = owner.post(f"/api/workspaces/{ws}/backups/{merge_snap['name']}/restore", params={"mode": "merge"})
     assert r.status_code == 200 and r.json()["pages_added"] == 1
     titles = {x["content"] for x in owner.get("/api/blocks/root/children").json()["children"]}
@@ -94,7 +95,8 @@ def test_cap_and_guest(owner, guest, monkeypatch):
     from gamma import ws_backup
     ws = workspace_of("bk_owner")
     monkeypatch.setattr(ws_backup, "MAX_PER_WORKSPACE", 3)
-    have = len(owner.get(f"/api/workspaces/{ws}/backups").json()["backups"])
+    # the cap counts manual snapshots only (not a restore's automatic "pre-restore" one)
+    have = sum(not b["scheduled"] and not b["auto"] for b in owner.get(f"/api/workspaces/{ws}/backups").json()["backups"])
     for i in range(3 - have):
         assert owner.post(f"/api/workspaces/{ws}/backups", json={"label": f"n{i}", "uploads": False}).status_code == 200
     r = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "one-too-many"})

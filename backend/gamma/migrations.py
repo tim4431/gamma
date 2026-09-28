@@ -16,7 +16,11 @@ The rules that keep this safe and small:
 - **Backup first.** Before the first pending step every database file is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
-  rewrite them). Only the newest ``backups.KEEP_BACKUPS`` are kept.
+  rewrite them). An upgrade that does not finish keeps that snapshot named
+  in ``backups/upgrade.json`` and every retry reuses it, so a restart loop
+  neither piles up copies nor rotates the clean one out. Once an upgrade
+  finishes, only the newest ``backups.KEEP_BACKUPS`` automatic snapshots
+  are kept; hand-made ones are never pruned.
 - **One step, one stamp.** Steps run in order; the version is stamped after
   each one, so an interrupted upgrade resumes at the step that did not
   finish. Every step is written to be re-runnable (it checks what it is
@@ -115,9 +119,13 @@ def ensure_current(dry_run: bool = False) -> dict:
             f"{MIN_UPGRADABLE} at the earliest. Run an intermediate Gamma release first.")
     pending = pending_steps(version)
     result = {"from": version, "to": SCHEMA_VERSION, "applied": [], "backup": None}
-    if not pending or dry_run:
+    if dry_run:
         return result
-    result["backup"] = backups.create(f"v{version}", prune=True)["path"]
+    if not pending:
+        if backups.unfinished_upgrade():  # stamped its last step, stopped before tidying up
+            _finish_upgrade()
+        return result
+    result["backup"] = _snapshot_before(version)
     log.info(f"[migrate] upgrading data directory from schema version {version} to "
              f"{SCHEMA_VERSION}; snapshot in {result['backup']}")
     for v, name, fn in pending:
@@ -133,7 +141,42 @@ def ensure_current(dry_run: bool = False) -> dict:
                 f"{result['backup']}.") from e
         result["applied"].append(name)
         log.info(f"[migrate] step {v} ({name}) done")
+    _finish_upgrade()
     return result
+
+
+def _snapshot_before(version: int) -> str:
+    """The snapshot this upgrade rolls back to. An earlier attempt that did
+    not finish (a failed step, a crash — and a restart loop retrying it)
+    took one before it changed anything, and that one is reused: retries
+    neither pile up copies nor push the clean one out. A snapshot that
+    cannot be written stops the upgrade before any step runs."""
+    unfinished = backups.unfinished_upgrade()
+    if unfinished:
+        kept = backups.info(unfinished.get("backup") or "")
+        if kept:
+            log.info(f"[migrate] resuming the upgrade that started at schema version "
+                     f"{unfinished.get('from')}; its snapshot {kept['name']} is kept")
+            return kept["path"]
+    try:
+        taken = backups.create(f"v{version}", auto=True)
+        backups.mark_upgrade({"from": version, "to": SCHEMA_VERSION, "backup": taken["name"],
+                              "started_at": page_now()})
+    except Exception as e:
+        raise MigrationError(
+            f"could not snapshot the data directory before upgrading it: {e}. Nothing was "
+            f"changed; free disk space (or fix the cause) and start again.") from e
+    return taken["path"]
+
+
+def _finish_upgrade() -> None:
+    """The upgrade is done: forget its marker, then keep only the newest
+    automatic snapshots (a failure to prune never stops the server)."""
+    backups.clear_upgrade()
+    try:
+        backups.prune_backups()
+    except OSError as e:
+        log.warning(f"[migrate] could not prune old pre-upgrade snapshots: {e}")
 
 
 # --- steps --------------------------------------------------------------------
@@ -218,24 +261,27 @@ def _v2_workspaces(conn: sqlite3.Connection) -> None:
 
     now = page_now()
     config.WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
-    for username, default_ws in conn.execute(
+    for username, ws_id in conn.execute(
             "SELECT username, default_workspace FROM users ORDER BY created_at").fetchall():
-        if default_ws:
-            continue  # resumed run: this account is done
-        from .workspaces import new_workspace_id  # local: workspaces imports seed
-        ws_id = new_workspace_id()
+        if not ws_id:
+            # The rows naming the new directory are committed BEFORE anything
+            # moves: a crash after this point resumes by moving the files into
+            # the id recorded here, never into a second, empty workspace.
+            from .workspaces import new_workspace_id  # local: workspaces imports seed
+            ws_id = new_workspace_id()
+            conn.execute("INSERT OR IGNORE INTO workspaces (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
+                         (ws_id, username, username, now))
+            conn.execute("INSERT OR IGNORE INTO workspace_members (workspace_id, username, role, added_by, added_at) "
+                         "VALUES (?, ?, 'owner', ?, ?)", (ws_id, username, username, now))
+            conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws_id, username))
+            conn.commit()
         src = config.LEGACY_USERS_DIR / username
         dst = config.WORKSPACES_DIR / ws_id
-        if src.is_dir():
+        if src.is_dir() and not dst.exists():
             src.rename(dst)
-        else:
+        elif not dst.exists():
             _fresh_workspace_files(dst)
-        _move_prefs(conn, username, ws_id, dst / "data.db")
-        conn.execute("INSERT OR IGNORE INTO workspaces (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
-                     (ws_id, username, username, now))
-        conn.execute("INSERT OR IGNORE INTO workspace_members (workspace_id, username, role, added_by, added_at) "
-                     "VALUES (?, ?, 'owner', ?, ?)", (ws_id, username, username, now))
-        conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws_id, username))
+        _move_prefs(conn, username, ws_id, dst / "data.db")  # a no-op once done: resumable
         conn.commit()
 
     # Shares: (username, page) → (workspace, page). Rows of unknown accounts
@@ -282,7 +328,8 @@ _V2_ACCOUNT_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "appearance"})
 
 def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Path) -> None:
     """data.db `prefs` rows → users.db user_prefs (personal keys with
-    workspace '' , the rest under the new workspace), then drop the table."""
+    workspace '' , the rest under the new workspace), then drop the table —
+    after the copies are committed, so a crash in between loses nothing."""
     if not data_db.is_file():
         return
     with closing(sqlite3.connect(str(data_db))) as ddb:
@@ -292,6 +339,7 @@ def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Pa
                 conn.execute(
                     "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
                     "VALUES (?, ?, ?, ?, ?)", (username, scope, key, value, updated_at))
+            conn.commit()
         normalize_data_db(ddb)
 
 
@@ -365,22 +413,35 @@ def _v8_ai_usage(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _v9_upload_path_titles(conn: sqlite3.Connection) -> None:
-    """Runs the content normalizers over every workspace's pages.db once
-    more: the ``upload_path_titles`` step (a directory path that leaked into
-    ``original_filename`` and the generated title) used to be repaired on
-    every library listing, with raw SQL outside the op log; now it is a
-    one-time rewrite like the other content shapes."""
+def _each_pages_db(step: str, fn) -> None:
+    """``fn(conn)`` on every workspace's pages.db (the file's current schema
+    statements applied first). A file that fails — a damaged database — is
+    logged as an error and skipped: one broken library must not keep every
+    other account's server from starting. That workspace stays as it was
+    for an admin to restore; a restore from the step's snapshot needs the
+    step run again on that file."""
     if not config.WORKSPACES_DIR.is_dir():
         return
     for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
         pages_db = ws_root / "pages.db"
         if not ws_root.is_dir() or not pages_db.is_file():
             continue
-        with closing(sqlite3.connect(str(pages_db))) as pdb:
-            for stmt in PAGES_SCHEMA:
-                pdb.execute(stmt)
-            normalize_pages_db(pdb)
+        try:
+            with closing(sqlite3.connect(str(pages_db))) as pdb:
+                for stmt in PAGES_SCHEMA:
+                    pdb.execute(stmt)
+                fn(pdb)
+        except sqlite3.Error as e:
+            log.error(f"[migrate] step {step}: workspace {ws_root.name} skipped, its pages.db failed: {e}")
+
+
+def _v9_upload_path_titles(conn: sqlite3.Connection) -> None:
+    """Runs the content normalizers over every workspace's pages.db once
+    more: the ``upload_path_titles`` step (a directory path that leaked into
+    ``original_filename`` and the generated title) used to be repaired on
+    every library listing, with raw SQL outside the op log; now it is a
+    one-time rewrite like the other content shapes."""
+    _each_pages_db("9 (upload_path_titles)", normalize_pages_db)
 
 
 def _v10_mirrors(conn: sqlite3.Connection) -> None:
@@ -410,36 +471,24 @@ def _v12_sync_log_stats(conn: sqlite3.Connection) -> None:
     """Every workspace's ``sync_log`` gains ``stats``: the git-style block
     counts of what a round did to the page (JSON ``{add, del, mod}``; rows
     from before carry none and show without counts)."""
-    if not config.WORKSPACES_DIR.is_dir():
-        return
-    for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
-        pages_db = ws_root / "pages.db"
-        if not ws_root.is_dir() or not pages_db.is_file():
-            continue
-        with closing(sqlite3.connect(str(pages_db))) as pdb:
-            for stmt in PAGES_SCHEMA:
-                pdb.execute(stmt)
-            if "stats" not in _columns(pdb, "sync_log"):
-                pdb.execute("ALTER TABLE sync_log ADD COLUMN stats TEXT NOT NULL DEFAULT ''")
-            pdb.commit()
+    def add_stats(pdb):
+        if "stats" not in _columns(pdb, "sync_log"):
+            pdb.execute("ALTER TABLE sync_log ADD COLUMN stats TEXT NOT NULL DEFAULT ''")
+        pdb.commit()
+
+    _each_pages_db("12 (sync_log_stats)", add_stats)
 
 
 def _v13_sync_conflict_base(conn: sqlite3.Connection) -> None:
     """Every workspace's ``sync_conflicts`` gains ``base``: the text a merged
     block had before either side edited it, so the resolver can show what
     each side changed (rows from before carry none and show as before)."""
-    if not config.WORKSPACES_DIR.is_dir():
-        return
-    for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
-        pages_db = ws_root / "pages.db"
-        if not ws_root.is_dir() or not pages_db.is_file():
-            continue
-        with closing(sqlite3.connect(str(pages_db))) as pdb:
-            for stmt in PAGES_SCHEMA:
-                pdb.execute(stmt)
-            if "base" not in _columns(pdb, "sync_conflicts"):
-                pdb.execute("ALTER TABLE sync_conflicts ADD COLUMN base TEXT NOT NULL DEFAULT ''")
-            pdb.commit()
+    def add_base(pdb):
+        if "base" not in _columns(pdb, "sync_conflicts"):
+            pdb.execute("ALTER TABLE sync_conflicts ADD COLUMN base TEXT NOT NULL DEFAULT ''")
+        pdb.commit()
+
+    _each_pages_db("13 (sync_conflict_base)", add_base)
 
 
 def _v14_identities(conn: sqlite3.Connection) -> None:
@@ -603,6 +652,36 @@ def _v21_folder_shares(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v22_upload_orphans(conn: sqlite3.Connection) -> None:
+    """Every workspace's pages.db gains ``upload_orphans`` (``name``,
+    ``since``): stored files nothing references any more are kept 30 days
+    before they are purged, instead of being deleted with their last
+    reference (gamma/upload_gc.py). The table starts empty — the old sweep
+    left no unreferenced file older than its 15-minute grace; the first
+    background pass after startup records whatever there is."""
+    _each_pages_db("22 (upload_orphans)", lambda pdb: pdb.commit())
+
+
+def _v23_page_trash(conn: sqlite3.Connection) -> None:
+    """Every workspace's pages.db gains the reserved ``trash`` row beside
+    ``root``: the parent of the pages in Recently deleted (gamma/trash.py),
+    written now so no block can take the id before the first page is
+    deleted. A workspace where a block already holds it is named in the log
+    and left as it is (moving a page to the trash then refuses)."""
+    def add_trash(pdb):
+        row = pdb.execute("SELECT parent_id FROM unified_blocks WHERE id = 'trash'").fetchone()
+        if row is None:
+            now = page_now()
+            pdb.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
+                        "updated_at) VALUES ('trash', NULL, 'a1', '', '{}', ?, ?)", (now, now))
+            pdb.commit()
+        elif row[0] is not None:
+            log.warning("[migrate] step 23 (page_trash): a block holds the reserved id 'trash' in "
+                        f"{pdb.execute('PRAGMA database_list').fetchone()[2]}; that workspace has no trash")
+
+    _each_pages_db("23 (page_trash)", add_trash)
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -625,4 +704,6 @@ STEPS = [
     (19, "mirror_page_filter", _v19_mirror_page_filter),
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
+    (22, "upload_orphans", _v22_upload_orphans),
+    (23, "page_trash", _v23_page_trash),
 ]

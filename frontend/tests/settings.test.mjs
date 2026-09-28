@@ -75,7 +75,8 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   assert.equal(read.theme, "sepia");
   assert.equal(read.toolRounds, 12);
   assert.equal(read.chatSystem, "Be brief.");
-  for (const dropped of ["pdfDarkPage", "translateLang", "translateParallel", "uiScale", "inkTools", "unknownPref"]) {
+  assert.equal(read.translateParallel, 4, "a count stored under the old 1–32 range is clamped, not dropped");
+  for (const dropped of ["pdfDarkPage", "translateLang", "uiScale", "inkTools", "unknownPref"]) {
     assert.ok(!(dropped in read), `${dropped} dropped`);
   }
   assert.equal(read.agentPerms.pdf.block_edit, false);

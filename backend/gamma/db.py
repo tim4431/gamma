@@ -28,7 +28,13 @@ from .config import USERS_DB, WORKSPACES_DIR
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 23
+
+
+# How long a connection waits for another connection's write lock before
+# "database is locked" (sqlite3's own default is 5 s). Pass it to every
+# sqlite3.connect of users.db and of a workspace's databases.
+BUSY_TIMEOUT_S = 10
 
 
 class SchemaOutdated(RuntimeError):
@@ -308,6 +314,14 @@ PAGES_SCHEMA = [
         at TEXT NOT NULL,
         resolved INTEGER NOT NULL DEFAULT 0
     )""",
+    # upload_orphans = stored files nothing references any more
+    # (gamma/upload_gc.py): the file name and since when. The file stays on
+    # disk and is served as before; a reference that comes back clears the
+    # row, and a file still unreferenced 30 days on is purged.
+    """CREATE TABLE IF NOT EXISTS upload_orphans (
+        name TEXT PRIMARY KEY,
+        since TEXT NOT NULL
+    )""",
     # page_ops = the per-page operation log (gamma/ops.py): one row per
     # applied batch, `seq` counting up per page. Live clients follow it over
     # the page's websocket; a reconnecting client catches up with
@@ -356,27 +370,75 @@ def users_db_version(conn: sqlite3.Connection) -> int:
     return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
-def connect_users_db() -> sqlite3.Connection:
+class Connection(sqlite3.Connection):
+    """What the ``connect_*`` helpers return: a ``with`` block commits (or
+    rolls back on an exception) and then CLOSES the connection. sqlite3's
+    own Connection only commits and leaves the closing to the garbage
+    collector, so a connection a traceback holds keeps its file open (on
+    Windows a workspace directory cannot be deleted under it). Never use a
+    connection after its ``with`` block; one opened without ``with`` is
+    closed by its owner."""
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
+def _wal(conn: sqlite3.Connection) -> None:
+    """WAL journal mode, as every Gamma database uses (readers never wait on
+    a writer, nor a writer on readers), with the sync level WAL makes safe.
+    Backups copy the files with the sqlite backup API, which is WAL-safe.
+    The mode is stored in the file, so usually this only reads it. A file
+    still in rollback mode (created before WAL, or copied in) is switched,
+    but the switch needs the file to itself: while another connection has
+    it open, SQLite answers "database is locked" at once, without waiting.
+    So the switch is tried without waiting, and a connection that cannot
+    switch works in the file's current mode. The startup pass and
+    ``seed.create_workspace_files`` switch every file while nobody else has
+    it open."""
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    if mode != "wal":
+        conn.execute("PRAGMA busy_timeout = 0")
+        try:
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e):
+                raise
+        finally:
+            conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_S * 1000}")
+    if mode == "wal":
+        conn.execute("PRAGMA synchronous=NORMAL")
+
+
+def connect_users_db() -> Connection:
     """Open the global users.db, creating it at SCHEMA_VERSION when it does
     not exist yet. An existing file behind SCHEMA_VERSION raises
     ``SchemaOutdated`` — the migration runner (gamma/migrations.py) is the
     only code that touches an old-shape users.db, so nothing can ever read
-    or write it with the wrong assumptions."""
+    or write it with the wrong assumptions. WAL mode and the busy timeout,
+    like the workspace databases; a ``with`` block closes it
+    (``Connection``)."""
     USERS_DB.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(USERS_DB))
-    has_users = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone()
-    version = users_db_version(conn)
-    if has_users and version < SCHEMA_VERSION:
+    conn = sqlite3.connect(str(USERS_DB), timeout=BUSY_TIMEOUT_S, factory=Connection)
+    try:
+        has_users = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone()
+        version = users_db_version(conn)
+        if has_users and version < SCHEMA_VERSION:
+            raise SchemaOutdated(
+                f"the data directory is at schema version {version}, this Gamma expects "
+                f"{SCHEMA_VERSION} — run `python manage.py migrate` (the server does so at startup)")
+        _wal(conn)
+        for stmt in USERS_SCHEMA:
+            conn.execute(stmt)
+        if not has_users:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+    except BaseException:
         conn.close()
-        raise SchemaOutdated(
-            f"the data directory is at schema version {version}, this Gamma expects "
-            f"{SCHEMA_VERSION} — run `python manage.py migrate` (the server does so at startup)")
-    for stmt in USERS_SCHEMA:
-        conn.execute(stmt)
-    if not has_users:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    conn.commit()
+        raise
     return conn
 
 
@@ -397,6 +459,12 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", P
 
 def pref_scope(key: str, ws: str) -> str:
     return "" if key in USER_PREF_KEYS else (ws or "")
+
+
+# (username, workspace_id, key, value, updated_at) in; last write wins.
+_UPSERT_PREF = ("INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at")
 
 
 def get_pref(username: str, key: str, ws: str = ""):
@@ -428,22 +496,14 @@ def set_pref(username: str, key: str, value, ws: str = "", *, updated_at: str | 
         if updated_at is None:
             stamp = page_now()
             if key == PROFILE_PREF_KEY:
+                db.execute("BEGIN IMMEDIATE")  # the stamp read and the write as one step
                 row = db.execute("SELECT updated_at FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
                                  (username, scope, key)).fetchone()
-                stamp = _stamp_newer_than(row[0] if row else "")
-            db.execute(
-                "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
-                "updated_at = excluded.updated_at",
-                (username, scope, key, json.dumps(value), stamp),
-            )
+                stamp = stamp_after(row[0] if row else "")
+            db.execute(_UPSERT_PREF, (username, scope, key, json.dumps(value), stamp))
         else:
-            db.execute(
-                "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
-                "updated_at = excluded.updated_at WHERE excluded.updated_at > user_prefs.updated_at",
-                (username, scope, key, json.dumps(value), updated_at),
-            )
+            db.execute(_UPSERT_PREF + " WHERE excluded.updated_at > user_prefs.updated_at",
+                       (username, scope, key, json.dumps(value), updated_at))
             stamp = db.execute("SELECT updated_at FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
                                (username, scope, key)).fetchone()[0]
         db.commit()
@@ -451,6 +511,31 @@ def set_pref(username: str, key: str, value, ws: str = "", *, updated_at: str | 
         from . import cloud_sync  # local: cloud_sync imports this module
         cloud_sync.profile_changed(username)
     return stamp
+
+
+def update_pref(username: str, key: str, change, ws: str = ""):
+    """Read-modify-write one pref in one write transaction, so two edits of
+    one value (a provider added in one tab while another tab's sign-in
+    stores its tokens) never undo each other, as a get_pref + set_pref pair
+    can. ``change`` gets the stored value (None when unset or unreadable)
+    and returns the value to store; an exception from it aborts with nothing
+    written. An unchanged value is not written. Returns the value in
+    effect. Not for the profile: its stamp and cloud push are set_pref's."""
+    scope = pref_scope(key, ws)
+    with connect_users_db() as db:
+        db.execute("BEGIN IMMEDIATE")  # the write lock before the read
+        row = db.execute("SELECT value FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
+                         (username, scope, key)).fetchone()
+        try:
+            value = json.loads(row[0]) if row else None
+        except ValueError:
+            value = None
+        new = change(value)  # may edit ``value`` in place: compare as stored
+        text = json.dumps(new)
+        if not row or text != row[0]:
+            db.execute(_UPSERT_PREF, (username, scope, key, text, page_now()))
+        db.commit()
+    return new
 
 
 def restamp_pref(username: str, key: str, old: str, new: str, ws: str = "") -> bool:
@@ -465,9 +550,11 @@ def restamp_pref(username: str, key: str, old: str, new: str, ws: str = "") -> b
     return bool(cur.rowcount)
 
 
-def _stamp_newer_than(stored: str) -> str:
-    """``page_now()``, or ``stored`` plus one millisecond when that is not
-    older: the profile's stamp never goes back."""
+def stamp_after(stored: str) -> str:
+    """A version stamp that never goes back: ``page_now()``, or ``stored``
+    plus one millisecond when the clock has not passed it (a pull from a
+    clock that runs ahead, two writes in one tick). The profile's stamp and
+    a chat's version (routers/chats.py)."""
     stamp = page_now()
     if not stored or stored < stamp:
         return stamp
@@ -520,7 +607,7 @@ def patch_profile(username: str, changes: dict) -> tuple[dict, str]:
     for _ in range(5):  # another write landed between the read and this one: read again
         value, at = get_profile(username)
         merged = {**value, **changes}
-        stamp = _stamp_newer_than(at)
+        stamp = stamp_after(at)
         if replace_profile_if(username, merged, at, stamp):
             break
     else:  # an unreadable stored row: replace it
@@ -550,25 +637,31 @@ def pdf_upload_path(ws: str, doc_id: str) -> Path:
     return ws_uploads_dir(ws) / f"{safe_doc_id(doc_id)}.pdf"
 
 
-def connect_pages_db(ws: str) -> sqlite3.Connection:
-    """THE way to open a workspace's pages.db. WAL mode (readers never wait
-    on a writer — several browsers, several members), a busy timeout instead
-    of an instant "database is locked", and the schema statements (cheap
-    no-ops once applied; they also give a restored backup the page_ops
-    table)."""
-    conn = sqlite3.connect(ws_db_path(ws, "pages.db"), timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    for stmt in PAGES_SCHEMA:
-        conn.execute(stmt)
+def _open_ws_db(ws: str, db_name: str, schema) -> Connection:
+    conn = sqlite3.connect(ws_db_path(ws, db_name), timeout=BUSY_TIMEOUT_S, factory=Connection)
+    try:
+        _wal(conn)
+        for stmt in schema:
+            conn.execute(stmt)
+    except BaseException:
+        conn.close()  # a locked or damaged file: never leave the handle open
+        raise
     return conn
 
 
-def connect_data_db(ws: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(ws_db_path(ws, "data.db"))
-    for stmt in DATA_SCHEMA:
-        conn.execute(stmt)
-    return conn
+def connect_pages_db(ws: str) -> Connection:
+    """THE way to open a workspace's pages.db. WAL mode (``_wal``), a busy
+    timeout instead of an instant "database is locked", and the schema
+    statements (cheap no-ops once applied; they also give a restored backup
+    the page_ops table). A ``with`` block closes it (``Connection``)."""
+    return _open_ws_db(ws, "pages.db", PAGES_SCHEMA)
+
+
+def connect_data_db(ws: str) -> Connection:
+    """THE way to open a workspace's data.db: WAL mode, the busy timeout and
+    the schema statements, like pages.db. The search indexes add their own
+    tables (gamma/block_index.py, gamma/pdf_index.py)."""
+    return _open_ws_db(ws, "data.db", DATA_SCHEMA)
 
 
 def get_page_snaps(ws: str, after: str = "") -> dict:
@@ -585,6 +678,7 @@ def set_page_snap(ws: str, page_id: str, img: str, at: str = "") -> str:
     """Store a snapshot (newest `at` wins) and prune past the cap; returns the stored at."""
     at = at or page_now()
     with connect_data_db(ws) as db:
+        db.execute("BEGIN IMMEDIATE")  # compare and write as one step: the newest capture wins
         row = db.execute("SELECT at FROM page_snaps WHERE page_id = ?", (page_id,)).fetchone()
         if row and row[0] >= at:
             return row[0]  # a newer capture (another device) already landed

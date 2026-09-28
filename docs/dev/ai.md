@@ -15,7 +15,12 @@ There are NO env API keys; providers are GUI entries: each account's own
 (Settings → AI › Connections), plus the server's shared ones an admin adds
 (below). An account's entries are stored under the reserved account-wide
 `ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
-via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
+via `POST/PUT/DELETE /api/ai/providers[/{id}]`. Every change to the list is
+one read-modify-write transaction (`ai_settings.update_provider_entries`,
+over `db.update_pref`), never a list read earlier and saved back. So a
+ChatGPT sign-in, which stores its entry before asking for its first models,
+or a token refresh writing back its entry's tokens never drops a key another
+tab added meanwhile. An entry offers exactly the
 models picked for it (from the provider's live listing in the form): there is
 no built-in default model, so an entry with none picked offers nothing and its
 Test button says so (migration step 15 wrote the old defaults into entries
@@ -198,6 +203,22 @@ Settings → AI. How each caller surfaces it:
   allowance is used up.
 - Model listings and the context-window lookup spend nothing and are never
   refused.
+
+**Calls open at once.** The same choke point caps the provider calls one
+account may have open: `ai_client.MAX_OPEN_CALLS` (6). An open call holds a
+server worker thread for as long as the provider takes, and those threads
+serve every other request too (a PDF page read included). So the seventh is
+refused with `TooManyCalls`, a 429 whose detail points at the translation's
+parallel requests. `open_ai` takes a slot before it connects and returns the
+response wrapped (`_OpenCall`), which frees the slot when it is closed. Every
+caller closes its response when the reply ends or fails, a stream's
+generator also when its client goes away; a response dropped unread frees
+its slot when it is collected, and a failed connect at once. Both refusals
+derive from `CallRefused`, so every caller above treats them alike
+(`failure_kind` calls this one `rate`). The streamed translation checks both
+before its stream starts (`check_call_slot`). Dictation and the model
+listings bypass `open_ai` and are not counted. The pool itself is raised
+from AnyIO's 40 to `app.THREAD_TOKENS` (100) at startup.
 
 ### The chatgpt protocol (OAuth)
 
@@ -526,6 +547,12 @@ scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
 which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
 
+The changing tools (rename, move, the note editors) are armed only when
+`auth.can_write` lets the request write: an editor or owner, and through an
+integration token only a write-scope one. A workspace viewer or a read-scope
+token gets the reading tools only (the prompt then says changes are not
+available here), and `run_agent_tool` refuses a changing tool called anyway.
+
 ### Permissions and knobs (Settings → Assistant)
 
 The single **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
@@ -698,8 +725,10 @@ A whole-document job queues pages nearest the current page first (forward before
 equal distance), so the page being read paints immediately. The queue lives
 in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
 segments queued pages in order and feeds one flat list of ~6-paragraph /
-1200-char chunks, while N workers (Settings → Reading → parallel requests,
-typed, 1–32) stream through it across page boundaries — the first request is
+1200-char chunks, while N workers (Settings → Translation → parallel
+requests, 1–`TRANSLATE_PARALLEL_MAX` = 4 in `app/prefDefs.js`, below the six
+AI calls an account may have open at once; a larger stored value reads as 4)
+stream through it across page boundaries — the first request is
 in flight while later pages are still segmenting, chunks paint as they land,
 char-weighted progress shows under the button and as a background-tasks row.
 Halting aborts the in-flight requests (each job carries an AbortController)
@@ -919,31 +948,62 @@ carries the bucket so a background reply finishing does not clear the open
 page's live edit preview (`handleAgentEvent`). Covered by
 `tests/chatSession.test.mjs` and the e2e `chat navigation` steps.
 
+Two tabs, or two members, can hold the same bucket's conversation, so a save
+never replaces a copy it hasn't seen. The active row's `updated_at` is the
+conversation's version. `GET /chats/{key}` returns it, the session keeps the
+one it last read or wrote per bucket (`seen`, `version`), and every save
+sends it (`PUT /chats/{key}` `{messages, updated_at}`). A save made from an
+older copy is refused with 409 and the stored conversation. The session then
+merges the two (`mergeChats`, three-way from the copy it had read). Every
+message either side added stays, ours after the message it follows, else at
+the end. Our newer version of a message wins, theirs wins where ours is
+unchanged, and only what this tab itself dropped (an edit-and-resend) goes.
+The session shows the merge and saves it against the stored version; a
+reply still streaming is rebased onto it on its next update. Messages carry
+a client-minted `id`, so the versions of one streamed reply are one message;
+older messages match by content. A save that fails on the network or with a
+5xx is retried (1, 3, 8 s). One that still fails, or a refusal, marks the
+bucket in the session's `failed` map, and the dock shows "This conversation
+isn't saved" with Retry until a save goes through. Covered by `tests/chatConflicts.test.mjs`,
+`backend/tests/test_chat_versions.py` and the e2e step "two tabs asking in
+one conversation".
+
+Chats belong to the workspace, and only its editors change them
+(`require_ws(write=True)` on every chat write). A workspace viewer asks the
+AI with the reading tools, but its conversation stays in the tab: App's
+save does nothing for it, the dock shows a "Not saved" tag, hides History,
+and New chat starts over locally.
+
 ### Chat history
 
 Each bucket keeps its earlier conversations. `chats` (data.db) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
-plus a `title` column (added lazily by `connect_data_db`); `chat_history`
+plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
 updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
 
 - **New chat** (+ in the header) archives the conversation: it POSTs
-  `/chat-history/archive` `{bucket, messages, title}`, which files it into
-  history and clears the active row. The title is the user's, else the first
-  user message's first non-quote line (`derive_title`). The client sends its
-  own copy of the messages, so a reply still inside the 500 ms autosave
-  debounce is kept. An empty conversation archives to nothing.
+  `/chat-history/archive` `{bucket, messages, title, updated_at}`, which
+  files it into history and clears the active row. The title is the user's,
+  else the first user message's first non-quote line (`derive_title`). The
+  client sends its own copy of the messages, so a reply still inside the
+  500 ms autosave debounce is kept. An empty conversation archives to
+  nothing. A stored conversation newer than the copy (another tab kept
+  talking) is archived too, never deleted. Whichever of the two holds every
+  message of the other is archived alone; otherwise both are.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
   in the tooltip), with a search box filtering on title + first message.
   Clicking an entry POSTs `/chat-history/{id}/open` with the current
-  conversation: the current one is archived, the entry becomes the active
-  row and leaves history. A conversation is always in exactly one place.
+  conversation and its version: the current one is archived (a newer stored
+  one too, as for New chat), the entry becomes the active row and leaves
+  history, and the answer carries the new version. A conversation is always
+  in exactly one place.
   - Rename: inline `aiKeyInput`. The active chat's title goes through
-    `PUT /chats/{key}` `{messages, title}`, an entry's through
-    `PUT /chat-history/{id}`. The autosave never sends a title, so it can't
-    roll a rename back.
+    `PUT /chats/{key}` `{title}`, which leaves the messages and the version
+    as they are; an entry's through `PUT /chat-history/{id}`. The autosave
+    never sends a title, so it can't roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
 - History follows its bucket: `POST /folders/rename` rewrites entry

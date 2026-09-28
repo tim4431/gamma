@@ -27,19 +27,24 @@ computes it on demand for anything older, in pdfium, in FastAPI's threadpool
 (the route is a sync `def`). A walk already running for the document is
 joined, not repeated, so opening a book right after uploading it waits for
 the upload's own walk instead of queueing a second one behind the pdfium
-lock. Every pdfium walk goes through
-`pdf_text.page_sizes`, behind the same lock as text extraction, and closes
-every page it opens explicitly, inside the lock — pypdfium2 objects sit in
-reference cycles, so a page merely dropped would be closed by the cyclic GC
-later, on another thread, outside the lock, which crashes the server
-(`pdf_text.py` has the story; its `_serialize_finalizers` is the net). A
-file pdfium cannot read is stored with `pages: 0` so it is not parsed again
-on every open;
-the endpoint sends that answer `no-store` and a real one with a day of
-`private` caching (a doc id is a content hash, its manifest never changes).
+lock.
+
+Every manifest walk is `pdf_text.page_sizes`, behind the same lock as text
+extraction. The lock is taken per page (and once each for the open and the
+close), not for the whole document, so a manifest walk runs between the
+pages of a book the search indexer is reading. Every page it opens is closed
+explicitly, inside the lock: pypdfium2 objects sit in reference cycles, so a
+page merely dropped would be closed by the cyclic GC later, on another
+thread, outside the lock, which crashes the server (`pdf_text.py` has the
+story; its `_serialize_finalizers` is the net). A file pdfium cannot read is
+stored with `pages: 0` so it is not parsed again on every open. The endpoint
+sends that answer `no-store` and a real one with a day of `private` caching
+(a doc id is a content hash, its manifest never changes).
 
 Access is the file's own rule: a workspace member, or a share token confined
-to the shared page's document (`_share_can_read_upload`).
+to the shared page's document (`_share_can_read_upload`). The check reads the
+shared pages only and remembers a yes for a few minutes, so a PDF opened by
+range requests asks once, not per chunk.
 
 ## The client (`src/pdf/PdfViewer.jsx`, `src/pdf/pdfSource.js`)
 

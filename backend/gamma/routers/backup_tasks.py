@@ -19,7 +19,7 @@ class TaskInput(BaseModel):
     cron: str = Field(default='0 3 * * *', max_length=200)
     uploads: bool = True
     retention_mode: Literal['days', 'count'] = 'days'
-    retention_value: int = Field(default=30, ge=1, le=3650)
+    retention_value: int = Field(default=30, ge=1, le=tasks.MAX_RETENTION)
 
 
 class PreviewInput(BaseModel):
@@ -47,6 +47,7 @@ def list_tasks(request: Request):
 @router.post('/preview')
 def preview(payload: PreviewInput, request: Request):
     owner(request)
+    call(tasks.check_schedule, payload.cron)  # the editor shows the refusal before Save
     at = tasks.now()
     runs = []
     for _ in range(3):

@@ -130,6 +130,14 @@ Retention is an age (days, weeks or 30-day months) or a snapshot count per
 workspace. Only that task's snapshots expire, after a successful run; the
 newest is always kept. Deleting a task keeps its snapshots.
 
+The server bounds what tasks can pile up. A schedule runs at most once an
+hour (the schedule preview refuses a cron with two minute values).
+Retention is at most 90 days or 90 snapshots (the editor's box stops
+there). An account keeps at most five tasks, and a run is refused while the
+disk has less than 1 GB free. A refused run shows its reason in the row and
+raises the `backup-failed` notice ([workspaces.md](workspaces.md) "Export
+and backups").
+
 The table fits the pane (the dialog keeps one width on every pane): the
 task cell's second line holds its workspaces, retention and whether files
 are included ("All workspaces I own · keeps 30 days · includes files"), the
@@ -169,6 +177,7 @@ and integration tokens get an empty list. The sources:
 |---|---|---|---|---|---|
 | `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose) | the newer version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
+| `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
 | `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
@@ -348,7 +357,9 @@ Library:
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
   a Run now / Edit / Duplicate / Delete `ActionMenu`), then the server-kept
   snapshots per workspace (Back up all, and per workspace: back up now,
-  download, restore, delete).
+  download, restore, delete). A row tags a task's snapshot "Automatic" and
+  the one a replace restore keeps "Before restore", and says when files were
+  missing or a database copy failed its check.
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, search-index rebuilding and the per-paper metadata / text / index
   health table.
@@ -359,8 +370,10 @@ Administration (admins only):
   labelled Storage / Edit buttons.
 - **Server**: the dashboard (build, uptime, warnings, the update
   check), the public server URL, storage defaults (each box saves on Enter
-  or blur), **Guests**, the shared AI provider, shared workspaces, server
-  backups and the log with its level filter ([user_db.md](user_db.md)).
+  or blur), **Guests**, the shared AI provider, shared workspaces,
+  **Databases** (Check databases: a quick check of every database file, the
+  damaged ones listed under the row), server backups and the log with its
+  level filter ([user_db.md](user_db.md)).
 
 At the bottom of the rail:
 

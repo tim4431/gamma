@@ -38,6 +38,7 @@ const COMMAND_ICONS = {
   "app.exportMarkdown": MarkdownIcon,
   "app.downloadPdf": DownloadIcon,
   "app.newPage": FilePlusIcon,
+  "app.recentlyDeleted": Trash2Icon,
   "app.import": ImportIcon,
   "app.exportObsidian": FolderFilesIcon,
   "app.exportGamma": DatabaseIcon,

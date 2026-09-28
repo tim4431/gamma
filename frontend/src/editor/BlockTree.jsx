@@ -51,6 +51,9 @@ import {
 // draggingId: the block a ⋮⋮ handle drags; fragment: {blockId, kind, idx},
 // an image / table / diagram dragged out of a block's rendered view.
 const _dragState = { draggingId: null, dropTarget: null, fragment: null };
+// Embed-card writes per source block, counted: only the latest one's answer
+// may replace what the card shows (BlockRow's embedEditRef).
+const _embedWrites = new Map();
 
 // Source → markdown the renderer understands: sized images (Obsidian
 // ![alt|300] and legacy Logseq {:width}), ![[embeds]],
@@ -298,6 +301,10 @@ function useMathUi() {
 // card is the jump link.
 function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEdit }) {
   const [draft, setDraft] = useState(null); // non-null while editing in place
+  // The source text the draft started from: every edit goes out with the
+  // text it was made from, so the server merges it into whatever the source
+  // says by now instead of replacing that (the card's copy may be old).
+  const draftBaseRef = useRef("");
   const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion } = useMathUi();
   const editorRef = useRef(null);
   const editable = !!onEmbedEdit && refBlock?.content != null;
@@ -308,7 +315,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       if (d != null) {
         // Same pretty-print-on-close as leaving a normal raw editor.
         const pretty = formatTables(d) ?? d;
-        if (pretty !== refBlock.content) onEmbedEdit(refId, pretty);
+        if (pretty !== draftBaseRef.current) onEmbedEdit(refId, pretty, draftBaseRef.current);
       }
       return null;
     });
@@ -357,22 +364,23 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
   // In-place tools on the rendered card write through to the source — same
   // source transforms as a normal block, identity-stable for the memo.
   const toolsRef = useRef({});
+  const base = refBlock?.content || "";
   toolsRef.current = {
     task: (idx, checked) => {
-      const v = toggleTaskMarker(refBlock?.content || "", idx, checked);
-      if (v !== refBlock?.content) onEmbedEdit?.(refId, v);
+      const v = toggleTaskMarker(base, idx, checked);
+      if (v !== base) onEmbedEdit?.(refId, v, base);
     },
     img: (idx, action, payload) => {
-      const v = applyImageEdit(refBlock?.content || "", idx, action, payload);
-      if (v != null && v !== refBlock?.content) onEmbedEdit?.(refId, v);
+      const v = applyImageEdit(base, idx, action, payload);
+      if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
     tbl: (idx, op) => {
-      const v = applyTableEdit(refBlock?.content || "", idx, op);
-      if (v != null && v !== refBlock?.content) onEmbedEdit?.(refId, v);
+      const v = applyTableEdit(base, idx, op);
+      if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
     mermaid: (idx, width) => {
-      const v = setMermaidWidth(refBlock?.content || "", idx, width);
-      if (v != null && v !== refBlock?.content) onEmbedEdit?.(refId, v);
+      const v = setMermaidWidth(base, idx, width);
+      if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
   };
   const stableTask = useRef((i, c) => toolsRef.current.task(i, c)).current;
@@ -394,8 +402,10 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
         // A click an inner tool already handled (checkbox, table cell or
         // handle, image toolbar, a link) must not ALSO open the raw editor.
         if (editable && e.target.closest?.(".mdTableWrap, .mdImgWrap, .mdTaskCheckbox, a, button, input")) return;
-        if (editable) setDraft(refBlock.content);
-        else onBlockRefClick?.(refId);
+        if (editable) {
+          draftBaseRef.current = refBlock.content;
+          setDraft(refBlock.content);
+        } else onBlockRefClick?.(refId);
       }}
     >
       <span className="blockEmbedBody">
@@ -798,21 +808,34 @@ function BlockRow({
   // In-place edits on ![[embed]] cards write to the SOURCE block. A source on
   // the current page goes through onChangeText (state + debounced autosave —
   // a direct PUT would be reverted by the page's own autosave); a cross-page
-  // source is PUT directly and the ref cache updated so every copy re-renders.
+  // source is PUT directly with `base`, the text the card's edit was made
+  // from, so the server merges it into what the source says now (someone may
+  // have edited it on its own page since the card read it). The ref cache
+  // shows the edit at once and then takes the stored text from the answer; a
+  // refused write says so and reloads the source's real text.
   const embedEditRef = useRef(null);
-  embedEditRef.current = (refId, newContent) => {
+  embedEditRef.current = (refId, newContent, base) => {
     if (allBlocks?.find((b) => b.id === refId)) {
       onChangeText(refId, newContent);
-    } else {
-      apiJson(`${API}/blocks/${refId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: newContent }),
-      }).catch(() => {});
-      onCacheRef?.(refId, { content: newContent }); // merge-write keeps page_title etc.
+      return;
     }
+    const seq = (_embedWrites.get(refId) || 0) + 1;
+    _embedWrites.set(refId, seq);
+    onCacheRef?.(refId, { content: newContent }); // merge-write keeps page_title etc.
+    apiJson(`${API}/blocks/${refId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: newContent, base }),
+    }).then((res) => {
+      if (_embedWrites.get(refId) === seq && res?.content != null && res.content !== newContent) {
+        onCacheRef?.(refId, { content: res.content });
+      }
+    }).catch((err) => {
+      onStatus?.(t("Couldn't save the change to the embedded note: {message}", { message: err.message }));
+      onFetchRefs?.([refId]);
+    });
   };
-  const stableEmbedEdit = useRef((id, c) => embedEditRef.current?.(id, c)).current;
+  const stableEmbedEdit = useRef((id, c, b) => embedEditRef.current?.(id, c, b)).current;
   // Hover tools on rendered images/tables (mdTools): edits are text
   // transforms on the nth construct in this block's source. A null result
   // means the scan couldn't locate it — no-op rather than corrupt.

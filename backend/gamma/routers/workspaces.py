@@ -7,13 +7,15 @@ Anyone creates personal workspaces for themselves; server admins create
 shared ones (for any owner) and set access, quota and kind. Owner-only
 operations (rename, delete, members) also pass for admins, who need no
 membership (a lab workspace whose last owner left can be recovered, and
-Settings → Workspaces manages every workspace from one place).
+Settings → Workspaces manages every workspace from one place). A change
+that can take access away (access, a role, a member removed, the workspace
+deleted) re-checks the workspace's open page sockets (``collab.revalidate``).
 """
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import cloud_auth, ratelimit, workspaces
+from .. import cloud_auth, collab, ratelimit, workspaces
 from ..auth import require_user
 from ..server_settings import user_limits, usage_bytes, validate_quota_mb, workspace_bytes, workspace_quota
 
@@ -99,7 +101,7 @@ def _payload(ws: str, user: str) -> dict:
 
 
 @router.post("")
-async def create_workspace(payload: WorkspaceCreate, request: Request):
+def create_workspace(payload: WorkspaceCreate, request: Request):
     """A new personal workspace of the caller's. Admins may make it
     ``shared`` (with ``access`` / ``public_role`` / ``quota_mb``) and name
     another ``owner``."""
@@ -127,7 +129,7 @@ async def create_workspace(payload: WorkspaceCreate, request: Request):
 
 
 @router.get("/mine")
-async def my_workspaces(request: Request):
+def my_workspaces(request: Request):
     """Settings → Workspaces: every workspace I can open, each with its
     upload size, plus my account's storage (limits + the usage of all my
     personal workspaces together)."""
@@ -137,7 +139,7 @@ async def my_workspaces(request: Request):
 
 
 @router.get("/find-page/{page_id}")
-async def find_page(page_id: str, request: Request):
+def find_page(page_id: str, request: Request):
     """Which of my workspaces holds this page — for a deep link that names
     no workspace. 404 when none does."""
     user = require_user(request)
@@ -148,7 +150,7 @@ async def find_page(page_id: str, request: Request):
 
 
 @router.get("/{ws}")
-async def get_workspace(ws: str, request: Request):
+def get_workspace(ws: str, request: Request):
     """The workspace with its members and the storage that applies to it
     (any member; admins)."""
     user = _member(request, ws, "viewer")
@@ -156,7 +158,7 @@ async def get_workspace(ws: str, request: Request):
 
 
 @router.put("/{ws}")
-async def update_workspace(ws: str, payload: WorkspaceUpdate, request: Request):
+def update_workspace(ws: str, payload: WorkspaceUpdate, request: Request):
     """Rename (owner); make it my default (the owner of a personal
     workspace); set kind, access + public role, or the workspace's own
     quota (admin). Fields left out stay as they are."""
@@ -170,24 +172,32 @@ async def update_workspace(ws: str, payload: WorkspaceUpdate, request: Request):
         workspaces.update(ws, changes, default_for=user if payload.default else "")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if {"kind", "access", "public_role"} & changes.keys():
+        collab.revalidate(ws)
     return {**_payload(ws, user), "quota": workspace_quota(ws)}
 
 
+# Sync def: the final copy zips the whole workspace first.
 @router.delete("/{ws}")
-async def delete_workspace(ws: str, request: Request):
-    """Delete a workspace and everything in it (owner). An account's last
-    personal workspace cannot be deleted; deleting the default moves the
-    default to another personal one."""
-    _member(request, ws, "owner")
+def delete_workspace(ws: str, request: Request):
+    """Delete a workspace and everything in it (owner): ``{ok, warning,
+    final_copy}``. A final copy is kept on the server first (backups/deleted/,
+    ``final_copy`` its file name); when it cannot be written nothing is
+    deleted (507). An account's last personal workspace cannot be deleted;
+    deleting the default moves the default to another personal one."""
+    user = _member(request, ws, "owner")
     try:
-        warning = workspaces.delete(ws)
+        result = workspaces.delete(ws, by=user)
+    except workspaces.FinalCopyError as e:
+        raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, "warning": warning}
+    collab.revalidate(ws)
+    return {"ok": True, **result}
 
 
 @router.put("/{ws}/members/{username}")
-async def set_member(ws: str, username: str, payload: MemberRole, request: Request):
+def set_member(ws: str, username: str, payload: MemberRole, request: Request):
     """Invite an account, or change a member's role (owner of a shared
     workspace). Naming someone owner is how ownership is handed on."""
     user = _member(request, ws, "owner")
@@ -195,11 +205,12 @@ async def set_member(ws: str, username: str, payload: MemberRole, request: Reque
         workspaces.set_member(ws, username, payload.role, by=user)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    collab.revalidate(ws)
     return _payload(ws, user)
 
 
 @router.delete("/{ws}/members/{username}")
-async def remove_member(ws: str, username: str, request: Request):
+def remove_member(ws: str, username: str, request: Request):
     """Remove a member (owner), or leave yourself (any explicit member)."""
     user = require_user(request)
     if username != user:
@@ -210,11 +221,12 @@ async def remove_member(ws: str, username: str, request: Request):
         workspaces.remove_member(ws, username)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    collab.revalidate(ws)
     return {"ok": True, "left": username == user}
 
 
 @router.get("/{ws}/invites")
-async def list_invites(ws: str, request: Request):
+def list_invites(ws: str, request: Request):
     """The invitations by Gamma Cloud username still waiting for the
     person's first sign-in (any member; admins)."""
     _member(request, ws, "viewer")
@@ -245,7 +257,7 @@ def invite_by_cloud_username(ws: str, payload: CloudInvite, request: Request):
 
 
 @router.delete("/{ws}/invites/{subject}")
-async def cancel_invite(ws: str, subject: str, request: Request):
+def cancel_invite(ws: str, subject: str, request: Request):
     """Withdraw a pending invitation (owner; admins)."""
     _member(request, ws, "owner")
     try:

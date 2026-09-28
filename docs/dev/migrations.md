@@ -30,8 +30,14 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
    `backups/<time>-v<N>/` (relative paths kept, plus `manifest.json`);
    uploads are never copied — steps move directories, never rewrite files.
    Steps run in order; the version is stamped after each one, so an
-   interrupted upgrade resumes at the step that did not finish. Only the
-   newest `KEEP_BACKUPS` (3) snapshots are kept.
+   interrupted upgrade resumes at the step that did not finish. An
+   unfinished upgrade and its snapshot are named in `backups/upgrade.json`,
+   and every retry reuses that snapshot. So a restart loop over a failing
+   step neither piles up copies nor pushes the clean pre-upgrade one out. A
+   snapshot that cannot be written (a full disk) stops the upgrade before
+   any step, as a `MigrationError`. Once an upgrade finishes, the marker
+   goes and only the newest `KEEP_BACKUPS` (3) automatic snapshots are kept;
+   hand-made backups are never pruned.
 5. **Nothing piles up.** Old steps are deleted once `MIN_UPGRADABLE` is
    raised past them (a release or two later); a data directory that old must
    first run a release that still has them — the refusal says so. The
@@ -66,6 +72,8 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
 | 19 | `mirror_page_filter` | `mirrors` gains `page_filter`: NULL (every page travels, what every existing mirror keeps) or a JSON list of the only page ids that do, the shape a published page's mirror has ([mirror.md](mirror.md) "The page filter") |
 | 20 | `guest_accounts` | Guests became throwaway accounts minted per login ([guests.md](guests.md)): the legacy shared `guest` account (`is_guest = 1`) is deleted with its sessions, memberships, prefs, shares, tokens and usage rows, and its personal workspace's rows, directory and stored snapshots (a directory that will not go is logged and left as an orphan). Any other `is_guest` row — what `manage.py create-user` without a password used to make — becomes a normal password-less account, so the guest expiry never deletes it |
 | 21 | `folder_shares` | `shares` gains `folder`: a share names a page (`page_id`) or a folder-label path (`folder`, the pages filed there or below it, read live), the other column `''`; the page unique index becomes partial (`WHERE page_id != ''`) and a folder twin joins it ([api.md](api.md) "Shares") |
+| 22 | `upload_orphans` | Every workspace's `pages.db` gains `upload_orphans` (`name`, `since`): a stored file nothing references any more is kept 30 days before it is purged, instead of being deleted with its last reference ([user_db.md](user_db.md) "Stored files"). The table starts empty; the first background pass after startup records what is unreferenced |
+| 23 | `page_trash` | Every workspace's `pages.db` gains the reserved `trash` row beside `root` (parentless, position `a1`): the parent of the pages in Recently deleted ([home_library.md](home_library.md) "Recently deleted"). Written now so no block can take the id before the first delete; new workspaces get it from `seed.create_workspace_files`, and `ops.trash_page` writes it where a restored older backup lacks it. A workspace where a block already holds the id is named in the log and left as it is |
 
 ## Backups (`gamma/backups.py`)
 
@@ -73,28 +81,37 @@ The runner's snapshots are one use of a general facility: a backup is
 `backups/<time>-<label>/` with every SQLite file at its relative path (taken
 with the SQLite backup API, so consistent while the server runs), the
 `uploads/` directories when asked, and a `manifest.json` (time, label, schema
-version, file list, whether uploads are included).
+version, file list, whether uploads are included, `auto` for the runner's,
+and `integrity`: each database copy's `PRAGMA quick_check` result,
+`gamma/integrity.py`). The snapshot is written as `.<name>.part` and renamed
+once the manifest, written last, is in. A failure removes it, so a full disk
+never leaves a half copy. A directory without a manifest (a crash mid-copy)
+is never listed or pruned; delete it by hand. A database SQLite cannot read
+is copied byte for byte instead of failing the whole snapshot, and its
+damage is recorded. A damaged copy raises the admins' `db-damage` notice.
 
 - **Take one**: Settings → Server → *Server backups* (admins; *Databases
-  only* or *Everything*), `POST /api/admin/backups`, or `manage.py backups
-  --create [--uploads] [--label x]`. The migration runner takes a
-  databases-only one labelled `v<N>` and prunes its own to
-  `backups.KEEP_BACKUPS`; hand-made ones are never pruned automatically.
+  only* or *Everything*), `POST /api/admin/backups` (507 when it cannot be
+  written), or `manage.py backups --create [--uploads] [--label x]`. The
+  migration runner takes a databases-only one labelled `v<N>`, marked
+  `auto`, and after a finished upgrade keeps the newest
+  `backups.KEEP_BACKUPS` of those; hand-made ones are never pruned.
 - **See / download / delete**: the same pane, `GET /api/admin/backups`,
   `GET /api/admin/backups/{name}/download` (a zip of the directory),
   `DELETE /api/admin/backups/{name}`; `manage.py backups [--delete <name>]
-  [--prune]`.
+  [--prune]` (`--prune` thins the automatic ones only).
 - **Restore**: `manage.py backups --restore <name>` with the server stopped
   — copies the files back over the data directory (WAL/SHM sidecars of the
   live files are dropped first) and leaves everything the snapshot lacks as
   it is; uploads come back only from a backup that carried them. Start the
   server afterwards; it migrates the restored data if the snapshot predates
-  the binary. Deliberately not an HTTP endpoint: a whole-directory swap
+  the binary (a restore abandons an unfinished upgrade, so that start takes a
+  fresh snapshot). Deliberately not an HTTP endpoint: a whole-directory swap
   under a running server is not safe.
 
 Per-workspace backups — the snapshots users keep on the server from
 Settings → Backups and the `/api/export` zips — are `gamma/ws_backup.py`
-([workspaces.md](workspaces.md) "Backups"), a different, smaller thing.
+([workspaces.md](workspaces.md) "Export and backups"), a different, smaller thing.
 
 ## Running it
 
@@ -108,10 +125,23 @@ Settings → Backups and the `/api/export` zips — are `gamma/ws_backup.py`
 
 A failed step stops the server: the version stays at the last completed
 step, the message names the cause and the snapshot. Fix the cause and start
-again (the step resumes), or restore the snapshot: copy its files back over
-the data directory — for a directory move, `manifest.json` in the snapshot
-and the `workspaces` table in the snapshot's `users.db` (after step 2) say
-which directory belongs to which account.
+again (the step resumes, with the same snapshot), or restore the snapshot:
+copy its files back over the data directory. For a directory move,
+`manifest.json` in the snapshot and the `workspaces` table in the snapshot's
+`users.db` (after step 2) say which directory belongs to which account. Step
+2 commits an account's `workspaces` row and `default_workspace` before it
+moves `users/<name>/`, and a resumed run moves the files into the id it
+recorded. The prefs it copies out of `data.db` are committed before their
+old table goes.
+
+A step that walks every workspace's `pages.db` (9, 12, 13, 22, 23 —
+`migrations._each_pages_db`) does not fail on one damaged file. That
+workspace is logged as an error and skipped, and the upgrade goes on: one
+broken library never keeps every other account's server from starting. The
+skipped workspace stays at the old shape; after restoring its file from the
+step's snapshot, the step has to be run on it again. Startup follows the
+same rule: a workspace whose files cannot be opened is logged and left out,
+and the others are served.
 
 Never run an older Gamma on an upgraded data directory: it refuses when it
 knows about versions, and an older one that does not would create empty
@@ -132,7 +162,9 @@ SCHEMA_VERSION = 3   # gamma/db.py
 
 - The step gets an open `users.db` connection; per-workspace files it opens
   itself (`closing(sqlite3.connect(...))` — leave no handle open, Windows
-  locks moved directories otherwise).
+  locks moved directories otherwise). A change to every workspace's
+  `pages.db` goes through `_each_pages_db(step, fn)`, which skips a damaged
+  file instead of failing the upgrade.
 - Update `USERS_SCHEMA` / `DATA_SCHEMA` / `PAGES_SCHEMA` to the new shape at
   the same time, so a fresh install and an upgraded one end up identical.
 - A change to block *content* shapes (a renamed property, a syntax) goes into

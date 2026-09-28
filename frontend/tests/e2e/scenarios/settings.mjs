@@ -551,17 +551,18 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".libraryDisplayCard .labelTagBadge").count(), 0);
       assertEq(await page.locator(".libraryDisplayCard .folderTagBadge").count(), 1);
       await search(page, "translation concurrency", "Parallel requests");
+      // 7 is past the cap (TRANSLATE_PARALLEL_MAX): it is stored as 4
       await row(page, "Parallel requests").locator("input").fill("7");
       await row(page, "Parallel requests").locator("input").press("Tab");
-      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "4"));
       // An account preference reaches the account's profile; a device one never does.
-      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 7));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 4));
       assert(!("uiScale" in (await user.api("/api/prefs/profile")).value), "interface size stays with the browser");
       // A fresh browser signed in to the same account picks the profile up.
       const other = await user.context(browser);
       try {
         const fresh = await openPage(other, server.base);
-        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "4"));
         assertEq(await fresh.evaluate(() => localStorage.getItem("gamma-theme")), "solarized");
         assertNoProblems(fresh);
       } finally { await other.close(); }
@@ -969,6 +970,10 @@ export async function settingsScenarios(env) {
       await page.getByText("could not check", { exact: false }).waitFor();
       await page.locator(".settingsPane .segGroup button", { hasText: "Warnings" }).click();
       await page.getByText("Shared workspaces", { exact: true }).waitFor();
+      // Databases: the on-demand integrity check of every database file
+      await row(page, "Check databases").getByRole("button", { name: "Check now", exact: true }).click();
+      await until(() => row(page, "Check databases").innerText().then((text) => /database files? passed/.test(text)),
+        { what: "the database check's result" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

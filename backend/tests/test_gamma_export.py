@@ -153,11 +153,13 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     exp = gdonor.get("/api/folders/export", params={"name": "rtfolder", "mode": "gamma"})
     assert exp.status_code == 200, exp.text
 
-    for pid in page_ids:
+    for pid in page_ids:  # deleted for good: through Recently deleted, then out of it
         assert gdonor.delete(f"/api/blocks/{pid}").status_code == 200
+        assert gdonor.delete(f"/api/trash/{pid}").status_code == 200
     assert rows_of(page_ids) == []
-    # orphan cleanup took the now-unreferenced PDF with the pages
-    assert not (ws_uploads_dir(workspace_of("gdonor")) / pdf_name).exists()
+    # the now-unreferenced PDF stays for 30 days (gamma/upload_gc.py); take it
+    # away as the purge eventually would, so the import has to bring it back
+    (ws_uploads_dir(workspace_of("gdonor")) / pdf_name).unlink()
 
     imp = gdonor.post("/api/import-data", params={"mode": "merge"},
                       files={"file": ("rt.zip", exp.content, "application/zip")})
@@ -170,9 +172,10 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     for row in after:
         want = by_id_before[row[0]]
         if row[1] == "root":
-            # merge appends root pages after the existing ones — position is
-            # the ONE field allowed to change
-            assert row[:2] == want[:2] and row[3:] == want[3:]
+            # merge appends root pages after the existing ones and stamps them
+            # now, so the change feed sees them — position and updated_at are
+            # the fields allowed to change
+            assert row[:2] == want[:2] and row[3:6] == want[3:6] and row[6] >= want[6]
         else:
             assert row == want
     # the PDF is back byte-identical, and the chat survived the round trip

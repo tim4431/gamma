@@ -275,6 +275,35 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  await step("notes: an embed card's checkbox merges into a source edited on its own page; reopening shows the source as it is", async () => {
+    const before = "- [ ] task A\n- [ ] task B";
+    const source = await alice2.api("/api/pages", { method: "POST", body: { title: "Embed source" } });
+    const x = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: source.id, content: before } });
+    const host = await alice2.api("/api/pages", { method: "POST", body: { title: "Embed host" } });
+    await alice2.api("/api/blocks", { method: "POST", body: { parent_id: host.id, content: `![[${x.id}]]` } });
+    const ctx2 = await alice2.context(browser);
+    const page2 = await openPage(ctx2, `${server.base}/?ws=${second.id}&page=${host.id}`);
+    try {
+      const card = page2.locator(".blockEmbedCard").first();
+      await until(async () => (await card.innerText()).includes("task B"), { what: "the embed card rendered" });
+      // Another tab adds to the source while this card shows its older copy.
+      const elsewhere = `${before}\nWritten elsewhere.`;
+      await alice2.api(`/api/blocks/${x.id}`, { method: "PUT", body: { content: elsewhere, base: before } });
+      await card.locator("input.mdTaskCheckbox").first().click();
+      const merged = "- [x] task A\n- [ ] task B\nWritten elsewhere.";
+      await until(async () => (await alice2.api(`/api/blocks/${x.id}`)).content === merged, { what: "the tick merged, the addition kept" });
+      await until(async () => (await card.innerText()).includes("Written elsewhere."), { what: "the card shows the stored text" });
+      // Off to the source page and back: the card is fetched again on the way in.
+      await card.locator(".blockEmbedSrc").click();
+      await until(() => new URL(page2.url()).searchParams.get("block") === source.id, { what: "the source page opened" });
+      await alice2.api(`/api/blocks/${x.id}`, { method: "PUT", body: { content: `${merged}\nAnd more.`, base: merged } });
+      await page2.getByRole("button", { name: "Back", exact: true }).click();
+      await until(async () => (await page2.locator(".blockEmbedCard").first().innerText()).includes("And more."),
+        { what: "the reopened page shows the source's current text" });
+      assertNoProblems(page2);
+    } finally { await ctx2.close(); }
+  });
+
   await step("notes: an uploaded image renders (URL carries the workspace) and survives reload", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot.png", "image/png");
     await editRow(page, "buy milk");

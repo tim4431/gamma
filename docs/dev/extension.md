@@ -173,9 +173,15 @@ Server side (`clip.py`, sync `def` — it downloads):
    `POST /api/blocks/by-doc`) with `default_title = citation_title`, so
    `auto_title` is set and the metadata lookup may still replace it (never a
    user rename). The tab URL is kept as `properties.web_url` when it differs
-   from the PDF URL — it feeds later lookups.
+   from the PDF URL — it feeds later lookups. The lookup and the insert run
+   under the workspace's write lock (`blocks_store.write_lock`), and so do
+   the web-page path's `find_web_page` and `/api/clip/note`'s "Web clips"
+   page: a double-clicked Save, two tabs of one paper or a retry make one
+   page.
 5. **Folder + labels** — `properties.folder` / `properties.category` comma
-   lists, cleaned by `foldertags`.
+   lists, cleaned by `foldertags`: an op batch on the page by the clipping
+   account (`_apply_tags`), fanned out to the page's open tabs like any
+   edit, also when the clip found the paper already saved.
 6. **Metadata** — `metadata.fetch_page_metadata()` (extracted from
    `/api/metadata/fetch`) in a daemon thread; the detector's `doi`/`arxiv_id`
    ride along as trusted hints (they come from the publisher page's own meta

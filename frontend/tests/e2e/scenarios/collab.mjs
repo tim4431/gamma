@@ -2,8 +2,9 @@
 // chips), each other's ops arriving live, concurrent edits to different
 // blocks converging, same-block typing merging both people's text, one
 // person's undo leaving the other's edit alone, a rename reaching the other
-// tab, edits made offline landing once the network is back, and a highlight
-// one person makes on the PDF showing up for the other.
+// tab, edits made offline landing once the network is back, a note moved in
+// with a reload surviving Ctrl+Z, a failed refresh keeping the page, and a
+// highlight one person makes on the PDF showing up for the other.
 import { tree, same, editRow, closeEditor } from "./notes.mjs";
 import { waitForPdf, selectPdfText } from "./pdf.mjs";
 
@@ -211,6 +212,42 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await until(async () => !(await A.textContent("body")).includes("alpha"), { what: "row gone on alice's side" });
     await until(async () => same(await tree(aliceT, pageId), [{ content: "beta from bob (bob) later offline", children: [] }]), { what: "server tree" });
     assertNoProblems(A); assertNoProblems(B);
+  });
+
+  // A note moved here from another page (an import, the AI's move_block)
+  // arrives as a reload; the undo stack from before it must not delete it.
+  const moveIn = async (content) => {
+    const elsewhere = await aliceT.api("/api/pages", { method: "POST", body: { title: `Elsewhere: ${content}` } });
+    const note = await aliceT.api("/api/blocks", { method: "POST", body: { parent_id: elsewhere.id, content } });
+    await aliceT.api(`/api/blocks/${note.id}/reorder`, { method: "POST", body: { parent_id: pageId, before: null, after: null } });
+  };
+
+  await step("collab: Ctrl+Z after a note arrived with a reload never deletes it", async () => {
+    const text = (await tree(aliceT, pageId))[0].content;
+    await editRow(A, text);
+    await A.keyboard.type(" undoable");
+    await closeEditor(A);
+    await serverHas(`${text} undoable`);
+    await moveIn("a note moved in");
+    await bodyHas(A, "a note moved in");
+    await A.keyboard.press("Control+z");
+    await sleep(800);
+    assert(JSON.stringify(await tree(aliceT, pageId)).includes("a note moved in"), "the moved note survives the undo");
+    await bodyHas(A, "a note moved in");
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: a refresh that fails keeps the page on screen and tries again", async () => {
+    let aborted = 0;
+    await A.route("**/subtree*", (route) => (aborted++ === 0 ? route.abort() : route.continue()));
+    await moveIn("arrives after a retry");
+    await until(async () => aborted >= 1, { what: "the refresh was cut off" });
+    // the page stays (never an empty page), with the notice
+    assert((await A.textContent("body")).includes("a note moved in"), "the notes stay on screen");
+    await until(async () => (await A.textContent(".statusPill").catch(() => "") || "").includes("Couldn't refresh"), { what: "the refresh notice" });
+    await bodyHas(A, "arrives after a retry"); // the retry
+    await A.unroute("**/subtree*");
+    assertNoProblems(A, [/net::ERR|Failed to fetch|subtree/]); assertNoProblems(B);
   });
 
   await step("collab: a highlight bob makes on the PDF appears on alice's page", async () => {

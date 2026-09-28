@@ -165,16 +165,23 @@ def test_ops_insert_retry_is_idempotent(guest):
     assert len(kids) == 1 and kids[0]["properties"] == {"k": 1}
 
 
-def test_ops_delete_sweeps_orphan_uploads(guest):
+def test_ops_that_drop_an_upload_hand_it_to_the_orphan_check(guest, monkeypatch):
+    from gamma import upload_gc
+    monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
+    scheduled = []
+    real = upload_gc.schedule
+    monkeypatch.setattr(upload_gc, "schedule", lambda ws, names: (scheduled.append(sorted(names)), real(ws, names)))
     page = make_page(guest, "Sweep page")
     url = guest.post("/api/upload-image", files={"file": ("dot.png", PNG, "image/png")}).json()["url"]
     name = url.rsplit("/", 1)[-1]
     assert _ops(guest, page["id"], [{"op": "insert", "id": "swA", "parent": page["id"], "content": f"![]({url})"}]).status_code == 200
-    # editing the text away drops the reference → swept
+    # editing the text away drops the reference: checked later, the file stays
     r = _ops(guest, page["id"], [{"op": "set", "id": "swA", "content": "plain"}])
-    assert name in r.json()["removed_uploads"]
-    # a plain text edit sweeps nothing (no reference could have gone)
-    assert _ops(guest, page["id"], [{"op": "set", "id": "swA", "content": "plainer"}]).json()["removed_uploads"] == []
+    assert "removed_uploads" not in r.json() and guest.get(url).status_code == 200
+    # a plain text edit hands over nothing (no reference could have gone)
+    assert _ops(guest, page["id"], [{"op": "set", "id": "swA", "content": "plainer"}]).status_code == 200
+    assert scheduled == [[], [name], []]
+    assert upload_gc.flush(workspace_of(guest_name())) == {workspace_of(guest_name()): [name]}
 
 
 def test_ops_log_prunes_and_catchup_reports_gap(guest, monkeypatch):
@@ -382,7 +389,9 @@ def test_socket_cross_page_move_and_ai_edit(guest):
         assert _recv(d, "reload")
         # an AI tool edit runs in a worker thread; its op still lands in the room
         from gamma.ai_tools import run_agent_tool
-        text, action = run_agent_tool(workspace_of(guest_name()), {"type": "page", "page_id": dst["id"]}, "edit_block",
+        scope = {"type": "page", "page_id": dst["id"]}
+        run_agent_tool(workspace_of(guest_name()), scope, "read_block", {"block_id": blk["id"]})  # a replace needs a read
+        text, action = run_agent_tool(workspace_of(guest_name()), scope, "edit_block",
                                       {"block_id": blk["id"], "content": "travelled, edited by ai"})
         assert action["kind"] == "edit", text
         m = _recv(d, "ops")

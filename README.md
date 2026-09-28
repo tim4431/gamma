@@ -198,7 +198,7 @@ cd ../backend
 GAMMA_STATIC_DIR=../frontend/dist uvicorn app:app --host 127.0.0.1 --port 9001
 ```
 
-Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl.
+Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). A proxy on another machine needs its address there, or every visitor shares the proxy's.
 
 </details>
 
@@ -210,6 +210,7 @@ Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain
 | `GAMMA_DATA_DIR` | No | `data/` at the repo root (`/data` in Docker) | Where `users.db` and the per-workspace data live |
 | `GAMMA_STATIC_DIR` | No | unset (`/app/static` in Docker) | Built frontend to serve as SPA; unset = API only |
 | `GAMMA_PORT` | No | `9001` | Listen port (Docker entrypoint only) |
+| `FORWARDED_ALLOW_IPS` | No | `127.0.0.1` (Docker: loopback and the private ranges) | Addresses of reverse proxies whose `X-Forwarded-For` / `-Proto` headers are believed (uvicorn's setting; comma list, networks allowed, `*` for any — only when nothing but the proxy can reach the port). Rate limits key on the client address this yields |
 | `GAMMA_ADMIN_USER` / `GAMMA_ADMIN_PASSWORD` | No | `admin` / random, printed to the log once | Overrides the account a **fresh** instance seeds itself at startup (only while no real accounts exist; never touched afterwards). Admins manage users from the GUI (Settings → Users) |
 | `GAMMA_AI_ANTHROPIC_BASE_URL` | No | `https://api.anthropic.com` | Default Anthropic-protocol endpoint, e.g. `https://api.deepseek.com/anthropic` |
 | `GAMMA_AI_OPENAI_BASE_URL` | No | `https://api.openai.com` | Default OpenAI-compatible endpoint |

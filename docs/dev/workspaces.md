@@ -140,10 +140,12 @@ Workspace IDs are random and stable. Renaming an account or workspace changes
 database rows without moving files. Schema upgrades run through the
 [versioned migration system](migrations.md).
 
-Workspace members share chats and cover snapshots as well as pages. AI keys,
-provider choice and the preference profile (appearance, reading, library and
-chat settings, [settings.md](settings.md)) belong to the account. Open tabs, recents,
-reading positions and saved layouts belong to an **account and workspace**.
+Workspace members share chats and cover snapshots as well as pages. Like
+pages, only editors and owners change them (a viewer's chat and covers stay
+in its browser tab). AI keys, provider choice and the preference profile
+(appearance, reading, library and chat settings, [settings.md](settings.md))
+belong to the account. Open tabs, recents, reading positions and saved
+layouts belong to an **account and workspace**.
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
 not restored because their owner is unknown.
@@ -156,7 +158,8 @@ Keep identity and data location separate in endpoint code:
 |---|---|
 | `require_user(request)` | Session username; account-only data such as AI settings |
 | `require_ws(request, write=False)` | Workspace ID with effective viewer access |
-| `require_ws(request, write=True)` | Workspace ID with editor or owner access |
+| `require_ws(request, write=True)` | Workspace ID with editor or owner access (and, through an integration token, a write-scope one) |
+| `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
 | `resolve_ws(request)` | Read through a share token, otherwise normal workspace access |
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
 | `share_scope(request)` | The `ShareScope` (one page, or the pages filed in one folder) a share-enabled endpoint must enforce |
@@ -195,7 +198,7 @@ in the [API reference](api.md).
 | `POST /workspaces` | Create a personal workspace; administrators may create shared ones or choose another owner |
 | `GET /workspaces/{id}` | Details, effective role, explicit members and quota |
 | `PUT /workspaces/{id}` | Atomic settings update; omitted fields stay unchanged |
-| `DELETE /workspaces/{id}` | Delete the workspace, its content and its saved workspace backups |
+| `DELETE /workspaces/{id}` | Delete the workspace, its content and its saved workspace backups, after one final copy went to `backups/deleted/` |
 | `PUT /workspaces/{id}/members/{user}` | Invite or change a membership role |
 | `DELETE /workspaces/{id}/members/{user}` | Remove a member, or leave your own explicit membership |
 | `POST /workspaces/{id}/invites` | Invite by Gamma Cloud username (`{username, role}`): a membership now, or a pending one |
@@ -250,8 +253,10 @@ manifest, database snapshots and uploads unless databases-only was selected.
   `/import-data`.
 - **Saved workspace snapshots:** Settings → Backups. Owners create or delete
   them, members list and download them, editors merge them, and owners restore
-  them in place. Each ZIP is independent. Up to 20 are kept per workspace;
-  they do not count against upload quotas. Guests cannot keep snapshots.
+  them in place. Each ZIP is independent. Up to 20 manual ones are kept per
+  workspace (`MAX_PER_WORKSPACE`); they do not count against upload quotas.
+  No snapshot is taken while the server's disk has less than 1 GB free
+  (`MIN_FREE_BYTES`). Guests cannot keep snapshots.
 - **Server snapshots:** Settings → Server. These cover the whole data
   directory and are restored with the server stopped. They are separate from
   workspace snapshots; see [migrations and server backups](migrations.md).
@@ -259,9 +264,65 @@ manifest, database snapshots and uploads unless databases-only was selected.
 Exports transfer library content. Passwords, sessions and private AI
 credentials stay with the account.
 
+A snapshot copies the databases first (the SQLite backup API) and lists the
+uploads only after that, so every file the copied pages name is on disk when
+the list is taken. A file an orphan sweep removes in between is left out and
+named in the manifest's `missing_uploads`; it never fails the snapshot. A
+workspace takes one snapshot at a time (a lock per workspace). Each is
+written under a unique temporary name and renamed when complete; a second
+one in the same second is named `<time>-<label>.2`. Every database copy is
+quick-checked (`gamma/integrity.py`) and the result goes into the
+manifest's `integrity`. The listing shows a damaged copy and missing files.
+
+**Restoring** (`restore_zip`) checks the backup before it touches anything:
+the zip's shape and `PRAGMA quick_check` of its databases. A damaged backup
+is refused whole.
+
+- **Replace** normalizes the unpacked copies, keeps what the workspace holds
+  now as an automatic `pre-restore` snapshot with its uploads, and swaps the
+  databases in. The pre-restore snapshot shows as "Before restore"; the
+  newest three stay (`PRE_RESTORE_KEEP`) and do not count against the cap.
+  The restore is refused when that snapshot cannot be taken.
+- **Files.** The backup's files the workspace lacks are copied in. Files
+  only the old pages used are left to the orphan cleanup, and the
+  pre-restore snapshot still has them.
+- **Merge** adds the pages the workspace lacks, whole. A block of such a
+  page whose id the workspace uses elsewhere (it moved to another page
+  since) comes in under a fresh id with its children, so nothing is grafted
+  into a page nobody restored.
+- **Pages in Recently deleted** count as lacking. A merge (and the reviewed
+  Gamma import, which plans such a page as "create") removes the trashed
+  copy's rows and brings the backup's version back live under the same ids.
+  Its chats, op log and reading state, all keyed by the page id, stay with
+  it; the answer counts it in `pages_added` and `from_trash`. Blocks the
+  trashed copy gained after the backup are gone with it; the trash's own
+  Restore keeps them ([home_library.md](home_library.md) "Recently
+  deleted"). A backup zip holds the trash as it was, and a replace brings
+  back that trash.
+
+Either way a restore writes pages behind the op log, so it keeps the log and
+the change feed honest ([collab.md](collab.md)):
+
+- every page it wrote gets a `reload` entry above the highest seq either
+  side had (a tab's seq never goes back), and its root is stamped now;
+- pages a replace removed get a `deleted_pages` tombstone, and pages a
+  merge brought back lose theirs;
+- every open room of the workspace (a replace) or of the added pages (a
+  merge) is told to reload, and the commit listeners hear of it.
+
 `restore_zip(mode="merge", selected=)` filters pages, chats and uploads by the
 `page:<id>` / `chat:<id>` ids `_review_import` hands it.
 Replace mode never takes a selection.
+
+**Deleting a workspace** (the Manage page, or an account's deletion taking
+its workspaces with it) first writes one final copy of it, uploads
+included, to `backups/deleted/<id>-<name>-<time>.zip` (`ws_backup.keep_final_copy`).
+That folder is outside the ones that go with the workspace. It is the same
+zip format, so an administrator restores it into any workspace through
+Import (`/import-data`). Copies older than 90 days are removed when the next
+one is written (`DELETED_KEEP_DAYS`); an admin may delete them by hand
+before that. When a copy cannot be written, nothing is deleted (507). A
+guest's workspace keeps no copy.
 
 **Scheduled tasks** (`gamma/backup_schedule.py`, API in [api.md](api.md)):
 a task belongs to an account, names the owned workspaces it snapshots
@@ -274,6 +335,21 @@ runs once on the next round, then reschedules from the cron.
 A failed run is retried after an hour. "Run now" sets `requested`, keeps
 the scheduled `next_run` and wakes the loop for a round at once (`_wake`).
 Snapshots are pruned per task and workspace after every run.
+
+Every run is a full copy, so tasks have limits (constants in
+`backup_schedule.py` and `ws_backup.py`):
+
+- a schedule fires at most once an hour (its cron has a single minute
+  value);
+- a task keeps at most 90 days or 90 snapshots (`MAX_RETENTION`);
+- an account has at most five tasks (`MAX_TASKS`);
+- a workspace keeps at most 100 scheduled snapshots of all its tasks
+  together (`MAX_SCHEDULED_PER_WORKSPACE`);
+- no run starts while the disk has less than 1 GB free (`MIN_FREE_BYTES`).
+
+A task saved before a limit existed fails its next run with the reason in
+`last_error` (the `backup-failed` notice) until it is edited; pausing it is
+always allowed.
 
 ## Clones (mirrors)
 
@@ -293,7 +369,9 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
 - Some viewer screens still expose write controls; the server refuses those
   operations. Effective permissions remain a server decision.
-- Shared workspace chats are visible to other workspace members.
+- Shared workspace chats are visible to other workspace members. There is
+  one conversation per page or folder: two members asking at once end up in
+  one merged conversation ([ai.md](ai.md) "Chat history buckets").
 - The account directory is visible to every signed-in non-guest account.
 - Cross-workspace page transfer uses export and merge, with no direct move.
 - The browser extension clips into the default workspace.

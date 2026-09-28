@@ -32,6 +32,7 @@ from ..blocks_store import (
     get_or_create_doc_page,
     last_child_position,
     page_attachment,
+    write_lock,
 )
 from ..db import connect_pages_db, get_pref, page_now, safe_doc_id, ws_uploads_dir
 from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
@@ -39,7 +40,7 @@ from ..logbuf import log
 from ..ops import after_commit, apply_ops, props_patch
 from ..server_settings import can_store
 from .. import pdf_meta
-from ..storage import DIGEST_CHARS, url_filename
+from ..storage import DIGEST_CHARS, url_filename, write_atomic
 from .metadata import fetch_page_metadata, registry_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -123,9 +124,11 @@ def find_web_page(conn, url: str) -> dict | None:
     return None
 
 
-def _apply_tags(conn, block: dict, folder: str, labels: list[str]) -> dict:
+def _apply_tags(conn, ws: str, actor: str, block: dict, folder: str, labels: list[str]) -> dict:
     """File the page: folder paths and flat labels are both comma lists on
-    the page's properties; adding is a soft link that keeps existing tags."""
+    the page's properties; adding is a soft link that keeps existing tags.
+    An op batch like every write to a page — logged under ``actor`` and
+    fanned out to the page's open tabs."""
     props = dict(block.get("properties") or {})
     changed = False
     path = clean_path(folder)
@@ -142,11 +145,9 @@ def _apply_tags(conn, block: dict, folder: str, labels: list[str]) -> dict:
             props["category"] = ", ".join(cats)
             changed = True
     if changed:
-        result = apply_ops(conn, block["id"], [{"op": "set", "id": block["id"],
-                                                "props": props_patch(block.get("properties") or {}, props)}],
-                           actor=block.get("_actor") or "")
-        if block.get("_ws"):
-            after_commit(block["_ws"], conn, result)
+        after_commit(ws, conn, apply_ops(conn, block["id"], [{
+            "op": "set", "id": block["id"],
+            "props": props_patch(block.get("properties") or {}, props)}], actor=actor))
         block = {**block, "properties": props}
     return block
 
@@ -221,11 +222,13 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
     """The no-PDF outcome of a clip: a page carrying the tab as
     ``properties.web_url`` (title from the tab, else the URL), the clipped
     selection as its first block. Re-clipping the same URL finds that page
-    (``find_web_page``) and only files it / appends the new selection."""
+    (``find_web_page``) and only files it / appends the new selection —
+    looked up under the write lock, so two clips at once make one page."""
     now = page_now()
+    write_lock(conn)
     existing = find_web_page(conn, source_url)
     if existing:
-        block = _apply_tags(conn, {**existing, "_ws": ws, "_actor": actor}, payload.folder, labels)
+        block = _apply_tags(conn, ws, actor, existing, payload.folder, labels)
         if (payload.selection or "").strip():
             after_commit(ws, conn, apply_ops(conn, block["id"], [{
                 "op": "insert", "id": secrets.token_urlsafe(9), "parent": block["id"],
@@ -236,7 +239,7 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
     if (payload.selection or "").strip():
         _insert_last(conn, block["id"], _quote_content(payload.selection, source_url, title), {}, now)
         conn.commit()
-    block = _apply_tags(conn, block, payload.folder, labels)
+    block = _apply_tags(conn, ws, actor, block, payload.folder, labels)
     # A DOI/arXiv id found on the page still identifies the work — the
     # lookup needs no PDF for those, so the note can cite even without one.
     if payload.fetch_metadata and (doi or arxiv_id):
@@ -263,7 +266,7 @@ def clip(payload: ClipRequest, request: Request):
     with connect_pages_db(ws) as conn:
         existing = find_page(conn, doi, arxiv_id, (pdf_url, source_url))
         if existing:
-            block = _apply_tags(conn, existing, payload.folder, labels)
+            block = _apply_tags(conn, ws, actor, existing, payload.folder, labels)
             return _result(block, existed=True)
 
     if not (payload.doc_id or pdf_url or arxiv_id or doi):
@@ -301,8 +304,7 @@ def clip(payload: ClipRequest, request: Request):
                 _, data = download_pdf(page_source, want_bytes=payload.save_copy)
                 if payload.save_copy:
                     if can_store(ws, len(data)):
-                        local.parent.mkdir(parents=True, exist_ok=True)
-                        local.write_bytes(data)
+                        write_atomic(local, data)
                         pdf_meta.schedule(ws, doc_id)
                     else:
                         log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")
@@ -327,7 +329,7 @@ def clip(payload: ClipRequest, request: Request):
             after_commit(ws, conn, apply_ops(conn, block["id"], [
                 {"op": "set", "id": block["id"], "props": {"web_url": source_url}}], actor=actor))
             block = {**block, "properties": props}
-        block = _apply_tags(conn, {**block, "_ws": ws, "_actor": actor}, payload.folder, labels)
+        block = _apply_tags(conn, ws, actor, block, payload.folder, labels)
 
     # 4. Metadata, off the request.
     if payload.fetch_metadata and not (block.get("properties") or {}).get("meta"):
@@ -429,23 +431,24 @@ def _insert_last(conn, parent_id: str, content: str, props: dict, now: str) -> s
 def clip_note(payload: ClipNoteRequest, request: Request):
     """Append a quoted selection (with its source link) as the last block of
     a page — the one matching this tab, or the "Web clips" page (created on
-    first use)."""
+    first use, under the write lock so concurrent first clips make one)."""
     ws = require_ws(request, write=True)
     if not (payload.text or "").strip():
         raise HTTPException(status_code=400, detail="nothing selected")
     content = _quote_content(payload.text, payload.source_url, payload.title)
-    now = page_now()
     with connect_pages_db(ws) as conn:
         page_id = (payload.page_id or "").strip()
         if page_id:
-            if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page_id,)).fetchone():
+            if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                                (page_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="page not found")
         else:
+            write_lock(conn)
             row = conn.execute(
                 "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.web_clips') = 1 LIMIT 1"
+                "AND json_extract(properties, '$.web_clips') = 1 ORDER BY created_at, id LIMIT 1"
             ).fetchone()
-            page_id = row[0] if row else _insert_last(conn, "root", WEB_CLIPS_TITLE, {"web_clips": 1}, now)
+            page_id = row[0] if row else create_page(conn, WEB_CLIPS_TITLE, {"web_clips": 1})["id"]
         block_id = secrets.token_urlsafe(9)
         after_commit(ws, conn, apply_ops(conn, page_id, [
             {"op": "insert", "id": block_id, "parent": page_id, "content": content}],

@@ -45,10 +45,17 @@ def _me(request: Request) -> str:
     return require_personal_user(request, "Sign in with a personal account to keep an offline copy.")
 
 
+def _owns(user: str, mirror: dict) -> bool:
+    """The mirror is the caller's: recorded as its owner, and still the
+    owner of the workspace the copy lives in (an account that later took a
+    renamed owner's old name never is)."""
+    return mirror["owner"] == user and workspaces.role_of(mirror["workspace_id"], user) == "owner"
+
+
 def _mine(request: Request, ws: str) -> dict:
     user = _me(request)
     mirror = sync_engine.get_mirror(ws)
-    if not mirror or mirror["owner"] != user:
+    if not mirror or not _owns(user, mirror):
         raise HTTPException(status_code=404, detail="no such mirror")
     return mirror
 
@@ -66,7 +73,8 @@ def _info(mirror: dict) -> dict:
 def list_mirrors(request: Request):
     """``{mirrors: [{workspace_id, name, remote_url, remote_ws, remote_name,
     mode, status, ...}]}`` — the caller's."""
-    return {"mirrors": [_info(m) for m in sync_engine.list_mirrors(_me(request))]}
+    user = _me(request)
+    return {"mirrors": [_info(m) for m in sync_engine.list_mirrors(user) if _owns(user, m)]}
 
 
 @router.post("", status_code=201)

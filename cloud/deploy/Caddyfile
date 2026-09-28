@@ -26,8 +26,10 @@
 # it as `gamma-demo` on the shared network `gamma-edge`, resolved per
 # request, so a stopped demo is a 502 for its name and nothing else.
 #
-# The demo's guest logins are rate limited per client address, which Gamma
-# reads from the first X-Forwarded-For hop. Caddy does not trust the
+# The demo's guest logins are rate limited per client address, which the
+# Gamma image takes from X-Forwarded-For when the connection comes from a
+# private address, as Caddy's does on this network (FORWARDED_ALLOW_IPS in
+# the image; uvicorn --proxy-headers). Caddy does not trust the
 # X-Forwarded-For Cloudflare sends and would put Cloudflare's edge address
 # there, so every visitor behind one edge would share one limit: the demo's
 # proxy passes Cloudflare's CF-Connecting-IP instead (see the README's origin

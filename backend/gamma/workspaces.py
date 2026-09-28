@@ -63,6 +63,11 @@ LOOKUP_TIMEOUT = 10
 _COLS = "id, name, created_by, created_at, kind, access, public_role, quota_mb"
 
 
+class FinalCopyError(RuntimeError):
+    """A workspace about to be deleted could not be copied to
+    backups/deleted/ first; nothing was deleted."""
+
+
 def new_workspace_id() -> str:
     return secrets.token_urlsafe(9)
 
@@ -385,6 +390,9 @@ def set_member(ws: str, username: str, role: str, by: str) -> None:
     if role not in ROLES:
         raise ValueError("role must be owner, editor or viewer")
     with connect_users_db() as conn:
+        # The write lock before the owner check: two owners demoting each
+        # other at once must not both pass "not the last owner".
+        conn.execute("BEGIN IMMEDIATE")
         if _personal_owner(conn, ws):
             raise ValueError("a personal workspace has no other members — share a page, or ask an admin for a shared workspace")
         _check_account(conn, username)
@@ -402,6 +410,7 @@ def remove_member(ws: str, username: str) -> None:
     personal workspace has nobody to remove, and public access is not a
     membership — there is nothing to remove."""
     with connect_users_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")  # the last-owner check and the delete as one step
         if _personal_owner(conn, ws):
             raise ValueError("a personal workspace cannot be left; delete it instead")
         if _is_last_owner(conn, ws, username):
@@ -611,23 +620,61 @@ def _is_last_owner(conn, ws: str, username: str) -> bool:
     return owners == [username]
 
 
-def delete(ws: str) -> str:
+def keep_final_copies(ws_ids, *, by: str = "") -> list[str]:
+    """One final copy of each workspace about to be deleted
+    (``ws_backup.keep_final_copy``: a full backup zip in backups/deleted/),
+    all or none: when one cannot be written, the copies already made go
+    again and FinalCopyError says which workspace, before anything is
+    deleted. Returns the copies' file names ("" for a guest's workspace)."""
+    from . import ws_backup  # local: ws_backup imports seed → db
+
+    done = []
+    for ws in ws_ids:
+        try:
+            done.append(ws_backup.keep_final_copy(ws, by=by))
+        except ws_backup.BackupError as e:
+            for name in done:
+                if name:
+                    (ws_backup.deleted_dir() / name).unlink(missing_ok=True)
+            label = (get(ws) or {}).get("name") or ws
+            raise FinalCopyError(f"nothing was deleted — workspace “{label}”: {e}") from e
+    return done
+
+
+def delete(ws: str, *, by: str = "") -> dict:
     """Remove the workspace: its rows (memberships, shares, per-workspace
-    prefs) and its directory. An account's last personal workspace is
+    prefs) and its directory, after a final copy of it went to
+    backups/deleted/ (``keep_final_copies``; FinalCopyError and nothing
+    deleted when that fails). An account's last personal workspace is
     refused; deleting its default moves the default to the oldest other
-    personal one. Returns a warning when the directory could not be
-    removed (Windows file locks)."""
+    personal one. Returns ``{warning, final_copy}``: a warning when the
+    directory could not be removed (Windows file locks), and the copy's
+    file name."""
     with connect_users_db() as conn:
-        owner = _personal_owner(conn, ws)
+        _other_personal(conn, ws)
+    final_copy = keep_final_copies([ws], by=by)[0]
+    with connect_users_db() as conn:
+        # checked again under the write lock: two of an account's last two
+        # personal workspaces deleted at once must not both go
+        conn.execute("BEGIN IMMEDIATE")
+        owner, others = _other_personal(conn, ws)
         if owner:
-            others = [w for w in _personal_ids(conn, owner) if w != ws]
-            if not others:
-                raise ValueError("your last personal workspace cannot be deleted; delete the account instead")
             conn.execute("UPDATE users SET default_workspace = ? WHERE username = ? AND default_workspace = ?",
                          (others[0], owner, ws))
         _delete_rows(conn, ws)
         conn.commit()
-    return remove_files(ws)
+    return {"warning": remove_files(ws), "final_copy": final_copy}
+
+
+def _other_personal(conn, ws: str) -> tuple[str, list[str]]:
+    """For a personal workspace about to go: its owner and the owner's other
+    personal workspaces, oldest first (``("", [])`` for a shared one).
+    ValueError when it is the owner's last."""
+    owner = _personal_owner(conn, ws)
+    others = [w for w in _personal_ids(conn, owner) if w != ws] if owner else []
+    if owner and not others:
+        raise ValueError("your last personal workspace cannot be deleted; delete the account instead")
+    return owner, others
 
 
 def _delete_rows(conn, ws: str) -> None:
@@ -660,21 +707,27 @@ def remove_files(ws: str) -> str:
                 f"delete workspaces/{ws}/ by hand")
 
 
+def _deleted_with(conn, username: str) -> list[str]:
+    """The workspaces that go with an account: its personal ones and the
+    shared ones it alone owns."""
+    deleted = []
+    for ws, in conn.execute("SELECT workspace_id FROM workspace_members WHERE username = ?",
+                            (username,)).fetchall():
+        kind = conn.execute("SELECT kind FROM workspaces WHERE id = ?", (ws,)).fetchone()
+        owners = [r[0] for r in conn.execute(
+            "SELECT username FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
+        if (kind and kind[0] == "personal") or owners == [username]:
+            deleted.append(ws)
+    return deleted
+
+
 def delete_account_workspaces(username: str) -> list[str]:
     """When an account goes: its personal workspaces are deleted; it leaves
     every shared workspace, and the ones where it was the only owner are
     deleted too (their other members lose them — the admin UI says so
     before). Returns the deleted workspace ids."""
-    deleted = []
     with connect_users_db() as conn:
-        mine = [r[0] for r in conn.execute(
-            "SELECT workspace_id FROM workspace_members WHERE username = ?", (username,))]
-        for ws in mine:
-            kind = conn.execute("SELECT kind FROM workspaces WHERE id = ?", (ws,)).fetchone()
-            owners = [r[0] for r in conn.execute(
-                "SELECT username FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
-            if (kind and kind[0] == "personal") or owners == [username]:
-                deleted.append(ws)
+        deleted = _deleted_with(conn, username)
         conn.execute("DELETE FROM workspace_members WHERE username = ?", (username,))
         conn.execute("DELETE FROM integration_tokens WHERE username = ?", (username,))
         conn.execute("DELETE FROM publisher_sessions WHERE username = ?", (username,))
@@ -687,21 +740,26 @@ def delete_account_workspaces(username: str) -> list[str]:
     return deleted
 
 
-def delete_account(username: str, *, release_now: bool = False) -> list[str]:
+def delete_account(username: str, *, release_now: bool = False, by: str = "") -> list[str]:
     """Delete an account and everything that is only its: sessions, the
     Gamma Cloud identity (its grant released — off the person's server
     list, refresh token revoked; in the background unless ``release_now``,
     which a CLI process that exits right after wants), integration tokens,
     publisher sessions, prefs, the workspaces ``delete_account_workspaces``
-    removes, its AI usage rows and the users row. The one account deletion:
-    the admin API, ``manage.py delete-user`` and the guest expiry
-    (gamma/guests.py) all come here. Returns the deleted workspace ids; []
-    for an unknown account. The callers check who may be deleted."""
+    removes, its AI usage rows and the users row. Each of those workspaces
+    is first copied to backups/deleted/ (``keep_final_copies``; a guest's
+    keep nothing): FinalCopyError, and nothing deleted, when one cannot be.
+    The one account deletion: the admin API, ``manage.py delete-user`` and
+    the guest expiry (gamma/guests.py) all come here. Returns the deleted
+    workspace ids; [] for an unknown account. The callers check who may be
+    deleted."""
     from . import cloud_auth, cloud_sync  # local: cloud_auth imports this module
 
     with connect_users_db() as conn:
         if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
             return []
+        doomed = _deleted_with(conn, username)
+    keep_final_copies(doomed, by=by)
     subject, held = cloud_auth.grant_of(username)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM sessions WHERE username = ?", (username,))

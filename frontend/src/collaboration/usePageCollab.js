@@ -29,9 +29,13 @@ function socketUrl(pageId) {
 //                 tree (pos: the shared id → position map blockOps needs)
 //   onReload(pageId)          — refetch the tree (a change ops can't express)
 //   onStatus(text)            — the status line
-// Returns the session's commit/flush/hasPending/sendCursor, `peers`, `me`,
-// and `reconnect` (reopen the socket — after a display-name change, since the
-// name travels in the handshake).
+//   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
+// Returns the session's commit/flush/hasPending/sendCursor/overlay/
+// reloadFailed/tooLong, `peers`, `me`, and `reconnect` (reopen the socket —
+// after a display-name change, since the name travels in the handshake).
+// While edits are unsaved, leaving the tab asks first (beforeunload); a tab
+// going to the background flushes (a phone may kill it without a pagehide),
+// and the browser coming back online retries a failed save at once.
 export function usePageCollab(opts) {
   const o = useRef(opts);
   o.current = opts;
@@ -60,11 +64,27 @@ export function usePageCollab(opts) {
   }
   const session = ref.current;
 
-  // Tab closing / reloading: a keepalive POST of what is still queued.
+  // Tab closing / reloading: a keepalive POST of what is still queued, and
+  // the browser's "leave site?" while anything is unsaved.
   useEffect(() => {
     const onHide = () => session.pagehide();
+    const onLeave = (e) => {
+      if (!session.hasPending()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") session.flush(); };
+    const onOnline = () => session.retryNow();
     window.addEventListener("pagehide", onHide);
-    return () => window.removeEventListener("pagehide", onHide);
+    window.addEventListener("beforeunload", onLeave);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("beforeunload", onLeave);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onOnline);
+    };
   }, [session]);
 
   useEffect(() => {
@@ -75,7 +95,8 @@ export function usePageCollab(opts) {
 
   return {
     commit: session.commit, flush: session.flush, hasPending: session.hasPending, peers, me,
-    sendCursor: session.sendCursor,
+    sendCursor: session.sendCursor, overlay: session.overlay, reloadFailed: session.reloadFailed,
+    tooLong: session.tooLong,
     reconnect: () => { if (enabled && pageId) session.connect(pageId); },
   };
 }

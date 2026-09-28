@@ -167,6 +167,63 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("chat navigation: two tabs asking in one conversation keep each other's messages", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const tabs = [];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
+        await ctx.addInitScript(() => {
+          localStorage.setItem("gamma-ai-login-check", "off");
+          const fetch = window.fetch.bind(window);
+          window.fetch = (input, init) => {
+            if (String(input).endsWith("/api/ai/chat")) {
+              return Promise.resolve(new Response(new ReadableStream({
+                start(controller) {
+                  window.chatStream = {
+                    push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                    finish: () => controller.close(),
+                  };
+                },
+              }), { headers: { "Content-Type": "application/x-ndjson" } }));
+            }
+            return fetch(input, init);
+          };
+        });
+        tabs.push({ ctx, page: await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`) });
+      }
+      for (const { page } of tabs) {
+        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+        await page.waitForLoadState("networkidle");
+      }
+      // Both tabs show the empty conversation; A asks and its answer is
+      // saved, then B — still on its empty copy — asks too.
+      const ask = async ({ page }, question, answer) => {
+        const input = page.getByRole("combobox", { name: "Message AI" });
+        await input.fill(question);
+        await input.press("Enter");
+        await page.waitForFunction(() => !!window.chatStream);
+        await page.evaluate((text) => { window.chatStream.push({ delta: text }); window.chatStream.finish(); }, answer);
+      };
+      const stored = async () => ((await alice.api(`/api/chats/${pdf.id}`)).messages || []).map((m) => m.text);
+      await ask(tabs[0], "Question from tab A", "Answer for tab A.");
+      await until(async () => (await stored()).includes("Answer for tab A."), { what: "tab A's reply saved" });
+      await ask(tabs[1], "Question from tab B", "Answer for tab B.");
+      await until(async () => {
+        const texts = await stored();
+        return ["Question from tab A", "Answer for tab A.", "Question from tab B", "Answer for tab B."]
+          .every((text) => texts.includes(text));
+      }, { what: "both tabs' messages stored" });
+      await until(async () => (await tabs[1].page.locator(".chatPanel").innerText()).includes("Answer for tab A."),
+        { what: "tab B shows tab A's messages" });
+      assertEq(await tabs[1].page.getByTestId("chat-save-error").count(), 0, "nothing is left unsaved");
+      for (const { page } of tabs) assertNoProblems(page);
+    } finally {
+      for (const { ctx } of tabs) await ctx.close();
+    }
+  });
+
   await step("chat navigation: the page picker's keys — Enter ticks the best match, arrows walk, Ctrl+F stays in the picker", async () => {
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);

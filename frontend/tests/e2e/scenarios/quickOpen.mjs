@@ -126,6 +126,7 @@ export async function quickOpenScenarios(env) {
   await step("quickopen: a link to a page that isn't here says so, and Search the library opens the palette", async () => {
     const gone = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Soon deleted" } });
     await user.api(`/api/blocks/${gone.id}`, { method: "DELETE" });
+    await user.api(`/api/trash/${gone.id}`, { method: "DELETE" }); // gone for good (trash.mjs covers Recently deleted)
     const holder = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Links to a gone page" } });
     await user.api("/api/blocks", { method: "POST", body: { parent_id: holder.id, content: `see [the old page](/?page=${gone.id})` } });
     const ctx = await user.context(browser);
@@ -181,7 +182,7 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("Escape");
       await row.click();
       await page.keyboard.press("Delete");
-      const confirm = page.locator(".confirmModal", { hasText: "Delete this page and all its notes?" });
+      const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
       await row.waitFor();

@@ -1,10 +1,10 @@
 """SDK-dependent OAuth provider, imported only during assistant sign-in."""
 import re
 import secrets
-import time
 from urllib.parse import urlencode
 
 from fastapi import HTTPException
+from fastapi.concurrency import run_in_threadpool
 from mcp.server.auth.provider import AuthorizationCode, AuthorizationParams, AuthorizeError, TokenError
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
@@ -20,14 +20,21 @@ class GammaCode(AuthorizationCode):
     session_hash: str
 
 
+def client_info(base, client_id):
+    value = load("client", base, client_id)
+    return OAuthClientInformationFull.model_validate(value) if value else None
+
+
 class Provider:
+    """The SDK's handlers await these methods on the event loop; their
+    users.db reads and writes run in the threadpool."""
+
     def __init__(self, base):
         self.base = base
         self.resource = base + "/mcp"
 
     async def get_client(self, client_id):
-        value = load("client", self.base, client_id)
-        return OAuthClientInformationFull.model_validate(value) if value else None
+        return await run_in_threadpool(client_info, self.base, client_id)
 
     async def authorize(self, client, params: AuthorizationParams):
         if params.resource != self.resource:
@@ -37,15 +44,18 @@ class Provider:
         if params.scopes is not None and params.scopes != [SCOPE]:
             raise AuthorizeError("invalid_scope", "Only gamma:read is supported.")
         request_id = secrets.token_urlsafe(32)
-        store("request", self.base, request_id,
-              {"client_id": client.client_id, "params": params.model_dump(mode="json")}, 600)
+        await run_in_threadpool(store, "request", self.base, request_id,
+                                {"client_id": client.client_id, "params": params.model_dump(mode="json")}, 600)
         return self.base + "/?" + urlencode({"gamma_oauth": request_id})
 
     async def load_authorization_code(self, client, authorization_code):
-        value = load("code", self.base, authorization_code)
+        value = await run_in_threadpool(load, "code", self.base, authorization_code)
         return GammaCode(code=authorization_code, **value) if value else None
 
     async def exchange_authorization_code(self, client, authorization_code: GammaCode):
+        return await run_in_threadpool(self._exchange, client, authorization_code)
+
+    def _exchange(self, client, authorization_code: GammaCode):
         # Atomic consumption prevents parallel exchanges of a valid code.
         value = load("code", self.base, authorization_code.code, consume=True)
         if not value or value["client_id"] != client.client_id or value["resource"] != self.resource:

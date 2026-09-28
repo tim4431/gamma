@@ -101,11 +101,14 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   overlapping extractions both die with "Failed to load page", even on
   different files. Sync endpoints run in FastAPI's threadpool and the search
   indexer runs in a background thread, so a chat could collide with its own
-  indexing, get the failure sentinel as context, and answer blind. All
-  extraction is now serialized behind one lock — and every pdfium object is
+  indexing, get the failure sentinel as context, and answer blind. Every
+  pdfium call is serialized behind one lock, and every pdfium object is
   closed explicitly inside it, with pypdfium2's finalizers routed through
-  the same lock, because a page left to the cyclic GC is closed on another
-  thread and takes the process down (`pdf_text.py`).
+  the same lock: a page left to the cyclic GC is closed on another thread
+  and takes the process down (`pdf_text.py`). The walks over every page
+  take the lock per page, not per document, so a chat's extraction runs
+  between the pages of a book being indexed instead of after it (measured:
+  `/pdf-text-status` during a 5,000-page reindex, 5.6 s → 77 ms).
 
 ## Known limits
 

@@ -10,7 +10,8 @@ Usage:
   python manage.py list-identities | link-identity <user> <sub> <username> [email] | unlink-identity <user>
                                                    # Sign in with Gamma Cloud (docs/dev/cloud_accounts.md)
   python manage.py rename-user <old> <new>
-  python manage.py delete-user <username>          # + the workspaces only they owned (guests too)
+  python manage.py delete-user <username>          # + the workspaces only they owned (guests too;
+                                                   #   a final copy of each goes to backups/deleted/)
   python manage.py list-users
   python manage.py list-workspaces                 # every workspace, access, members, size
   python manage.py create-workspace <name> <owner> [shared [public [viewer|editor]]]
@@ -22,7 +23,7 @@ Usage:
   python manage.py backups                         # list the snapshots under backups/
   python manage.py backups --create [--uploads] [--label x]   # take one now (databases; + uploads)
   python manage.py backups --restore <name>        # copy one back over the data dir (server stopped!)
-  python manage.py backups --delete <name> | --prune
+  python manage.py backups --delete <name> | --prune   # --prune: old pre-upgrade snapshots only
 
 Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder).
 """
@@ -155,8 +156,13 @@ def delete_user(username):
     if _is_guest(username) is None:
         print(f"User '{username}' not found.")
         return
-    deleted = workspaces.delete_account(username, release_now=True)
-    print(f"Deleted user '{username}'" + (f" and workspace(s) {', '.join(deleted)}" if deleted else ""))
+    try:
+        deleted = workspaces.delete_account(username, release_now=True)
+    except workspaces.FinalCopyError as e:
+        print(f"Refused: {e}")
+        sys.exit(2)
+    print(f"Deleted user '{username}'" + (f" and workspace(s) {', '.join(deleted)}" if deleted else "")
+          + (" (a final copy of each is in backups/deleted/)" if deleted else ""))
 
 
 def sweep_guests(everyone=False):
@@ -167,9 +173,11 @@ def sweep_guests(everyone=False):
 
 
 def rename_user(old, new):
-    """Rename an account: every row that names it. Sessions and share tokens
-    keep working; no files move (workspace directories are named by id)."""
-    from gamma.routers.admin import rename_account_rows
+    """Rename an account: every row that names it, and its backup tasks.
+    Sessions and share tokens keep working; no workspace directory moves
+    (they are named by id)."""
+    from gamma import backup_schedule
+    from gamma.routers.admin import rename_account
 
     if _is_guest(old):
         print("A guest account cannot be renamed.")
@@ -184,8 +192,11 @@ def rename_user(old, new):
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (new,)).fetchone():
             print(f"User '{new}' already exists.")
             return
-        rename_account_rows(conn, old, new)
-        conn.commit()
+        try:
+            rename_account(conn, old, new)
+        except backup_schedule.TaskBusy as e:
+            print(str(e))
+            return
     print(f"Renamed user '{old}' -> '{new}'")
 
 
@@ -301,6 +312,9 @@ def backups(args: list):
         except ValueError as e:
             print(f"Refused: {e}")
             sys.exit(2)
+        except OSError as e:  # a full disk: the half-written copy is removed
+            print(f"The backup could not be written: {e}")
+            sys.exit(2)
         print(f"Created {b['name']} ({b['size_bytes'] // (1024 * 1024)} MB, "
               f"{'with' if b.get('uploads') else 'without'} uploads)")
         return
@@ -325,10 +339,12 @@ def backups(args: list):
         print("No backups.")
     for b in rows:
         print(f"  {b['name']}  schema v{b.get('schema_version', '?')}  {len(b.get('files', []))} db file(s)"
-              f"{' + uploads' if b.get('uploads') else ''}  {b['size_bytes'] // (1024 * 1024)} MB")
-    if "--prune" in args:
+              f"{' + uploads' if b.get('uploads') else ''}  {b['size_bytes'] // (1024 * 1024)} MB"
+              f"{'  (automatic)' if backups_mod.is_auto(b) else ''}"
+              f"{'  DAMAGED: ' + ', '.join(b['damaged']) if b.get('damaged') else ''}")
+    if "--prune" in args:  # the automatic (pre-upgrade) ones only; hand-made backups stay
         removed = backups_mod.prune_backups()
-        print("Pruned: " + (", ".join(removed) if removed else "nothing"))
+        print("Pruned automatic snapshots: " + (", ".join(removed) if removed else "nothing"))
 
 
 def main():

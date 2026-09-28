@@ -38,6 +38,7 @@ export const GROUPS = [
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"] },
   { id: "auth", files: ["auth.mjs"] },
   { id: "quick-open", files: ["quickOpen.mjs"] },
+  { id: "trash", files: ["trash.mjs"] },
   { id: "ipad", files: ["ipad.mjs"] },
 ];
 
@@ -78,6 +79,7 @@ export const RULES = [
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   ["frontend/src/library/QuickOpen.jsx", ["quick-open"]],
+  ["frontend/src/library/RecentlyDeleted.jsx", ["trash"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
   ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab"]],

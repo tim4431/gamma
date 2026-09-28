@@ -54,7 +54,9 @@ def test_edit_block_append_prepend_replace(page):
     assert text.startswith("ok"), text
     assert action["summary"].startswith("Prepended to a note")
     assert _content(c, block) == "## Readout\n\nKey result: T1 = 300 us.\nMeasured at 20 mK."
-    # Default stays replace; the action carries the mode either way.
+    # Default stays replace; the action carries the mode either way. A
+    # replace rewrites what the model read this turn (test_writer_races.py).
+    run_agent_tool(workspace_of(USER), scope, "read_block", {"block_id": block})
     text, action = run_agent_tool(workspace_of(USER), scope, "edit_block",
                                   {"block_id": block, "content": "fresh text"})
     assert text == f"ok — block [{block}] updated"

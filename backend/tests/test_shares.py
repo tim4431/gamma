@@ -107,7 +107,8 @@ def test_shared_chat_is_scoped_and_read_only(bob, carol, anon):
             ("DELETE", "/api/chat-history/entry", None),
         ):
             assert viewer.request(method, path, params=q, json=body).status_code == 403
-    assert bob.get(f"/api/chats/{page['id']}").json() == saved
+    own = bob.get(f"/api/chats/{page['id']}").json()
+    assert {k: v for k, v in own.items() if k != "updated_at"} == saved  # a member's read carries the version
     assert anon.get(f"/api/chats/{page['id']}", params=q).status_code == 401
     bob.put(f"/api/share-settings/{page['id']}", json={"audience": "list", "role": "view"})
     assert carol.get(f"/api/chats/{page['id']}", params=q).status_code == 403

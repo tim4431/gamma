@@ -13,6 +13,11 @@ round (``sync_pages.base``):
   three-way text merge keeps the local keystrokes), then what still differs
   is pushed, the remote tree is fetched back and becomes the new base.
 
+The base is saved as each of those steps lands (the bare page once it
+exists on both sides, the remote's tree once its changes are applied here,
+what was pushed once the push lands), so a round cut short anywhere goes
+on from there and never applies a change twice.
+
 An edit beats a delete, in both directions: a subtree the remote deleted
 stays when it was edited here (and is re-inserted there by the push), and
 a subtree deleted here comes back when the remote edited inside it. Every
@@ -48,17 +53,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import config, ops, pdf_meta, workspaces
+from . import config, ops, pdf_meta, textmerge, workspaces
 from fractional_indexing import generate_key_between
 
 from .blocks_store import create_page, fetch_subtree, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import MAX_OPS, commit_ops, delete_page
+from .ops import MAX_OPS, commit_ops, trash_page
 from .publisher_sessions import cipher
 from .routers.sync import changes as local_changes
-from .sync_tree import (ancestors, diff, snapshot_from_rows, snapshot_from_tree, subtree_ids, tree_order,
-                        upload_refs)
+from .storage import matches_name, write_atomic
+from .sync_tree import (ancestors, children_of, diff, snapshot_from_rows, snapshot_from_tree, subtree_ids,
+                        tree_order, upload_refs)
 
 SYNC_LOG_KEEP = 500        # rows of sync_log kept per mirror
 CLIENT = "sync"            # the op-log client of every local write the engine makes
@@ -68,6 +74,7 @@ ADOPT = ("theirs", "mine")           # whose version a never-reconciled page tak
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = 1                           # the loop's clock
 WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
+UNKNOWN_SEQ = -1                     # a base saved before the remote's answer was read: the next round fetches the page
 STREAM_CHUNK = 256 * 1024
 default_fetch = None       # the tests point this at an in-process TestClient; None = urllib
 UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,8}$")
@@ -84,8 +91,9 @@ class RemoteError(Exception):
 class PageDeferred(Exception):
     """A page the round leaves for the next one without calling it an
     error: its push was refused because a block it holds lives in another
-    page on the remote (a cross-page move there), which the other page's
-    round of this same pass settles."""
+    page on the remote (a cross-page move there, which the other page's
+    round of this same pass settles), or the page it was about to create
+    there appeared meanwhile (the next round finds it on both sides)."""
 
 
 class Remote:
@@ -572,14 +580,55 @@ def remove_mirror(ws: str) -> None:
 
 # --- conflicts -----------------------------------------------------------------------
 
-def _conflict(conn, page_id: str, block_id: str, kind: str, mine="", theirs="", result="", base="") -> None:
+def _conflict(conn, page_id: str, block_id: str, kind: str, mine="", theirs="", result="", base="", *,
+              once: bool = False) -> None:
     """One row to look at. ``base`` is the text before either side edited it
-    (a ``merged`` block), so the resolver can show what each side did."""
+    (a ``merged`` block), so the resolver can show what each side did; for a
+    ``dropped`` one it names the block it was under. ``once``: not again
+    while the same row is open (a replace cut short and run again)."""
+    if once and conn.execute(
+            "SELECT 1 FROM sync_conflicts WHERE resolved = 0 AND page_id = ? AND block_id = ? AND kind = ? "
+            "AND mine = ? AND theirs = ?", (page_id, block_id, kind, mine or "", theirs or "")).fetchone():
+        return
     conn.execute(
         "INSERT INTO sync_conflicts (page_id, block_id, kind, mine, theirs, result, base, at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (page_id, block_id, kind, mine or "", theirs or "", result or "", base or "", page_now()))
     conn.commit()
+
+
+def _outline(tree: dict, top: str, only: set | None = None) -> str:
+    """A block and what is under it as one text — its content, then its
+    descendants as an indented markdown list — how a removed subtree is kept
+    in its conflict row. ``only``: the ids that went (a child that lives on
+    elsewhere is left out)."""
+    kids = children_of(tree)
+    lines = [tree[top]["content"]]
+    stack = [(c, 0) for c in reversed(kids.get(top, []))]
+    while stack:
+        bid, depth = stack.pop()
+        if only is not None and bid not in only:
+            continue
+        pad = "  " * depth
+        lines.append(f"{pad}- " + tree[bid]["content"].replace("\n", f"\n{pad}  "))
+        stack.extend((c, depth + 1) for c in reversed(kids.get(bid, [])))
+    return "\n".join(lines)
+
+
+def _dropped(conn, page_id: str, loser: dict, winner: dict, side: str) -> None:
+    """``dropped`` rows for what only the losing side of a link or a force
+    had (``side``: ``mine`` when this copy loses it, ``theirs`` when the
+    remote does): one per top-most block that goes — the page itself when
+    ``winner`` lacks it — with its subtree's text and, in ``base``, the
+    block it was under. Written before anything is removed and only once,
+    so a replace cut short and run again is on record exactly once."""
+    gone = {bid for bid in loser if bid not in winner}
+    why = ("only this copy had it; the other side's version was taken" if side == "mine"
+           else "only the other side had it; this copy's version was taken")
+    for bid in [page_id] + tree_order(loser, page_id):
+        if bid in gone and loser[bid]["parent"] not in gone:
+            _conflict(conn, page_id, bid, "dropped", result=why, base=loser[bid]["parent"], once=True,
+                      **{side: _outline(loser, bid, gone)})
 
 
 def _stats(ops: list[dict], before: dict | None = None) -> dict:
@@ -687,7 +736,8 @@ def list_log(ws: str, limit: int = 50) -> list[dict]:
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
             "SELECT l.id, l.at, l.page_id, l.title, l.action, l.stats, "
-            "EXISTS (SELECT 1 FROM unified_blocks b WHERE b.id = l.page_id) FROM sync_log l "
+            "EXISTS (SELECT 1 FROM unified_blocks b WHERE b.id = l.page_id AND b.parent_id = 'root') "
+            "FROM sync_log l "
             "ORDER BY l.id DESC LIMIT ?", (max(1, min(int(limit or 50), 500)),)).fetchall()
     out = []
     for r in rows:
@@ -771,7 +821,13 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
             if e.status == 404:
                 continue  # the remote lost it too; the reference stays dangling on both
             raise
-        (uploads / name).write_bytes(data)
+        if not matches_name(name, data):
+            # not the file (a captive portal's page, an error body): keep none
+            # rather than one that would be served as this name forever
+            log.warning(f"[mirror] {ws}: {name} from {remote.url} is not what its name says "
+                        f"({len(data)} bytes) — not stored")
+            continue
+        write_atomic(uploads / name, data)
         report["files_pulled"] += 1
         if name.endswith(".pdf"):
             pdf_meta.schedule(ws, name[:-4])
@@ -907,6 +963,28 @@ def _push(remote: Remote, page_id: str, ops: list[dict]) -> None:
         remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "ops": ops[i:i + MAX_OPS]})
 
 
+def _known(conn, page_id: str, base: dict, local: dict, remote: dict) -> dict:
+    """``base`` plus the blocks both sides hold that it lacks — a round cut
+    short after one side got them from the other, a page both sides had
+    before any base — each at the remote's version with only the property
+    keys this copy has too. So the remote adds only what it alone has (blocks,
+    property keys), nothing is inserted twice or overwritten, and this
+    copy's text, place and property values stay for the push to send. A
+    remote text the text here does not hold (typed on from it) is kept in a
+    ``diverged`` conflict."""
+    extra = [bid for bid in local if bid in remote and bid not in base]
+    if not extra:
+        return base
+    out = dict(base)
+    for bid in extra:
+        mine, theirs = local[bid], remote[bid]
+        out[bid] = {**theirs, "props": {k: v for k, v in theirs["props"].items() if k in mine["props"]}}
+        if theirs["content"] not in mine["content"]:
+            _conflict(conn, page_id, bid, "diverged", mine=mine["content"], theirs=theirs["content"],
+                      result=mine["content"], once=True)
+    return out
+
+
 def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: dict) -> list[dict]:
     """The remote's diff from base, adjusted so an edit beats a delete:
     remote deletes of subtrees edited here are dropped, and subtrees
@@ -914,7 +992,9 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
     remote moved *out* of a subtree deleted here is not part of that
     deletion any more: it comes back whole where the remote put it (the
     subtree it left stays deleted unless something still inside it was
-    touched there)."""
+    touched there). A remote text change this copy's text already holds (it
+    was pushed from here, or applied by a round cut short before its
+    bookkeeping) is not applied again."""
     remote_ops = diff(base, remote, page_id)
     local_ops = diff(base, local, page_id)
     local_edited = {op["id"] for op in local_ops if op["op"] in ("set", "move", "insert")}
@@ -978,6 +1058,12 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
         if op["op"] in ("set", "move", "delete") and bid not in local:
             continue  # gone here, not restored: the other side's change to it is dropped (a delete of
             # a block already gone — deleted on both sides, or moved to another page here — is done)
+        if op["op"] == "set" and "base" in op and local[bid]["content"] not in (op["base"], op["content"]) \
+                and textmerge.contains(op["base"], op["content"], local[bid]["content"]):
+            # the text here holds the change already (typed on since): merging it in again would double it
+            op = {k: v for k, v in op.items() if k not in ("content", "base")}
+            if "props" not in op:
+                continue
         if op["op"] in ("insert", "move") and op["parent"] not in local and op["parent"] not in restored \
                 and op["parent"] not in inserted:
             op = {**op, "parent": page_id}  # its parent is gone here: land at the page's top level
@@ -988,11 +1074,15 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
 
 
 def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: int, report: dict, action: str) -> None:
-    """A page that comes here whole (new here, or restored): created under
-    its id, the remote tree laid in, its files fetched, the state saved."""
+    """A page that comes here whole (new here, or restored): its files
+    fetched first (the page never names a file this copy lacks), created
+    under its id with the bare page as its base at once — a fill cut short
+    goes on as a three-way merge, never as a page with no base — then the
+    remote tree laid in and the state saved."""
+    _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
     with connect_pages_db(ws) as conn:
         create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], block_id=page_id)
-    _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
+        _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: remote_tree[page_id]})
     _apply_local(ws, page_id, diff({page_id: remote_tree[page_id]}, remote_tree, page_id, with_base=False))
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, seq, remote_tree)
@@ -1003,11 +1093,18 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
 
 def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict, action: str) -> None:
     """A page that goes there whole (new there, or restored): created under
-    its id, the local tree pushed, its files uploaded, the remote's answer
-    saved as the base."""
-    _create_remote_page(remote, page_id, local)
+    its id with the bare page as its base at once — a fill cut short (a
+    refused file, a dropped link, the app quit) goes on as a three-way
+    merge, never as a page with no base — its files uploaded, the local
+    tree pushed and, once it landed, taken as the base until the remote's
+    answer is read and saved."""
+    root = _create_remote_page(remote, page_id, local)
+    with connect_pages_db(ws) as conn:
+        _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: root})
     _push_files(ws, remote, upload_refs(local.values()), report)
     _push(remote, page_id, diff({page_id: local[page_id]}, local, page_id, with_base=False))
+    with connect_pages_db(ws) as conn:
+        _save_state(conn, page_id, UNKNOWN_SEQ, {**local, page_id: root})
     remote_after, seq = _remote_tree(remote, page_id)
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, seq, remote_after or local)
@@ -1017,8 +1114,12 @@ def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict
 
 
 def _delete_here(ws: str, page_id: str, local: dict, report: dict) -> None:
+    """The page goes to Recently deleted here, like a delete made here
+    (gamma/trash.py): the other side's deletion never costs this copy its
+    notes for good. Coming back from either side later is a page created
+    anew (``create_page`` replaces the trashed copy)."""
     with connect_pages_db(ws) as conn:
-        delete_page(ws, conn, page_id, actor=ACTOR, client=CLIENT)
+        trash_page(ws, conn, page_id, actor=ACTOR, client=CLIENT)
         _drop_state(conn, page_id)
     _note(ws, page_id, "deleted here", local[page_id]["content"], stats=_whole(local, "del"),
           changes=_whole_changes(local, "del", page_id), report=report)
@@ -1040,8 +1141,12 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         state = _state(conn, page_id)
         local = _local_snapshot(conn, page_id)
     base = state["base"] if state else {}
+    # no base, or one saved before the remote's answer was read (UNKNOWN_SEQ)
+    unsettled = state is None or state["remote_seq"] < 0
     push_allowed = mode == "two-way"
-    adopt, prune = report.get("adopt") or "theirs", bool(report.get("prune"))
+    # a link's or a force's policy: whose version a page both sides hold without
+    # a base takes (none: both are kept, below)
+    adopt, prune = report.get("adopt"), bool(report.get("prune"))
     if prune:
         # a force: tombstones say nothing on either side (the per-page state
         # was cleared, so "deleted here, never synced" would skip a page the
@@ -1055,12 +1160,20 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
             with connect_pages_db(ws) as conn:
                 _drop_state(conn, page_id)
             return
-        if state and diff(base, local, page_id):
+        if state is None or diff(base, local, page_id):
+            # edited here since the last round, or never reconciled here (a
+            # linked workspace, a restored backup): the tombstone says nothing
+            # about this copy's page, which goes back there (a receive-only
+            # copy keeps it here)
             if push_allowed:
                 _push_whole(ws, remote, page_id, local, report, "restored there")
                 with connect_pages_db(ws) as conn:
                     _conflict(conn, page_id, page_id, "page_restored", mine=local[page_id]["content"],
-                              result="the other side deleted this page; it was edited here, so it came back there")
+                              result="the other side deleted this page; it was edited here, so it came back there"
+                              if state else "the other side deleted this page; this copy had it with no sync "
+                              "record (a link, a restored backup), so it went back there")
+            elif state is None:
+                log.info(f"[mirror] {ws}: {page_id} was deleted on the remote and has no sync record here; kept")
             return
         _delete_here(ws, page_id, local, report)
         return
@@ -1072,7 +1185,9 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
             with connect_pages_db(ws) as conn:
                 _drop_state(conn, page_id)
             return
-        if seq == state["remote_seq"] and push_allowed:
+        # untouched there since the last round (a base whose seq is not known: the tree it holds)
+        untouched = not diff(base, remote_tree, page_id) if unsettled else seq == state["remote_seq"]
+        if untouched and push_allowed:
             _delete_there(ws, remote, page_id, remote_tree, report)
             return
         # the remote edited it since (or we may not delete there): it comes back here
@@ -1083,14 +1198,16 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         return
 
     # --- both exist (or the remote one is new here / the local one is new there)
-    remote_changed = state is None or (remote_seq_hint is not None and remote_seq_hint != state["remote_seq"])
+    remote_changed = unsettled or (remote_seq_hint is not None and remote_seq_hint != state["remote_seq"])
     if remote_changed:
         remote_tree, seq = _remote_tree(remote, page_id)
     else:
         remote_tree, seq = base, state["remote_seq"]
     if remote_tree is None:
         if state is None and local is not None and prune and adopt == "theirs":
-            # a force pull: a page the original does not have goes
+            # a force pull: a page the original does not have goes (its text waits in a conflict)
+            with connect_pages_db(ws) as conn:
+                _dropped(conn, page_id, local, {}, "mine")
             _delete_here(ws, page_id, local, report)
             return
         if state is None and local is not None and push_allowed:
@@ -1099,7 +1216,9 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         # else: the feed said it changed, but it is gone now (deleted after the feed): next round's tombstone
         return
     if local is None and prune and adopt == "mine" and push_allowed:
-        # a force push: a page this copy does not have goes from the original
+        # a force push: a page this copy does not have goes from the original (its text waits in a conflict)
+        with connect_pages_db(ws) as conn:
+            _dropped(conn, page_id, remote_tree, {}, "theirs")
         _delete_there(ws, remote, page_id, remote_tree, report)
         return
     if local is None:
@@ -1107,17 +1226,22 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         _pull_whole(ws, remote, page_id, remote_tree, seq, report, "created here")
         return
 
-    if state is None:
-        # both exist and were never reconciled (a linked workspace, a force, a
-        # round cut short between a page's creation and its state): there is
-        # no base to merge from, so one side's version is taken whole
+    if state is None and adopt:
+        # both exist and were never reconciled, under a link's or a force's
+        # policy: one side's version is taken whole, what the other had is
+        # kept in conflicts
         _adopt_page(ws, remote, page_id, local, remote_tree, seq, adopt if push_allowed else "theirs", report)
         return
+    # (both exist without a base and no policy asks for one side — a round cut
+    # short between a page's creation and its first base, say: nothing is
+    # dropped, the blocks both hold count as known at the remote's version)
 
     # 1. what the remote changed (from base), applied here with the local merge rules
-    with connect_pages_db(ws) as conn:
-        remote_ops = _reconcile_remote_ops(conn, page_id, base, local, remote_tree) if remote_changed else []
+    remote_ops = []
     if remote_changed:
+        with connect_pages_db(ws) as conn:
+            base = _known(conn, page_id, base, local, remote_tree)
+            remote_ops = _reconcile_remote_ops(conn, page_id, base, local, remote_tree)
         # the whole tree's files, not only the changed blocks': a round cut short
         # after the page landed but before its PDF did is repaired here
         _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
@@ -1129,66 +1253,83 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
                         and op["content"] != sent[op["id"]]["content"]:
                     _conflict(conn, page_id, op["id"], "merged", mine=local[op["id"]]["content"],
                               theirs=sent[op["id"]]["content"], result=op["content"],
-                              base=((base or {}).get(op["id"]) or {}).get("content", ""))
-        _note(ws, page_id, "pulled", remote_tree[page_id]["content"], stats=_stats(remote_ops, local),
-              changes=_changes(remote_ops, local), report=report)
-        report["pages_pulled"] += 1
+                              base=(base.get(op["id"]) or {}).get("content", ""))
+            # the remote's tree is the base from here on, so a round cut short
+            # after this (a refused push, a dropped link, the app quit) never
+            # applies these changes again; what is not there is a local edit
+            # (pull mode never pushes it, but a later merge keeps it)
+            _save_state(conn, page_id, seq, remote_tree)
+        if remote_ops:
+            _note(ws, page_id, "pulled", remote_tree[page_id]["content"], stats=_stats(remote_ops, local),
+                  changes=_changes(remote_ops, local), report=report)
+            report["pages_pulled"] += 1
     # 2. what still differs here goes there
     with connect_pages_db(ws) as conn:
         local_now = _local_snapshot(conn, page_id) or local
     push_ops = diff(remote_tree, local_now, page_id) if push_allowed else []
-    if push_ops:
-        _push_files(ws, remote, upload_refs(push_ops), report)
-        try:
-            _push(remote, page_id, push_ops)
-        except RemoteError as e:
-            if e.status == 403 and "outside this page" in (e.detail or ""):
-                # a block of ours now lives in another page there (moved
-                # there meanwhile): that page's round moves it here too, and
-                # this page is looked at again next round
-                raise PageDeferred(f"{page_id}: a block moved to another page on the remote; retried next round")
-            raise
-        remote_after, seq = _remote_tree(remote, page_id)
-        if remote_after is None:
-            return
-        # the remote's answer (re-keyed positions, its merges) lands here, merged over any typing since
-        settle = diff(local_now, remote_after, page_id)
-        if settle:
-            _apply_local(ws, page_id, settle)
-        with connect_pages_db(ws) as conn:
-            _save_state(conn, page_id, seq, remote_after)
-        _note(ws, page_id, "pushed", local_now[page_id]["content"], stats=_stats(push_ops, remote_tree),
-              changes=_changes(push_ops, remote_tree), report=report)
-        report["pages_pushed"] += 1
-    else:
-        # the base is always the remote's tree: what is not there is a local
-        # edit (pull mode never pushes it, but a later merge keeps it)
-        with connect_pages_db(ws) as conn:
-            _save_state(conn, page_id, seq, remote_tree)
+    if not push_ops:
+        return
+    files = upload_refs(push_ops)
+    if unsettled:
+        # after a round cut short the remote may lack a file of a block that
+        # is not pushed again — the page's own PDF above all
+        files |= upload_refs(local_now.values())
+    _push_files(ws, remote, files, report)
+    try:
+        _push(remote, page_id, push_ops)
+    except RemoteError as e:
+        if e.status == 403 and "outside this page" in (e.detail or ""):
+            # a block of ours now lives in another page there (moved
+            # there meanwhile): that page's round moves it here too, and
+            # this page is looked at again next round
+            raise PageDeferred(f"{page_id}: a block moved to another page on the remote; retried next round")
+        raise
+    with connect_pages_db(ws) as conn:
+        # the push landed: the remote holds what was pushed until its answer is read
+        _save_state(conn, page_id, UNKNOWN_SEQ, local_now)
+    remote_after, seq = _remote_tree(remote, page_id)
+    if remote_after is None:
+        return
+    # the remote's answer (re-keyed positions, its merges) lands here, merged over any typing since
+    settle = diff(local_now, remote_after, page_id)
+    if settle:
+        _apply_local(ws, page_id, settle)
+    with connect_pages_db(ws) as conn:
+        _save_state(conn, page_id, seq, remote_after)
+    _note(ws, page_id, "pushed", local_now[page_id]["content"], stats=_stats(push_ops, remote_tree),
+          changes=_changes(push_ops, remote_tree), report=report)
+    report["pages_pushed"] += 1
 
 
 def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree: dict, seq: int,
                 policy: str, report: dict) -> None:
-    """A page both sides have but that was never reconciled: ``policy``'s
-    version (``theirs`` = the original's, ``mine`` = this copy's) becomes the
-    page on both sides; every block whose text differed is a ``diverged``
-    conflict carrying both texts, so nothing is lost and Use mine / Use
-    theirs still work afterwards."""
+    """A page both sides have but that was never reconciled, under a link's
+    or a force's policy: ``policy``'s version (``theirs`` = the original's,
+    ``mine`` = this copy's) becomes the page on both sides. Nothing the
+    other side had is lost: every block whose text differed is a
+    ``diverged`` conflict carrying both texts (Use mine / Use theirs still
+    work afterwards) and what only the other side had is a ``dropped`` one,
+    both written before anything is replaced."""
     if local == remote_tree:
         with connect_pages_db(ws) as conn:
             _save_state(conn, page_id, seq, remote_tree)
         return
     differed = sorted(bid for bid in set(local) & set(remote_tree) if local[bid]["content"] != remote_tree[bid]["content"])
+    winner, loser, side = (local, remote_tree, "theirs") if policy == "mine" else (remote_tree, local, "mine")
+    with connect_pages_db(ws) as conn:
+        for bid in differed:
+            _conflict(conn, page_id, bid, "diverged", mine=local[bid]["content"],
+                      theirs=remote_tree[bid]["content"], result=winner[bid]["content"], once=True)
+        _dropped(conn, page_id, loser, winner, side)
     if policy == "mine":
         push_ops = diff(remote_tree, local, page_id, with_base=False)
         _push_files(ws, remote, upload_refs(push_ops), report)
         _push(remote, page_id, push_ops)
+        with connect_pages_db(ws) as conn:
+            _save_state(conn, page_id, UNKNOWN_SEQ, local)  # landed: the base until the remote's answer is read
         remote_after, seq = _remote_tree(remote, page_id)
         with connect_pages_db(ws) as conn:
             _save_state(conn, page_id, seq, remote_after or local)
-            for bid in differed:
-                _conflict(conn, page_id, bid, "diverged", mine=local[bid]["content"],
-                          theirs=remote_tree[bid]["content"], result=local[bid]["content"])
         _note(ws, page_id, "replaced there", local[page_id]["content"], stats=_stats(push_ops, remote_tree),
               changes=_changes(push_ops, remote_tree), report=report)
         report["pages_pushed"] += 1
@@ -1199,21 +1340,25 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _apply_local(ws, page_id, ops_)
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, seq, remote_tree)
-        for bid in differed:
-            _conflict(conn, page_id, bid, "diverged", mine=local[bid]["content"],
-                      theirs=remote_tree[bid]["content"], result=remote_tree[bid]["content"])
     _note(ws, page_id, "replaced here", remote_tree[page_id]["content"], stats=_stats(ops_, local),
           changes=_changes(ops_, local), report=report)
     report["pages_pulled"] += 1
 
 
-def _create_remote_page(remote: Remote, page_id: str, local: dict) -> None:
+def _create_remote_page(remote: Remote, page_id: str, local: dict) -> dict:
+    """Create the page there under its id; its root as stored there (a
+    snapshot entry). An id taken there already (the page appeared there
+    meanwhile) leaves the page for the next round, which finds it on both
+    sides and keeps both."""
     root = local[page_id]
     try:
-        remote.post("/api/pages", {"id": page_id, "title": root["content"], "properties": root["props"]})
+        out = remote.post("/api/pages", {"id": page_id, "title": root["content"], "properties": root["props"]}) or {}
     except RemoteError as e:
-        if e.status != 409:
-            raise
+        if e.status == 409:
+            raise PageDeferred(f"{page_id}: the page appeared on the remote meanwhile; reconciled next round") from e
+        raise
+    return {"parent": "root", "position": out.get("position") or "", "content": out.get("content", root["content"]),
+            "props": dict(out.get("properties", root["props"]) or {})}
 
 
 # --- one round -----------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from .. import publisher_sessions as sessions
 from ..auth import _is_https, read_body, require_personal_user
@@ -36,7 +37,8 @@ async def connect(request: Request):
         payload = json.loads(body)
         if not isinstance(payload, dict):
             raise ValueError("Invalid request")
-        return sessions.save(user, payload.get("host"), payload.get("cookies"))
+        # sealed and stored in users.db: in the threadpool, off the event loop
+        return await run_in_threadpool(sessions.save, user, payload.get("host"), payload.get("cookies"))
     except (ValueError, TypeError):
         # Never echo validation input: it contains credentials.
         raise HTTPException(400, "Invalid publisher cookies or unsupported host") from None

@@ -23,6 +23,12 @@ Folder semantics mirror
 [frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
+Pages in Recently deleted are out of every tool's reach, the MCP adapter's
+included: they are not under `root`, and `_load_scoped_page` and
+`blocks_store.page_root_id` find no page for them or their blocks
+([home_library.md](home_library.md) "Recently deleted"). The agent cannot
+delete pages.
+
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
 these references for reads and search. `run_agent_tool` removes `context_pages`
@@ -94,14 +100,15 @@ successive windows. The `pdf_*` names stay for compatibility; they mean
 ### search_library (both scopes)
 
 One query over both FTS indexes for the in-scope pages: the notes index
-(`gamma/block_index.py` — refreshed for changed pages before the query, so an
-edit made a moment ago is found) and the PDF index (`gamma/pdf_index.py`
+(`gamma/block_index.py` — changed pages are rebuilt before the query for up
+to 0.2 s, so an edit made a moment ago is found; the background refresher
+does the rest) and the PDF index (`gamma/pdf_index.py`
 `pdf_missing`/`search_pdf` — the same indexes and query rules as
 `GET /api/search` / Ctrl+F).
 Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
 — ids `read_block` and the editors take — then PDF hits as `- PDF "title"
 p.N (page_id …): snippet`. Un-indexed PDFs are kicked to the background indexer and
-reported (as are note pages waiting for a rebuild batch) so the model knows
+reported (as are note pages the background refresher hasn't reached) so the model knows
 results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
 retried with only its longest words and the result labelled approximate —
 otherwise the strict query reads as "the pages are silent" and the model
@@ -260,6 +267,23 @@ replace only for full rewrites. The action carries
 "Edited the selection in" / "Edited". Page
 roots are refused (titles go through `rename_page`); editing a highlight
 block edits its note text, never the anchored passage.
+
+A replace is the model's rewrite of text it has seen, so it needs the
+block's full text from this turn. The scope dict lives for one request and
+keeps `read_texts` (`notes_seen(scope)`): the stored text of every block a
+`read_block`, a `read_page` or the chat's own context (the page's notes, the
+cursor block, attached chips — the `notes_seen` argument in `ai_context`)
+showed whole. A child that `read_block` snipped does not count. The replace
+goes out with that text as its `base`, so the three-way merge in `ops.py`
+keeps whatever the user typed into the block while the model was writing
+([collab.md](collab.md)). A replace of a block not read in full this turn
+is refused with "read the block first", and so is one whose `content`
+carries read_block's `[truncated — read_block(` marker. After a replace the
+block counts as read with the model's own text, as does a block
+`create_block` made; after the other modes it has to be read again.
+`append`, `prepend`, `patch` and `selection` need no read: they apply to
+the current text.
+
 `create_block` inserts a new block
 under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and

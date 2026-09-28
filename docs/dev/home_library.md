@@ -16,7 +16,8 @@ of the home library asks it, never a role or a share token:
   stop at it.
 - `browse`: there is a library to list (a page share has none).
 - `organize`: New page / New folder, drags and drops, rename, move,
-  duplicate, delete, labels, sharing a folder, file drops onto the library.
+  duplicate, delete, labels, sharing a folder, file drops onto the library,
+  Recently deleted (below).
 - `pin`: the pin buttons and the pinned strip.
 - `history`: the recents strip.
 
@@ -226,13 +227,16 @@ the `recent-views` prefs key, tabs-style — a union merge would resurrect
 
 Snapshots are captured client-side from the rendered pdf.js canvases at the
 last-read spot (debounced on scroll-settle + a post-render retry loop in
-App.jsx, `captureViewerSnapshot`) and stored server-side in the per-user
+App.jsx, `captureViewerSnapshot`) and stored server-side in the
 `page_snaps` table via `/api/page-snaps` ({pageId: {img, at}}, JPEG data URLs,
 per-page newest-`at` wins, server prunes past `PAGE_SNAPS_CAP`; too big for the
 64KB prefs KV) so covers follow the strip to every device — batched pushes, a
 full pull + local-heal on login, `?after=` delta pulls on window focus;
 localStorage `gamma-page-snaps:<user>` is only the instant-paint cache, pruned
-to the pages still in the 24-entry recents queue; the Thumbnails switch of
+to the pages still in the 24-entry recents queue. The table is the
+workspace's (its `data.db`), so writing to it takes an editor: a viewer of a
+shared workspace keeps its captures in that cache and pushes nothing
+(`snapsWritableRef`). The Thumbnails switch of
 Settings → Appearance → Library (`gamma-recent-thumbs`) swaps covers to the
 plain glyph and stops capturing.
 
@@ -274,3 +278,56 @@ Citation sections. Its one link reaches every page filed in the folder or
 below it, now and later ([api.md](api.md) "Shares"). Renaming, moving or
 deleting a folder carries its chat buckets and its shares along through
 `POST /folders/rename`, one call made before the tag rewrite.
+
+## Recently deleted
+
+Deleting a page moves it to a 30-day trash instead of removing it. The
+page menu's Delete, the Del key, the page header's trash button and a
+folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
+page root, and the server moves the page there (`ops.trash_page`). The
+confirmations say where it goes and for how long.
+
+On the server, the trash is a reserved block `trash` beside `root`
+(`blocks_store.TRASH`). A trashed page is moved under it, and `deleted_at`
+and `deleted_by` are stamped in its properties. Its blocks, files, chats,
+op log and folder labels stay as they were. Everything that finds pages asks
+for `parent_id = 'root'` or walks up to a page (`page_root_id`). So a
+trashed page drops out of the library, folder counts, searches, backlinks,
+`[[ref]]` resolution, shares, the agent's and MCP's tools, exports and the
+change feed without code of its own. Its blocks read as not found, and ops
+to it are refused. The block readers that scan across pages (block search,
+backlinks) skip `blocks_store.trashed_ids`. To a copy of the workspace the
+page is deleted: trashing writes the `deleted_pages` tombstone a hard delete
+leaves.
+
+Restoring (`ops.restore_page`) puts the page back under `root`, last in the
+library, with its folder labels. It stamps the root and clears the
+tombstone, so the change feed shows the page as created again. A mirror
+that brings the page back under its id (`blocks_store.create_page`)
+replaces the trashed copy. So does a merge restore of a backup that has the
+page (`ws_backup._merge`): the trashed copy's rows go, and the backup's
+version comes back live under the same ids, its chats and op log kept
+([workspaces.md](workspaces.md) "Export and backups").
+
+`gamma/trash.py` deletes pages trashed more than `KEEP_DAYS` (30) days ago
+for good through `ops.delete_page`, the one path that drops a page's chats
+and index rows. The sweeper runs at startup and every hour (`lifespan`).
+Delete permanently and Empty take the same path at once. On a share host,
+whose pages are published copies, `DELETE /api/blocks/{id}` deletes for good
+directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners
+trash and restore; a viewer and a share link cannot. A trashed page's files
+stay referenced, so they count against the storage quota until the page is
+deleted for good. Then the orphan check takes over
+([user_db.md](user_db.md) "Stored files").
+
+In the app, [RecentlyDeleted.jsx](../../frontend/src/library/RecentlyDeleted.jsx)
+is a `SubDialog` opened from the trash button at the right end of the home
+toolbar (at the library root, where `lib.organize`) or from the
+`app.recentlyDeleted` command. It lists each page with its title, who
+deleted it and when, the days it has left and its folder, as `aiProvRow`
+rows. Each row has Restore and a trash button that deletes for good after
+App's confirm box, and the dialog's footer has Empty. A link to a trashed
+page gets a 404 whose body carries `trashed` (the page's trash entry). The
+missing-page notice then names the page and offers Restore, which restores
+it and opens what the link named. The browser suite's `trash` group
+(`e2e/scenarios/trash.mjs`) covers the flow.

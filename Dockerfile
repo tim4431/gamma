@@ -40,6 +40,14 @@ ENV GAMMA_DATA_DIR=/data \
     GAMMA_COMMIT=$GAMMA_COMMIT \
     PYTHONUNBUFFERED=1
 
+# The peers whose X-Forwarded-For uvicorn believes (it then takes the
+# client's address from the header — rate limits key on it): loopback and
+# the private ranges, where a reverse proxy on the host or in another
+# container connects from. Anyone else's header is ignored. Narrow it to
+# the proxy's own address in the compose file, or set "*" only when nothing
+# but the proxy can reach the port.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
 VOLUME /data
 EXPOSE 9001
 

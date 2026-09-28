@@ -25,7 +25,7 @@ from .. import pdf_meta
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
-from ..storage import DIGEST_CHARS
+from ..storage import DIGEST_CHARS, is_pdf, write_atomic
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -353,11 +353,13 @@ def proxy_pdf(source_url: str, request: Request):
             resp.close()
             if chunks is not None and complete:
                 data = b"".join(chunks)
-                # best-effort cache: over the user's storage limits, just skip
-                # the save — the PDF still streamed through fine
-                if can_store(ws, len(data)):
-                    uploads.mkdir(parents=True, exist_ok=True)
-                    local_path.write_bytes(data)
+                # best-effort cache: over the user's storage limits (or not a
+                # PDF after all), just skip the save — the bytes still
+                # streamed through
+                if not is_pdf(data):
+                    log.info(f"[pdf] not caching {pdf_doc_id}: the body is not a PDF")
+                elif can_store(ws, len(data)):
+                    write_atomic(local_path, data)
                     pdf_meta.schedule(ws, pdf_doc_id)
                 else:
                     log.info(f"[pdf] not caching {pdf_doc_id} ({len(data)} bytes): over storage limits")

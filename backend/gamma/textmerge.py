@@ -33,6 +33,30 @@ def merge(base: str, ours: str, theirs: str) -> tuple[str, bool]:
     return text, all(results)
 
 
+def _edits(base: str, text: str) -> tuple[dict, set]:
+    """The change ``base → text`` as ``(inserted text before each base
+    offset, the deleted base offsets)``."""
+    inserted, deleted, at = {}, set(), 0
+    for kind, chunk in _dmp.diff_main(base, text, False):
+        if kind > 0:
+            inserted[at] = inserted.get(at, "") + chunk
+            continue
+        if kind < 0:
+            deleted.update(range(at, at + len(chunk)))
+        at += len(chunk)
+    return inserted, deleted
+
+
+def contains(base: str, ours: str, theirs: str) -> bool:
+    """Whether ``theirs`` already holds the change ``base → ours``: every
+    span it deletes is deleted there too, and every insertion is there at
+    the same place (inside a longer one when more was typed around it).
+    ``merge`` would apply such a change a second time."""
+    ours_in, ours_del = _edits(base, ours)
+    theirs_in, theirs_del = _edits(base, theirs)
+    return ours_del <= theirs_del and all(s in theirs_in.get(at, "") for at, s in ours_in.items())
+
+
 def map_offset(src: str, dst: str, offset: int) -> int:
     """Where the caret at ``offset`` in ``src`` sits in ``dst``."""
     if src == dst:

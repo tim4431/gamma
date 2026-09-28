@@ -35,7 +35,7 @@ class SeenRequest(BaseModel):
 
 
 @router.post("/notices/{notice_id}/seen")
-async def mark_seen(notice_id: str, payload: SeenRequest, request: Request):
+def mark_seen(notice_id: str, payload: SeenRequest, request: Request):
     """The account has looked at the pane this notice points to; it stays
     quiet until its fingerprint changes."""
     user = _account(request)

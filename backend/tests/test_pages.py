@@ -2,14 +2,23 @@
 PDF, generic file uploads + serving, and the root listing's text preview."""
 
 import io
+from contextlib import closing
 
 import pytest
 from fastapi.testclient import TestClient
 
 from conftest import login, make_page, make_user, workspace_of, guest_name
-from gamma.db import ws_uploads_dir
+from gamma import upload_gc
+from gamma.db import connect_pages_db, ws_uploads_dir
 
 PDF_BYTES = b"%PDF-1.4 pages test\n" + b"z" * 2000
+
+
+@pytest.fixture
+def no_grace(monkeypatch):
+    """No upload grace (upload_gc.UPLOAD_GRACE_S): these tests upload a file
+    and drop its reference within milliseconds."""
+    monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
 
 
 def _upload_pdf(client, data=PDF_BYTES):
@@ -113,7 +122,16 @@ def test_attach_a_doc_another_page_owns_names_that_page(guest):
     assert "doc_id" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
 
 
-def test_detach_clears_attachment_and_sweeps_the_file(guest):
+def _orphans(ws):
+    """The workspace's upload_orphans names (gamma/upload_gc.py)."""
+    upload_gc.flush(ws)
+    with closing(connect_pages_db(ws)) as conn:
+        return {r[0] for r in conn.execute("SELECT name FROM upload_orphans")}
+
+
+def test_detach_clears_attachment_and_keeps_the_file(guest, no_grace):
+    # the detached PDF stays, recorded as unreferenced, and a re-attach finds it
+    ws = workspace_of(guest_name())
     doc_id = _upload_pdf(guest, PDF_BYTES + b"e")
     page = guest.post("/api/pages", json={"title": "Detach me"}).json()
     guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc_id, "original_filename": "x.pdf"})
@@ -121,22 +139,27 @@ def test_detach_clears_attachment_and_sweeps_the_file(guest):
     hl = guest.post("/api/blocks", json={
         "parent_id": page["id"], "content": "quoted",
         "properties": {"highlight_id": "h1", "pdf_position": {"page": 1}}}).json()
-    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").is_file()
+    assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file()
 
     r = guest.delete(f"/api/pages/{page['id']}/attachment")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["ok"] and f"{doc_id}.pdf" in body["removed_uploads"]
-    assert not (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
+    assert body["ok"] and "removed_uploads" not in body
+    assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file() and f"{doc_id}.pdf" in _orphans(ws)
     props = body["block"]["properties"]
     assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
     assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {"page": 1}
     assert guest.get(f"/api/blocks/by-doc/{doc_id}").status_code == 404
     # nothing left to detach
     assert guest.delete(f"/api/pages/{page['id']}/attachment").status_code == 404
+    # attached again, the file is in use again
+    assert guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc_id}).status_code == 200
+    assert f"{doc_id}.pdf" not in _orphans(ws)
+    assert guest.get(f"/api/uploads/{doc_id}.pdf").status_code == 200
 
 
-def test_detach_keeps_a_file_another_page_still_uses(guest):
+def test_detach_keeps_a_file_another_page_still_uses(guest, no_grace):
+    ws = workspace_of(guest_name())
     doc_id = _upload_pdf(guest, PDF_BYTES + b"f")
     keeper = guest.post("/api/pages", json={"title": "Keeper"}).json()
     guest.post(f"/api/pages/{keeper['id']}/attachment", json={"doc_id": doc_id})
@@ -144,8 +167,9 @@ def test_detach_keeps_a_file_another_page_still_uses(guest):
     # a chip reference (not an attachment) on another page also counts
     guest.post("/api/blocks", json={"parent_id": other["id"], "content": f"[paper](/api/uploads/{doc_id}.pdf)"})
     r = guest.delete(f"/api/pages/{keeper['id']}/attachment")
-    assert r.status_code == 200 and r.json()["removed_uploads"] == []
-    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").is_file()
+    assert r.status_code == 200
+    assert f"{doc_id}.pdf" not in _orphans(ws)
+    assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file()
 
 
 @pytest.fixture
@@ -213,7 +237,7 @@ def test_upload_file_takes_anything_but_executables(guest):
     assert _upload_file(guest, "fake.pdf", b"not a pdf").status_code == 400
 
 
-def test_pdf_file_block_promotes_to_a_document_page(guest):
+def test_pdf_file_block_promotes_to_a_document_page(guest, no_grace):
     """A PDF dropped into a block (upload-file) is stored under the hash the
     PDF ingest uses, so by-doc on that hash opens it as a document page
     without a second upload; by-docs reports which hashes have pages."""
@@ -241,9 +265,12 @@ def test_pdf_file_block_promotes_to_a_document_page(guest):
     assert r.json() == {"pages": {doc_id: {"id": page["id"], "title": "Supplement.pdf"}}}
     # the same file referenced by a file block AND carried by a page survives either going away
     ref = guest.post("/api/blocks", json={"parent_id": page["id"], "content": f"[Supplement.pdf]({up['url']})"}).json()
-    removed = guest.delete(f"/api/blocks/{ref['id']}").json()["removed_uploads"]
-    assert f"{doc_id}.pdf" not in removed and f"{other}.pdf" in removed  # the never-attached one was the orphan
-    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
+    assert guest.delete(f"/api/blocks/{ref['id']}").status_code == 200
+    ws = workspace_of(guest_name())
+    upload_gc.reconcile(ws)
+    orphans = _orphans(ws)
+    assert f"{doc_id}.pdf" not in orphans and f"{other}.pdf" in orphans  # the never-attached one is the orphan
+    assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").exists()
 
 
 def test_uploaded_files_are_served_with_the_right_headers(guest):
@@ -268,18 +295,18 @@ def test_uploaded_files_are_served_with_the_right_headers(guest):
     assert guest.get(f"/api/uploads/{stem}.exe").status_code == 400
 
 
-def test_file_chips_keep_files_alive_and_shares_can_read_them(bob_page):
+def test_file_chips_keep_files_alive_and_shares_can_read_them(bob_page, no_grace):
     from gamma.app import app
     bob, page, token = bob_page
+    ws = workspace_of("pages_bob")
     url = _upload_file(bob, "data.json", b'{"k": 1}').json()["url"]
     filename = url.rsplit("/", 1)[-1]
-    # unreferenced → the next sweep (a block delete) removes it
-    stray = bob.post("/api/blocks", json={"parent_id": page["id"], "content": "stray"}).json()
-    assert filename in bob.delete(f"/api/blocks/{stray['id']}").json()["removed_uploads"]
-    url = _upload_file(bob, "data.json", b'{"k": 1}').json()["url"]
+    # unreferenced → recorded as an orphan by the next reconciliation (kept 30 days)
+    upload_gc.reconcile(ws)
+    assert filename in _orphans(ws)
     chip = bob.post("/api/blocks", json={"parent_id": page["id"], "content": f"[data.json]({url})"}).json()
-    stray = bob.post("/api/blocks", json={"parent_id": page["id"], "content": "stray"}).json()
-    assert bob.delete(f"/api/blocks/{stray['id']}").json()["removed_uploads"] == []
+    # a chip naming it again clears the record in the same write
+    assert filename not in _orphans(ws)
     # a share of the page reads the referenced file; the unreferenced one is refused
     anon = TestClient(app)
     make_user("pages_dave", "pw")
@@ -355,21 +382,20 @@ def test_root_listing_carries_a_text_preview(guest):
     assert all("preview" not in k for k in kids)
 
 
-def test_orphan_cleanup_spares_fresh_uploads(guest, monkeypatch):
-    """A file is stored BEFORE the page/block referencing it is written; an
-    autosave of another page in that window must not sweep it."""
-    from gamma import storage
-    from gamma.db import ws_uploads_dir
-    monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 15 * 60)
+def test_orphan_bookkeeping_spares_fresh_uploads(guest, monkeypatch):
+    """A file is stored BEFORE the page/block referencing it is written; a
+    reconciliation in that window must not count it as unreferenced."""
+    monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 15 * 60)
+    ws = workspace_of(guest_name())
     up = guest.post("/api/uploads", files={"file": ("fresh.pdf", io.BytesIO(PDF_BYTES + b"fresh"), "application/pdf")}).json()
-    path = ws_uploads_dir(workspace_of(guest_name())) / f"{up['doc_id']}.pdf"
+    path = ws_uploads_dir(ws) / f"{up['doc_id']}.pdf"
     assert path.is_file()
-    stray = guest.post("/api/blocks", json={"parent_id": "root", "content": "stray"}).json()
-    assert guest.delete(f"/api/blocks/{stray['id']}").json()["removed_uploads"] == []
-    assert path.is_file()
-    monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 0)
-    guest.delete(f"/api/blocks/{guest.post('/api/blocks', json={'parent_id': 'root', 'content': 'x'}).json()['id']}")
-    assert not path.exists()
+    upload_gc.reconcile(ws)
+    assert f"{up['doc_id']}.pdf" not in _orphans(ws)
+    monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
+    upload_gc.reconcile(ws)
+    assert f"{up['doc_id']}.pdf" in _orphans(ws)
+    assert path.is_file()  # recorded, not deleted: that is 30 days away
 
 
 # --- the page log's hygiene ---------------------------------------------------------
@@ -405,8 +431,11 @@ def test_deleting_a_page_leaves_a_tombstone_and_drops_its_op_log(guest):
     guest.post("/api/blocks", json={"parent_id": page["id"], "content": "note"}).raise_for_status()
     with _pages_conn() as conn:
         assert conn.execute("SELECT count(*) FROM page_ops WHERE page_id = ?", (page["id"],)).fetchone()[0] == 1
+    # deleting moves it to Recently deleted; "Delete permanently" drops the log
+    # (tests/test_page_trash.py covers the trash itself)
     r = guest.delete(f"/api/blocks/{page['id']}")
     assert r.status_code == 200, r.text
+    assert guest.delete(f"/api/trash/{page['id']}").status_code == 200
     with _pages_conn() as conn:
         assert conn.execute("SELECT count(*) FROM page_ops WHERE page_id = ?", (page["id"],)).fetchone()[0] == 0
         row = conn.execute("SELECT actor FROM deleted_pages WHERE page_id = ?", (page["id"],)).fetchone()

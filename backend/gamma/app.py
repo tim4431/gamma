@@ -5,13 +5,15 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, Response
 
 from . import backup_schedule, cloud_sync, config, guests, migrations
-from . import sync_engine, version
+from . import sync_engine, trash, upload_gc, version
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
+from .compression import JsonGzip
 from .db import connect_data_db, connect_pages_db, connect_users_db
 from .logbuf import log, setup_logging
 from .mcp_lazy import LazyMCP
@@ -42,11 +44,17 @@ from .routers import (
     search,
     shares,
     sync,
+    trash as trash_router,
     uploads,
     workspaces,
     ws_backups, cloud_auth as cloud_auth_router)
 from .seed import ensure_admin_seed
-from .storage import cleanup_orphan_uploads
+
+# Worker threads for sync endpoints, streamed replies and file responses
+# (AnyIO's default limiter holds 40). Slow outbound work — the PDF proxy, an
+# AI stream — holds one for as long as the far side takes, and a PDF page
+# read must not wait behind forty of them.
+THREAD_TOKENS = 100
 
 
 def _silence_windows_connection_reset():
@@ -75,8 +83,11 @@ def _startup_maintenance():
     """In this order: bring the data directory to the current schema version
     (gamma/migrations.py — refuses to serve a newer or unmigratable data
     directory), create users.db on a fresh install, seed the first admin,
-    then per workspace: prune orphaned uploads and apply the per-file
-    schema statements (a restored backup gains page_ops, WAL, ...)."""
+    then per workspace: apply the per-file schema statements (a restored
+    backup gains page_ops, WAL, ...). A workspace whose files fail to open
+    is logged and left out: the others are served. The stored files'
+    reconciliation (gamma/upload_gc.py) runs in the background once the
+    server is up, never here."""
     log.info(f"[startup] Gamma {version.label()}")
     try:
         check_publish_config()
@@ -99,17 +110,15 @@ def _startup_maintenance():
         if not ws_root.is_dir():
             continue
         ws_id = ws_root.name
-        uploads_dir = ws_root / "uploads"
-        pages_db = ws_root / "pages.db"
-        if uploads_dir.exists() and pages_db.exists():
-            # connect_pages_db also switches the file to WAL and adds the
-            # page_ops table on files that predate them.
-            with connect_pages_db(ws_id) as conn:
-                removed = cleanup_orphan_uploads(conn, uploads_dir)
-                if removed:
-                    log.info(f"[startup] removed orphan uploads in workspace {ws_id}: {removed}")
-        if (ws_root / "data.db").exists():
-            connect_data_db(ws_id).close()
+        try:
+            if (ws_root / "pages.db").exists():
+                # connect_pages_db also switches the file to WAL and adds any
+                # table an older file lacks (page_ops, ...).
+                connect_pages_db(ws_id).close()
+            if (ws_root / "data.db").exists():
+                connect_data_db(ws_id).close()
+        except Exception as e:  # noqa: BLE001 — one damaged library never stops the server
+            log.error(f"[startup] workspace {ws_id} could not be opened, the others are served: {e}")
 
 
 def create_app() -> FastAPI:
@@ -118,15 +127,17 @@ def create_app() -> FastAPI:
     mcp = LazyMCP()
     @asynccontextmanager
     async def lifespan(app):
+        anyio.to_thread.current_default_thread_limiter().total_tokens = THREAD_TOKENS
         # The MCP lifespan's yield is request state (its runtime, read by the
         # /mcp route from scope["state"]) — it must pass through here.
         async with mcp.lifespan(app) as state, backup_schedule.lifespan(), cloud_sync.lifespan(), \
-                guests.lifespan():
+                guests.lifespan(), trash.lifespan():
             yield state
 
     app = FastAPI(title="Gamma PDF Annotator", lifespan=lifespan)
 
     app.middleware("http")(session_middleware)
+    app.add_middleware(JsonGzip)  # outermost: compresses what the rest answered
 
     @app.get("/api/health")
     async def health():
@@ -155,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(ink.router)
     app.include_router(blocks.router)
     app.include_router(pages.router)
+    app.include_router(trash_router.router)
     app.include_router(imports.router)
     app.include_router(export.router)
     app.include_router(links.router)
@@ -207,6 +219,7 @@ def create_app() -> FastAPI:
     _startup_maintenance()
 
     sync_engine.start_loop()
+    upload_gc.start()
     return app
 
 

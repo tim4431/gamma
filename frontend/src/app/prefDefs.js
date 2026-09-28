@@ -30,6 +30,15 @@ const intIn = (min, max) => ({
     return Number.isFinite(value) && value >= min && value <= max ? value : undefined;
   },
 });
+// Like intIn, but a number out of range is pulled into it rather than
+// dropped: for a range that narrowed, so a value stored under the old one
+// keeps its intent ("as many as allowed").
+const intClamped = (min, max) => ({
+  parse: (raw) => {
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : undefined;
+  },
+});
 const json = (normalize) => ({
   parse: (raw) => { try { return normalize(JSON.parse(raw)); } catch { return undefined; } },
   serialize: JSON.stringify,
@@ -66,6 +75,12 @@ export function defaultTranslateLang(languages = typeof navigator === "undefined
 
 // The translation service that needs no setup (Microsoft's free endpoint).
 export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
+
+// The most translation calls in flight at once (the translateParallel
+// preference). The server lets an account have ai_client.MAX_OPEN_CALLS (6)
+// AI calls open and answers 429 past that, so translation leaves room for a
+// chat.
+export const TRANSLATE_PARALLEL_MAX = 4;
 
 // What translation sends for the "Translate with" pick, given the set-up
 // services and the chat models on offer: the pick while it is still
@@ -184,9 +199,8 @@ export const PREFS = {
   translateLang: pref("gamma-translate-lang", ACCOUNT, defaultTranslateLang(), oneOf(TRANSLATE_LANGS.map(([code]) => code))),
   // Parallel translation requests: chunks of a page are translated this many
   // at a time — the whole-document queue never exceeds it either. Clamped to
-  // 1–32 (a chunk is ~1200 chars, so even 32 stays well under provider rate
-  // limits for most accounts).
-  translateParallel: pref("gamma-translate-parallel", ACCOUNT, 3, intIn(1, 32)),
+  // 1–TRANSLATE_PARALLEL_MAX, a stored value above it included.
+  translateParallel: pref("gamma-translate-parallel", ACCOUNT, 3, intClamped(1, TRANSLATE_PARALLEL_MAX)),
   // Reasoning effort for translation calls. "" = provider default (param
   // omitted — some models reject it outright, so that stays the safe
   // default); Low/Minimal is the speed lever for reasoning models, which

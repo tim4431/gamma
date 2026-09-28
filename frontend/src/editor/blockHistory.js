@@ -5,9 +5,13 @@
 //
 // Every committed change to `blocks` is classified by diffing it against the
 // previous committed tree:
-//   - trees that did not come from an edit here (`isLoad(tree)`: a load, or
-//     another client's ops — the caller marks them) and undo/redo
-//     applications are never recorded;
+//   - trees that did not come from an edit here (`originOf(tree)`: "load",
+//     fetched from the server, or "remote", another client's ops — the
+//     caller marks them) and undo/redo applications are never recorded; a
+//     load also empties the stack — its snapshots predate what the fetch
+//     brought in (a note moved here from another page, an import), and
+//     restoring one would delete that (a remote op is folded into every
+//     snapshot instead, `rebase`);
 //   - opening/closing editors and collapse toggles are not edits;
 //   - everything else (add/delete/move/indent, property changes such as a
 //     highlight colour or link, any content change — typing, checkboxes,
@@ -23,7 +27,9 @@
 // block in edit mode and hands the caret back through `onCaret` so the
 // editor puts the cursor where the change was; restoring with no editor open
 // strips editMode so undo never pops editors open. The stack belongs to one
-// page and is cleared when the page id changes.
+// page and is cleared when the page id changes. The stack's bookkeeping is
+// plain functions over one state object (`observeTree`, `rebaseHistory`,
+// `clearHistory`), so the node tests drive it without React.
 import { useCallback, useEffect, useRef } from "react";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -120,8 +126,83 @@ function withEditMode(list, keepId) {
   return (list || []).map((b) => ({ ...b, editMode: b.id === keepId, children: withEditMode(b.children, keepId) }));
 }
 
+// The history's state: the two stacks, the tree last seen, and the
+// bookkeeping of the transition being recorded.
+export function createHistory(tree = []) {
+  return { undo: [], redo: [], prev: tree, prevCaret: null, displaced: null, intent: null, lastEdit: null };
+}
+
+export function clearHistory(s) {
+  s.undo = [];
+  s.redo = [];
+  s.lastEdit = null;
+}
+
+// Another client's change landed: fold it into every snapshot, so undoing
+// our own edits never reverts theirs (what a collaborative undo means).
+export function rebaseHistory(s, fn) {
+  if (s.undo.length) s.undo = s.undo.map((e) => ({ ...e, tree: fn(e.tree) }));
+  if (s.redo.length) s.redo = s.redo.map((e) => ({ ...e, tree: fn(e.tree) }));
+}
+
+// Selection of the editor open in `tree`: the live one while that editor
+// is still the open one, else what it was at the previous commit (the
+// editor has since moved to another block, e.g. Enter made a new one).
+function caretIn(s, tree, o) {
+  const id = editingId(tree);
+  if (!id) return null;
+  const live = o.caretRef?.current;
+  const c = live?.id === id ? live : s.prevCaret?.id === id ? s.prevCaret : null;
+  return c ? { id, from: c.from, to: c.to } : null;
+}
+
+// A committed tree (`o`: the hook's options): push the previous tree when
+// the transition was an edit here, merge it into the running chunk, or
+// record nothing; a load empties the stack.
+export function observeTree(s, blocks, o) {
+  const prev = s.prev;
+  s.prev = blocks;
+  const intent = s.intent;
+  s.intent = null;
+  const displaced = s.displaced;
+  s.displaced = null;
+  try {
+    if (prev === blocks) return;
+    const origin = o.originOf?.(blocks);
+    if (origin === "load") { clearHistory(s); return; }
+    if (origin) return;
+    if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced }); return; }
+    if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced }); return; }
+    const kind = classifyTransition(prev, blocks);
+    if (kind === null) {
+      // The editor of the block being merged into closed: the run ends.
+      if (s.lastEdit?.editing && editingId(blocks) !== s.lastEdit.id) s.lastEdit = null;
+      return;
+    }
+    const now = Date.now();
+    const editing = kind !== true && editingId(blocks) === kind;
+    if (kind !== true && s.lastEdit?.id === kind
+        && now - s.lastEdit.at < (editing && s.lastEdit.editing ? TYPING_MERGE_MS : EDIT_MERGE_MS)) {
+      s.lastEdit.at = now;
+      s.lastEdit.editing = editing;
+      return;
+    }
+    s.lastEdit = kind === true ? null : { id: kind, at: now, editing };
+    // A content change from an editor carries the selection it started from.
+    const before = o.caretBeforeRef?.current;
+    const caret = kind !== true && before?.id === kind ? { ...before } : caretIn(s, prev, o);
+    s.undo.push({ tree: prev, caret });
+    if (s.undo.length > MAX_ENTRIES) s.undo.shift();
+    s.redo = [];
+  } finally {
+    const live = o.caretRef?.current;
+    s.prevCaret = live ? { ...live } : null;
+  }
+}
+
 // Options:
-//   isLoad(tree) — true for a tree that came from the server, not an edit
+//   originOf(tree) — "load" for a tree fetched from the server, "remote" for
+//                 one with another client's ops applied, else undefined
 //   pageId      — the stack is cleared when it changes
 //   enabled     — false while read-only / no page
 //   caretRef    — {id, from, to} the open editor's live selection (App keeps
@@ -131,70 +212,18 @@ function withEditMode(list, keepId) {
 //   onCaret({id, from, to}) — called after a restore that should land the
 //                 cursor in the (kept-open) editor of that block
 export function useBlockHistory(blocks, setBlocks, opts) {
-  const st = useRef({ undo: [], redo: [], prev: blocks, prevCaret: null, displaced: null, intent: null, lastEdit: null });
+  const st = useRef(null);
+  if (!st.current) st.current = createHistory(blocks);
   const optsRef = useRef({ setBlocks, ...opts });
   optsRef.current = { setBlocks, ...opts };
   const { pageId } = opts;
 
-  const clear = useCallback(() => {
-    st.current.undo = [];
-    st.current.redo = [];
-    st.current.lastEdit = null;
-  }, []);
+  const clear = useCallback(() => clearHistory(st.current), []);
   useEffect(clear, [pageId, clear]);
-
-  // Selection of the editor open in `tree`: the live one while that editor
-  // is still the open one, else what it was at the previous commit (the
-  // editor has since moved to another block, e.g. Enter made a new one).
-  const caretIn = (tree) => {
-    const id = editingId(tree);
-    if (!id) return null;
-    const s = st.current;
-    const live = optsRef.current.caretRef?.current;
-    const c = live?.id === id ? live : s.prevCaret?.id === id ? s.prevCaret : null;
-    return c ? { id, from: c.from, to: c.to } : null;
-  };
 
   // Must run before the autosave effect forgets the tree's origin (effects
   // run in declaration order — call this hook before that effect).
-  useEffect(() => {
-    const s = st.current;
-    const prev = s.prev;
-    s.prev = blocks;
-    const intent = s.intent;
-    s.intent = null;
-    const displaced = s.displaced;
-    s.displaced = null;
-    try {
-      if (prev === blocks || optsRef.current.isLoad?.(blocks)) return;
-      if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced }); return; }
-      if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced }); return; }
-      const kind = classifyTransition(prev, blocks);
-      if (kind === null) {
-        // The editor of the block being merged into closed: the run ends.
-        if (s.lastEdit?.editing && editingId(blocks) !== s.lastEdit.id) s.lastEdit = null;
-        return;
-      }
-      const now = Date.now();
-      const editing = kind !== true && editingId(blocks) === kind;
-      if (kind !== true && s.lastEdit?.id === kind
-          && now - s.lastEdit.at < (editing && s.lastEdit.editing ? TYPING_MERGE_MS : EDIT_MERGE_MS)) {
-        s.lastEdit.at = now;
-        s.lastEdit.editing = editing;
-        return;
-      }
-      s.lastEdit = kind === true ? null : { id: kind, at: now, editing };
-      // A content change from an editor carries the selection it started from.
-      const before = optsRef.current.caretBeforeRef?.current;
-      const caret = kind !== true && before?.id === kind ? { ...before } : caretIn(prev);
-      s.undo.push({ tree: prev, caret });
-      if (s.undo.length > MAX_ENTRIES) s.undo.shift();
-      s.redo = [];
-    } finally {
-      const live = optsRef.current.caretRef?.current;
-      s.prevCaret = live ? { ...live } : null;
-    }
-  }, [blocks]);
+  useEffect(() => { observeTree(st.current, blocks, optsRef.current); }, [blocks]);
 
   // Stable, so a once-mounted key listener can call it. Returns the action
   // description, or false when empty. `inEditor`: from an open editor —
@@ -211,20 +240,14 @@ export function useBlockHistory(blocks, setBlocks, opts) {
     s.lastEdit = null;
     // The state being displaced keeps the cursor it has right now (read
     // before the restore re-syncs the editor's document).
-    s.displaced = caretIn(s.prev);
+    s.displaced = caretIn(s, s.prev, o);
     const caret = inEditor && entry.caret && hasBlock(entry.tree, entry.caret.id) ? entry.caret : null;
     o.setBlocks(withEditMode(entry.tree, caret?.id || null));
     if (caret) o.onCaret?.(caret);
     return description;
   }, []);
 
-  // Another client's change landed: fold it into every snapshot, so undoing
-  // our own edits never reverts theirs (what a collaborative undo means).
-  const rebase = useCallback((fn) => {
-    const s = st.current;
-    if (s.undo.length) s.undo = s.undo.map((e) => ({ ...e, tree: fn(e.tree) }));
-    if (s.redo.length) s.redo = s.redo.map((e) => ({ ...e, tree: fn(e.tree) }));
-  }, []);
+  const rebase = useCallback((fn) => rebaseHistory(st.current, fn), []);
 
   return { undo, clear, rebase };
 }

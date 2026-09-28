@@ -10,6 +10,7 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -111,7 +112,9 @@ async def bounded_request(request: Request) -> Request:
 async def register(request: Request):
     from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
 
-    base = public_base(request)
+    # The async OAuth endpoints (they await the body, or the SDK's handler)
+    # read and write users.db in the threadpool, never on the event loop.
+    base = await run_in_threadpool(public_base, request)
     ratelimit.check("mcp-register:" + ratelimit.client_ip(request), 30, 3600)
     request = await bounded_request(request)
     try:
@@ -131,7 +134,7 @@ async def register(request: Request):
     client = OAuthClientInformationFull(**{**metadata.model_dump(), "token_endpoint_auth_method": "none",
                                           "scope": SCOPE, "grant_types": ["authorization_code"]},
                                       client_id=secrets.token_urlsafe(24), client_id_issued_at=int(time.time()))
-    store("client", base, client.client_id, client.model_dump(mode="json"), TTL)
+    await run_in_threadpool(store, "client", base, client.client_id, client.model_dump(mode="json"), TTL)
     return _no_store(client.model_dump(mode="json", exclude_none=True), 201)
 
 
@@ -140,7 +143,7 @@ async def authorize(request: Request):
     from mcp.server.auth.handlers.authorize import AuthorizationHandler
     from .mcp_oauth_provider import Provider
 
-    base = public_base(request)
+    base = await run_in_threadpool(public_base, request)
     ratelimit.check("mcp-authorize:" + ratelimit.client_ip(request), 60, 600)
     if len(str(request.url)) > 8192:
         raise HTTPException(414)
@@ -155,7 +158,7 @@ async def token(request: Request):
     from mcp.server.auth.middleware.client_auth import ClientAuthenticator
     from .mcp_oauth_provider import Provider
 
-    base = public_base(request)
+    base = await run_in_threadpool(public_base, request)
     ratelimit.check("mcp-token:" + ratelimit.client_ip(request), 120, 600)
     request = await bounded_request(request)
     form = await request.form()
@@ -178,13 +181,13 @@ def consent_user(request, base):
 
 
 @router.get("/api/integrations/oauth/request")
-async def consent_details(request: Request, request_id: str):
-    from .mcp_oauth_provider import Provider
+def consent_details(request: Request, request_id: str):
+    from .mcp_oauth_provider import client_info
 
     base = public_base(request)
     user = consent_user(request, base)
     pending = load("request", base, request_id)
-    client = await Provider(base).get_client(pending["client_id"]) if pending else None
+    client = client_info(base, pending["client_id"]) if pending else None
     if not pending or not client:
         raise HTTPException(400, "This sign-in request expired. Start connecting again from your assistant.")
     csrf = secrets.token_urlsafe(32)
@@ -203,7 +206,7 @@ class Consent(BaseModel):
 
 
 @router.post("/api/integrations/oauth/consent")
-async def consent(payload: Consent, request: Request):
+def consent(payload: Consent, request: Request):
     from mcp.server.auth.provider import AuthorizationParams, construct_redirect_uri
     from .mcp_oauth_provider import GammaCode
 

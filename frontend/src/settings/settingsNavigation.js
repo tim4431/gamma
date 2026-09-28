@@ -44,7 +44,7 @@ const entries = [
   e("translation", t("Translate with"), t("Service"), t("A chat model, or a translation service below"), "translation model engine service AI Google Youdao"),
   e("translation", t("Translation services"), t("Service"), t("Microsoft for free; Google or Youdao with a key"), "translation engine API key Google Cloud Youdao Microsoft"),
   e("translation", t("Translation effort"), t("Speed"), t("Low makes reasoning models translate much faster"), "translation reasoning thinking speed"),
-  e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–32)"), "translation concurrency speed"),
+  e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–4)"), "translation concurrency speed"),
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),
   e("ai", t("Connections"), null, t("AI providers, keys and ChatGPT sign-in"), "provider credentials API key ChatGPT login service"),
@@ -96,6 +96,7 @@ const entries = [
   e("server", t("Allowance per guest"), t("Shared AI provider"), t("Tokens a day for each guest; 0 = unlimited"), "administration shared AI tokens daily limit quota budget guests"),
   e("server", t("Guest workspaces last"), t("Guests"), t("Then the guest's account and workspace are deleted"), "administration guests temporary expiry hours delete throwaway"),
   e("server", t("Demo mode"), t("Guests"), t("The login page leads with Try the demo"), "administration guests try the demo public login page first-run tour"),
+  e("server", t("Check databases"), t("Databases"), t("a quick check of every account and workspace database"), "administration integrity corruption damaged sqlite quick_check health"),
   e("diagnostics", t("Debug logging"), t("Tracing"), t("Trace reading-position, restore and sync events"), "diagnostics tracing browser system log"),
 ];
 export const SETTINGS_SEARCH = entries;

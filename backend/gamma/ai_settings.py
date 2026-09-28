@@ -40,7 +40,7 @@ from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
 from . import ai_protocols, ai_usage
-from .db import connect_users_db, get_pref, page_now, set_pref
+from .db import connect_users_db, get_pref, page_now, set_pref, update_pref
 from .logbuf import log
 from .publisher_sessions import cipher
 from .server_settings import _get_raw, _set_raw
@@ -54,14 +54,31 @@ MAX_NAME_LEN = 60
 MAX_PROVIDERS = 20
 
 
-def load_provider_entries(user: str) -> list:
-    value, _ = get_pref(user, AI_SETTINGS_PREF_KEY)
-    entries = (value or {}).get("providers") if isinstance(value, dict) else None
+def _entries_of(value) -> list:
+    entries = value.get("providers") if isinstance(value, dict) else None
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
 
 
+def load_provider_entries(user: str) -> list:
+    return _entries_of(get_pref(user, AI_SETTINGS_PREF_KEY)[0])
+
+
 def save_provider_entries(user: str, entries: list):
+    """Replace the whole list. Edits go through update_provider_entries."""
     set_pref(user, AI_SETTINGS_PREF_KEY, {"providers": entries})
+
+
+def update_provider_entries(user: str, change) -> list:
+    """Read-modify-write the account's entries in one transaction
+    (db.update_pref): ``change(entries)`` edits the list in place and may
+    raise to abort. A list read before a slow call (a sign-in's token
+    exchange) is never saved back over a change made meanwhile. Returns the
+    saved list."""
+    def apply(value):
+        entries = _entries_of(value)
+        change(entries)
+        return {"providers": entries}
+    return update_pref(user, AI_SETTINGS_PREF_KEY, apply)["providers"]
 
 
 def new_provider_id() -> str:
@@ -408,13 +425,15 @@ def _entry_oauth(entries: list, provider_id: str) -> dict | None:
 
 
 def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
-    """An account's own sign-in entry, refreshed under the account's lock."""
+    """An account's own sign-in entry, refreshed under the account's lock
+    and written back as only its tokens (an edit of the list meanwhile —
+    another tab adding a key — stays)."""
     def write(oauth):
-        entries = load_provider_entries(user)
-        for e in entries:
-            if e.get("id") == provider_id:
-                e["oauth"] = oauth
-        save_provider_entries(user, entries)
+        def change(entries):
+            for e in entries:
+                if e.get("id") == provider_id:
+                    e["oauth"] = oauth
+        update_provider_entries(user, change)
     return _refresh_tokens(user, lambda: _entry_oauth(load_provider_entries(user), provider_id), write, flow)
 
 
@@ -523,13 +542,13 @@ def clear_refresh_backoff(user: str, provider_id: str) -> None:
                 edit_server_ai(change)
         return
     with _refresh_lock(user):
-        entries = load_provider_entries(user)
-        for e in entries:
-            oauth = e.get("oauth")
-            if e.get("id") == provider_id and isinstance(oauth, dict) \
-                    and oauth.pop("refresh_failed_at", None) is not None:
-                save_provider_entries(user, entries)
-                return
+        oauth = _entry_oauth(load_provider_entries(user), provider_id)
+        if oauth and "refresh_failed_at" in oauth:
+            def change(entries):
+                for e in entries:
+                    if e.get("id") == provider_id and isinstance(e.get("oauth"), dict):
+                        e["oauth"].pop("refresh_failed_at", None)
+            update_provider_entries(user, change)
 
 
 def require_ai_runtime(user: str) -> dict:

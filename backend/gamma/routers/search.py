@@ -6,7 +6,9 @@ a millisecond-range query instead of opening a thousand PDFs; missing papers
 are indexed lazily by a background thread the first time a search runs, and
 the response reports how many are still pending so the UI can hint that
 results are incomplete. The notes index lives in gamma.block_index (rebuilt
-per page, synchronously, when a page changed since its last build).
+per page when a page changed since its last build: by the search itself for
+a moment, then in the background — this module registers its commit
+listener).
 
 Extraction prefers pypdfium2 (PDFium — proper word spacing and unicode) and
 falls back to PyPDF2. Text is stored in normalized form (see gamma.textnorm)
@@ -22,24 +24,26 @@ highlight rects always agree with what's on screen.
 frontend still uses.
 """
 
-import sqlite3
 import threading
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from .. import block_index, pdf_index
+from .. import block_index, ops, pdf_index, pdf_meta
 from ..ai_context import pdf_path as _pdf_path
-from .. import pdf_meta
 from ..auth import require_ws
 from ..block_index import fts_query
 from ..blocks_store import root_pages
-from ..db import connect_pages_db, page_now, ws_db_path
+from ..db import connect_data_db, connect_pages_db
 from ..logbuf import log
 from ..pdf_text import extract_pages
-from ..textnorm import INDEX_VERSION, normalize_text
+from ..textnorm import normalize_text
 
 router = APIRouter(prefix="/api", tags=["search"])
+
+# Every committed page write re-indexes that page's notes in the background
+# once the page is quiet (block_index imports nothing of ops, which imports it).
+ops.commit_listeners.append(block_index.page_changed)
 
 _MAX_PAGE_CHARS = 20000   # per page
 
@@ -65,18 +69,11 @@ def _index_doc(ws: str, doc_id: str):
             for i, raw in enumerate(_extract_pages(path), start=1):
                 text = normalize_text(raw)
                 if text:
-                    rows.append((doc_id, i, text[:_MAX_PAGE_CHARS]))
+                    rows.append((i, text[:_MAX_PAGE_CHARS]))
     except Exception as e:
         log.warning(f"[pdf-search] indexing {doc_id} failed: {e}")
-    with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
-        pdf_index.ensure_schema(conn)
-        conn.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (doc_id,))
-        conn.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)", rows)
-        conn.execute(
-            "INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) VALUES (?, ?, ?, ?)",
-            (doc_id, page_now(), len(rows), INDEX_VERSION),
-        )
-        conn.commit()
+    with connect_data_db(ws) as conn:
+        pdf_index.store_doc(conn, doc_id, rows)
 
 
 def _index_missing_async(ws: str, doc_ids: list[str]) -> bool:
@@ -123,13 +120,14 @@ def search_reindex(request: Request, payload: ReindexRequest | None = None):
         doc_ids = library
         # Stamp everything stale first: if the run is interrupted, the next
         # search still sees the remainder as missing and finishes the job.
-        with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+        with connect_data_db(ws) as conn:
             pdf_index.ensure_schema(conn)
             conn.execute("UPDATE pdf_fts_docs SET ver = 0")
             conn.commit()
     started = doc_ids and _index_missing_async(ws, doc_ids)
     if not wanted:
-        block_index.mark_all_dirty(ws)  # notes rebuild on the next search
+        block_index.mark_all_dirty(ws)  # the notes rebuild in the background
+        block_index.schedule(ws)
     return {"scheduled": len(doc_ids) if started else 0,
             "busy": bool(doc_ids) and not started}
 
@@ -162,10 +160,10 @@ def stop_indexing(request: Request):
 @router.get("/search")
 def library_search(request: Request, q: str = "", limit: int = 20, scope: str = ""):
     """One search over the workspace's knowledge base: notes (block_fts) and the
-    text of PDF attachments (pdf_fts). Owner-only, like /pdf-search. Results
+    text of PDF attachments (pdf_fts). Any member, like /pdf-search. Results
     are notes first (bm25 order), then PDF hits, each capped at ``limit``;
-    ``indexing`` counts what is still being built (note pages waiting for a
-    rebuild batch + PDFs the background extractor hasn't reached)."""
+    ``indexing`` counts what is still being built (note pages the background
+    refresher hasn't reached + PDFs the background extractor hasn't)."""
     ws = require_ws(request)
     q = (q or "").strip()
     limit = max(1, min(int(limit or 20), 100))
@@ -174,12 +172,12 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
     match = fts_query(q)
     with connect_pages_db(ws) as conn:
         pages = root_pages(conn, scope)
-        # Notes: rebuild what changed (synchronous, batch-capped), then query.
+        # Notes: rebuild what changed (for a moment; the rest in the background), then query.
         pending = block_index.refresh(ws, conn, list(pages)) if pages else 0
     docs = {info["doc_id"]: page_id for page_id, info in pages.items() if info["doc_id"]}
     results = []
     missing: list = []
-    with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+    with connect_data_db(ws) as conn:
         for block_id, page_id, snippet in block_index.search_blocks(conn, match, limit, pages):
             results.append({"source": "notes", "block_id": block_id, "page_id": page_id,
                             "title": pages[page_id]["title"], "snippet": snippet})
@@ -209,7 +207,7 @@ def pdf_search(request: Request, q: str = "", limit: int = 20):
     if not docs:
         return {"results": [], "indexing": 0}
 
-    with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+    with connect_data_db(ws) as conn:
         missing = pdf_index.pdf_missing(conn, docs)  # never indexed or stale version
         if missing:
             _index_missing_async(ws, missing)

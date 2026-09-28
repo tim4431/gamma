@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyOps } from "../src/shared/model/blockOps.js";
-import { MAX_RETRIES, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
+import { MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
 
 const ME = "this-client";
 const block = (id, content = id, properties = {}) => ({ id, content, properties, children: [], position: "a0" });
@@ -120,27 +120,30 @@ test("network retries keep local content protected until it is acknowledged", as
   assert.equal(h.session.hasPending(), false);
 });
 
-test("retries stop after the limit; the edits stay for pagehide", async (t) => {
+test("retries never give up, ever longer apart; the edits stay for pagehide", async (t) => {
   const h = setup(t, async () => { throw new Error("offline"); });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();
-  for (let i = 0; i < MAX_RETRIES; i++) {
+  const waits = [];
+  for (let i = 0; i < 8; i++) {
     const [timer] = h.timers.values();
-    assert.equal(timer.ms, RETRY_MS);
+    waits.push(timer.ms);
     h.fire();
     await settle();
   }
-  assert.equal(h.status.filter((s) => /retrying/.test(s)).length, MAX_RETRIES);
-  assert.equal(h.status[h.status.length - 1], "Save failed: offline");
-  assert.equal(h.timers.size, 0, "no further retry armed");
+  assert.deepEqual(waits, [RETRY_MS, 2 * RETRY_MS, 4 * RETRY_MS, 8 * RETRY_MS, 16 * RETRY_MS,
+    MAX_RETRY_MS, MAX_RETRY_MS, MAX_RETRY_MS]);
+  assert.equal(h.timers.size, 1, "a retry is still armed");
+  assert.match(h.status[h.status.length - 1], /retrying/);
   assert.equal(h.session.hasPending(), true);
   h.session.pagehide();
   assert.equal(h.keepalive.length, 1);
   assert.deepEqual(h.keepalive[0].body.ops.map((op) => [op.op, op.id, op.content]), [["set", "a", "mine"]]);
-  assert.equal(h.session.hasPending(), false);
+  // the batch keeps its id: a copy that already landed is answered, not re-applied
+  assert.equal(h.keepalive[0].body.batch, h.calls[0].body.batch);
 });
 
-test("a rejected batch drops the queue and reloads the page", async (t) => {
+test("a rejected batch is dropped and the page reloads", async (t) => {
   const h = setup(t, async () => { const e = new Error("no such block"); e.status = 404; throw e; });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();
@@ -171,7 +174,7 @@ test("a batch refused for a block the server lacks sends that block again, subtr
   assert.equal(h.session.hasPending(), false);
 });
 
-test("a refused block this tab doesn't hold still drops the queue and reloads", async (t) => {
+test("a refused block this tab doesn't hold still drops the batch and reloads", async (t) => {
   const h = setup(t, async () => { const e = new Error("no such parent: zz"); e.status = 404; e.data = { missing: "zz" }; throw e; });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();

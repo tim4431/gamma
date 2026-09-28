@@ -23,10 +23,12 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   path: the pages filed there or below it, read live, so pages filed later
   join and pages moved out leave). `auth.share_scope()` hands every
   share-enabled endpoint a `ShareScope`, and the endpoint asks it what is in
-  reach (`allows_page`, `allows_block`, `allows_folder`, `lists_library`;
-  `blocks_store.assert_block_in_scope()` for block reads) instead of
+  reach (`allows_page`, `allows_block`, `allows_folder`, `lists_library`,
+  `pages`; `blocks_store.assert_block_in_scope()` for block reads) instead of
   branching on the share's kind. A token reaches only its own pages'
-  subtrees and assets: their PDFs, the uploads their blocks reference, their
+  subtrees and assets: their PDFs, the uploads their blocks reference (found
+  by walking the shared pages' subtrees, never the workspace; a yes is
+  remembered for `uploads.SHARE_READ_TTL_S`, 5 min), their
   own `source_url` through the proxy. Backlinks and other pages are refused
   (403). The root listing and folder export are refused for a page share;
   a folder share gets the pages in reach and exports its folder or a
@@ -73,7 +75,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   `collab.LINK_OPS_PER_MINUTE` op batches, `uploads.LINK_UPLOADS_PER_5_MIN`
   uploads); their uploads count against the page's workspace like any
   share editor's. Flipping the share back to `view`, or stopping it,
-  revokes the link's writes at once (the grant is re-read per request).
+  revokes the link's writes at once (the grant is re-read per request, and
+  open page sockets are re-checked by `collab.revalidate`).
 - **Unknown tokens.** A `?share=` that names no share is counted per IP
   (`auth.note_share_miss`, from `share_grant`, `GET /share/{token}` and the
   page socket): past `auth.SHARE_MISSES_PER_5_MIN` (30) in five minutes the
@@ -106,7 +109,20 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   per IP per hour), as are share-link
   visitors' writes and unknown share tokens (above; those log a warning
   once per window through `check`'s `on_first_exceed`). Not an edge WAF; add
-  one for large public deployments.
+  one for large public deployments. "Per IP" is the connection's peer
+  address (`ratelimit.client_ip`); `X-Forwarded-For` counts only when
+  uvicorn itself rewrote the peer from it, which it does for the proxies
+  `FORWARDED_ALLOW_IPS` lists (the Docker image: loopback and the private
+  ranges; a bare `uvicorn`: 127.0.0.1). The counters are bounded
+  (`ratelimit.MAX_KEYS`): expired windows are swept when the table fills,
+  then the oldest.
+- JSON answers of 1 KB or more are gzipped for clients that accept it
+  (`gamma/compression.py`, level 3: a 5,000-block subtree goes from 2.1 MB
+  to 0.47 MB for about 22 ms of compression, done in a worker thread above
+  256 KB). Only a whole `application/json` 200 of known length is
+  touched: streams (the AI chat and translation NDJSON, event streams),
+  files and their range requests (uploads, PDFs, the app's assets) and
+  anything already encoded pass through as they are.
 - Every response carries baseline hardening headers (`X-Content-Type-Options`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Content-Security-Policy:
   frame-ancestors 'self'`, and HSTS on HTTPS). SVG uploads are served
@@ -132,22 +148,22 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 | GET | `/accounts[?q=]` | the account directory for the invite / owner pickers: `{accounts: [{username, is_admin}]}`, non-guest accounts only (signed-in non-guest callers). On a share host only admins get the list; anyone else gets the one account named exactly `q`, or none |
 | GET | `/export` (+ `/export-progress`) | backup zip of a workspace (everything or `uploads=0`; the `gamma-backup-1` zip of `gamma/ws_backup.py`): the request's, `?ws=` (any member), or — admins — `?user=` for an account's default workspace |
 | GET | `/export-all` | every personal workspace of the account in one zip, one `/export` zip per workspace inside (`uploads=0` for databases only; guests 403) |
-| POST | `/import-data` | restore (`mode=replace`, owners) / merge (`mode=merge`, editors) a backup zip into a workspace (same targeting); never into a guest's workspace |
+| POST | `/import-data` | restore (`mode=replace`, owners) / merge (`mode=merge`, editors) a backup zip into a workspace (same targeting); never into a guest's workspace. A zip whose databases fail `PRAGMA quick_check` is refused (400) before anything changes; a replace first keeps the current state as a `pre-restore` snapshot (its name in `pre_restore`; 400 and nothing restored when it cannot be taken) and reports `pages_removed`; a merge reports `pages_added` / `pages_skipped` / `chats_added` / `from_trash` (pages that were only in Recently deleted, brought back as the backup has them). Every restored page gets a `reload` in its op log above any seq a client saw ([workspaces.md](workspaces.md) "Export and backups") |
 
 ### Workspaces (`workspaces.py`) — see [workspaces.md](workspaces.md)
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/workspaces` | create a personal one (`{name}`; guests 403); admins may add `kind: "shared"`, `owner`, `access`, `public_role`, `quota_mb` |
 | GET | `/workspaces/mine` | Settings → Workspaces: every workspace I can open with its `used_bytes` (and `mirror_of`, the remote workspace's name when it is an offline copy, `publishing` true while at least one of its pages is published to Gamma Cloud, where `mirror_of` stays empty — [mirror.md](mirror.md)), plus `account` (my limits and the usage of all my personal workspaces) |
-| GET/PUT/DELETE | `/workspaces/{id}` | kind + members (pending invitations last, `pending: true` + `subject`) + quota + `personal_of` + `default` (any member; admins) / rename `{name}` (owner), `default: true` (a personal workspace's owner), kind, access + public role, workspace quota (admin) / delete (owner; not an account's last personal one) |
-| GET/POST | `/workspaces/{id}/backups` | the workspace's server-kept snapshots (any member) / take one now `{label?, uploads?}` (owner; at most `ws_backup.MAX_PER_WORKSPACE`) |
+| GET/PUT/DELETE | `/workspaces/{id}` | kind + members (pending invitations last, `pending: true` + `subject`) + quota + `personal_of` + `default` (any member; admins) / rename `{name}` (owner), `default: true` (a personal workspace's owner), kind, access + public role, workspace quota (admin) / delete (owner; not an account's last personal one): `{ok, warning, final_copy}` — a final copy goes to `backups/deleted/` first (`final_copy` its file name, "" for a guest's), and when it cannot be written nothing is deleted (507) |
+| GET/POST | `/workspaces/{id}/backups` | the workspace's server-kept snapshots (any member; each with `scheduled`, `auto` — a restore's `pre-restore` one — `missing_uploads` and `damaged`) / take one now `{label?, uploads?}` (owner; at most `ws_backup.MAX_PER_WORKSPACE` manual ones; 400 while the disk has less than 1 GB free) |
 | GET | `/workspaces/{id}/backups/{name}/download` | the snapshot as a zip — the same zip `/export` gives (any member) |
-| POST | `/workspaces/{id}/backups/{name}/restore?mode=` | restore it in place: `replace` (owner) / `merge` (editor), the same rules as `/import-data` |
+| POST | `/workspaces/{id}/backups/{name}/restore?mode=` | restore it in place: `replace` (owner) / `merge` (editor), the same rules and answer as `/import-data` |
 | DELETE | `/workspaces/{id}/backups/{name}` | delete a snapshot (owner) |
-| GET/POST | `/backup-tasks` | the account's scheduled backup tasks (`routers/backup_tasks.py`, `gamma/backup_schedule.py`; signed-in non-guest) / create one `{name, enabled, scope: selected\|all_owned, workspaces[], cron, uploads, retention_mode: days\|count, retention_value}`; `cron` is five UTC fields, targets must be workspaces the owner owns (at most 100 tasks) |
+| GET/POST | `/backup-tasks` | the account's scheduled backup tasks (`routers/backup_tasks.py`, `gamma/backup_schedule.py`; signed-in non-guest) / create one `{name, enabled, scope: selected\|all_owned, workspaces[], cron, uploads, retention_mode: days\|count, retention_value}`; `cron` is five UTC fields firing at most hourly (one minute value; else 400), `retention_value` 1–90 (else 422), targets must be workspaces the owner owns (at most 5 tasks) |
 | PUT/DELETE | `/backup-tasks/{id}` | replace the task (same body; 409 while it runs) / delete it, keeping its snapshots |
 | POST | `/backup-tasks/{id}/run` | queue a run now, paused or not (409 while it runs) |
-| POST | `/backup-tasks/preview` | `{cron}` → `{runs: [next three ISO times], timezone: "UTC"}` |
+| POST | `/backup-tasks/preview` | `{cron}` → `{runs: [next three ISO times], timezone: "UTC"}`; 400 for a schedule that fires more than hourly |
 | PUT/DELETE | `/workspaces/{id}/members/{user}` | shared workspaces: invite or set a role `{role}`, incl. owner (owner) / remove (owner) or leave (yourself) |
 | GET/POST | `/workspaces/{id}/invites` | invitations by Gamma Cloud username still waiting for the person's first sign-in, `{invites: [{subject, username, role, invited_by, created_at}]}` (any member) / invite `{username, role}` — role `editor` (default) or `viewer`; the account server resolves the username to a subject; a person already linked here becomes a member at once (`invited: {member}`), anyone else gets a pending membership (`invited: {pending}`) their first cloud sign-in claims; returns the workspace like `GET /workspaces/{id}` (owner; admins). 400 on a personal workspace, when cloud sign-in is off, for an unknown username or an existing member; 429 past 30 lookups per account per 10 minutes; 503 when the account server cannot be asked ([workspaces.md](workspaces.md) "Pending invitations") |
 | DELETE | `/workspaces/{id}/invites/{subject}` | withdraw a pending invitation (owner; admins); 404 when there is none |
@@ -166,12 +182,12 @@ never returned by the generic endpoint.
 ### Blocks (`blocks.py`) — the core data model
 | Method | Path | Purpose |
 |---|---|---|
-| GET/POST | `/blocks/by-doc/{doc_id}` | lookup / create the page BY ATTACHMENT — the page whose PDF is `doc_id` (POST creates it: `{default_title, source_url?, original_filename?, folder?}`, `folder` files a NEW page only); the PDF-ingest + extension-dedup path, and what "Open as document" on a PDF file chip calls (the file is already stored under that hash). Text-only pages come from `POST /pages` |
-| GET | `/blocks/{id}/children`, `/{id}/subtree`, `/{id}/backlinks` | tree reads; the root listing (`/blocks/root/children`) — through a folder share token, only the pages the share reaches (the share view's home library); 403 through a page share — additionally gives every page a `preview` — the first ~240 chars of its first non-highlight child blocks joined with ` · ` (one window query, `""` when empty) |
-| POST/PUT/DELETE | `/blocks`, `/blocks/{id}` | CRUD — inside a page these are thin wrappers over the op path (`gamma/ops.py`): logged, fanned out to the page's room; `PUT` takes `content` and/or a properties PATCH (a null value deletes the key). A new page (`parent_id: "root"`) is a plain insert (`blocks_store.create_page`); deleting a page is `ops.delete_page`: subtree + its op log gone, a `deleted_pages` tombstone left |
-| PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert; triggers orphan-upload cleanup) — bulk paths only (imports, tests); the page's room gets a `reload`. The editor itself sends ops |
+| GET/POST | `/blocks/by-doc/{doc_id}` | lookup / create the page BY ATTACHMENT — the page whose PDF is `doc_id` (POST creates it: `{default_title, source_url?, original_filename?, folder?}`, `folder` files a NEW page only); the PDF-ingest + extension-dedup path, and what "Open as document" on a PDF file chip calls (the file is already stored under that hash). The lookup and the insert run under the workspace's write lock (`blocks_store.write_lock`), as in every get-or-create by attachment (clip, the "Web clips" page of `clip/note`, attach, `pages/from-file`, the Logseq import), so racing requests find one page; if older data holds two, the oldest answers. Text-only pages come from `POST /pages` |
+| GET | `/blocks/{id}/children`, `/{id}/subtree`, `/{id}/backlinks` | tree reads; the root listing (`/blocks/root/children`) — through a folder share token, only the pages the share reaches (the share view's home library); 403 through a page share — additionally gives every page a `preview` — the first ~240 chars of its first non-highlight child blocks joined with ` · ` (one `idx_ub_parent` seek per listed page, so the cost follows the pages, not the blocks; `""` when empty) |
+| POST/PUT/DELETE | `/blocks`, `/blocks/{id}` | CRUD — inside a page these are thin wrappers over the op path (`gamma/ops.py`): logged, fanned out to the page's room; `PUT` takes `content` and/or a properties PATCH (a null value deletes the key), and with `content` an optional `base` — the text the content was edited from: a block changed meanwhile gets the edit merged in (`gamma/textmerge.py`) instead of replaced, and the answer (`{ok, updated_at, seq, content}`) carries the text stored (an embed card editing another page's block sends it). A new page (`parent_id: "root"`) is a plain insert (`blocks_store.create_page`); deleting a page moves it to Recently deleted (`ops.trash_page`, below) → `{ok, id, trashed: {id, title, folder, deleted_at, deleted_by}}` — on a share host it is `ops.delete_page` at once: subtree + its op log gone, a `deleted_pages` tombstone left. A block of a page in Recently deleted reads as not found everywhere; for a member the 404 of `GET /blocks/{id}`, `/{id}/children` and `/{id}/subtree` carries `trashed` (the page's entry) |
+| PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert, one transaction) — bulk paths only (duplicating a page, tests); the page's room gets a `reload`, the upload names the old subtree held and the new one lacks go to the orphan check ([user_db.md](user_db.md) "Stored files"). Node ids must have the block-id shape (a node without one gets a fresh id) and text is capped like an op's: 400 / 413; an id another block already has is a 409 and leaves the old children in place. 400 for `root`: the library's pages are created and deleted one by one. The editor itself sends ops |
 | POST | `/blocks/{id}/reorder` | move within the page (an op) or, with `parent_id` on another page, across pages (the source room sees a `delete`, the target reloads) |
-| GET | `/block-search` | fuzzy note/page/highlight search; empty `q` returns recently edited blocks (feeds the `[[ref]]` popup's initial suggestions) |
+| GET | `/block-search` | fuzzy note/page/highlight search (`case`, `whole` word), the newest `limit` matches; empty `q` returns recently edited blocks (feeds the `[[ref]]` popup's initial suggestions). The query is always text: `regex=1` is refused (400) — a catastrophic pattern would hold the GIL, i.e. the whole server. SQLite skips the blocks without the query's literal runs (`textnorm.literal_runs`), the fuzzy pattern runs over the rest; past 2 s the answer is what was found so far plus `"partial": true`. Sync `def` (threadpool) |
 
 Route order matters: the static-prefix routes (`by-doc`, `children`,
 `subtree`) must stay registered before `/blocks/{block_id}`.
@@ -181,24 +197,36 @@ the tree reflects (the live session catches up from it).
 ### Collaboration (`collab.py`) — see [collab.md](collab.md)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/pages/{id}/ops` | apply a batch of block ops `{client, ops: [set / insert / move / delete], cursor?: {block, anchor, head}}` (a `set` may carry `base`, the text its `content` was edited from: when the block changed meanwhile the edit is applied as a patch onto the current text — a three-way merge, `gamma/textmerge.py` — and the echoed op carries the merged text) (`cursor`: the writer's caret in the text after the batch, fanned out with it and stored as the writer's presence) in one transaction → `{seq, at, ops (as applied — re-keyed positions carry their final value), removed_uploads}`; a workspace editor or an edit share (confined to the shared page; the page root's properties stay the workspace's); a bad op fails the whole batch (400/403/404/413; a 404 for an unknown block or parent names it as `missing`, which the client re-sends as an insert when it holds that block) |
-| GET | `/pages/{id}/ops?since=` | the op log after a seq → `{seq, batches: [{seq, actor, client, at, ops}]}`; 410 when pruned past `since` (reload the tree) |
+| POST | `/pages/{id}/ops` | apply a batch of block ops `{client, batch?, ops: [set / insert / move / delete], cursor?: {block, anchor, head}}` in one transaction → `{seq, at, ops}`, the ops as applied (re-keyed positions carry their final value). `batch`: the client's id for the batch, the same on every retry; a batch this process already applied for that client is answered again, not re-applied. An `insert` of a block the page already has leaves it as it is and echoes it. A `set` may carry `base`, the text its `content` was edited from: a block changed meanwhile gets the edit as a patch onto its current text (a three-way merge, `gamma/textmerge.py`), and the echoed op carries the merged text. `cursor`: the writer's caret in the text after the batch, fanned out with it and stored as the writer's presence. Lone UTF-16 surrogates in any string are stored as U+FFFD. A workspace editor or an edit share (confined to the shared page; the page root's properties stay the workspace's). A bad op fails the whole batch (400/403/404/413): a 404 for an unknown block or parent names it as `missing`, which the client re-sends as an insert when it holds that block; a refusal because someone changed the page meanwhile adds `conflict` (`missing` 404, `moved` 403, `cycle` 400) and `index`, the refused op's place in the batch |
+| GET | `/pages/{id}/ops?since=` | the op log after a seq → `{seq, batches: [{seq, actor, client, at, ops}]}`; 410 (reload the tree) when the log is pruned past `since`, holds more after it than a catch-up carries (`ops.CATCHUP_MAX_BATCHES` / `CATCHUP_MAX_BYTES`), or cannot continue from it (a backup restore replaced the log) |
 | GET | `/sync/whoami` | who the credential is on this server: `{user, workspace: {id, name}, role, scope}` — `scope` is an integration token's (`read` / `write`), `session` for a browser; what a mirror checks before it is created and at the start of every round |
 | GET | `/sync/changes?since=&limit=` | the workspace change feed (`gamma/routers/sync.py`): pages whose root was stamped after the cursor (`pages: [{id, created_at, updated_at, seq}]`, `seq` the page's latest op) and pages deleted after it (`deleted: [{id, deleted_at, actor}]`, from `deleted_pages`), one time-ordered stream of at most `limit` (≤ 2000) entries → `{since, cursor, more, pages, deleted}`. `since=""` lists everything. The cursor is `<time>|<id>` while `more`, else the server time minus a 60 s grace, so the last minute is re-listed on every poll — the feed is a hint for a copy of the workspace (a mirror, a merge) to know which pages to look at; the page's own `seq` / `GET /pages/{id}/ops` is the truth, and the consumer must be idempotent. Any member (viewers too); no share tokens |
-| WS | `/ws/page/{id}[?ws=&share=&client=]` | the page's live channel: `hello` / `join` / `leave` / `cursor` presence, every applied `ops` batch (with the writer's `cursor` when the batch carried one), `reload`; the client only ever sends `cursor`. Auth like HTTP (session cookie + `?ws=` (else the default workspace) or share token, resolved in the handler — the middleware doesn't run for websockets); viewers join too |
+| WS | `/ws/page/{id}[?ws=&share=&client=]` | the page's live channel: `hello` / `join` / `leave` / `cursor` presence, every applied `ops` batch (with the writer's `cursor` when the batch carried one), `reload`; the client only ever sends `cursor`. Auth like HTTP (session cookie + `?ws=` (else the default workspace) or share token, resolved in the handler — the middleware doesn't run for websockets); viewers join too. Closed with 4403 when access is refused, or revoked while open (a share changed or stopped, a member removed — `collab.revalidate`), and with 4409 when the same tab (`client`) joins again on a newer socket |
 
 ### Pages (`pages.py`) — page first, PDF as an action on it
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/pages` | create a text-only root page: body `{title?, folder?, id?, properties?}` (title defaults to `Untitled`, `folder` → `properties.folder`; `id` keeps a page's id when a mirror brings it over — 400 when malformed, 409 when taken; `properties` seeds the page's own) → the block dict. On a share host, 402 `{detail, limit, used, plan}` when the owner's plan allows no more pages in their default personal workspace ([mirror.md](mirror.md) "Publishing") |
+| POST | `/pages` | create a text-only root page: body `{title?, folder?, id?, properties?}` (title defaults to `Untitled`, `folder` → `properties.folder`; `id` keeps a page's id when a mirror brings it over — 400 when malformed or reserved (`root`, `trash`), 409 when a live block has it (a page of that id in Recently deleted gives way); `properties` seeds the page's own) → the block dict. On a share host, 402 `{detail, limit, used, plan}` when the owner's plan allows no more pages in their default personal workspace ([mirror.md](mirror.md) "Publishing") |
 | POST | `/pages/by-docs` | which pages these stored files became: body `{doc_ids: [<hash>, ...]}` (≤500) → `{pages: {hash: {id, title}}}` — a hash matches the page carrying it as its PDF (`doc_id`) or the note page imported from it (a markdown upload's `markdown_import`); hashes with no page absent; any member. The file chips ask once per page render for their "open page" button and the menu's "Open page" / "Add to library" |
 | POST | `/pages/from-file` | "Add to library" on a markdown file chip: body `{filename: "<hash>.md", original?, folder?}` → `{page, created, imported?}` — the stored upload becomes a note page through the `/import/markdown` importer (title from front matter, else `original` minus its extension), filed in `folder`; idempotent (a page whose `markdown_import` is the hash is returned with `created: false`); the file is untouched, the page is a copy. 400 for anything but a stored markdown name, 404 when the file is not in the workspace; workspace editors |
 | POST | `/pages/{page_id}/attachment` | attach a PDF to a page that has none: body `{doc_id?, source_url?, original_filename?}` (at least one of `doc_id`/`source_url`; `doc_id` is shape-validated only — a URL-opened PDF's id is the URL hash and the proxy fetches it lazily, like `by-doc`; `source_url` defaults to `/api/uploads/<doc_id>.pdf`). While the title is still automatic (`Untitled`/empty) it becomes the file name / URL tail and is marked `auto_title`. → the updated block. 400 bad input / not a root page, 404 unknown page, 409 `{"detail": "page already has an attachment"}`, 409 `{"detail": "attachment belongs to another page", "page_id"}` |
-| DELETE | `/pages/{page_id}/attachment` | drop `doc_id`/`source_url`/`original_filename` (highlights keep their `pdf_position`; the orphan sweep deletes the file unless another page references it) → `{ok, block, removed_uploads}`; 404 when the page has no attachment |
+| DELETE | `/pages/{page_id}/attachment` | drop `doc_id`/`source_url`/`original_filename` (highlights keep their `pdf_position`; the file stays, and unless something else references it is purged 30 days on — a re-attach before then finds it, [user_db.md](user_db.md) "Stored files") → `{ok, block}`; 404 when the page has no attachment |
 
 The writers need a workspace editor (`require_ws(write=True)`): a share token
 never creates pages or touches a page's attachment. `GET /pages/{id}/export*` live
 in `export.py`.
+
+### Recently deleted (`routers/trash.py`, `gamma/trash.py`) — see [home_library.md](home_library.md) "Recently deleted"
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/trash` | the pages deleted in the last 30 days, the last deleted first → `{pages: [{id, title, folder, deleted_at, deleted_by, purge_at}], keep_days}`; any member |
+| POST | `/trash/{page_id}/restore` | back under `root`, last in the library, its folder labels as they were; the root is stamped and the tombstone cleared (the change feed shows the page again) → the page's block dict; 404 when it is not in the trash |
+| DELETE | `/trash/{page_id}` | delete one page of the trash for good (`ops.delete_page`: blocks, op log, chats, index rows; its files go to the orphan check) → `{ok, id}`; the tombstone keeps its trashing's time; 404 when it is not in the trash |
+| DELETE | `/trash` | delete every page of the trash for good → `{deleted: [ids]}` |
+
+The writers need a workspace editor, like deleting a page; share tokens never
+reach the trash. The sweeper in `gamma/trash.py` deletes pages trashed more
+than 30 days ago the same way, every hour.
 
 ### PDFs & uploads (`pdf.py`, `uploads.py`)
 
@@ -223,7 +251,7 @@ guarded fetch path.
 | POST | `/upload-file` | store a file for a block to reference as `[name](/api/uploads/<hash>.<ext>)` — the file chip. Any extension except executables (`storage.BLOCKED_EXTENSIONS`: exe, msi, bat, dll, ps1, …; 400 "not accepted (executable)"); the extension comes from the uploaded name, lowercased, `.bin` when there is none; images route like `/upload-image`, a `.pdf` must be a real PDF and lands under the same `<hash>.pdf` the PDF ingest mints (so it can be opened as a document page later); same hashing + limits → `{url, name, size, already_existed}` |
 | POST | `/upload-ink` | store a handwriting group's `gamma-ink` JSON (the request body; validated against `gamma/ink.py`'s schema and limits, canonical bytes so identical strokes dedup) as `<hash>.ink` → `{url, size, strokes, bbox, pdf_position, already_existed}`; editors and edit shares. [handwriting.md](handwriting.md) |
 | GET | `/pdf-info/{doc_id}` | the document manifest the viewer lays a PDF out from before pdf.js has parsed it (`gamma/pdf_meta.py`, [pdf_loading.md](pdf_loading.md)): `{doc_id, bytes, pages, dims: [[w, h], …]}` in PDF points, rotation applied; same access rule as the file; computed in pdfium on first request when the upload-time background walk has not run (`pages: 0` for an unreadable file, not cached); 400 malformed id, 404 no such file |
-| GET, HEAD | `/uploads/{filename}` | serve stored files (HEAD: the headers alone, which is how the viewer learns a file's size before choosing its transport); with their media type (`storage.FILE_MEDIA_TYPES`, else `application/octet-stream`); pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg); blocked or malformed extensions 400 |
+| GET, HEAD | `/uploads/{filename}` | serve stored files (HEAD: the headers alone, which is how the viewer learns a file's size before choosing its transport); with their media type (`storage.FILE_MEDIA_TYPES`, else `application/octet-stream`); pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg); blocked or malformed extensions 400. Sync `def`: a share visitor's access check reads the shared pages in the threadpool |
 | GET | `/quota` | the limits that apply to uploads into the request's workspace — the account's for a personal one (`used_bytes` = all its personal workspaces), the workspace's own for a shared one — with `workspace_bytes` and `account` (the person, or "") |
 
 ### Shares (`shares.py`)
@@ -236,28 +264,35 @@ One share link per page or per folder of a workspace. What a token reaches and w
 | GET/PUT/DELETE | `/share-settings/{page_id}` | read settings (`{token: null}` when unshared; any member) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: unknown usernames or roles → 400; the token stays; `edit`+`anyone` is allowed — see "Link visitors" above) / stop sharing (the token dies) — editors and owners |
 | POST | `/share/folder?name=` | the same for a folder (`name` a folder-label path): 400 for an empty path, 404 when no page is filed in the folder |
 | GET/PUT/DELETE | `/share-settings/folder?name=` | the folder share's settings, changes and stop, as for a page. The share follows the folder's renames (`POST /folders/rename`) and dies with the folder |
-| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, folder, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` plus, for a page share, `doc_id` (the page's PDF attachment id via `page_attachment`, `""` without one); a folder share's listing is `GET /blocks/root/children` through the token; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"; 404 unknown, 401 sign in first, 403 signed in but not allowed |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, folder, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` plus, for a page share, `doc_id` (the page's PDF attachment id via `page_attachment`, `""` without one); a folder share's listing is `GET /blocks/root/children` through the token; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"; 404 unknown (or a page share whose page is deleted or in Recently deleted — a restore brings the link back), 401 sign in first, 403 signed in but not allowed |
 
 ### Search (`search.py`, `gamma/block_index.py`, `gamma/pdf_index.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + PDF text (`pdf_fts`). `scope` = `""` (library) or a folder path (that folder and its subfolders). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order) then PDF hits, each capped at `limit` (default 20, max 100). A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the page carrying the PDF, `page` the 1-based PDF page). `indexing` = note pages still waiting for a rebuild batch + PDFs the background extractor hasn't reached. Owner-only |
-| GET | `/pdf-search` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the Ctrl+F panel's library group still uses it (with `/block-search` for notes: fuzzy/regex + flags that FTS does not offer) |
-| POST | `/search-reindex` | full rebuild (PDF text re-extracted in the background, every note page stamped stale for the next search), or just `doc_ids` from the body |
+| GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + PDF text (`pdf_fts`). `scope` = `""` (library) or a folder path (that folder and its subfolders). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order) then PDF hits, each capped at `limit` (default 20, max 100). A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the page carrying the PDF, `page` the 1-based PDF page). `indexing` = note pages the background refresher hasn't rebuilt yet + PDFs the background extractor hasn't reached. Any member |
+| GET | `/pdf-search` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the Ctrl+F panel's library group still uses it (with `/block-search` for notes: substring matching + case / whole-word flags that FTS does not offer) |
+| POST | `/search-reindex` | full rebuild (PDF text re-extracted in the background, every note page stamped stale and rebuilt in the background), or just `doc_ids` from the body |
 | GET | `/tasks` | background task progress (indexing, downloads) |
 | DELETE | `/tasks/indexing` | stop the workspace's running indexer after the current paper (`{cancelled}`); the skipped papers stay stale and index on the next search; editors and owners |
 
-The notes index is rebuilt lazily per page: a search first refreshes every
-page whose `block_fts_meta` row is missing, older than `textnorm.INDEX_VERSION`,
-or no longer matches the page root's `updated_at`; the block writers that
-change a child without touching the root (`POST /blocks`, `PUT /blocks/{id}`,
-`DELETE /blocks/{id}`, `PUT /blocks/{id}/children` on a nested block, a
-re-parenting `reorder`) call `block_index.mark_page_dirty`.
-Deleting a page or detaching its PDF prunes its rows (`block_index.purge_page_data`,
-which also drops the `pdf_fts` rows of papers no page carries and the deleted
-blocks' chats). The `pdf_fts` schema and its shared queries (`pdf_missing`,
-`search_pdf`) live in `gamma/pdf_index.py`; extraction and the background
-indexer in `search.py`.
+The notes index is rebuilt per page, each page in its own short data.db
+transaction. A page is stale when its `block_fts_meta` row is missing, older
+than `textnorm.INDEX_VERSION` (`ver` 0), or no longer matches the page root's
+`updated_at`; the writers that change a child without touching the root (`PUT
+/blocks/{id}/children` on a nested block, a cross-page `reorder`) call
+`block_index.mark_page_dirty`. A search rebuilds stale pages itself for up to
+`REFRESH_BUDGET_S` (0.2 s — so a page edited a moment ago is found) and hands
+the rest to the background refresher (one thread per process), which also
+re-indexes every page an op batch wrote once it has been quiet for `QUIET_S`
+(an `ops.commit_listeners` entry `search.py` registers). FTS5 finds rows only
+by rowid or MATCH, so `block_fts_rows` / `pdf_fts_rows` map each page / paper
+to its rows' rowids and every delete goes by rowid; an index written before
+those tables existed is taken over once when they are created.
+Deleting a page for good or detaching its PDF prunes its rows (`block_index.purge_page_data`,
+which also drops the `pdf_fts` rows of papers no block carries and the deleted
+blocks' chats; pruning reads `block_fts_meta` alone). The `pdf_fts` schema and its shared queries (`pdf_missing`,
+`search_pdf`, `store_doc`, `doc_pages`) live in `gamma/pdf_index.py`; extraction and the background
+indexer in `search.py` (a paper's rows are written a few hundred pages per transaction).
 
 ### Link previews (`links.py`)
 | Method | Path | Purpose |
@@ -312,19 +347,21 @@ the request's workspace — the extension names none, so its personal one.
 saved conversation, subject to the link's audience. Shared pages show this in
 a read-only AI chat window on desktop and mobile, with search and copy.
 Chat mutations reject share tokens, including links that allow page editing;
-archived conversation browsing remains session-only.
+archived conversation browsing remains session-only. Every chat write takes
+a workspace editor (`require_ws(write=True)`): a viewer or a read-scope
+token reads chats and history, and gets 403 on each write below.
 | Method | Path | Purpose |
 |---|---|---|
-| GET/PUT/DELETE | `/chats/{key:path}` | the ACTIVE conversation per bucket: page id, `home`, or `home:<folder>` (hence `:path`); GET → `{messages, title}`, PUT `{messages, title?}` (title omitted = keep) |
+| GET/PUT/DELETE | `/chats/{key:path}` | the ACTIVE conversation per bucket: page id, `home`, or `home:<folder>` (hence `:path`); GET → `{messages, title, updated_at}` (`updated_at` the conversation's version, `""` without one; a share read gets `{messages, title}`), PUT `{messages?, title?, updated_at?}` → `{ok, updated_at}` — title omitted = keep, messages omitted = a rename (title only, unconditional); with `updated_at` (the version the copy is based on, `""` = none) a save from an older copy is refused with 409 `{detail, messages, title, updated_at}`, the stored conversation, and nothing changes ([ai.md](ai.md) "Chat history buckets") |
 | GET | `/chat-history?bucket=` | the bucket's archived conversations, newest first (`{sessions: [{id, title, preview, count, created_at, updated_at}]}`) |
-| POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title}` into history and clear the active row (→ `{id}`, null when empty) |
-| POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title}` (the current one) is archived first (→ `{messages, title}`) |
+| POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title, updated_at?}` into history and clear the active row (→ `{id}`, null when empty); when `updated_at` isn't the stored version, the newer stored conversation is archived too (unless the copy holds all of it; alone when it holds all of the copy) |
+| POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title, updated_at?}` (the current one) is archived first, as for `archive` (→ `{messages, title, updated_at}`) |
 | PUT/DELETE | `/chat-history/{id}` | rename (`{title}`) / delete an archived conversation |
 
 ### Import & export (`imports.py`, `export.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/import/logseq` | Logseq .pdf + .edn import |
+| POST | `/import/logseq` | Logseq .pdf + .edn (+ optional .md) import into the page carrying that PDF, created when absent (under the write lock, like `by-doc`); highlights already there are skipped by quote and notes by text, so a re-run adds nothing twice; into an existing page it is logged as a `reload` by the importing account and its room reloads → `{ok, block_id, doc_id, source_url, imported}` |
 | POST | `/import/markdown` | UTF-8 `.md`/`.markdown` file → note page and nested blocks (optional `folder`; a front-matter `folder:` files it below that) |
 | POST | `/import/markdown-zip` | zip of Markdown notes → one page per `.md` (multipart `file`, optional `folder` prefix): Obsidian vaults (wikilinks/embeds → mentions and synced blocks, `^id` anchors and headings as link targets, `tags` → labels, `aliases` kept, comments and fold markers dropped, `.obsidian/` skipped), Notion "Markdown & CSV" exports (subpage folders → folder labels, databases → table pages, links → mentions, images uploaded), Gamma Markdown / Obsidian exports (folder/source/meta/bibtex restored) or any zipped notes. Idempotent by file digest / `notion_id`; the report says `obsidian: true` for a vault |
 | POST | `/markdown-blocks` | parse markdown text into a `{content, children}` tree without storing anything (the editor's paste-as-blocks helper; same parser as `/import/markdown`, 5 MB cap) |
@@ -348,8 +385,8 @@ archived conversation browsing remains session-only.
 | GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `pinned-folders`, `read-pos` are stored per workspace (the request's), `profile` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); reading `profile` first syncs it with Gamma Cloud when the last sync is over a minute old, and its answer carries `cloud_choice` (a first sync waits for the person's choice); values over 64 KB get 413; refuses the reserved `ai-settings`, `translate-engines` and `profile-base` keys |
 | PATCH | `/prefs/profile` | `{set: {name: value}}`: sets those entries of the profile and keeps every other one as stored (`db.patch_profile`) — how the web app saves, so a tab's stale copy of an entry it did not touch never undoes one synced from elsewhere; answers `{key, value, updated_at}` with the whole profile; 413 over 64 KB |
 | GET | `/page-snaps` | all recents-card cover thumbnails `{snaps: {pageId: {img, at}}}`; `?after=<iso>` returns only newer ones (the focus-pull delta) |
-| PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side) |
-| DELETE | `/page-snaps/{page_id}` | drop a cover (the recents card's ×) |
+| PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side); the covers are the workspace's, so workspace editors only (a viewer's stay in its browser) |
+| DELETE | `/page-snaps/{page_id}` | drop a cover (the recents card's ×); workspace editors |
 
 ### Notices (`notices.py`, `gamma/notices.py`) — see [settings.md](settings.md) "Notices"
 | Method | Path | Purpose |
@@ -369,7 +406,7 @@ archived conversation browsing remains session-only.
 | POST | `/oauth/register`; GET `/oauth/authorize`; POST `/oauth/token` | dynamic client registration, the authorization redirect, the PKCE code exchange (no `/api` prefix) |
 | POST | `/mcp` | the Streamable HTTP MCP endpoint (bearer token or OAuth access token; no `/api` prefix, browser origins refused) |
 
-A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*` route as `Authorization: Bearer` (`auth.py`): the request runs as the account behind it, in the token's workspace only (`?ws=` / the header may only repeat it — 403 otherwise), writes only with the `write` scope (403 "this token is read-only"), never as an admin, and never as a session that manages tokens or accounts (`require_personal_user` refuses it with 403).
+A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*` route as `Authorization: Bearer` (`auth.py`): the request runs as the account behind it, in the token's workspace only (`?ws=` / the header may only repeat it — 403 otherwise), writes only with the `write` scope (403 "this token is read-only"), never as an admin, and never as a session that manages tokens or accounts (`require_personal_user` refuses it with 403). `auth.can_write` is the same rule for an endpoint that offers less instead of refusing: `POST /ai/chat` through a read token (or for a workspace viewer) arms the reading tools only.
 
 ### Mirrors (`routers/mirrors.py`, prefix `/api/mirrors`) — see [mirror.md](mirror.md)
 
@@ -385,10 +422,12 @@ A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*
 | POST | `/mirrors/{ws}/sync[?wait=1]` | a sync round now (`wait=1` answers with the round's status) |
 | DELETE | `/mirrors/{ws}` | stop mirroring; the workspace stays |
 | GET | `/mirrors/{ws}/log?limit=` | what the last rounds did, page by page, newest first: `{changes: [{id, at, page_id, title, action, stats, changes, exists}]}` — `stats` the git-style block counts `{add, del, mod}` (`{}` on rows from before they were kept), `changes` what each edit did block by block (`[{k: add \| del \| mod \| props \| move, id, text, old?}]`) |
-| GET | `/mirrors/{ws}/conflicts[?resolved=1][&page=]` | the merges the engine decided on its own (kinds `merged`, `diverged`, `kept_local_edit`, `restored_remote_edit`, `page_restored`, `page_restored_from_remote`) |
+| GET | `/mirrors/{ws}/conflicts[?resolved=1][&page=]` | the merges the engine decided on its own (kinds `merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`, `page_restored`, `page_restored_from_remote`) |
 | POST | `/mirrors/{ws}/conflicts/{id}` | `{choice: keep \| mine \| theirs}` — the text is written into the block's page as it is now, then the conflict is marked resolved; 409 (the conflict stays open) when the block refuses the write |
 
-Session only, the mirror's owner, never a guest.
+Session only, the mirror's owner — the account recorded as its owner that
+also owns the copy's workspace (anyone else gets 404 and an empty list) —
+never a guest.
 
 ### Publishing (`routers/publish.py`, `gamma/publish.py`) — see [mirror.md](mirror.md) "Publishing"
 
@@ -411,12 +450,13 @@ Session only, the mirror's owner, never a guest.
 | Method | Path | Purpose |
 |---|---|---|
 | GET/POST | `/admin/users` | list (with usage and `default_workspace`) / create accounts (+ personal workspace) |
-| PUT/DELETE | `/admin/users/{name}` | password, admin flag, storage overrides / delete through `workspaces.delete_account` (+ the workspaces only they owned, listed as `deleted_workspaces`; guest accounts too) |
-| POST | `/admin/users/{name}/rename` | rename (rows only — no files move; sessions survive) |
+| PUT/DELETE | `/admin/users/{name}` | password, admin flag, storage overrides / delete through `workspaces.delete_account` (+ the workspaces only they owned, listed as `deleted_workspaces`, each copied to `backups/deleted/` first — 507 and nothing deleted when a copy cannot be written; guest accounts too, without copies) |
+| POST | `/admin/users/{name}/rename` | rename (rows only — no files move; sessions survive): everything that names the account follows it, its offline copies, backup tasks, token usage, publisher connections and the invitations it sent included, so nothing passes to a later account of the old name; 409 while one of its backup tasks runs |
 | GET | `/admin/workspaces` | every workspace (kind, access, public role, quota, `personal` = its account or "", `default`, members, upload size), plus orphan directories — Settings → Workspaces |
-| GET/POST | `/admin/backups` | list the whole-data-directory snapshots under `backups/` / take one now (`{label?, uploads?}` — databases, plus every upload with `uploads: true`); per-workspace snapshots are `/workspaces/{id}/backups` |
+| GET/POST | `/admin/backups` | list the whole-data-directory snapshots under `backups/` (each with its manifest: `auto` for the migration runner's, `integrity` per database copy, `damaged`) / take one now (`{label?, uploads?}` — databases, plus every upload with `uploads: true`; 507 when it cannot be written); per-workspace snapshots are `/workspaces/{id}/backups` |
 | GET | `/admin/backups/{name}/download` | the snapshot as a zip |
 | DELETE | `/admin/backups/{name}` | delete a snapshot (restoring is `manage.py backups --restore`, server stopped — [migrations.md](migrations.md)) |
+| POST | `/admin/check-databases` | `PRAGMA quick_check` of `users.db` and every workspace's `pages.db` and `data.db`, changing nothing: `{ok, checked_at, files: [{file, workspace, name, result, ok}]}`; a failed file raises the admins' `db-damage` notice until a later check of it passes (`gamma/integrity.py`) |
 | GET/PUT | `/admin/settings` | server-wide storage defaults, plus `public_url` / `public_url_source` (the admin-confirmed public server URL, [mcp.md](mcp.md)), `guest_ttl_hours` / `guest_ttl_source` (1–720 hours, `guest_ttl_hours_range`; `environment` when `GAMMA_GUEST_TTL_HOURS` decides) and `demo_mode` / `demo_mode_source` (`environment` when `GAMMA_DEMO` is on) — a PUT of either is 400 while the environment decides ([guests.md](guests.md)) — and `cloud` (the cloud sign-in settings, written as `cloud_issuer`, `cloud_client_id`, `cloud_client_secret`, `cloud_policy`, `cloud_share_host`, plus the read-only `needs_connect` — [cloud_accounts.md](cloud_accounts.md)) |
 | GET | `/admin/logs?after=<seq>` | scrubbed in-memory server log |
 | GET/PUT | `/admin/ai-providers` | the server's shared AI entries, masked like `/ai/settings` (key hint, never the key; the same `protocols` and `services`), `guests` and `allowance` (`{accounts, guests}`: tokens per account per rolling 24 h, 0 = unlimited); PUT `{guests?, allowance?: {accounts?, guests?}}` (whole numbers 0..10^9, else 400). Chat, translate, metadata fetch/cite and transcribe answer 429 with a human `detail` once an account's allowance is used up; streams end with `{error: detail}` |

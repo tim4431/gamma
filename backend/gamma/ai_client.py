@@ -6,6 +6,7 @@ protocol adapters (gamma/ai_protocols); route handlers deal in the common
 import http.client
 import json
 import re
+import threading
 import urllib.error
 import urllib.request
 
@@ -36,11 +37,18 @@ class UpstreamError(RuntimeError):
         self.status = status
 
 
-class AllowanceExhausted(HTTPException):
+class CallRefused(HTTPException):
+    """A call Gamma refused before it reached the provider. An HTTPException
+    (429) so a route that lets it through answers with it as is; ``str()``
+    is the detail, for the in-body and stream error paths."""
+
+    def __str__(self):
+        return self.detail
+
+
+class AllowanceExhausted(CallRefused):
     """A call on one of the server's shared entries after the account used
-    up its shared AI allowance (docs/dev/guests.md). An HTTPException (429)
-    so a route that lets it through answers with it as is; ``str()`` is the
-    detail, for the in-body and stream error paths."""
+    up its shared AI allowance (docs/dev/guests.md)."""
 
     def __init__(self, used: int, limit: int):
         super().__init__(status_code=429, detail=(
@@ -48,8 +56,84 @@ class AllowanceExhausted(HTTPException):
             "tokens in the last 24 hours). Add your own key in Settings → AI, or try again later."))
         self.used, self.limit = used, limit
 
-    def __str__(self):
-        return self.detail
+
+class TooManyCalls(CallRefused):
+    """A call past the account's MAX_OPEN_CALLS open at once."""
+
+    def __init__(self, limit: int):
+        super().__init__(status_code=429, detail=(
+            f"Too many AI requests are running for your account at once (at most {limit}). Wait for "
+            "one to finish and try again, or lower the parallel requests in Settings → Translation."))
+
+
+# Provider calls one account may have open at once (chat, translation,
+# metadata, a connection test). An open call holds a server thread for as
+# long as the provider takes — minutes for a long answer — and the threads
+# are shared with every other request, PDF reads included, so past the cap
+# a call is refused (TooManyCalls) instead of starving them.
+MAX_OPEN_CALLS = 6
+_open_calls: dict[str, int] = {}
+_open_calls_lock = threading.Lock()
+
+
+def _take_call_slot(user: str) -> None:
+    with _open_calls_lock:
+        n = _open_calls.get(user, 0)
+        if n >= MAX_OPEN_CALLS:
+            raise TooManyCalls(MAX_OPEN_CALLS)
+        _open_calls[user] = n + 1
+
+
+def check_call_slot(user: str) -> None:
+    """Refuse up front (TooManyCalls) when ``user`` already has every slot
+    in use: for a route whose call opens later, inside its stream, where a
+    refusal could no longer be an HTTP 429."""
+    with _open_calls_lock:
+        if _open_calls.get(user, 0) >= MAX_OPEN_CALLS:
+            raise TooManyCalls(MAX_OPEN_CALLS)
+
+
+def _free_call_slot(user: str) -> None:
+    with _open_calls_lock:
+        n = _open_calls.get(user, 0) - 1
+        if n > 0:
+            _open_calls[user] = n
+        else:
+            _open_calls.pop(user, None)
+
+
+class _OpenCall:
+    """An open provider response that holds one of its account's call slots
+    until it is closed: by its reader (``with``, ``close()`` — every caller
+    closes it when the reply ends or fails, a stream's also when its client
+    goes away), or, for a response dropped unread, when it is collected."""
+
+    def __init__(self, response, user: str):
+        self._response, self._user = response, user or None
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+    def __iter__(self):
+        return iter(self._response)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        user, self._user = self._user, None
+        try:
+            self._response.close()
+        finally:
+            if user:
+                _free_call_slot(user)
+
+    def __del__(self):
+        if "_response" in self.__dict__:
+            self.close()
 
 
 # What a failure message says when the status alone doesn't (a 400 about the
@@ -69,9 +153,12 @@ def failure_kind(error: Exception) -> str:
     rejected), ``rate`` (429, quota), ``overloaded`` (5xx, 529),
     ``unreachable`` (no connection, a timeout, a stream cut off),
     ``bad_endpoint`` (an answer that isn't an AI API's), ``too_long`` (the
-    prompt exceeds the model's context) or ``other``."""
+    prompt exceeds the model's context) or ``other``. Too many calls of the
+    account's own open at once (TooManyCalls) is ``rate`` too."""
     if isinstance(error, AllowanceExhausted):
         return "allowance"
+    if isinstance(error, TooManyCalls):
+        return "rate"
     if isinstance(error, HTTPException):
         return "not_configured" if error.status_code == 503 else "other"
     status = error.status if isinstance(error, UpstreamError) else (
@@ -154,18 +241,28 @@ def open_ai(
 ):
     """Open a provider call without consuming response bytes. The one door
     every token-spending call goes through (call_ai too): a shared entry's
-    allowance is checked here (AllowanceExhausted, a 429)."""
+    allowance is checked here (AllowanceExhausted, a 429), and so is the
+    account's cap on calls open at once (TooManyCalls, a 429) — the call
+    holds one of its slots until the response is closed."""
     conf = runtime["providers"][entry["provider"]]
     check_allowance(conf)
     wire = ai_protocols.of(conf).wire(conf, tools)
     request = wire.request(conf, messages, system, entry["model"], pdf_b64s,
                            effort, max_tokens, images, stream, tools)
+    user = runtime.get("user") or ""
+    if user:
+        _take_call_slot(user)
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
-    except urllib.error.HTTPError as error:
-        detail = upstream_detail(error)
-        log.warning(f"[ai] {detail}")
-        raise UpstreamError(error.code, detail)
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except BaseException as error:
+        if user:
+            _free_call_slot(user)
+        if isinstance(error, urllib.error.HTTPError):
+            detail = upstream_detail(error)
+            log.warning(f"[ai] {detail}")
+            raise UpstreamError(error.code, detail)
+        raise
+    return _OpenCall(response, user)
 
 
 def normalize_usage(raw, provider_protocol) -> dict | None:

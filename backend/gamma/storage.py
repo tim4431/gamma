@@ -1,14 +1,19 @@
-"""Uploaded-file helpers: media types, content-hash storage, lookup, orphan
-cleanup."""
+"""Uploaded-file helpers: media types, content-hash storage (atomic,
+verified writes), lookup, and the one grammar of a reference to a stored
+file. What becomes of a file nothing references any more is
+gamma/upload_gc.py."""
 
-import re
-import time
 import hashlib
+import json
+import os
+import re
+import secrets
 import urllib.parse
 from pathlib import Path
 
 from . import pdf_meta
 from .db import ws_uploads_dir
+from .logbuf import log
 from .server_settings import check_upload_allowed
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
@@ -102,6 +107,36 @@ def upload_extension(name: str) -> str:
     return ext if EXTENSION_RE.match(ext) else ".bin"
 
 
+# How a block names a stored file: ``/api/uploads/<name>`` anywhere in its
+# content or properties (an image, a file chip, ``ink_url``, a page's
+# ``source_url``), and a page's ``doc_id`` (its PDF, ``<doc_id>.pdf``). The
+# one grammar the orphan bookkeeping (gamma/upload_gc.py), a mirror's file
+# transfer and a backup's file list read references with. A name is the whole
+# ``<stem>.<ext>`` run: what follows it ("….png." ending a sentence,
+# "?ws=…", "#page=2") is not part of it.
+UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])")
+_DOC_STEM_RE = re.compile(r"^[0-9A-Za-z_-]{1,128}$")
+
+
+def upload_refs(content: str, props) -> set[str]:
+    """The stored file names one block references. ``props`` is the
+    properties dict or its stored JSON text."""
+    raw = props if isinstance(props, str) else json.dumps(props or {})
+    names = set(UPLOAD_REF_RE.findall(content or "")) if "/api/uploads/" in (content or "") else set()
+    if "/api/uploads/" in raw:
+        names.update(UPLOAD_REF_RE.findall(raw))
+    if '"doc_id"' in raw:
+        if isinstance(props, str):
+            try:
+                props = json.loads(props)
+            except ValueError:
+                props = {}
+        doc = props.get("doc_id") if isinstance(props, dict) else None
+        if isinstance(doc, str) and _DOC_STEM_RE.match(doc):
+            names.add(f"{doc}.pdf")
+    return names
+
+
 # Upload filenames are the content sha256 truncated to this many hex chars
 # (long enough that collisions stay theoretical, short enough to read in logs).
 DIGEST_CHARS = 24
@@ -136,20 +171,93 @@ def content_digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:DIGEST_CHARS]
 
 
+def matches_name(name: str, data: bytes) -> bool:
+    """Whether ``data`` can be what the stored file ``name`` holds — for
+    bytes that arrive under a name someone else chose (a mirror pulling from
+    its origin). Upload names are the content hash, except a PDF's: it may
+    hash the URL it was fetched from (the proxy cache, a clip), and a stored
+    PDF keeps its name when its embedded annotations are stripped. So a PDF
+    only has to be a PDF, and anything else with a digest-length stem has to
+    hash to it."""
+    stem, _, ext = name.rpartition(".")
+    if ext == "pdf":
+        return is_pdf(data)
+    return len(stem) != DIGEST_CHARS or content_digest(data) == stem
+
+
+def write_atomic(path: Path, data: bytes) -> None:
+    """Store ``data`` as ``path`` all at once: written to a temporary file
+    beside it (``.partial/`` in the same directory — the same filesystem, and
+    no listing of stored files counts a directory), flushed to disk, then
+    renamed over the name. Whatever stops a write half way (a full disk, a
+    killed process) leaves nothing under the name — never a truncated file
+    that the next upload of the same bytes would take for stored. Every
+    writer of a stored file goes through here."""
+    partial = path.parent / ".partial"
+    partial.mkdir(parents=True, exist_ok=True)
+    tmp = partial / secrets.token_hex(8)
+    try:
+        # a plain exclusive open, not tempfile.mkstemp: the file gets the
+        # umask's permissions like every stored file, not mkstemp's 0600
+        with open(tmp, "xb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _cut_short(path: Path, data: bytes) -> bool:
+    """Whether a stored copy whose size differs from ``data`` is a write that
+    stopped early. Only a PDF is ever rewritten under its name (embedded
+    annotations stripped, routers/imports.py), so any other file of the
+    wrong size is not what its name says; a PDF is cut short when its bytes
+    are the beginning of the real ones."""
+    if path.suffix != ".pdf":
+        return True
+    stored = path.read_bytes()
+    return len(stored) < len(data) and data.startswith(stored)
+
+
+def _store(ws: str, filename: str, data: bytes) -> bool:
+    """Write ``data`` as the workspace's upload ``filename`` unless it is
+    stored already; returns whether it was. A stored copy is re-dated
+    (``os.utime``): the upload→reference window gets its grace again and an
+    unreferenced file's retention starts over (gamma/upload_gc.py). A copy an
+    earlier, non-atomic write left short is rewritten. The storage limits
+    gate new bytes only (check_upload_allowed raises 413/507 past them)."""
+    target = ws_uploads_dir(ws) / filename
+    try:
+        size = target.stat().st_size
+    except FileNotFoundError:
+        size = None
+    if size is not None and size != len(data) and _cut_short(target, data):
+        log.warning(f"[uploads] {filename} in workspace {ws} held {size} of {len(data)} bytes — rewritten")
+        write_atomic(target, data)
+        return True
+    if size is not None:
+        try:
+            os.utime(target)
+            return True
+        except FileNotFoundError:
+            pass  # purged a moment ago (gamma/upload_gc.py): store it again
+    check_upload_allowed(ws, len(data))
+    write_atomic(target, data)
+    return False
+
+
 def store_pdf(ws: str, data: bytes) -> tuple[str, str, bool]:
     """Store PDF bytes under their content hash in the workspace (callers
     validate with :func:`is_pdf` first). Returns ``(doc_id, source_url,
     already_existed)``. Dedup first: a re-upload of a stored file adds no
-    bytes, so the storage limits only gate genuinely new ones
-    (check_upload_allowed raises 413/507 past them)."""
-    uploads = ws_uploads_dir(ws)
-    uploads.mkdir(parents=True, exist_ok=True)
+    bytes."""
     doc_id = content_digest(data)
-    target = uploads / f"{doc_id}.pdf"
-    already_existed = target.exists()
-    if not already_existed:
-        check_upload_allowed(ws, len(data))
-        target.write_bytes(data)
+    already_existed = _store(ws, f"{doc_id}.pdf", data)
     pdf_meta.schedule(ws, doc_id)  # the viewer's manifest, ready before the first open
     return doc_id, f"/api/uploads/{doc_id}.pdf", already_existed
 
@@ -157,16 +265,9 @@ def store_pdf(ws: str, data: bytes) -> tuple[str, str, bool]:
 def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
     """Store any upload under its content hash as ``<sha24><ext>`` (``ext``
     lowercase with the dot, already validated by the caller). Returns
-    ``(filename, already_existed)``; storage limits gate new bytes only."""
-    uploads = ws_uploads_dir(ws)
-    uploads.mkdir(parents=True, exist_ok=True)
+    ``(filename, already_existed)``."""
     filename = f"{content_digest(data)}{ext}"
-    target = uploads / filename
-    already_existed = target.exists()
-    if not already_existed:
-        check_upload_allowed(ws, len(data))
-        target.write_bytes(data)
-    return filename, already_existed
+    return filename, _store(ws, filename, data)
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:
@@ -183,47 +284,3 @@ def find_upload_file(filename: str, ws: str) -> Path | None:
     except ValueError:
         return None
     return path if path.is_file() else None
-
-
-UPLOAD_GRACE_S = 15 * 60
-
-
-def cleanup_orphan_uploads(conn, uploads_dir: Path):
-    """Delete files in uploads_dir that are no longer referenced by any block
-    in conn. Extension-agnostic: a file survives when its stem is some page's
-    ``doc_id`` (the PDF attachment) or any block's content/properties mention
-    ``/api/uploads/<filename>`` (images, generic file chips).
-
-    Files younger than ``UPLOAD_GRACE_S`` are left alone: an upload is stored
-    BEFORE the block/page that references it is written (upload → attach, or
-    upload → insert chip), and an autosave of some other page landing in that
-    window used to delete the freshly stored file."""
-    if not uploads_dir.exists():
-        return []
-    removed = []
-    now = time.time()
-    for f in uploads_dir.iterdir():
-        if not f.is_file():
-            continue
-        try:
-            if now - f.stat().st_mtime < UPLOAD_GRACE_S:
-                continue
-        except OSError:
-            continue
-        filename = f.name
-        stem = f.stem
-        ref = conn.execute(
-            "SELECT 1 FROM unified_blocks "
-            "WHERE json_extract(properties, '$.doc_id') = ? "
-            "   OR content LIKE ? "
-            "   OR properties LIKE ? "
-            "LIMIT 1",
-            (stem, f"%/api/uploads/{filename}%", f"%/api/uploads/{filename}%"),
-        ).fetchone()
-        if not ref:
-            try:
-                f.unlink()
-                removed.append(filename)
-            except OSError:
-                pass
-    return removed

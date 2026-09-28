@@ -6,8 +6,9 @@
 // Delete and Ctrl+, have defaults; the rest are palette entries until the
 // account gives them a chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, homePick (the one
-// page selected on the home library), homePicks (how many), search(all),
-// palette(prefix), back(), undo(redo), renameTitle(), deletePages(), toggleChat(),
+// page selected on the home library), homePicks (how many), organize (the
+// library may be changed: library/libraryAccess.js), search(all),
+// palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
 // togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
 // reportProblem() }.
@@ -104,6 +105,9 @@ export const APP_COMMANDS = [
     if (isTextField(document.activeElement)) return false;
     c.deletePages();
   }, { when: (c) => c.homePicks > 0 }),
+  // The deleted pages of the last 30 days, to restore or delete for good.
+  cmd("app.recentlyDeleted", t("Recently deleted"), GROUP_LIBRARY, null, (c) => { c.recentlyDeleted(); },
+    { when: (c) => c.organize }),
   cmd("app.import", t("Import…"), GROUP_LIBRARY, null, (c) => { c.importDialog(); }, { when: (c) => !c.shareMode }),
   cmd("app.exportObsidian", t("Export the library as an Obsidian vault"), GROUP_LIBRARY, null, (c) => { c.exportAs("obsidian"); }, { when: (c) => !c.shareMode }),
   cmd("app.exportGamma", t("Export the library as a Gamma backup"), GROUP_LIBRARY, null, (c) => { c.exportAs("gamma"); }, { when: (c) => !c.shareMode }),
