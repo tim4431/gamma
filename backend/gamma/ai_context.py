@@ -1040,6 +1040,58 @@ def selection_crops(ws: str, doc_id: str, passages: list[dict],
     return images
 
 
+# Area highlights (Ctrl+drag rectangles: a highlight block whose
+# pdf_position carries area: true and no quote) have no text to show the
+# model; their region goes as a picture instead — at most this many per
+# page per read, the rest named by page number.
+MAX_AREA_CROPS = 4
+_AREA_PAD = 0.005
+
+
+def area_highlight(properties: dict) -> tuple[int, tuple] | None:
+    """``(pdf page, box)`` of an area highlight — the box as page fractions,
+    top-left origin, the shape ``render_page`` crops by — or None for a
+    text highlight or a block without a usable rectangle. The stored
+    rectangle is in pixels of a capture-time render of ``width`` × ``height``."""
+    position = properties.get("pdf_position")
+    if not isinstance(position, dict):
+        return None
+    rect = position.get("boundingRect")
+    if not isinstance(rect, dict):
+        return None
+    if not (position.get("area") or rect.get("area") or not (properties.get("quote") or "").strip()):
+        return None
+    try:
+        width, height = float(rect.get("width") or 0), float(rect.get("height") or 0)
+        xs = sorted((float(rect["x1"]) / width, float(rect["x2"]) / width))
+        ys = sorted((float(rect["y1"]) / height, float(rect["y2"]) / height))
+        page = int(properties.get("pdf_page") or position.get("pageNumber") or 0)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return None
+    box = (max(0.0, xs[0] - _AREA_PAD), max(0.0, ys[0] - _AREA_PAD),
+           min(1.0, xs[1] + _AREA_PAD), min(1.0, ys[1] + _AREA_PAD))
+    if page < 1 or box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    return page, box
+
+
+def render_area_crops(ws: str, doc_id: str, areas: list) -> list[tuple[str, str]]:
+    """The pictures of area highlights, ``[(media_type, base64)]`` in the
+    order given — ``areas`` are ``(page, box)`` pairs, already capped by
+    the caller. A region that fails to render is skipped."""
+    images = []
+    if not areas:
+        return images
+    path = pdf_path(ws, doc_id)
+    if not path:
+        return images
+    for page, box in areas:
+        image = render_selection_crop(path, page, box)
+        if image:
+            images.append((image[1], base64.standard_b64encode(image[0]).decode("ascii")))
+    return images
+
+
 def page_properties_line(properties: dict) -> str:
     """One line describing what a page carries and how it is filed —
     folders, labels, cached metadata (authors, year, venue, DOI/arXiv), web
@@ -1086,8 +1138,11 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     ``notes_budget`` > 0 caps the highlights and notes at that many chars
     (read_page's window) and says how much was left out. ``report``, when
     given, receives ``pdf_pages`` — the ``(first, last)`` PDF pages the
-    window spans, (0, 0) for none — and ``next_offset``. None when the page
-    doesn't exist."""
+    window spans, (0, 0) for none — ``next_offset``, and ``areas``: the
+    ``(page, box)`` of the area highlights shown whose picture the caller
+    should attach (the first MAX_AREA_CROPS per page; the lines say
+    "picture N attached" for those, and name the page for the rest). None
+    when the page doesn't exist."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -1106,14 +1161,29 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     doc_id = attachment["id"] if attachment else ""
     highlights: list[str] = []
     notes: list[str] = []
+    areas: list = []  # (page, box) of the area highlights whose picture goes along
+    per_page: dict = {}
 
     def walk(block_id, depth):
         for row in by_parent.get(block_id, []):
             child_properties = json.loads(row[4] or "{}")
             quote = (child_properties.get("quote") or "").strip()
             content = (row[3] or "").strip()
+            area = area_highlight(child_properties) if child_properties.get("highlight_id") else None
             if quote:
                 entry = f'- Highlighted: "{quote}"'
+                if content:
+                    entry += f"\n  User note: {content}"
+                highlights.append(entry)
+            elif area:
+                page, box = area
+                per_page[page] = per_page.get(page, 0) + 1
+                if per_page[page] <= MAX_AREA_CROPS:
+                    areas.append((page, box))
+                    where = f"picture {len(areas)} attached"
+                else:
+                    where = "no picture: more than the limit on this page"
+                entry = f"- Area highlight (a rectangle on PDF page {page}; {where})"
                 if content:
                     entry += f"\n  User note: {content}"
                 highlights.append(entry)
@@ -1131,7 +1201,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     if properties.get("summary"):
         sections.append(f"Summary: {properties['summary']}")
     if report is not None:
-        report.update(pdf_pages=(0, 0), next_offset=None)
+        report.update(pdf_pages=(0, 0), next_offset=None, areas=areas)
     if document_text is not None:
         if document_text:
             sections.append(f"Document text:\n{document_text}")
@@ -1294,13 +1364,21 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                             f'Text around the selected passage{"s" if len(passages) > 1 else ""} of '
                             f'"{title}" (Gamma page ID: {page_id}):\n{windows}')
                 report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes)
+            shown: dict = {}
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
-                                          include_notes=with_notes)
+                                          include_notes=with_notes, report=shown)
             if section:
                 context_sections.append(section)
                 if not doc_id:
                     report(title, page_id, "", False, {**none, "chars": len(section)}, notes=True)
+                # The area highlights' pictures ride with the message like
+                # the selection crops (the wires put images on the last
+                # user turn); the report says how many went.
+                if doc_id and shown.get("areas") and crops is not None:
+                    pictures = render_area_crops(ws, doc_id, shown["areas"])
+                    crops.extend(pictures)
+                    coverage[-1]["area_pictures"] = len(pictures)
             # Only for a chat with tools: the map is worth its tokens when
             # the model can act on it (read_page), not in plain chat — and
             # only for the pages the excerpt doesn't show in full.

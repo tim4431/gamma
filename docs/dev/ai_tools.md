@@ -91,6 +91,20 @@ remains, the excerpt names the next offset, so long documents are read in
 successive windows. The `pdf_*` names stay for compatibility; they mean
 "attachment text".
 
+An area highlight (a Ctrl+drag rectangle: a highlight block with
+`pdf_position.area` and no quote) has no text to show, so its line names
+the rectangle and its page — "Area highlight (a rectangle on PDF page 4;
+picture 1 attached)" — and the crop of that region rides on the result as
+a picture (`ai_context.area_highlight` turns the stored pixel rectangle
+into page fractions, `render_area_crops` renders it like a selection
+crop; the chip's `images`, which the loop moves onto the tool message like
+`view_pdf_page`'s page). At most `MAX_AREA_CROPS` (4) per page per read;
+the rest say "no picture: more than the limit on this page". `read_block`
+does the same on its outline lines, and the chat context does it for the
+notes of a context page (the pictures go with the message's images; the
+coverage entry's `area_pictures` says how many, and the chat shows a
+"Pictures of N area highlights sent" pill).
+
 What the conversation context already holds is never sent again. The
 chat's coverage report rides in the scope (`scope["coverage"]`,
 `context_cover`): for a page whose head excerpt is in context, a read with

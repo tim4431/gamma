@@ -46,7 +46,8 @@ import sqlite3
 
 from fractional_indexing import generate_key_between
 
-from .ai_context import DEPRECATED_TOOLS, canonical_tool, page_report_section, pdf_path
+from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
+                         page_report_section, pdf_path, render_area_crops)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import connect_data_db, connect_pages_db, page_now, ws_db_path
 from .ops import after_commit, apply_ops, note_reload, record_ops
@@ -407,7 +408,7 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
         return error, None
-    page_id, title, _, _ = loaded
+    page_id, title, props, _ = loaded
     budget, offset, page = _window_args(scope, args)
     first_window = offset == 0 and page == 1
     cover = context_cover(scope, page_id)
@@ -442,7 +443,23 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     if last:
         chip["pdf_pages"] = [first, last]
         chip["summary"] = f"Read “{title[:60]}” p. {first}" + (f"–{last}" if last > first else "")
+    # The area highlights' pictures go with the result (the loop moves
+    # them onto the tool message, like view_pdf_page's page).
+    attachment = page_attachment(props)
+    images = (render_area_crops(ws, attachment["id"], report["areas"])
+              if attachment and report.get("areas") else [])
+    if images:
+        chip["images"] = images
     return text, chip
+
+
+def _page_doc_id(conn, page_id: str) -> str:
+    row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    try:
+        attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
+    except ValueError:
+        attachment = None
+    return attachment["id"] if attachment else ""
 
 
 def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
@@ -496,6 +513,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     for children in by_parent.values():
         children.sort(key=lambda row: row[2])
 
+    areas: list = []  # (page, box) of the area highlights whose picture goes along
+    per_page: dict = {}
+
     def line(block_id, content, props, depth, full=False):
         quote = (props.get("quote") or "").strip()
         text = (content or "").strip()
@@ -505,6 +525,15 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         bits = [f"[{block_id}]"]
         if quote:
             bits.append(f'(highlight: "{quote[:200]}")')
+        elif props.get("highlight_id") and (area := area_highlight(props)):
+            page, box = area
+            per_page[page] = per_page.get(page, 0) + 1
+            if per_page[page] <= MAX_AREA_CROPS:
+                areas.append((page, box))
+                bits.append(f"(area highlight: a rectangle on PDF page {page}; picture {len(areas)} attached)")
+            else:
+                bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
+                            "the limit on this page)")
         if props.get("ink_url"):
             bits.append(f"(handwriting on p. {props.get('pdf_page')}, {props.get('ink_strokes', 0)} strokes; "
                         "the text is its caption)")
@@ -548,8 +577,12 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     what = f'“{page_title[:60]}”' if is_page else f'a block in “{page_title[:60]}”'
     # block_id lets the notes panel light up the block (or, for a page id,
     # the whole outline) the agent is reading.
-    return out, {"kind": "read", "page_id": page_id, "block_id": block["id"],
-                 "summary": f"Read notes of {what}"}
+    chip = {"kind": "read", "page_id": page_id, "block_id": block["id"],
+            "summary": f"Read notes of {what}"}
+    images = render_area_crops(ws, _page_doc_id(conn, page_id), areas) if areas else []
+    if images:
+        chip["images"] = images
+    return out, chip
 
 
 def _chat_bucket(conn, scope: dict, args: dict):

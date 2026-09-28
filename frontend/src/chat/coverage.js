@@ -105,6 +105,19 @@ export function coverageNote(c, { actions = [], tools = false } = {}) {
   return { short, long, refused };
 }
 
+// The pill for the area highlights (Ctrl+drag rectangles) whose pictures
+// went with the notes of a context page (`area_pictures` on its entry).
+export function areaPicturesNote(c) {
+  const n = c?.area_pictures || 0;
+  if (!n) return null;
+  return {
+    short: n === 1 ? t("Picture of 1 area highlight sent") : t("Pictures of {count} area highlights sent", { count: n }),
+    long: t("The notes of {what} include rectangle highlights, which have no text; the model got a picture of each region instead (at most a few per page).",
+      { what: c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the page") }),
+    refused: false,
+  };
+}
+
 // The pill for turns left out of a conversation the model's window can't
 // hold any more ({"trimmed": {turns}} on the stream).
 export function trimmedNote(trimmed) {

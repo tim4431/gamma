@@ -336,7 +336,10 @@ see [ai_context.md](ai_context.md)), or the PDF itself as a native
 document/file content part when the request sets `attach_pdf`, and shows its
 notes only with `include_notes`. A page without an attachment IS its notes,
 so they always go — `include_notes` only means "also add my notes/highlights
-for PDF pages". The built-in chat system prompt frames the model as working
+for PDF pages". An area highlight among them (a Ctrl+drag rectangle, no
+text) is named with its page and its region goes along as a picture, up
+to `MAX_AREA_CROPS` per page ([ai_tools.md](ai_tools.md) read_page — the
+same for the tools). The built-in chat system prompt frames the model as working
 inside that knowledge base and grounds claims about the pages in text
 actually read (look details up or say they're absent, never fill gaps from
 memory; cite a PDF by page number, say when something comes from the user's

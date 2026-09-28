@@ -11,7 +11,7 @@ import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
-import { coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
+import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -74,6 +74,8 @@ function ContextCoverage({ items, actions, tools, trimmed, truncated }) {
     const out = [];
     const note = coverageNote(c, { actions, tools });
     if (note) out.push(note);
+    const areas = areaPicturesNote(c);
+    if (areas) out.push(areas);
     const cropped = (c.selection?.passages || []).filter((p) => p.crop);
     if (cropped.length) {
       out.push({

@@ -250,6 +250,73 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
     assert "even if you think you know it" not in system
 
 
+def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
+    """An area highlight (a Ctrl+drag rectangle: no quote, pdf_position with
+    area: true) has no text to show — read_page, read_block and the chat
+    context name the rectangle and its page and attach a crop of the region,
+    at most MAX_AREA_CROPS per page; the rest are named only."""
+    from gamma import ai_context
+    from gamma.ai_context import MAX_AREA_CROPS, area_highlight
+    from gamma.routers.ai import AIChatRequest
+
+    c, ids = org
+    rendered = []
+
+    def render(src, page_no, max_side, box=None):
+        rendered.append((page_no, box))
+        return (b"png", "image/png", 4, 4), 9
+
+    monkeypatch.setattr(ai_context, "render_page", render)
+    monkeypatch.setattr(ai_context, "pdf_path", lambda ws, doc: "fake.pdf")
+    monkeypatch.setattr(ai_context, "extract_text_pages", lambda *a, **kw: ("(page 1) text", 1))
+    monkeypatch.setattr(ai_context, "ensure_indexed", lambda *a: None)
+
+    def rect(x1, y1, x2, y2):
+        return {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": 800, "height": 1000, "pageNumber": 2}
+    props = {"highlight_id": "h-area", "quote": "",
+             "pdf_position": {"pageNumber": 2, "boundingRect": rect(80, 100, 400, 300),
+                              "rects": [rect(80, 100, 400, 300)], "area": True}}
+    assert area_highlight(props) == (2, (0.095, 0.095, 0.505, 0.305))
+    assert area_highlight({"highlight_id": "h-text", "quote": "some text",  # a text highlight
+                           "pdf_position": {"pageNumber": 2, "boundingRect": rect(80, 100, 400, 300)}}) is None
+    assert area_highlight({"highlight_id": "x"}) is None
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "figure notes",
+                                       "properties": {"folder": "readout", "doc_id": "a" * 24}}).json()["id"]
+    ids_made = [c.post("/api/blocks", json={"parent_id": page, "content": f"box {n}" if n == 0 else "",
+                                            "properties": {**props, "highlight_id": f"h{n}"}}).json()["id"]
+                for n in range(MAX_AREA_CROPS + 1)]
+
+    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": page})
+    assert "Area highlight (a rectangle on PDF page 2; picture 1 attached)\n  User note: box 0" in text
+    assert f"picture {MAX_AREA_CROPS} attached" in text and "no picture: more than the limit" in text
+    assert len(chip["images"]) == MAX_AREA_CROPS and chip["images"][0][0] == "image/png"
+    assert rendered[0] == (2, (0.095, 0.095, 0.505, 0.305)) and len(rendered) == MAX_AREA_CROPS
+
+    rendered.clear()
+    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_block", {"block_id": page})
+    assert f"[{ids_made[0]}] (area highlight: a rectangle on PDF page 2; picture 1 attached) box 0" in text
+    assert "no picture: more than the limit" in text
+    assert len(chip["images"]) == MAX_AREA_CROPS
+    # A single block read carries its own picture.
+    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_block", {"block_id": ids_made[1]})
+    assert "picture 1 attached" in text and len(chip["images"]) == 1
+
+    # The chat context: the pictures ride with the message's images, and
+    # the coverage says how many went.
+    rendered.clear()
+    crops = []
+    payload = AIChatRequest(prompt="what is in the boxes?", page_id=page, include_notes=True)
+    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    assert "Area highlight (a rectangle on PDF page 2; picture 1 attached)" in context
+    assert len(crops) == MAX_AREA_CROPS and coverage[0]["area_pictures"] == MAX_AREA_CROPS
+    # Notes left out of the context: no pictures either.
+    crops = []
+    payload = AIChatRequest(prompt="hi", page_id=page, include_notes=False)
+    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    assert "Area highlight" not in context and not crops and "area_pictures" not in coverage[0]
+    c.delete(f"/api/blocks/{page}")
+
+
 def test_document_map_starts_after_the_excerpt(org):
     """The map lists the pages the excerpt doesn't show in full — the
     model picks the next page to read from it, not one it already has."""

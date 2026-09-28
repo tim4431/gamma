@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { coverageNote, formatSpans, readSpans, trimmedNote, truncatedNote, unseenSpans } from "../src/chat/coverage.js";
+import { areaPicturesNote, coverageNote, formatSpans, readSpans, trimmedNote, truncatedNote, unseenSpans } from "../src/chat/coverage.js";
 
 const reads = [
   { kind: "read", tool: "read_page", page_id: "a", pdf_pages: [3, 5] },
@@ -51,6 +51,13 @@ test("the context pill says what the model saw, read and missed", () => {
   assert.equal(refused.short, "PDF file not accepted — text only, pages 1–2 of 9");
   assert.equal(refused.refused, true);
   assert.equal(coverageNote({ ...partial, partial: false, native_requested: true }).short, "PDF file not accepted — sent as text");
+});
+
+test("area highlights' pictures are announced", () => {
+  assert.equal(areaPicturesNote({ title: "T" }), null);
+  assert.equal(areaPicturesNote({ title: "T", area_pictures: 1 }).short, "Picture of 1 area highlight sent");
+  assert.equal(areaPicturesNote({ title: "T", area_pictures: 3 }).short, "Pictures of 3 area highlights sent");
+  assert.match(areaPicturesNote({ title: "T", area_pictures: 3 }).long, /notes of “T” include rectangle highlights/);
 });
 
 test("the per-reply pills: messages left out, a reply cut off", () => {
