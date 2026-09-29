@@ -331,8 +331,9 @@ AI:
   and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
-  columns offer Read library / Read & search / All tools presets. Web search,
-  fetching and using connected journal sign-ins have separate switches.
+  columns offer Ask before changes / Read only / Always allow / Read library
+  presets. Each tool has an Always allow / Ask / Deny menu. Library and web
+  reading default to Always allow; changes and journal sign-ins default to Ask.
 - **Advanced**: tool limits and the context budgets (the section's action
   is the Standard / Larger / Custom preset).
 - **Prompts**: the accordion with one Cancel / Save pair.
@@ -486,9 +487,23 @@ The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
 chats of that kind. Settings compares all three kinds in a table; the chat
-popover shows grouped checkbox rows for its kind. They share the permission
-catalog and presets in `AssistantTools.jsx`. The journal-sign-in choice is
-disabled while fetching is off, with its value preserved.
+popover shows the same grouped permission menus for its kind. They share the
+permission catalog and controls in `AssistantTools.jsx` and pure policy helpers
+in `chat/chatSettings.js`. `ChatApproval.jsx` uses the same catalog for its
+permission labels. `allow` runs the action, `ask` pauses for approval,
+and `deny` prevents it. Ask before changes is the default preset: library and
+web reads are allowed; writes and publisher cookies ask first. Read only denies
+writes while publisher cookies still ask; Read library also denies web access.
+The journal-sign-in choice is disabled while fetching is denied, with its value
+preserved.
+
+The preference codec migrates explicit legacy booleans (`true` to `allow`,
+`false` to `deny`) and pre-kind flat maps without overriding the user's choices.
+Missing keys take the safe defaults; explicit malformed values become `deny`
+and unknown keys are dropped. The frontend and backend use the same policy.
+Allow once in a running chat approves only the pending action. Always allow
+also updates that action's permission for its chat kind in the shared account
+preferences; later chats of that kind inherit it.
 
 Reasoning effort, the context budgets, the tools switch and the permissions
 are account preferences: they live in the profile and follow the account to

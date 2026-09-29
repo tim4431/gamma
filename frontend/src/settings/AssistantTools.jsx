@@ -3,15 +3,15 @@ import { t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
 import { BookIcon, CloudDownloadIcon, EyeIcon, FileTextIcon, FolderIcon, GlobeIcon,
   ListIcon, OutlineIcon, PenIcon, PencilIcon, SearchIcon, ShieldIcon } from "../shared/ui/Icons";
-import { permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
+import { permissionFor, permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
 
-// One catalog for the comparison table and the current chat's quick settings.
+// Shared labels for settings, the chat shortcut and inline approval requests.
 const GROUPS = [
   ["library", t("Read your library")],
   ["web", t("Web research")],
   ["edit", t("Make changes")],
 ];
-const PERMISSIONS = [
+export const TOOL_PERMISSION_ROWS = [
   ["list", ListIcon, t("List pages"), t("Browse page titles, folders and metadata"), "library"],
   ["read", BookIcon, t("Read pages"), t("Read PDF text, highlights and notes"), "library"],
   ["block_read", OutlineIcon, t("Read note blocks"), t("Read individual notes and their outline"), "library"],
@@ -32,8 +32,10 @@ export const CHAT_KIND_ROWS = [
   ["notes", OutlineIcon, t("Notes chat"), t("Note pages"), "page", t("Notes")],
 ];
 
-function changePermission(setPerms, kind, key, on) {
-  setPerms((previous) => ({ ...previous, [kind]: { ...previous?.[kind], [key]: on } }));
+const PERMISSION_OPTIONS = [["allow", t("Always allow")], ["ask", t("Ask")], ["deny", t("Deny")]];
+
+function changePermission(setPerms, kind, key, value) {
+  setPerms((previous) => ({ ...previous, [kind]: { ...previous?.[kind], [key]: value } }));
 }
 
 function PermissionPreset({ kind, perms, setPerms, disabled }) {
@@ -41,17 +43,28 @@ function PermissionPreset({ kind, perms, setPerms, disabled }) {
   const value = permissionPreset(kind, perms?.[kind]);
   return <MenuSelect value={value} label={t("{kind} permissions", { kind: label })}
     display={value === "custom" ? t("Custom") : undefined}
-    options={[["library", t("Read library")], ["read", t("Read & search")], ["edit", t("All tools")]]}
+    options={[["ask", t("Ask before changes")], ["read", t("Read only")],
+      ["edit", t("Always allow")], ["library", t("Read library")]]}
     onChange={(preset) => {
       if (!disabled) setPerms((previous) => ({ ...previous,
         [kind]: { ...previous?.[kind], ...presetPermissions(kind, preset) } }));
     }} />;
 }
 
-const needsFetch = (key, permissions) => key === "publisher_cookies" && permissions?.web_read === false;
+const needsFetch = (key, permissions) => key === "publisher_cookies" && permissionFor("web_read", permissions) === "deny";
+
+function PermissionChoice({ kind, tool, label, hint, perms, setPerms, disabled }) {
+  const unavailable = disabled || needsFetch(tool, perms?.[kind]);
+  return <fieldset className="agentToolChoice" disabled={unavailable}
+    title={needsFetch(tool, perms?.[kind]) ? t("Enable Fetch documents first") : hint}>
+    <MenuSelect value={permissionFor(tool, perms?.[kind])} label={label}
+      options={PERMISSION_OPTIONS} onChange={(value) => {
+        if (!unavailable) changePermission(setPerms, kind, tool, value);
+      }} />
+  </fieldset>;
+}
 
 export function AgentToolMatrix({ perms, setPerms, disabled }) {
-  const id = React.useId();
   return <fieldset className="agentToolMatrix" disabled={disabled}>
     <legend className="srOnly">{t("Tool permissions by chat type")}</legend>
     <table className="agentToolTable">
@@ -60,7 +73,7 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
       <thead><tr>
         <th scope="col" className="agentToolIntro">
           <span className="settingLabel">{t("Choose access for each chat")}</span>
-          <span className="settingDesc">{t("Start with a preset, then adjust individual permissions.")}</span>
+          <span className="settingDesc">{t("Reads are allowed by default. Changes ask for your approval.")}</span>
         </th>
         {CHAT_KIND_ROWS.map(([kind, Icon, label, hint, , short]) => <th key={kind} scope="col" data-setting={label}>
           <span className="agentToolKind" title={`${label} — ${hint}`}><Icon size={15} />{short}</span>
@@ -69,21 +82,17 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
       </tr></thead>
       {GROUPS.map(([group, groupLabel]) => <tbody key={group}>
         <tr className="agentToolGroup"><th colSpan={4} scope="colgroup">{groupLabel}</th></tr>
-        {PERMISSIONS.filter((row) => row[4] === group).map(([key, Icon, label, hint]) => <tr key={key}>
+        {TOOL_PERMISSION_ROWS.filter((row) => row[4] === group).map(([key, Icon, label, hint]) => <tr key={key}>
           <th scope="row" className="agentToolDescription" data-setting={label}>
             <Icon size={16} />
-            <span><span className="settingLabel">{label}</span><span className="settingDesc" id={`${id}-${key}`}>{hint}</span></span>
+            <span><span className="settingLabel">{label}</span><span className="settingDesc">{hint}</span></span>
           </th>
           {CHAT_KIND_ROWS.map(([kind, , kindLabel, , , short]) => <td key={kind}>
             <span className="agentToolMobileLabel" aria-hidden="true">{short}</span>
-            {toolsForKind(kind).includes(key) ? <span className="switch"
-              title={needsFetch(key, perms?.[kind]) ? t("Enable Fetch documents first") : hint}>
-              <input type="checkbox" aria-label={t("{tool} — {kind}", { tool: label, kind: kindLabel })}
-                aria-describedby={`${id}-${key}`} checked={perms?.[kind]?.[key] !== false}
-                disabled={disabled || needsFetch(key, perms?.[kind])}
-                onChange={(event) => changePermission(setPerms, kind, key, event.target.checked)} />
-              <span className="switchTrack" />
-            </span> : <span className="agentToolUnavailable" aria-label={t("Not available for this chat type")}>—</span>}
+            {toolsForKind(kind).includes(key) ? <PermissionChoice kind={kind} tool={key}
+              label={t("{tool} — {kind}", { tool: label, kind: kindLabel })} hint={hint}
+              perms={perms} setPerms={setPerms} disabled={disabled} />
+              : <span className="agentToolUnavailable" aria-label={t("Not available for this chat type")}>—</span>}
           </td>)}
         </tr>)}
       </tbody>)}
@@ -98,16 +107,15 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
   return <fieldset className="agentToolPicker" disabled={disabled}>
     <legend className="srOnly">{t("Tool permissions")}</legend>
     <PermissionPreset kind={kind} perms={perms} setPerms={setPerms} disabled={disabled} />
+    <p className="settingDesc agentToolPickerHint">{t("Ask pauses the action until you approve it.")}</p>
     {GROUPS.map(([group, groupLabel]) => <div key={group}>
       <div className="popoverSection">{groupLabel}</div>
-      {PERMISSIONS.filter(([key, , , , rowGroup]) => rowGroup === group && available.includes(key))
-        .map(([key, Icon, label, hint]) => <label key={key} className="chatToolPermRow"
-          title={needsFetch(key, perms?.[kind]) ? t("Enable Fetch documents first") : hint}>
-          <input type="checkbox" checked={perms?.[kind]?.[key] !== false}
-            disabled={disabled || needsFetch(key, perms?.[kind])}
-            onChange={(event) => changePermission(setPerms, kind, key, event.target.checked)} />
-          <Icon size={14} /><span>{label}</span>
-        </label>)}
+      {TOOL_PERMISSION_ROWS.filter(([key, , , , rowGroup]) => rowGroup === group && available.includes(key))
+        .map(([key, Icon, label, hint]) => <div key={key} className="chatToolPermRow" title={hint}>
+          <Icon size={14} /><span className="chatToolPermLabel">{label}</span>
+          <PermissionChoice kind={kind} tool={key} label={label} hint={hint}
+            perms={perms} setPerms={setPerms} disabled={disabled} />
+        </div>)}
     </div>)}
   </fieldset>;
 }

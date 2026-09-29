@@ -48,6 +48,28 @@ test("mergeChats keeps what both copies added, each after what it follows", () =
     [{ role: "user", text: "old" }, { role: "ai", text: "x" }, { role: "user", text: "y" }]);
 });
 
+test("the live reply keeps approval ownership when another tab adds a later partial reply", async () => {
+  const question = [msg("q1", "add a note")];
+  const srv = server(question);
+  const session = createChatSession(srv.save, noWait);
+  session.seen("page", question, "v0");
+  session.start("page", question, "", new AbortController(), "a1");
+  const local = [...question, msg("a1", "", { partial: true,
+    approvals: [{ id: "ours", permission: "block_edit" }] })];
+  await session.update("page", local, true);
+  srv.messages = [...local, msg("q2", "another question"), msg("a2", "", {
+    partial: true, approvals: [{ id: "theirs", permission: "block_edit" }],
+  })];
+  srv.at = "other-tab-version";
+  await session.update("page", [...question, { ...local[1], text: "Waiting for your permission." }], true);
+  const reply = session.getSnapshot().replies.get("page");
+  assert.equal(reply.messages.at(-1).id, "a2", "the later conversation is preserved");
+  assert.equal(reply.replyId, "a1", "ownership follows the local run, not the last message");
+  assert.equal(session.isActive("page"), true);
+  session.finish("page");
+  assert.equal(session.isActive("page"), false, "saved approvals cannot become active after completion");
+});
+
 test("a save from an older copy merges the stored one in and saves again", async () => {
   const q1 = [msg("q1", "question")];
   const srv = server(q1, "v0");

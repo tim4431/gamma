@@ -891,20 +891,24 @@ export async function settingsScenarios(env) {
       await nav(page, "Chat").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
       // The matrix and chat popover edit the same per-kind permissions.
-      await page.getByRole("checkbox", { name: "Rename pages — Folder chat", exact: true }).uncheck();
-      await page.getByRole("checkbox", { name: "Use journal sign-ins — Folder chat", exact: true }).uncheck();
+      for (const tool of ["Rename pages", "Use journal sign-ins"]) {
+        await page.getByRole("button", { name: `${tool} — Folder chat`, exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "Deny", exact: true }).click();
+      }
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       assertEq(await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).isChecked(), true);
-      assertEq(await popover.getByRole("checkbox", { name: "Rename pages", exact: true }).isChecked(), false);
-      assertEq(await popover.getByRole("checkbox", { name: "Read pages", exact: true }).isChecked(), true);
-      assertEq(await popover.getByRole("checkbox", { name: "Use journal sign-ins", exact: true }).isChecked(), false);
+      assertEq(await popover.getByRole("button", { name: "Rename pages", exact: true }).innerText(), "Deny");
+      assertEq(await popover.getByRole("button", { name: "Read pages", exact: true }).innerText(), "Always allow");
+      assertEq(await popover.getByRole("button", { name: "Use journal sign-ins", exact: true }).innerText(), "Deny");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
 
   await step("settings: tool permissions compare chat types, preserve choices, and fit narrow screens", async () => {
+    const { value: profile } = await user.api("/api/prefs/profile");
     for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      await user.api("/api/prefs/profile", { method: "PUT", body: { value: { ...profile, agentPerms: {} } } });
       const { ctx, page } = await setup(viewport);
       try {
         await openSettings(page);
@@ -912,49 +916,69 @@ export async function settingsScenarios(env) {
         await nav(page, "Chat").click();
         const master = page.getByRole("checkbox", { name: "Assistant tools", exact: true });
         const matrix = page.getByRole("group", { name: "Tool permissions by chat type" });
-        const permission = (tool, kind = "Folder chat") => matrix.getByRole("checkbox", { name: `${tool} — ${kind}`, exact: true });
+        const permission = (tool, kind = "Folder chat") => matrix.getByRole("button", { name: `${tool} — ${kind}`, exact: true });
         const preset = (kind) => matrix.getByRole("button", { name: `${kind} permissions`, exact: true });
         const choosePreset = async (kind, label) => {
           await preset(kind).click();
           await page.locator(".uiSelectMenu").getByRole("button", { name: label, exact: true }).click();
         };
+        const choosePermission = async (tool, label, kind = "Folder chat") => {
+          await permission(tool, kind).click();
+          await page.locator(".uiSelectMenu").getByRole("button", { name: label, exact: true }).click();
+        };
         await master.check();
-        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "All tools");
+        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) {
+          assertEq(await preset(kind).innerText(), "Ask before changes");
+          assertEq(await permission("Read pages", kind).innerText(), "Always allow");
+          assertEq(await permission("Edit note blocks", kind).innerText(), "Ask");
+        }
         assertEq(await permission("Rename pages", "PDF chat").count(), 0);
         assertEq(await permission("List pages", "Notes chat").count(), 0);
 
         await choosePreset("Folder chat", "Read library");
         for (const tool of ["Search papers online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
-          assertEq(await permission(tool).isChecked(), false, `${tool} is off in read-library mode`);
+          assertEq(await permission(tool).innerText(), "Deny", `${tool} is denied in read-library mode`);
         }
-        assertEq(await permission("Read pages").isChecked(), true);
-        assertEq(await permission("Fetch documents", "PDF chat").isChecked(), true);
-        await permission("Fetch documents").check();
+        assertEq(await permission("Read pages").innerText(), "Always allow");
+        assertEq(await permission("Fetch documents", "PDF chat").innerText(), "Always allow");
+        await choosePermission("Fetch documents", "Always allow");
         assertEq(await permission("Use journal sign-ins").isDisabled(), false);
-        await permission("Use journal sign-ins").check();
-        await permission("Fetch documents").uncheck();
+        await choosePermission("Use journal sign-ins", "Ask");
+        await choosePermission("Fetch documents", "Deny");
         assertEq(await permission("Use journal sign-ins").isDisabled(), true);
-        assertEq(await permission("Use journal sign-ins").isChecked(), true, "dependent choices are remembered");
-        await permission("Fetch documents").check();
-        await permission("Use journal sign-ins").uncheck();
+        assertEq(await permission("Use journal sign-ins").innerText(), "Ask", "dependent choices are remembered");
+        await choosePermission("Fetch documents", "Always allow");
+        await choosePermission("Use journal sign-ins", "Deny");
         assertEq(await preset("Folder chat").innerText(), "Custom");
-        await choosePreset("PDF chat", "Read & search");
-        assertEq(await permission("Edit note blocks", "PDF chat").isChecked(), false);
-        assertEq(await permission("Search papers online", "PDF chat").isChecked(), true);
+        await choosePreset("PDF chat", "Read only");
+        assertEq(await permission("Edit note blocks", "PDF chat").innerText(), "Deny");
+        assertEq(await permission("Search papers online", "PDF chat").innerText(), "Always allow");
+        await choosePreset("Notes chat", "Always allow");
+        assertEq(await permission("Edit note blocks", "Notes chat").innerText(), "Always allow");
 
         await master.uncheck();
         assertEq(await preset("Folder chat").isDisabled(), true);
         assertEq(await permission("Read pages").isDisabled(), true);
         await master.check();
-        assertEq(await permission("Use journal sign-ins").isChecked(), false);
-        assertEq(await permission("Use journal sign-ins", "PDF chat").isChecked(), true);
+        assertEq(await permission("Use journal sign-ins").innerText(), "Deny");
+        assertEq(await permission("Use journal sign-ins", "PDF chat").innerText(), "Ask");
         const fits = await matrix.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
         assert(fits.scroll <= fits.width + 1, `tool permissions fit ${viewport.width}px: ${JSON.stringify(fits)}`);
-        // Every switch has a full accessible name and is reachable by keyboard.
+        // Every state menu has a full accessible name and is reachable by keyboard.
         await permission("Use journal sign-ins").focus();
-        await page.keyboard.press("Space");
-        assertEq(await permission("Use journal sign-ins").isChecked(), true);
-        await page.keyboard.press("Space");
+        await page.keyboard.press("Enter");
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "Ask", exact: true }).focus();
+        await page.keyboard.press("Enter");
+        assertEq(await permission("Use journal sign-ins").innerText(), "Ask");
+        await until(async () => (await user.api("/api/prefs/profile")).value?.agentPerms?.folder?.publisher_cookies === "ask");
+        await page.reload();
+        await page.waitForSelector(".folderNewBtn");
+        await openSettings(page);
+        if (viewport.width < 600) await page.getByRole("button", { name: "Back", exact: true }).click();
+        await nav(page, "Chat").click();
+        assertEq(await permission("Use journal sign-ins").innerText(), "Ask", "the selected state survives a reload");
+        assertEq(await permission("Edit note blocks", "PDF chat").innerText(), "Deny");
+        assertEq(await permission("Edit note blocks", "Notes chat").innerText(), "Always allow");
         if (flags.keep) {
           await row(page, "Tools").scrollIntoViewIfNeeded();
           await page.screenshot({ path: `${server.dir}/tool-permissions-${viewport.width}.png`, animations: "disabled" });
@@ -962,7 +986,10 @@ export async function settingsScenarios(env) {
           await page.screenshot({ path: `${server.dir}/tool-permissions-web-${viewport.width}.png`, animations: "disabled" });
         }
         assertNoProblems(page);
-      } finally { await ctx.close(); }
+      } finally {
+        await ctx.close();
+        await user.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      }
     }
   });
 

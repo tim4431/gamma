@@ -9,8 +9,9 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards from "./FetchHandoffCards";
+import ChatApproval from "./ChatApproval";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
-import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
+import { READ_TOOLS, WRITE_TOOLS, permissionFor, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
@@ -443,7 +444,7 @@ export default function ChatDock({
   // The chat settings shortcut edits the same global preferences as Settings.
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
-  const perm = (key) => chatToolPerms?.[key] !== false;
+  const perm = (key) => permissionFor(key, chatToolPerms) !== "deny";
   const toggleTools = () => setAgentEnabled(!agentEnabled);
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
@@ -1019,12 +1020,14 @@ export default function ChatDock({
     };
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
-    if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
+    const replyId = makeId(); // identifies this stream even after a concurrent transcript merge
+    if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl, replyId)) return;
     // One-shot semantics: the PDF went with this message; don't silently
     // re-upload (and re-bill) it on every follow-up.
     if (sendingPdf) setAttachPdf(false);
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
+    let approvals = []; // decisions belong to this reply, across navigation
     let coverage = null; // {"context": [...]} — what the model was given, per document
     let answered = null; // {"model": {id, name, effort}} — which model answers, at what effort
     let usage = null; // the provider's token report, summed over the reply's rounds
@@ -1034,10 +1037,10 @@ export default function ChatDock({
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
-    const replyId = makeId(); // every version of this reply, partial or final, is one message
     const aiMsg = (extra = {}) => ({
       id: replyId, role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
+      ...(approvals.length ? { approvals } : {}),
       ...(coverage ? { context: coverage } : {}),
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
         ...(answered.tools ? { tools: true } : {}) } : {}),
@@ -1071,7 +1074,18 @@ export default function ChatDock({
       await readNdjson(res, (events) => {
         for (const ev of events) {
           if (ev.error) throw chatFailure(ev.error, ev);
-          if (ev.step) {
+          if (ev.approval) {
+            running = null;
+            approvals = [...approvals, { ...ev.approval, kind: chatKind }];
+          } else if (ev.approval_resolved) {
+            const { id, decision } = ev.approval_resolved;
+            const resolved = approvals.find((approval) => approval.id === id);
+            approvals = approvals.map((approval) => approval.id === id ? { ...approval, decision } : approval);
+            if (decision === "allow_always" && resolved && toolsForKind(chatKind).includes(resolved.permission)) {
+              setAgentPerms((previous) => ({ ...previous,
+                [chatKind]: { ...previous?.[chatKind], [resolved.permission]: "allow" } }));
+            }
+          } else if (ev.step) {
             running = ev.step;
           } else if (ev.action) {
             running = null;
@@ -1104,7 +1118,7 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage || running) {
+        if (acc || actions.length || usage || running || approvals.length) {
           showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}) }));
         }
       });
@@ -1695,6 +1709,9 @@ export default function ChatDock({
                       </div>
                       </AgentSteps>
                     ) : null}
+                    {!isUser && m.approvals?.map((approval) => <ChatApproval key={approval.id}
+                      approval={approval} active={busyHere && m.id === sessionState.replies.get(chatKey)?.replyId}
+                      kind={approval.kind || chatKind} />)}
                     {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
@@ -1710,7 +1727,7 @@ export default function ChatDock({
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
-                    {isResponding && !m.step ? (
+                    {isResponding && !m.step && !m.approvals?.some((approval) => !approval.decision) ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
                         <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>
                         <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>

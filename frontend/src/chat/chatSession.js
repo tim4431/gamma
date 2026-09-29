@@ -165,13 +165,13 @@ export function createChatSession(save, { retryDelays = RETRY_DELAYS,
     // The version the tab's copy is based on — "New chat" and opening a
     // history entry send it, so a newer stored conversation is kept.
     version: (key) => (versions.get(key) || NO_VERSION).at,
-    start(key, messages, title, ctrl) {
+    start(key, messages, title, ctrl, replyId) {
       if (snapshot.active.has(key)) return false;
       controllers.set(key, ctrl);
       inputs.set(key, messages);
       snapshot = {
         ...snapshot,
-        replies: new Map(snapshot.replies).set(key, { messages, title }),
+        replies: new Map(snapshot.replies).set(key, { messages, title, replyId }),
         active: new Set(snapshot.active).add(key),
       };
       emit();

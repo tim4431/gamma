@@ -18,6 +18,7 @@
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
+import { normalizePermissions } from "../chat/chatSettings.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -96,19 +97,15 @@ export function translateModelFor(pick, engines, models) {
 // one map per chat KIND: "folder" (the home/folder chat), "pdf" (a page with
 // a PDF attached) and "notes" (a page without one). The chat picks its
 // kind's map (chat/ChatDock.jsx) and sends it as the request's `permissions`.
-// Missing keys mean allowed, so new tools default on for existing users;
-// a pre-kind flat map ({list, read, …}) is applied to every kind.
+// Reads default to allow; writes and publisher cookies default to ask.
+// Legacy booleans preserve explicit choices; a pre-kind flat map is applied
+// to every kind. The shared policy normalizes every value and drops unknowns.
 export const CHAT_KINDS = ["folder", "pdf", "notes"];
-const TOOL_PERMS_DEFAULT = {
-  list: true, read: true, block_read: true, view: true, search: true,
-  web_search: true, web_read: true, publisher_cookies: true,
-  rename: true, move: true, block_edit: true,
-};
 const AGENT_PERMS = json((value) => {
-  if (!value || typeof value !== "object") return undefined;
-  const perKind = CHAT_KINDS.some((k) => value[k] && typeof value[k] === "object");
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const perKind = CHAT_KINDS.some((k) => Object.hasOwn(value, k));
   return Object.fromEntries(CHAT_KINDS.map((k) => [
-    k, { ...TOOL_PERMS_DEFAULT, ...(perKind ? value[k] || {} : value) },
+    k, normalizePermissions(perKind ? value[k] : value),
   ]));
 });
 
@@ -263,7 +260,7 @@ export const PREFS = {
   // Master kill-switch for tool use in every chat (folder and page alike).
   agentEnabled: flag("gamma-ai-agent-enabled", ACCOUNT, true),
   agentPerms: pref("gamma-ai-agent-perms", ACCOUNT,
-    Object.fromEntries(CHAT_KINDS.map((k) => [k, { ...TOOL_PERMS_DEFAULT }])), AGENT_PERMS),
+    Object.fromEntries(CHAT_KINDS.map((k) => [k, normalizePermissions()])), AGENT_PERMS),
   // Off by default: a chat fetch a publisher stopped waits for the user to
   // open the page. On, the card hands it to Gamma Connector by itself, which
   // tries in a background tab (chat/FetchHandoffCards.jsx).

@@ -55,6 +55,7 @@ def test_chat_agent_loop_streams_actions(org, monkeypatch):
     r = c.post("/api/ai/chat", json={
         "prompt": "rename the cavity paper to Ada2019 cavity",
         "agent_scope": "folder", "folder": "readout", "stream": True,
+        "permissions": {"rename": "allow"},
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]

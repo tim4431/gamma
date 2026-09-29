@@ -9,6 +9,211 @@ export async function chatNavigationScenarios(env) {
     default_title: "Chat navigation paper", source_url: upload.source_url,
   } });
 
+  // A controllable NDJSON stream pauses where the real agent waits for a
+  // decision. Backend tests exercise authorization and execution; these
+  // scenarios cover the user's choice, its receipt, and conversation ownership.
+  async function approvalChat() {
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...profile, agentPerms: {} } } });
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.permissionStreams = [];
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              const stream = {
+                request: JSON.parse(init.body), aborted: false,
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+              window.permissionStreams.push(stream);
+              init.signal.addEventListener("abort", () => {
+                stream.aborted = true;
+                controller.error(new DOMException("Stopped", "AbortError"));
+              });
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return originalFetch(input, init);
+      };
+    });
+    const decisions = [];
+    await ctx.route("**/api/ai/approvals/*", (route) => {
+      const request = route.request();
+      const { decision } = request.postDataJSON();
+      decisions.push({ id: new URL(request.url()).pathname.split("/").at(-1), decision,
+        workspace: request.headers()["x-gamma-workspace"] });
+      return route.fulfill({ json: { permission: "block_edit", decision } });
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+    await page.waitForLoadState("networkidle");
+    const begin = async (id) => {
+      const count = await page.evaluate(() => window.permissionStreams.length);
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.fill("Read my papers and add summary notes");
+      await input.press("Enter");
+      await page.waitForFunction((n) => window.permissionStreams.length === n + 1, count);
+      await page.evaluate(({ id, pageId }) => window.permissionStreams.at(-1).push({ approval: {
+        id, tool: "create_block", permission: "block_edit",
+        args: { parent_id: pageId, content: "An important finding from the paper" },
+        summary: "Add a note to Chat navigation paper",
+        target: { page_id: pageId, title: "Chat navigation paper" },
+        expires_at: Date.now() / 1000 + 300,
+      } }), { id, pageId: pdf.id });
+      const card = page.locator('.chatApproval[data-approval-state="pending"]');
+      await card.waitFor();
+      return card;
+    };
+    return { ctx, page, decisions, begin, cleanup: async () => {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    } };
+  }
+
+  await step("chat navigation: approval allows one action or denies it without changing the policy", async () => {
+    const { page, decisions, begin, cleanup } = await approvalChat();
+    try {
+      const original = await page.evaluate(() => localStorage.getItem("gamma-ai-agent-perms"));
+      for (const [id, label, decision] of [["allow-one", "Allow once", "allow_once"], ["deny-one", "Deny", "deny"]]) {
+        const card = await begin(id);
+        assert((await card.innerText()).includes("Chat navigation paper"), "the request names the affected paper");
+        await card.getByRole("button", { name: "Always allow", exact: true }).waitFor();
+        assertEq(decisions.length, id === "allow-one" ? 0 : 1, "showing a request does not grant it");
+        if (flags.keep && id === "allow-one") {
+          await page.screenshot({ path: `${server.dir}/chat-approval-light.png`, animations: "disabled" });
+          await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
+          await card.screenshot({ path: `${server.dir}/chat-approval-dark.png`, animations: "disabled" });
+          await page.evaluate(() => { document.documentElement.dataset.theme = "light"; document.documentElement.dataset.scheme = "light"; });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await page.locator(".phoneTabBar").getByRole("button", { name: "AI chat", exact: true }).click();
+          await card.scrollIntoViewIfNeeded();
+          assert(await card.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "the request fits a narrow chat");
+          await card.screenshot({ path: `${server.dir}/chat-approval-mobile.png`, animations: "disabled" });
+          await page.setViewportSize({ width: 1440, height: 1000 });
+        }
+        await card.getByRole("button", { name: label, exact: true }).click();
+        await until(() => decisions.some((item) => item.id === id));
+        assertEq(decisions.at(-1).decision, decision);
+        assertEq(decisions.at(-1).workspace, alice.ws, "the approval request belongs to this workspace");
+        await page.evaluate(({ id, decision }) => {
+          window.permissionStreams.at(-1).push({ approval_resolved: { id, decision } });
+          window.permissionStreams.at(-1).push({ delta: decision === "deny" ? "I left the notes unchanged." : "The note is ready." });
+          window.permissionStreams.at(-1).finish();
+        }, { id, decision });
+        const receipt = page.locator(`.chatApproval[data-approval-state="${decision}"]`);
+        await receipt.waitFor();
+        assertEq(await receipt.getByRole("button", { name: "Allow once", exact: true }).count(), 0, "a completed request cannot be granted twice");
+        await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+        assertEq(await page.evaluate(() => localStorage.getItem("gamma-ai-agent-perms")), original,
+          "one-time decisions preserve the configured permission");
+      }
+      await until(async () => (await alice.api("/api/chats/home")).messages?.at(-1)?.text?.includes("unchanged"));
+      await page.reload();
+      await page.locator('.chatApproval[data-approval-state="deny"]').waitFor();
+      assertEq(await page.locator('.chatApproval[data-approval-state="pending"]').count(), 0);
+      assertNoProblems(page);
+    } finally { await cleanup(); }
+  });
+
+  await step("chat navigation: an always-allow approval stays with the original chat type when navigating", async () => {
+    const { page, decisions, begin, cleanup } = await approvalChat();
+    try {
+      const card = await begin("allow-folder");
+      assert(/folder/i.test(await card.innerText()), "the persistent grant explains its chat-type scope");
+      await page.evaluate((id) => window.permissionStreams.at(-1).push({ delta: `See [Linked paper](/?page=${id}).` }), target.id);
+      await card.getByRole("button", { name: "Always allow", exact: true }).click();
+      await until(() => decisions.length === 1);
+      assertEq(decisions[0].decision, "allow_always");
+      await page.locator(".chatPanel").getByRole("link", { name: "Linked paper", exact: true }).click();
+      await until(() => new URL(page.url()).searchParams.get("block") === target.id);
+      assertEq(await page.locator(".chatApproval").count(), 0, "the request does not leak into another conversation");
+      await page.evaluate(() => {
+        window.permissionStreams.at(-1).push({ approval_resolved: { id: "allow-folder", decision: "allow_always" } });
+        window.permissionStreams.at(-1).push({ delta: " The approved note is saved." });
+        window.permissionStreams.at(-1).finish();
+      });
+      let permissions;
+      await until(async () => {
+        permissions = (await alice.api("/api/prefs/profile")).value?.agentPerms;
+        return permissions?.folder?.block_edit === "allow";
+      });
+      assertEq(permissions.pdf.block_edit, "ask", "PDF chat retains its own policy");
+      assertEq(permissions.notes.block_edit, "ask", "the currently open notes chat is not granted access");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.locator('.chatApproval[data-approval-state="allow_always"]').waitFor();
+      await page.locator('[title^="Chat settings"]').click();
+      assertEq(await page.locator(".chatSettingsPop").getByRole("button", { name: "Edit note blocks", exact: true }).innerText(), "Always allow");
+      assertNoProblems(page);
+    } finally { await cleanup(); }
+  });
+
+  await step("chat navigation: stopping a pending approval makes its saved request inactive", async () => {
+    const { page, decisions, begin, cleanup } = await approvalChat();
+    try {
+      await begin("stopped-request");
+      await page.getByRole("button", { name: "Stop generating", exact: true }).click();
+      await page.waitForFunction(() => window.permissionStreams.at(-1).aborted);
+      const card = page.locator('.chatApproval[data-approval-state="stopped"]');
+      await card.waitFor();
+      assertEq(await card.getByRole("button", { name: "Allow once", exact: true }).count(), 0);
+      assertEq(decisions.length, 0, "stopping never grants a waiting request");
+      await until(async () => {
+        const reply = (await alice.api("/api/chats/home")).messages?.at(-1);
+        return reply?.text?.includes("(stopped)") && !reply.partial;
+      });
+      await page.reload();
+      await page.locator('.chatApproval[data-approval-state="stopped"]').waitFor();
+      assertEq(await page.locator('.chatApproval[data-approval-state="pending"]').count(), 0);
+      assertNoProblems(page);
+    } finally { await cleanup(); }
+  });
+
+  await step("chat navigation: approval controls belong to the live reply after another tab's messages merge", async () => {
+    const { page, decisions, begin, cleanup } = await approvalChat();
+    try {
+      await begin("local-approval");
+      let stored;
+      await until(async () => {
+        stored = await alice.api("/api/chats/home");
+        return stored.messages?.some((message) => message.approvals?.some((approval) => approval.id === "local-approval"));
+      });
+      // Another tab writes a newer partial reply into the shared conversation.
+      // Its request is shown here as history; only the local stream can own buttons.
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [...stored.messages,
+        { id: "other-tab-question", role: "user", text: "Make another summary" },
+        { id: "other-tab-reply", role: "ai", text: "The other tab is waiting for permission.", partial: true,
+          approvals: [{ id: "other-tab-approval", tool: "create_block", permission: "block_edit", kind: "folder",
+            args: { parent_id: target.id, content: "A different summary" }, target: { title: "Another tab note" },
+            expires_at: Date.now() / 1000 + 300 }] },
+      ] } });
+      await page.evaluate(() => window.permissionStreams.at(-1).push({ delta: "My summary is waiting for approval." }));
+      await page.getByText("The other tab is waiting for permission.", { exact: true }).waitFor();
+      const local = page.locator(".chatApproval").filter({ hasText: "Chat navigation paper" });
+      const remote = page.locator(".chatApproval").filter({ hasText: "Another tab note" });
+      assertEq(await local.getAttribute("data-approval-state"), "pending", "a newer foreign reply does not close the local approval");
+      assertEq(await remote.getAttribute("data-approval-state"), "stopped", "a foreign partial reply has no local stream");
+      assertEq(await remote.getByRole("button", { name: "Allow once", exact: true }).count(), 0);
+      await local.getByRole("button", { name: "Allow once", exact: true }).click();
+      await until(() => decisions.length === 1);
+      assertEq(decisions[0].id, "local-approval");
+      await page.evaluate(() => {
+        window.permissionStreams.at(-1).push({ approval_resolved: { id: "local-approval", decision: "allow_once" } });
+        window.permissionStreams.at(-1).finish();
+      });
+      await page.locator('.chatApproval[data-approval-state="allow_once"]').waitFor();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      assertEq(await page.locator('.chatApproval[data-approval-state="pending"]').count(), 0);
+      assertNoProblems(page);
+    } finally { await cleanup(); }
+  });
+
   for (const source of [{ name: "library", key: "home" }, { name: "PDF", key: pdf.id }]) {
     for (const finishAway of [false, true]) {
       await step(`chat navigation: ${source.name} reply survives returning ${finishAway ? "after" : "before"} completion`, async () => {

@@ -7,12 +7,17 @@ from ai_fixtures import FakeResp, ai_provider, indexed_pdf, org, props  # noqa: 
 from gamma.ai_tools import run_agent_tool
 
 
+@pytest.fixture(autouse=True)
+def _offline_model_facts(monkeypatch):
+    monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+
+
 @pytest.mark.parametrize("scope_type", ["page", "folder"])
 def test_references_expand_reads_but_not_writes(org, scope_type):
     c, ids = org
     child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": "mentionneedle"}).json()["id"]
     scope = {"type": scope_type, "page_id": ids["b"], "folder": "readout",
-             "context_pages": [ids["note"], "missing"]}
+             "context_pages": [ids["note"], "missing"], "permissions": {"block_edit": "allow"}}
     for tool, args in [("read_page", {"page_id": ids["note"]}),
                        ("read_block", {"block_id": child}),
                        ("search_library", {"query": "mentionneedle"})]:

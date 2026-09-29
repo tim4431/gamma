@@ -41,7 +41,7 @@ def _content(c, block_id):
 
 def test_edit_block_append_prepend_replace(page):
     c, page_id = page
-    scope = {"type": "page", "page_id": page_id}
+    scope = {"type": "page", "page_id": page_id, "permissions": {"block_edit": "allow"}}
     block = c.post("/api/blocks", json={"parent_id": page_id, "content": "Key result: T1 = 300 us."}).json()["id"]
     text, action = run_agent_tool(workspace_of(USER), scope, "edit_block",
                                   {"block_id": block, "mode": "append", "content": "Measured at 20 mK."})
@@ -93,7 +93,7 @@ def test_patch_block_text_rules():
 
 def test_edit_block_patch_cuts_and_replaces_a_passage(page):
     c, page_id = page
-    scope = {"type": "page", "page_id": page_id}
+    scope = {"type": "page", "page_id": page_id, "permissions": {"block_edit": "allow"}}
     body = "Setup: 20 mK.\n\nResult: T1 = 300 us, measured twice.\n\nOutlook: retry at 10 mK."
     block = c.post("/api/blocks", json={"parent_id": page_id, "content": body}).json()["id"]
     # Replace one passage; everything around it is untouched.
@@ -135,7 +135,8 @@ def test_edit_block_selection_rewrites_only_the_selected_range(page):
     block = c.post("/api/blocks", json={"parent_id": page_id, "content": src}).json()["id"]
     start = src.index("Noise", 5)  # the SECOND occurrence, inside the bold
     sel = {"label": "S1", "block_id": block, "from": start, "to": start + 13, "text": "Noise is low."}
-    scope = {"type": "page", "page_id": page_id, "note_selections": [sel]}
+    scope = {"type": "page", "page_id": page_id, "note_selections": [sel],
+             "permissions": {"block_edit": "allow"}}
     ws = workspace_of(USER)
     text, action = run_agent_tool(ws, scope, "edit_block",
                                   {"block_id": block, "mode": "selection", "selection": "S1",
@@ -155,7 +156,7 @@ def test_edit_block_selection_rewrites_only_the_selected_range(page):
     text, _ = run_agent_tool(ws, scope, "edit_block",
                              {"block_id": page_id, "mode": "selection", "content": "x"})
     assert text.startswith("error: selection S1 is in block"), text
-    text, _ = run_agent_tool(ws, {"type": "page", "page_id": page_id}, "edit_block",
+    text, _ = run_agent_tool(ws, {"type": "page", "page_id": page_id, "permissions": {"block_edit": "allow"}}, "edit_block",
                              {"block_id": block, "mode": "selection", "content": "x"})
     assert text.startswith("error: the user selected no note text"), text
 

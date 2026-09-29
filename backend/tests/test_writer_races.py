@@ -86,7 +86,8 @@ def test_embed_card_edit_merges_into_a_source_edited_elsewhere(owner):
 # --- an AI replace keeps what the user typed meanwhile ------------------------
 
 def _scope(page_id):
-    return {"type": "page", "page_id": page_id, "actor": USER, "can_write": True, "read_texts": {}}
+    return {"type": "page", "page_id": page_id, "actor": USER, "can_write": True, "read_texts": {},
+            "permissions": {"block_edit": "allow"}}
 
 
 def test_ai_replace_keeps_what_the_user_typed_while_it_wrote(owner):
