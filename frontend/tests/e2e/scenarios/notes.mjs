@@ -71,6 +71,19 @@ async function startDrag(page, from, ontoText) {
   };
 }
 
+// Make every notes search (/api/block-search with a query) on `page` answer
+// as if the server's scan ran out of time: the real hits plus
+// `partial: true`. Returns the undo.
+export async function partialBlockSearch(page) {
+  const match = (url) => url.pathname.endsWith("/api/block-search") && !!url.searchParams.get("q");
+  const handler = async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), partial: true } });
+  };
+  await page.route(match, handler);
+  return () => page.unroute(match, handler);
+}
+
 export async function newPageViaUi(page, title) {
   await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
   await page.click(".folderNewBtn");
@@ -273,6 +286,35 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await box.click();
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("- [x] buy milk"), { what: "checkbox toggled in the source" });
     assertNoProblems(page);
+  });
+
+  await step("notes: an embed card's checkbox merges into a source edited on its own page; reopening shows the source as it is", async () => {
+    const before = "- [ ] task A\n- [ ] task B";
+    const source = await alice2.api("/api/pages", { method: "POST", body: { title: "Embed source" } });
+    const x = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: source.id, content: before } });
+    const host = await alice2.api("/api/pages", { method: "POST", body: { title: "Embed host" } });
+    await alice2.api("/api/blocks", { method: "POST", body: { parent_id: host.id, content: `![[${x.id}]]` } });
+    const ctx2 = await alice2.context(browser);
+    const page2 = await openPage(ctx2, `${server.base}/?ws=${second.id}&page=${host.id}`);
+    try {
+      const card = page2.locator(".blockEmbedCard").first();
+      await until(async () => (await card.innerText()).includes("task B"), { what: "the embed card rendered" });
+      // Another tab adds to the source while this card shows its older copy.
+      const elsewhere = `${before}\nWritten elsewhere.`;
+      await alice2.api(`/api/blocks/${x.id}`, { method: "PUT", body: { content: elsewhere, base: before } });
+      await card.locator("input.mdTaskCheckbox").first().click();
+      const merged = "- [x] task A\n- [ ] task B\nWritten elsewhere.";
+      await until(async () => (await alice2.api(`/api/blocks/${x.id}`)).content === merged, { what: "the tick merged, the addition kept" });
+      await until(async () => (await card.innerText()).includes("Written elsewhere."), { what: "the card shows the stored text" });
+      // Off to the source page and back: the card is fetched again on the way in.
+      await card.locator(".blockEmbedSrc").click();
+      await until(() => new URL(page2.url()).searchParams.get("block") === source.id, { what: "the source page opened" });
+      await alice2.api(`/api/blocks/${x.id}`, { method: "PUT", body: { content: `${merged}\nAnd more.`, base: merged } });
+      await page2.getByRole("button", { name: "Back", exact: true }).click();
+      await until(async () => (await page2.locator(".blockEmbedCard").first().innerText()).includes("And more."),
+        { what: "the reopened page shows the source's current text" });
+      assertNoProblems(page2);
+    } finally { await ctx2.close(); }
   });
 
   await step("notes: an uploaded image renders (URL carries the workspace) and survives reload", async () => {
@@ -479,13 +521,14 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
-  await step("notes: the [[ picker lists pages by title first; a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
+  await step("notes: the [[ picker lists pages by title first (a block search cut short says so); a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
     const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Linkable Target" } });
     const other = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Scratch" } });
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Picker source" } });
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "pkblock", parent: src.id, position: "a0", content: "start" }] } });
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    const unroute = await partialBlockSearch(p2);
     try {
       await editRow(p2, "start");
       await p2.keyboard.type(" [[linkable");
@@ -494,6 +537,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(await picker.locator(".refPopupHead").first().textContent(), "Pages", "pages come first");
       assertEq(await picker.locator(".refPopupItem.selected .refPopupText").innerText(), "Quantum Linkable Target");
       assertEq(await picker.locator(".refPopupItem.selected .refPopupText mark.searchMark").innerText(), "Linkable", "the typed text is marked");
+      await until(async () => (await picker.locator(".refPopupFooter").innerText()).startsWith("Block search stopped early"),
+        { what: "the footer says the block search stopped early" });
+      await unroute();
       await p2.keyboard.press("Enter");
       await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
       // "]]" typed after the exact title of one page links it; an unknown title stays text.
@@ -504,6 +550,104 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const r = row(p2, "start");
       assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()), JSON.stringify(["Quantum Linkable Target", "Quantum Scratch"]));
       assertEq(await r.locator(".unlinkedRef").innerText(), "Nothing By This Name", "the unknown title is an unlinked chip");
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // Ctrl+F on a page opens the compact find bar (Settings → Search). With no
+  // PDF to step through it still counts what the details would list, and
+  // says when the notes search stopped early.
+  await step("notes: the compact find bar on a notes page counts the results and says when the search stopped early", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Compact find" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "cfnote", parent: pg.id, position: "a0", content: "a quokkafind note here" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    const unroute = await partialBlockSearch(p2);
+    try {
+      await row(p2, "quokkafind").waitFor();
+      await p2.click("button[aria-label='Search']");
+      await p2.waitForSelector(".searchPopover .searchInput");
+      const details = p2.locator("button[aria-label='Toggle result details']");
+      if (/\bon\b/.test(await details.getAttribute("class"))) await details.click();
+      await p2.fill(".searchPopover .searchInput", "quokkafind");
+      const summary = p2.locator(".searchPopover .searchResult", { hasText: "1 result — show it" });
+      await summary.waitFor();
+      await p2.locator(".searchPopover .searchHint", { hasText: "Stopped early — refine the search to see more." }).waitFor();
+      assertEq(await p2.locator(".searchPopover .searchSection").count(), 0, "compact: no result lists");
+      await summary.click();
+      await p2.locator(".searchPopover .searchSection", { hasText: "Notes on this page" }).waitFor();
+      await p2.keyboard.press("Escape");
+      assertNoProblems(p2);
+    } finally {
+      await unroute();
+      await p2.close();
+    }
+  });
+
+  // "Paste as → Blocks" splits an outline into blocks (POST
+  // /api/markdown-blocks); pasted into an empty line, they take its place.
+  await step("notes: Paste as Blocks counts every block it made and leaves no empty line behind", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Paste blocks" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "pbfirst", parent: pg.id, position: "a0", content: "above the paste" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    try {
+      await editRow(p2, "above the paste");
+      await p2.keyboard.press("Shift+Enter");
+      await p2.waitForFunction(() => {
+        const ed = document.activeElement?.closest(".cm-content");
+        return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
+      }, null, { timeout: 5000 });
+      await p2.evaluate((text) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        document.activeElement.closest(".cm-content")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, "- one\n  - one a\n  - one b\n- two");
+      await p2.locator(".slashMenu .slashMenuItem", { hasText: "Blocks" }).first().click();
+      await p2.getByText("Pasted 4 blocks.").waitFor();
+      await until(async () => same(await tree(alice2, pg.id), [
+        { content: "above the paste", children: [] },
+        { content: "one", children: [{ content: "one a", children: [] }, { content: "one b", children: [] }] },
+        { content: "two", children: [] },
+      ]), { what: "the outline took the empty line's place" });
+      await until(async () => (await p2.locator(".blockEditorCm .cm-content").innerText()) === "two",
+        { what: "the caret ends in the last pasted block" });
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // Text over the server's limit (collabSession's MAX_CONTENT, 200,000
+  // characters) is held back: the notice says why, and the editor stays open
+  // on it (App's onStartEdit) until it is short enough to save.
+  await step("notes: a note over the length limit says so, is not saved, and keeps its editor open until shortened", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Long note" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "longnote", parent: pg.id, position: "a0", content: "short" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    try {
+      await editRow(p2, "short");
+      await p2.keyboard.insertText(" " + "word ".repeat(40001));
+      const notice = p2.getByText(/^A note is too long to save \(at most 200,000 characters\)/);
+      await notice.waitFor();
+      // The whole sentence shows: the pill wraps rather than ending in "…".
+      assert(await p2.locator(".statusPill.error .pillText").evaluate((el) => el.scrollWidth <= el.clientWidth + 1
+        && getComputedStyle(el).whiteSpace === "normal"), "the notice wraps");
+      await p2.evaluate(() => document.activeElement?.blur());
+      await sleep(300);
+      assertEq(await p2.locator(".blockEditorCm").count(), 1, "the editor stays open on the long text");
+      assertEq((await tree(alice2, pg.id))[0].content, "short", "the long text is not saved");
+      await p2.locator(".blockEditorCm .cm-content").click();
+      await p2.keyboard.press("Control+a");
+      await p2.keyboard.insertText("short again");
+      await notice.waitFor({ state: "detached" });
+      await until(async () => (await tree(alice2, pg.id))[0].content === "short again", { what: "the shortened text saved" });
+      await closeEditor(p2);
       assertNoProblems(p2);
     } finally {
       await p2.close();
@@ -575,18 +719,23 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: Enter-as-new-block preference, in the default workspace", async () => {
     // The Enter key is an account preference: the profile's copy wins over this browser's.
     const { value: profile } = await alice.api("/api/prefs/profile");
-    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
     const ctxD = await alice.context(browser);
-    await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
-    const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
-    const id = await newPageViaUi(p, "Default ws page");
-    await p.keyboard.type("hello");
-    await p.keyboard.press("Enter");
-    await p.keyboard.type("world");
-    await closeEditor(p);
-    await until(async () => same(await tree(alice, id), [{ content: "hello", children: [] }, { content: "world", children: [] }]), { what: "two blocks saved" });
-    assertNoProblems(p);
-    await ctxD.close();
+    try {
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
+      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
+      const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
+      const id = await newPageViaUi(p, "Default ws page");
+      await p.keyboard.type("hello");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("world");
+      await closeEditor(p);
+      await until(async () => same(await tree(alice, id), [{ content: "hello", children: [] }, { content: "world", children: [] }]), { what: "two blocks saved" });
+      assertNoProblems(p);
+    } finally {
+      await ctxD.close();
+      // Workers reuse Alice in later groups; Shift+Enter must keep its original meaning.
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+    }
   });
 
   await step("notes: images and tables are objects — a press selects, a drag lands between or inside blocks, right-click edits the source", async () => {

@@ -1,15 +1,32 @@
 """unified_blocks table helpers shared across routers."""
 
 import json
+import re
 import secrets
 
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
+from . import upload_gc
 from .db import page_now
 from .foldertags import clean_path, parse_tags, path_within
-from .storage import display_filename, url_filename
+from .storage import display_filename, upload_refs, url_filename
 
 BLOCK_COLUMNS = "id, parent_id, position, content, properties, created_at, updated_at"
+
+# The parent of the pages in Recently deleted (ops.trash_page, gamma/trash.py):
+# a reserved block id beside "root". A page moved under it keeps every block,
+# chat and file but is no page any more: whatever asks for pages
+# (``parent_id = 'root'``) passes it by, and a walk up from one of its blocks
+# (``page_root_id``, the op batches) finds no page.
+TRASH = "trash"
+
+BLOCK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the shape of a block or page id
+
+
+def valid_block_id(block_id) -> bool:
+    """An id a client may give a new block or page: the id shape, and none
+    of the reserved ones (``root``, ``trash``)."""
+    return isinstance(block_id, str) and bool(BLOCK_ID_RE.match(block_id)) and block_id not in ("root", TRASH)
 
 
 def block_to_dict(row) -> dict:
@@ -32,6 +49,25 @@ def last_child_position(conn, parent_id: str) -> str | None:
     return row[0] if row else None
 
 
+def free_position(conn, parent_id: str, position: str | None, block_id: str = "") -> str:
+    """The sibling key ``block_id`` gets under ``parent_id``: ``position``
+    (a key the client minted) unless another sibling holds it — clients
+    mint keys on their own, so two can pick the same — else a key between
+    it and the next sibling up; None appends after the last child. Call it
+    under the write lock, in the transaction that writes the key."""
+    if position is None:
+        return generate_key_between(last_child_position(conn, parent_id), None)
+    clash = conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE parent_id = ? AND position = ? AND id != ?",
+        (parent_id, position, block_id)).fetchone()
+    if not clash:
+        return position
+    nxt = conn.execute(
+        "SELECT MIN(position) FROM unified_blocks WHERE parent_id = ? AND position > ? AND id != ?",
+        (parent_id, position, block_id)).fetchone()[0]
+    return generate_key_between(position, nxt)
+
+
 def fetch_subtree(conn, block_id: str):
     """Fetch a block + all its descendants."""
     return conn.execute(
@@ -48,16 +84,28 @@ def fetch_subtree(conn, block_id: str):
     ).fetchall()
 
 
+def subtree_refs(rows) -> set[str]:
+    """The upload names ``fetch_subtree`` rows reference (storage.upload_refs)."""
+    return set().union(*(upload_refs(r[3] or "", r[4] or "{}") for r in rows))
+
+
+# Both deletes START with DELETE, the recursive walk inside the IN (...):
+# Python's sqlite3 opens its implicit transaction only before a statement
+# that begins with INSERT/UPDATE/DELETE/REPLACE. A ``WITH … DELETE`` would
+# commit on the spot, and a later failure of the same write could not roll
+# it back (a page left empty, a page gone without its tombstone).
+
 def delete_subtree(conn, block_id: str):
     """Delete a block and all its descendants."""
     conn.execute(
         """
-        WITH RECURSIVE subtree AS (
-            SELECT id FROM unified_blocks WHERE id = ?
-            UNION ALL
-            SELECT ub.id FROM unified_blocks ub JOIN subtree s ON ub.parent_id = s.id
-        )
-        DELETE FROM unified_blocks WHERE id IN (SELECT id FROM subtree)
+        DELETE FROM unified_blocks WHERE id IN (
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM unified_blocks WHERE id = ?
+                UNION ALL
+                SELECT ub.id FROM unified_blocks ub JOIN subtree s ON ub.parent_id = s.id
+            )
+            SELECT id FROM subtree)
         """,
         (block_id,),
     )
@@ -67,12 +115,13 @@ def delete_children(conn, block_id: str):
     """Delete all descendants of a block, keeping the block itself."""
     conn.execute(
         """
-        WITH RECURSIVE subtree AS (
-            SELECT id FROM unified_blocks WHERE parent_id = ?
-            UNION ALL
-            SELECT ub.id FROM unified_blocks ub JOIN subtree s ON ub.parent_id = s.id
-        )
-        DELETE FROM unified_blocks WHERE id IN (SELECT id FROM subtree)
+        DELETE FROM unified_blocks WHERE id IN (
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM unified_blocks WHERE parent_id = ?
+                UNION ALL
+                SELECT ub.id FROM unified_blocks ub JOIN subtree s ON ub.parent_id = s.id
+            )
+            SELECT id FROM subtree)
         """,
         (block_id,),
     )
@@ -107,7 +156,8 @@ def flatten_tree(tree, parent_id, result, now):
 def page_root_id(conn, block_id: str) -> str | None:
     """Walk parents up to the top-level page block that contains block_id
     (whose parent is 'root'). Returns the page id, or None if block_id is
-    unknown. Cycle-guarded."""
+    unknown or lives in Recently deleted (a trashed page reads as gone).
+    Cycle-guarded."""
     cur = block_id
     for _ in range(10000):
         row = conn.execute(
@@ -116,10 +166,70 @@ def page_root_id(conn, block_id: str) -> str | None:
         if not row:
             return None
         parent = row[0]
+        if parent == TRASH or cur == TRASH:
+            return None
         if parent in (None, "root"):
             return cur
         cur = parent
     return None
+
+
+def ensure_trash(conn) -> bool:
+    """Write the reserved ``trash`` row (parentless, like ``root``) unless it
+    is there. False when some other block holds the id: it is left alone,
+    and nothing can be moved to the trash (``ops.trash_page`` refuses)."""
+    row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (TRASH,)).fetchone()
+    if row is None:
+        now = page_now()
+        conn.execute(
+            "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
+            "VALUES (?, NULL, 'a1', '', '{}', ?, ?)", (TRASH, now, now))
+        return True
+    return row[0] is None
+
+
+def trash_entry(conn, block_id: str) -> dict | None:
+    """The Recently deleted entry of the page ``block_id`` is or lives in
+    (``trashed_page``'s shape), or None when the block is not in the trash.
+    Cycle-guarded like ``page_root_id``."""
+    cur = block_id
+    for _ in range(10000):
+        row = conn.execute(
+            "SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (cur,)
+        ).fetchone()
+        if not row or row[0] in (None, "root"):
+            return None
+        if row[0] == TRASH:
+            return trashed_page(cur, row[1], row[2])
+        cur = row[0]
+    return None
+
+
+def trashed_page(page_id: str, title: str, props_raw) -> dict:
+    """A trashed page as Recently deleted lists it: ``{id, title, folder,
+    deleted_at, deleted_by}`` (the stamps ``ops.trash_page`` wrote)."""
+    try:
+        props = json.loads(props_raw or "{}")
+    except ValueError:
+        props = {}
+    return {"id": page_id, "title": title or "Untitled", "folder": str(props.get("folder") or ""),
+            "deleted_at": str(props.get("deleted_at") or ""),
+            "deleted_by": str(props.get("deleted_by") or "")}
+
+
+def trashed_ids(conn) -> set[str]:
+    """Every block id inside Recently deleted — the trashed pages and their
+    blocks — for the readers that scan blocks across pages (block search,
+    backlinks) and must pass them by. One recursive query over the trash."""
+    return {r[0] for r in conn.execute(
+        """
+        WITH RECURSIVE trashed(id) AS (
+            SELECT id FROM unified_blocks WHERE parent_id = ?
+            UNION ALL
+            SELECT ub.id FROM unified_blocks ub JOIN trashed t ON ub.parent_id = t.id
+        )
+        SELECT id FROM trashed
+        """, (TRASH,))}
 
 
 def assert_block_in_scope(conn, block_id: str, scope) -> None:
@@ -192,12 +302,26 @@ def page_attachment(props: dict | None) -> dict | None:
 def page_for_doc(conn, doc_id: str, columns: str = "id"):
     """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
     whose PDF attachment is ``doc_id``, or None. The one query for "which
-    page carries this PDF" — root pages only, a nested block never counts."""
+    page carries this PDF" — root pages only, a nested block never counts.
+    Should a workspace hold two (an older copy of the data), the oldest
+    answers, every time."""
     if not doc_id:
         return None
     return conn.execute(
         f"SELECT {columns} FROM unified_blocks WHERE parent_id = 'root' "
-        "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
+        "AND json_extract(properties, '$.doc_id') = ? ORDER BY created_at, id LIMIT 1",
+        (doc_id,)).fetchone()
+
+
+def write_lock(conn) -> None:
+    """Take the workspace's write lock now (``BEGIN IMMEDIATE``) unless the
+    connection is inside a transaction already, so a writer's checks and
+    its writes run as one step: two requests racing to create the same page
+    (a double-clicked clip, two tabs) find one page instead of making two,
+    and op batches never share a seq. The next commit (or the connection's
+    ``with`` block) releases it."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
 
 
 def root_pages(conn, folder: str = "") -> dict:
@@ -244,21 +368,31 @@ def create_page(conn, title: str, props: dict | None = None, *,
                 block_id: str = "", position: str = "") -> dict:
     """Insert a new root page and return its block dict. Commits. Last in
     the library unless ``position`` (a sibling key the caller minted) says
-    otherwise; ``block_id`` reuses an id (a page brought back) — its
-    ``deleted_pages`` tombstone, if any, is cleared. The one code path that
-    mints pages: POST /api/pages, POST /api/blocks (parent ``root``) and
-    get_or_create_doc_page all go through it."""
+    otherwise — re-keyed like an op's when another page holds it
+    (``free_position``); ``block_id`` reuses an id (a page brought back) — its
+    ``deleted_pages`` tombstone, if any, is cleared, and a copy of it in
+    Recently deleted gives way, as it would to a hard delete and a
+    re-create (a mirror bringing the page back with its own tree; files
+    only that copy held are left to upload_gc's ``reconcile`` pass). The
+    one code path that mints pages: POST /api/pages, POST /api/blocks
+    (parent ``root``) and get_or_create_doc_page all go through it."""
     block_id = block_id or secrets.token_urlsafe(9)
     title = (title or "").strip() or "Untitled"
     props = dict(props or {})
     now = page_now()
-    new_pos = position or generate_key_between(last_child_position(conn, "root"), None)
+    write_lock(conn)  # the free key and the insert as one step
+    if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?",
+                    (block_id, TRASH)).fetchone():
+        delete_subtree(conn, block_id)
+        conn.execute("DELETE FROM page_ops WHERE page_id = ?", (block_id,))
+    new_pos = free_position(conn, "root", position or None, block_id)
     conn.execute(
         "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
         "VALUES (?, 'root', ?, ?, ?, ?, ?)",
         (block_id, new_pos, title, json.dumps(props), now, now),
     )
     conn.execute("DELETE FROM deleted_pages WHERE page_id = ?", (block_id,))
+    upload_gc.claim(conn, upload_refs(title, props))  # its PDF is in use (again)
     conn.commit()
     return {
         "id": block_id, "parent_id": "root", "position": new_pos,
@@ -285,10 +419,13 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
     workspace, ``actor`` the account); auto_title is
     only set when the page still carries the exact title this call considers
     automatic, so a re-upload can never mark a user's custom title as
-    replaceable by the metadata worker."""
+    replaceable by the metadata worker. Lookup and creation run under the
+    write lock (``write_lock``): one page per PDF, however many requests
+    ask at once. Commits."""
     attachment, auto = attachment_props(doc_id, source_url or "", original_filename or "")
     original = attachment.get("original_filename", "")
     title = original or (default_title or "").strip() or auto
+    write_lock(conn)
     row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
     if row:
         props = json.loads(row[4] or "{}")
@@ -306,6 +443,8 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
             after_commit(ws, conn, apply_ops(conn, row[0], [{"op": "set", "id": row[0], "props": patch}],
                                              actor=actor))
             row = (*row[:4], json.dumps(props), *row[5:])
+        else:
+            conn.commit()  # nothing to write: let go of the lock
         return block_to_dict(row)
     props = {**attachment, "auto_title": title}
     folder = clean_path(folder or "")

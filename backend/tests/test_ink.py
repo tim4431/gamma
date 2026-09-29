@@ -156,28 +156,42 @@ def test_upload_ink_rejects_bad_files(guest):
     assert r.status_code == 400
 
 
-def test_orphan_sweep_keeps_referenced_ink(guest):
-    from gamma.db import ws_uploads_dir
+def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
+    # a dropped ink block's file is recorded as unreferenced and kept, so an
+    # ink undo still finds it
+    from contextlib import closing
+    from gamma import upload_gc
+    from gamma.db import connect_pages_db, ws_uploads_dir
     from gamma.workspaces import default_workspace
+    monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
+    ws = default_workspace(guest_name())
     url = guest.post("/api/upload-ink", json=_ink(strokes=[{"id": "keep", "ch": "xy", "pts": [100, 100]}])).json()["url"]
+    name = url.rsplit("/", 1)[1]
     page = make_page(guest, "Ink page")
     r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
         {"op": "insert", "id": "inkblk1", "parent": page["id"], "content": "caption",
          "props": {"ink_url": url, "pdf_page": 1}},
     ]})
     assert r.status_code == 200, r.text
-    # deleting an unrelated block sweeps orphans (grace is 0 in tests): the referenced file stays
-    r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
-        {"op": "insert", "id": "inkblk2", "parent": page["id"], "content": "x", "props": {}},
-        {"op": "delete", "id": "inkblk2"},
-    ]})
-    assert r.status_code == 200, r.text
-    uploads = ws_uploads_dir(default_workspace(guest_name()))
-    assert (uploads / url.rsplit("/", 1)[1]).is_file()
-    # dropping the block frees the file
+    # a full reconciliation sees the ink_url reference: the file is in use
+    assert name not in upload_gc.reconcile(ws)["recorded"]
+    # dropping the block leaves the file where it was, recorded as unreferenced
     r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [{"op": "delete", "id": "inkblk1"}]})
     assert r.status_code == 200, r.text
-    assert not (uploads / url.rsplit("/", 1)[1]).is_file()
+    upload_gc.flush(ws)
+    uploads = ws_uploads_dir(ws)
+    assert (uploads / name).is_file()
+    with closing(connect_pages_db(ws)) as conn:
+        assert conn.execute("SELECT 1 FROM upload_orphans WHERE name = ?", (name,)).fetchone()
+    # the undo brings the block back, and the file is in use again
+    r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "inkblk1", "parent": page["id"], "content": "caption",
+         "props": {"ink_url": url, "pdf_page": 1}},
+    ]})
+    assert r.status_code == 200, r.text
+    with closing(connect_pages_db(ws)) as conn:
+        assert not conn.execute("SELECT 1 FROM upload_orphans WHERE name = ?", (name,)).fetchone()
+    assert guest.get(url).status_code == 200
 
 
 # --- PDF interchange ------------------------------------------------------------------

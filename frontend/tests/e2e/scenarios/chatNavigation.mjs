@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
-  const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
+  const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
   const target = await alice.api("/api/pages", { method: "POST", body: { title: "Linked paper" } });
   const upload = await alice.upload("/api/uploads", makePdf([["Chat navigation paper"]]), "chat-navigation.pdf", "application/pdf");
@@ -195,6 +195,182 @@ export async function chatNavigationScenarios(env) {
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("still going. Done."));
       assertEq(await stop.count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: two tabs asking in one conversation keep each other's messages", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const tabs = [];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
+        await ctx.addInitScript(() => {
+          localStorage.setItem("gamma-ai-login-check", "off");
+          const fetch = window.fetch.bind(window);
+          window.fetch = (input, init) => {
+            if (String(input).endsWith("/api/ai/chat")) {
+              return Promise.resolve(new Response(new ReadableStream({
+                start(controller) {
+                  window.chatStream = {
+                    push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                    finish: () => controller.close(),
+                  };
+                },
+              }), { headers: { "Content-Type": "application/x-ndjson" } }));
+            }
+            return fetch(input, init);
+          };
+        });
+        tabs.push({ ctx, page: await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`) });
+      }
+      for (const { page } of tabs) {
+        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+        await page.waitForLoadState("networkidle");
+      }
+      // Both tabs show the empty conversation; A asks and its answer is
+      // saved, then B — still on its empty copy — asks too.
+      const ask = async ({ page }, question, answer) => {
+        const input = page.getByRole("combobox", { name: "Message AI" });
+        await input.fill(question);
+        await input.press("Enter");
+        await page.waitForFunction(() => !!window.chatStream);
+        await page.evaluate((text) => { window.chatStream.push({ delta: text }); window.chatStream.finish(); }, answer);
+      };
+      const stored = async () => ((await alice.api(`/api/chats/${pdf.id}`)).messages || []).map((m) => m.text);
+      await ask(tabs[0], "Question from tab A", "Answer for tab A.");
+      await until(async () => (await stored()).includes("Answer for tab A."), { what: "tab A's reply saved" });
+      await ask(tabs[1], "Question from tab B", "Answer for tab B.");
+      await until(async () => {
+        const texts = await stored();
+        return ["Question from tab A", "Answer for tab A.", "Question from tab B", "Answer for tab B."]
+          .every((text) => texts.includes(text));
+      }, { what: "both tabs' messages stored" });
+      await until(async () => (await tabs[1].page.locator(".chatPanel").innerText()).includes("Answer for tab A."),
+        { what: "tab B shows tab A's messages" });
+      assertEq(await tabs[1].page.getByTestId("chat-save-error").count(), 0, "nothing is left unsaved");
+      for (const { page } of tabs) assertNoProblems(page);
+    } finally {
+      for (const { ctx } of tabs) await ctx.close();
+    }
+  });
+
+  // A tab back in focus reads the stored conversation again, and "New chat"
+  // in one tab wins over a tab still holding the old conversation: that
+  // tab's next question starts the new conversation instead of bringing the
+  // archived one back (chatSession.mergeChats).
+  await step("chat navigation: a focused tab shows the other tab's answer; New chat in one tab wins over a stale tab", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${encodeURIComponent(pdf.id)}`)).sessions.length;
+    const historyBefore = await historyCount();
+    const tabs = [];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
+        await ctx.addInitScript(() => {
+          localStorage.setItem("gamma-ai-login-check", "off");
+          const fetch = window.fetch.bind(window);
+          window.fetch = (input, init) => {
+            if (String(input).endsWith("/api/ai/chat")) {
+              return Promise.resolve(new Response(new ReadableStream({
+                start(controller) {
+                  window.chatStream = {
+                    push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                    finish: () => controller.close(),
+                  };
+                },
+              }), { headers: { "Content-Type": "application/x-ndjson" } }));
+            }
+            return fetch(input, init);
+          };
+        });
+        tabs.push({ ctx, page: await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`) });
+      }
+      for (const { page } of tabs) {
+        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+        await page.waitForLoadState("networkidle");
+      }
+      const ask = async ({ page }, question, answer) => {
+        await page.evaluate(() => { window.chatStream = null; });
+        const input = page.getByRole("combobox", { name: "Message AI" });
+        await input.fill(question);
+        await input.press("Enter");
+        await page.waitForFunction(() => !!window.chatStream);
+        await page.evaluate((text) => { window.chatStream.push({ delta: text }); window.chatStream.finish(); }, answer);
+      };
+      const stored = async () => ((await alice.api(`/api/chats/${pdf.id}`)).messages || []).map((m) => m.text);
+      const panel = ({ page }) => page.locator(".chatPanel").innerText();
+      const focus = ({ page }) => page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      const [a, b] = tabs;
+      await ask(a, "First question in tab A", "First answer in tab A.");
+      await until(async () => (await stored()).includes("First answer in tab A."), { what: "tab A's reply saved" });
+      await focus(b);
+      await until(async () => (await panel(b)).includes("First answer in tab A."), { what: "tab B, back in focus, shows it" });
+
+      await a.page.getByRole("button", { name: "New chat", exact: true }).click();
+      await until(async () => (await stored()).length === 0, { what: "the conversation archived" });
+      // B still shows the old conversation and asks in it.
+      await ask(b, "Question after the new chat", "Answer after the new chat.");
+      await until(async () => JSON.stringify(await stored()) === JSON.stringify(["Question after the new chat", "Answer after the new chat."]),
+        { what: "the stale tab's question starts the new conversation" });
+      await until(async () => !(await panel(b)).includes("First answer in tab A."), { what: "tab B drops the archived turns" });
+      assertEq(await historyCount(), historyBefore + 1, "the old conversation is in history once");
+      await focus(a);
+      await until(async () => (await panel(a)).includes("Answer after the new chat."), { what: "tab A, back in focus, shows it" });
+      for (const tab of tabs) {
+        assertEq(await tab.page.getByTestId("chat-save-error").count(), 0, "nothing is left unsaved");
+        assertNoProblems(tab.page);
+      }
+    } finally {
+      for (const { ctx } of tabs) await ctx.close();
+    }
+  });
+
+  // Chats are the workspace's and only its editors write them: a viewer asks
+  // the AI too, but the conversation stays in the tab (ChatDock's canSave,
+  // App's chat session saving nothing).
+  await step("chat navigation: a workspace viewer's chat is not saved — the tag shows, no History, New chat stays in the tab", async () => {
+    const out = server.manage("create-workspace", "Chat readers", "alice", "shared");
+    const labId = (out.match(/workspace (\S+)/) || [])[1];
+    assert(labId, `shared workspace id from: ${out}`);
+    server.manage("set-member", labId, "bob", "viewer");
+    const owner = Object.assign(Object.create(Object.getPrototypeOf(alice)), alice, { ws: labId });
+    const pg = await owner.api("/api/pages", { method: "POST", body: { title: "Read-only chat page" } });
+    const kept = [{ role: "user", text: "The owner's question" }, { role: "ai", text: "The owner's stored answer." }];
+    await owner.api(`/api/chats/${pg.id}`, { method: "PUT", body: { messages: kept } });
+    const storedTexts = async () => ((await owner.api(`/api/chats/${pg.id}`)).messages || []).map((m) => m.text).join(" | ");
+    const ctx = await bob.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/chat", (route) => route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"An answer for the viewer."}\n' }));
+    const writes = []; // every chat write the viewer's tab sends
+    ctx.on("request", (r) => {
+      if (r.method() !== "GET" && /\/api\/chat(s|-history)\b/.test(r.url())) writes.push(`${r.method()} ${r.url()}`);
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${labId}&page=${pg.id}`);
+    try {
+      const panel = page.locator(".chatPanel");
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await until(async () => (await panel.innerText()).includes("The owner's stored answer."), { what: "the stored conversation shows" });
+      await page.locator(".uiTag", { hasText: "Not saved" }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Chat history", exact: true }).count(), 0, "no History for a viewer");
+      await input.fill("A viewer's question");
+      await input.press("Enter");
+      await until(async () => (await panel.innerText()).includes("An answer for the viewer."), { what: "the reply" });
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()), { what: "the reply ends" });
+      assertEq(await page.getByTestId("chat-save-error").count(), 0, "no save error: nothing was tried");
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await until(async () => !(await panel.innerText()).includes("The owner's stored answer."), { what: "New chat starts over in the tab" });
+      assertEq(await storedTexts(), "The owner's question | The owner's stored answer.", "the stored conversation is untouched");
+      assertEq(writes.join("\n"), "", "no chat save or archive was sent");
+      // The server's copy is what a reload shows.
+      await page.reload();
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("The owner's stored answer."), { what: "the stored conversation after a reload" });
+      assert(!(await page.locator(".chatPanel").innerText()).includes("An answer for the viewer."), "the viewer's exchange is gone");
+      assertEq(writes.join("\n"), "", "still nothing written");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -431,6 +607,206 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
+  // card opens the page through /go, follows the request on the server (the
+  // Connector taking the tab shows), takes a PDF dropped on it — never the
+  // library underneath — and the chat continues once, by itself. The
+  // request's endpoints are faked here; the server's are in
+  // backend/tests/test_fetch_handoff.py.
+  await step("chat navigation: a blocked fetch's card gets the PDF from the browser and the chat continues", async () => {
+    const HID = "e2eHandoffRequest01";
+    const handoff = { id: HID, host: "www.science.org", wall: "captcha", source: "doi:10.1126/e2e.handoff" };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { id: "handoff-q", role: "user", text: "Read the Science paper" },
+      { id: "handoff-a", role: "ai", text: "Science asked for a bot check, so I could not download it.",
+        actions: [{ kind: "fetch", error: true, summary: "Needs your browser: www.science.org", tool: "fetch_paper",
+          args: { source: handoff.source }, result: "error: blocked", handoff }] },
+    ] } });
+    let request = { ...handoff, url: "https://www.science.org/doi/10.1126/e2e.handoff", pdf_url: "", detail: "",
+      status: "waiting", watched: false, pages: 0, from_url: "" };
+    const uploads = [], prompts = [], libraryUploads = [];
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    // Gamma Connector's content script (extension/bridge.js), answering the
+    // card's probe the way it does when it can serve the request — once
+    // `connectorOn` is set; until then the page hears nothing, like a browser
+    // without it (or with a version from before chat fetching). It takes the
+    // card's open / show / close too, noting each in `connectorAsked`.
+    await ctx.addInitScript(() => {
+      window.connectorAsked = [];
+      window.addEventListener("message", (e) => {
+        const d = e.data;
+        if (!window.connectorOn || d?.source !== "gamma-app") return;
+        if (d.type === "connector-probe") {
+          window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+        } else if (d.type === "connector-tab") {
+          window.connectorAsked.push({ do: d.do, background: !!d.background });
+          const status = { open: "opened", show: "shown", close: "closed" }[d.do];
+          window.postMessage({ source: "gamma-connector", type: "connector-tab", id: d.id, do: d.do, status }, location.origin);
+        }
+      });
+    });
+    await ctx.route(`**/api/ai/handoffs/${HID}**`, async (route) => {
+      const req = route.request();
+      const path = new URL(req.url()).pathname;
+      if (path.endsWith("/go")) return route.fulfill({ contentType: "text/html", body: "<title>Opening</title>" });
+      if (path.endsWith("/pdf")) {
+        uploads.push(req.postDataBuffer());
+        request = { ...request, status: "done", pages: 3 };
+      }
+      return route.fulfill({ json: request });
+    });
+    await ctx.route("**/api/ai/chat", (route) => {
+      prompts.push(route.request().postDataJSON().prompt);
+      return route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"Reading the delivered PDF now."}\n' });
+    });
+    ctx.on("request", (r) => { if (r.method() === "POST" && /\/api\/uploads\b/.test(r.url())) libraryUploads.push(r.url()); });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const card = page.locator(".chatHandoff");
+      await card.getByText("www.science.org asked for a CAPTCHA or bot check").waitFor();
+      assert((await card.innerText()).includes(handoff.source), "the card names the paper");
+      await card.getByText("Gamma Connector isn't answering in this browser").waitFor({ timeout: 8000 });
+      assert((await card.innerText()).includes(`set it to ${server.base}`), "it says what address to set");
+      // The Connector installed (or reloaded) meanwhile: coming back asks again.
+      await page.evaluate(() => { window.connectorOn = true; window.dispatchEvent(new Event("focus")); });
+      await card.getByText("Gamma Connector sends the PDF back from that tab by itself.").waitFor();
+
+      // The Connector opens the publisher's tab itself: no Gamma page on the way.
+      const pagesBefore = ctx.pages().length;
+      await card.getByRole("button", { name: "Open www.science.org" }).click();
+      await card.getByText("Finish in the tab that opened").waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: false }]));
+      assertEq(ctx.pages().length, pagesBefore, "the page opened no window of its own");
+
+      // The Connector took the tab: the card says so on its next look, and
+      // brings that tab forward on request.
+      request = { ...request, watched: true };
+      await card.getByText("Gamma Connector is watching the tab").waitFor({ timeout: 8000 });
+      await card.getByRole("button", { name: "Show the tab" }).click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
+        { what: "the card asks to show the tab" });
+
+      // A PDF dropped on the card goes to the request, not into the library.
+      const drop = await page.evaluateHandle((bytes) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array(bytes)], "paper.pdf", { type: "application/pdf" }));
+        return dt;
+      }, [...makePdf([["Delivered handoff paper"]])]);
+      await card.dispatchEvent("dragover", { dataTransfer: drop });
+      await card.dispatchEvent("drop", { dataTransfer: drop });
+      await card.getByText("Got the PDF from your browser (3 pages).").waitFor();
+      assertEq(uploads.length, 1, "one upload to the request");
+      assert(uploads[0].includes(Buffer.from("%PDF")), "the upload carries the PDF");
+      assertEq(libraryUploads.length, 0, "the page underneath did not import the drop");
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
+        { what: "the Connector lets its tab go" });
+
+      await until(() => prompts.length === 1, { what: "the chat continues by itself" });
+      assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("Reading the delivered PDF now."));
+
+      // A reload shows the settled card and sends nothing again.
+      await page.reload();
+      await page.locator(".chatHandoff.done").waitFor();
+      await page.waitForTimeout(500);
+      assertEq(prompts.length, 1, "no second continuation");
+      assertEq(await page.locator(".chatHandoffContinue").count(), 0, "the conversation moved on: no Continue");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  await step("chat navigation: in the background the Connector takes a blocked fetch unasked; a reply's papers save to the library", async () => {
+    const HID = "e2eHandoffBackground1";
+    const handoff = { id: HID, host: "www.worldscientific.com", wall: "captcha", source: "doi:10.1142/e2e.bg" };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { id: "bg-q", role: "user", text: "Find papers on proximity junctions" },
+      { id: "bg-a", role: "ai",
+        text: "I read [Proximity effect in superconductors](https://arxiv.org/abs/2301.01234); see also "
+          + "[A junction review](https://doi.org/10.1234/e2e.review). World Scientific asked for a bot check.",
+        actions: [
+          { kind: "fetch", tool: "fetch_paper", summary: "Fetched “2301.01234”", args: { source: "arXiv:2301.01234" },
+            result: "Fetched PDF", url: "https://arxiv.org/pdf/2301.01234", title: "", pdf: true },
+          { kind: "fetch", error: true, summary: "Needs your browser: www.worldscientific.com", tool: "fetch_paper",
+            args: { source: handoff.source }, result: "error: blocked", handoff },
+        ] },
+    ] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), fetchInBackground: true } } });
+    let request = { ...handoff, url: "https://www.worldscientific.com/doi/10.1142/e2e.bg", pdf_url: "", detail: "",
+      status: "waiting", watched: false, note: "", background: false, pages: 0, from_url: "" };
+    const clips = [];
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.addInitScript(() => {
+      window.connectorAsked = [];
+      window.addEventListener("message", (e) => {
+        const d = e.data;
+        if (d?.source !== "gamma-app") return;
+        if (d.type === "connector-probe") {
+          window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+        } else if (d.type === "connector-tab") {
+          window.connectorAsked.push({ do: d.do, background: !!d.background });
+          const status = { open: "opened", show: "shown", close: "closed" }[d.do];
+          window.postMessage({ source: "gamma-connector", type: "connector-tab", id: d.id, do: d.do, status }, location.origin);
+        }
+      });
+    });
+    await ctx.route(`**/api/ai/handoffs/${HID}**`, (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      return route.fulfill({ json: request });
+    });
+    // The server's side of saving is POST /api/clip (tests/test_clip.py): here it only records.
+    await ctx.route("**/api/clip", (route) => {
+      const body = route.request().postDataJSON();
+      clips.push(body);
+      return route.fulfill({ json: { block_id: `saved-${clips.length}`, doc_id: `doc-${clips.length}`,
+        title: body.title, existed: false, folder: body.folder, labels: [], open_url: "/" } });
+    });
+    await ctx.route("**/api/library/preview*", (route) => route.fulfill({ status: 404, json: { detail: "no registry record" } }));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const card = page.locator(".chatHandoff");
+      await card.getByText("www.worldscientific.com asked for a CAPTCHA or bot check").waitFor();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).length > 0,
+        { what: "the card hands the request to the Connector without a click" });
+      assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
+      request = { ...request, watched: true, background: true };
+      await card.getByText("Gamma Connector is getting it in a minimized window").waitFor({ timeout: 8000 });
+      // The page wants the user: the card says so and offers the tab.
+      request = { ...request, note: "check" };
+      await card.getByText("The site is showing a bot check or CAPTCHA").waitFor({ timeout: 8000 });
+      await card.locator("button.primary", { hasText: "Show the tab" }).click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
+        { what: "the card asks to show the tab" });
+
+      // The reply's papers: the one it read, the blocked one, the one it links.
+      const pill = page.getByRole("button", { name: /3 papers in this reply · Save to library/ });
+      await pill.click();
+      const list = page.getByRole("group", { name: "Papers in this reply" });
+      await list.getByText("Proximity effect in superconductors").waitFor();
+      await list.getByRole("checkbox", { name: "Proximity effect in superconductors" }).check();
+      await list.getByRole("checkbox", { name: "A junction review" }).check();
+      await list.getByRole("button", { name: "Save 2 papers to library" }).click();
+      await until(async () => (await list.getByText("Saved", { exact: true }).count()) === 2, { what: "both rows say Saved" });
+      assertEq(JSON.stringify(clips.map((c) => [c.arxiv_id, c.doi, c.pdf_url, c.source_url, c.title])), JSON.stringify([
+        ["2301.01234", "", "https://arxiv.org/pdf/2301.01234", "https://arxiv.org/abs/2301.01234", "Proximity effect in superconductors"],
+        ["", "10.1234/e2e.review", "", "https://doi.org/10.1234/e2e.review", "A junction review"],
+      ]));
+      assert(clips.every((c) => c.folder === "" && c.save_copy === true && !c.doc_id), "into the library root, stored");
+      assertNoProblems(page, [/api\/library\/(lookup|preview)/, /status of 404/]);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });

@@ -10,12 +10,26 @@ services:
       # a real folder next to this file instead, use a bind mount:
       #   - ./data:/data
       - gamma-data:/data
-    # With a bind mount, set these to your host user's ids (`id -u` / `id -g`)
-    # so the files Gamma creates belong to you instead of root:
     # environment:
-    #   PUID: 1000
-    #   PGID: 1000
+      # With a bind mount, set these to your host user's ids (`id -u` / `id -g`)
+      # so the files Gamma creates belong to you instead of root:
+      # PUID: 1000
+      # PGID: 1000
+      # Behind a reverse proxy (Caddy, nginx for a domain with TLS), the
+      # proxy's address, so Gamma believes its X-Forwarded-For and rate
+      # limits count each visitor instead of the proxy. For a proxy container
+      # in this file, the subnet of the network below (pinned, so it is
+      # known). Leave it unset when nothing sits in front of the port.
+      # FORWARDED_ALLOW_IPS: 10.203.0.0/24
     restart: unless-stopped
 
 volumes:
   gamma-data:
+
+# With a proxy container next to gamma, pin the compose network's subnet and
+# name it in FORWARDED_ALLOW_IPS above:
+# networks:
+#   default:
+#     ipam:
+#       config:
+#         - subnet: 10.203.0.0/24

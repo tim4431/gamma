@@ -249,7 +249,9 @@ async function main() {
       const dir = await hook(app, (s, id) => s.registry.get(id).dataDir, ids.alpha);
       const wsDir = fs.readdirSync(path.join(dir, 'workspaces'))[0];
       // A new account also starts with the seeded Welcome PDF (gamma/seed.py).
-      alphaUploads = fs.readdirSync(path.join(dir, 'workspaces', wsDir, 'uploads'));
+      // Stored files only: not the `.partial/` directory of in-flight writes.
+      alphaUploads = fs.readdirSync(path.join(dir, 'workspaces', wsDir, 'uploads'), { withFileTypes: true })
+        .filter((e) => e.isFile() && !e.name.startsWith('.')).map((e) => e.name);
       const mine = alphaUploads.find((f) => sourceUrl.endsWith('/' + f));
       assert(mine, 'the upload is on disk: ' + alphaUploads.join(', '));
       return `${sourceUrl} → ${mine}`;

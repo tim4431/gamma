@@ -48,6 +48,7 @@ export default function SearchPanel({
   const [labels, setLabels] = useState([]); // confirmed filter chips
   const [sugIdx, setSugIdx] = useState(0);
   const [noteHits, setNoteHits] = useState([]); // /api/block-search
+  const [notesPartial, setNotesPartial] = useState(false); // its scan stopped at the server's time budget
   const [libHits, setLibHits] = useState([]);   // /api/pdf-search (FTS over all papers)
   const [libIndexing, setLibIndexing] = useState(0);
   const [pdfMatches, setPdfMatches] = useState([]); // pdf.js matches in the open document
@@ -150,15 +151,17 @@ export default function SearchPanel({
   // pinned searches follow navigation)
   useEffect(() => {
     if (!q || !(open || pinned)) {
-      setNoteHits([]); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
+      setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
       return;
     }
     const timer = setTimeout(() => {
       setBusy(true);
       const flags = `&case=${caseSensitive ? 1 : 0}&whole=${wholeWord ? 1 : 0}`;
+      // `partial`: the server's scan ran out of time, so the notes found
+      // are only some of them (the notes group says so).
       const notesReq = apiJson(`${API}/block-search?q=${encodeURIComponent(q)}&limit=20${flags}`)
-        .then((d) => setNoteHits(d.blocks || []))
-        .catch(() => setNoteHits([]));
+        .then((d) => { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); })
+        .catch(() => { setNoteHits([]); setNotesPartial(false); });
       // Full-text over every paper's PDF (server-side FTS index; normalized
       // word matching — the Aa/ab toggles only apply to notes and the
       // open document)
@@ -270,17 +273,25 @@ export default function SearchPanel({
   const linkHits = scopedNotes.filter((r) => r.kind === "link" && !inPage(r));
   const libElsewhere = libHits.filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
   const showPdfMatches = inScope(focusedBlockId);
+  // An incomplete notes scan is no "No matches.": the notes group says why.
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
-    || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length;
+    || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
+    || notesPartial;
+  // What the details list besides the open PDF's matches (the compact bar's
+  // summary line).
+  const listed = titleMatches.length + titlesExtra.length + notesHere.length + notesElsewhere.length
+    + linkHits.length + labelMatches.length + libElsewhere.length;
 
   // One switch for the whole detail area (all the result lists). Its default
   // comes from Settings → Search via the detailsDefault prop (App owns the
-  // per-place preference: home expanded unless turned off — with no open PDF
-  // a compact find bar shows nothing — paper view compact unless turned on).
+  // per-place preference: home expanded unless turned off, paper view
+  // compact unless turned on). Compact, the bar keeps the open PDF's match
+  // count and one line counting the rest, which expands the details.
   // Re-applied each time the panel opens; the toggle button then only affects
   // the current panel session.
   const [showDetails, setShowDetails] = useState(detailsDefault);
-  useEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
+  // (Before paint: the popover never shows last session's state first.)
+  useLayoutEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   // Result rows: the page's kind glyph and title, then one line of text,
   // the query marked in both (search/snippets.js maps each match back
@@ -423,6 +434,18 @@ export default function SearchPanel({
           <div className="searchResults">
             {busy ? <div className="searchHint">{t("Searching…")}</div> : null}
             {!busy && q && !anything ? <div className="searchHint">{t("No matches.")}</div> : null}
+            {/* The compact find bar still says what the details hold (the
+                open PDF's matches are the count beside the box), and that a
+                cut-short notes scan found only some. */}
+            {!showDetails && !busy && q && listed ? (
+              <button type="button" className="searchResult" onClick={() => setShowDetails(true)}
+                title={t("Expand result details: titles, notes, and other pages")}>
+                <span className="searchResultText">{showPdfMatches && pdfMatches.length
+                  ? tn("{n} more result — show it", "{n} more results — show them", listed)
+                  : tn("{n} result — show it", "{n} results — show them", listed)}</span>
+              </button>
+            ) : null}
+            {!showDetails && !busy && q && notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
             {showDetails ? (
               <>
                 {labels.length ? (
@@ -449,7 +472,8 @@ export default function SearchPanel({
                     <span className="searchResultText">…{marked(m.snippet)}…</span>
                   </button>
                 ))}
-                {notesElsewhere.length ? section(notesElsewhereLabel, notesElsewhere.length) : null}
+                {notesElsewhere.length || notesPartial ? section(notesElsewhereLabel, notesElsewhere.length) : null}
+                {notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
                 {notesElsewhere.map(noteRow)}
                 {linkHits.length ? section(t("Reference links"), linkHits.length) : null}
                 {linkHits.map(noteRow)}

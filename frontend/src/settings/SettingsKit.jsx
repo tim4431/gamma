@@ -385,10 +385,12 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
   const [draft, setDraft] = React.useState(null); // non-null only while editing deferred
   // The draft stays on screen until the commit settles (an async save), then
   // the stored value shows — the parent never needs a `key` remount to reset
-  // the box, which would drop a value typed while the save was landing.
+  // the box, which would drop a value typed while the save was landing. A
+  // value typed after this commit started stays: it is the next commit.
   const commit = async () => {
     if (draft == null) return;
-    try { await onCommit(draft); } finally { setDraft(null); }
+    const sent = draft;
+    try { await onCommit(sent); } finally { setDraft((now) => (now === sent ? null : now)); }
   };
   return (
     <span className="unitInput">

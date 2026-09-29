@@ -1,5 +1,6 @@
 """Pure-function units: DOI candidate extraction, BibTeX building, FTS query
-quoting, image validation, PDF annotation extraction."""
+quoting, image validation, PDF annotation extraction, stored times, the
+workspace directories."""
 
 import io
 
@@ -57,7 +58,7 @@ def test_fuzzy_pattern_separator_tolerance():
     assert fuzzy_pattern("Qubit").search("QUBIT")                       # case-insensitive default
     assert not fuzzy_pattern("qubit", case=True).search("QUBIT")
     assert not fuzzy_pattern("fine", whole=True).search("refined")
-    assert fuzzy_pattern("(", regex=True) is None                       # invalid regex reported
+    assert fuzzy_pattern("(").search("a (b)")                           # the query is text, never a pattern
     assert fuzzy_pattern("   ") is None
 
 
@@ -298,3 +299,22 @@ def test_selection_crops_render_unreliable_regions(monkeypatch):
     # A tiny box (one symbol) is grown to a readable strip of its line.
     page_no, (x0, y0, x1, y1) = rendered[0]
     assert page_no == 3 and x1 - x0 >= 0.3 and y1 - y0 >= 0.05
+
+
+def test_stored_times_read_back_and_unreadable_ones_are_none():
+    from datetime import datetime, timezone
+
+    from gamma.db import format_stamp, page_now, parse_stamp
+    now = page_now()
+    assert format_stamp(parse_stamp(now)) == now
+    assert parse_stamp("2026-01-02T03:04:05.000006Z") == datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+    assert [parse_stamp(bad) for bad in ("", "garbage", None, 12)] == [None] * 4
+
+
+def test_workspace_ids_are_the_directories_an_id_can_name(data_dir):
+    from gamma.db import workspace_ids
+    assert workspace_ids() == []
+    for name in ("wsB", "wsA", "not a workspace", ".partial"):
+        (data_dir / "workspaces" / name).mkdir(parents=True)
+    (data_dir / "workspaces" / "wsFile").write_text("a file, not a workspace")
+    assert workspace_ids() == ["wsA", "wsB"]

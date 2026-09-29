@@ -20,8 +20,10 @@
 //   delete — the top-most removed subtrees, last (so a block that escaped
 //            a deleted parent is moved out before the parent goes).
 // applyOps is idempotent: inserting a known id re-parents it, moving or
-// deleting an unknown one is a no-op; siblings stay sorted by key.
+// deleting an unknown one is a no-op, and a parent the tree lacks leaves
+// the block where it is (a new one stays out); siblings stay sorted by key.
 import { generateKeyBetween } from "fractional-indexing";
+import { findBlock } from "./blockModel.js";
 
 const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
@@ -189,9 +191,13 @@ function insertSorted(siblings, node, pos) {
 
 function placeUnder(tree, parent, node, pageId, pos) {
   if (parent === pageId) return insertSorted(tree, node, pos);
-  const out = findAndUpdate(tree, parent, (p) => ({ ...p, children: insertSorted(p.children, node, pos) }));
-  return out; // unknown parent: unchanged (the op is for a subtree we don't hold)
+  return findAndUpdate(tree, parent, (p) => ({ ...p, children: insertSorted(p.children, node, pos) }));
 }
+
+// A parent this tree lacks (an undo snapshot taken before the parent was
+// made, a subtree we don't hold): a block already here stays where it is —
+// it must never vanish with the op — and a new one stays out.
+const placeable = (tree, parent, pageId) => parent === pageId || !!findBlock(tree || [], parent);
 
 export function applyOps(tree, ops, pageId, pos) {
   let out = tree;
@@ -204,8 +210,12 @@ export function applyOps(tree, ops, pageId, pos) {
         ...(op.props ? { properties: applyPatch(b.properties, op.props) } : {}),
       }));
     } else if (op.op === "insert") {
-      pos.set(op.id, op.position);
       const ex = extract(out, op.id);
+      if (!placeable(ex ? ex.rest : out, op.parent, pageId)) {
+        if (ex) out = findAndUpdate(out, op.id, (b) => ({ ...b, content: op.content ?? "", properties: op.props || {} }));
+        continue;
+      }
+      pos.set(op.id, op.position);
       const node = ex
         ? { ...ex.node, content: op.content ?? "", properties: op.props || {}, position: op.position }
         : { id: op.id, content: op.content ?? "", properties: op.props || {}, position: op.position,
@@ -213,7 +223,7 @@ export function applyOps(tree, ops, pageId, pos) {
       out = placeUnder(ex ? ex.rest : out, op.parent, node, pageId, pos);
     } else if (op.op === "move") {
       const ex = extract(out, op.id);
-      if (!ex) continue;
+      if (!ex || !placeable(ex.rest, op.parent, pageId)) continue;
       pos.set(op.id, op.position);
       out = placeUnder(ex.rest, op.parent, { ...ex.node, position: op.position }, pageId, pos);
     } else if (op.op === "delete") {
@@ -224,9 +234,28 @@ export function applyOps(tree, ops, pageId, pos) {
   return out;
 }
 
+// Whether another client's `ops` move the row of block `id` in the DOM:
+// the block or an ancestor is moved (re-parented rows remount, so an open
+// editor in it unmounts), or a sibling list holding one of them is
+// reordered (React may move our row's node). Either blurs the editor open
+// on it, which the caller must not take for the person leaving it.
+export function displacedRow(tree, ops, id, pageId) {
+  if (!id || !(ops || []).some((op) => op.op === "move" || op.op === "insert")) return false;
+  const index = indexTree(tree, pageId);
+  const lineage = new Set(), lists = new Set();
+  for (let at = index.get(id); at; at = index.get(at.parent)) {
+    lineage.add(at.node.id);
+    lists.add(at.parent);
+  }
+  if (!lineage.size) return false;
+  return ops.some((op) => (op.op === "move" || op.op === "insert") && index.has(op.id)
+    && (lineage.has(op.id) || (op.parent === index.get(op.id).parent && lists.has(op.parent))));
+}
+
 // Coalesce a queue of ops: a `set` for a block folds into the last `set`
 // for the same block when nothing structural about it sits in between.
-// Returns true when the op was merged (nothing new appended).
+// Returns the queued op it was folded into (as it was before), or null when
+// it was appended.
 export function pushOp(queue, op) {
   if (op.op === "set") {
     for (let i = queue.length - 1; i >= 0; i--) {
@@ -242,24 +271,9 @@ export function pushOp(queue, op) {
       }
       if (op.props) merged.props = { ...(q.props || {}), ...op.props };
       queue[i] = merged;
-      return true;
+      return q;
     }
   }
   queue.push(op);
-  return false;
-}
-
-// A refetch under a live page: the block being edited keeps ITS text on
-// the freshly fetched tree — the editor is the source of truth for it, and
-// the next commit sends that text on (the fresh tree is the new base).
-export function keepEditingText(fresh, current, editingId) {
-  if (!editingId) return fresh;
-  let text;
-  const find = (list) => { for (const n of list || []) { if (n.id === editingId) { text = n.content; return true; } if (find(n.children)) return true; } return false; };
-  if (!find(current)) return fresh;
-  const apply = (list) => (list || []).map((n) => {
-    const node = n.id === editingId ? { ...n, content: text } : n;
-    return n.children?.length ? { ...node, children: apply(n.children) } : node;
-  });
-  return apply(fresh);
+  return null;
 }

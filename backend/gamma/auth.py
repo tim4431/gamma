@@ -3,7 +3,8 @@
 Two questions every endpoint answers through this module:
 
 - WHO is asking — ``request.state.user`` from the session cookie
-  (``require_user`` for identity-only endpoints: session, AI keys, admin).
+  (``require_user`` for account-level endpoints: session, AI keys, prefs,
+  admin — an integration token is refused there).
 - WHICH WORKSPACE the data comes from — ``require_ws`` (session member of
   the workspace named by ``?ws=`` / ``X-Gamma-Workspace`` / the account's
   default), ``resolve_ws`` (a ``?share=`` token's workspace, else
@@ -21,12 +22,15 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
+import anyio
+from anyio.lowlevel import RunVar
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import guests, publisher_sessions
 from .blocks_store import page_root_id
 from .config import USERS_DB
+from .db import BUSY_TIMEOUT_S, Connection, parse_stamp
 from .foldertags import clean_path, parse_tags, path_within
 from .logbuf import log
 
@@ -39,9 +43,8 @@ _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
 def _session_expired(created_at: str) -> bool:
     """True if a session row is older than SESSION_MAX_AGE. Unparseable
     timestamps are treated as expired (fail closed)."""
-    try:
-        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+    created = parse_stamp(created_at)
+    if created is None:
         return True
     return (datetime.now(timezone.utc) - created).total_seconds() > SESSION_MAX_AGE
 
@@ -138,6 +141,13 @@ _SESSION_SQL = ("SELECT u.username, u.is_guest, u.is_admin, u.default_workspace,
                 "FROM sessions s JOIN users u ON s.username = u.username WHERE s.token = ?")
 
 
+def _users_db() -> Connection:
+    """A plain connection to users.db for the per-request reads here (no
+    schema statements — every request pays for this one), closed by its
+    ``with`` block."""
+    return sqlite3.connect(str(USERS_DB), timeout=BUSY_TIMEOUT_S, factory=Connection)
+
+
 def session_lookup(token: str | None):
     """``(username, is_guest, is_admin, default_workspace)`` for a live
     session token, else None (an expired guest account included). Read-only
@@ -146,16 +156,51 @@ def session_lookup(token: str | None):
     expired guest."""
     if not token:
         return None
-    with sqlite3.connect(str(USERS_DB)) as conn:
+    with _users_db() as conn:
         row = conn.execute(_SESSION_SQL, (token,)).fetchone()
     if not row or _session_expired(row[4]) or (row[1] and guests.is_expired(row[5])):
         return None
     return row[0], bool(row[1]), bool(row[2]) and not row[1], row[3] or ""
 
 
+def _middleware_session(token: str) -> tuple[tuple | None, str]:
+    """The middleware's read of a session cookie: ``(row, expired_guest)`` —
+    ``row`` the live session's ``(username, is_guest, is_admin,
+    default_workspace, …)``, else None; ``expired_guest`` the account of a
+    guest past its lifetime. An expired session row is deleted here:
+    server-side expiry, so a stolen token can't outlive its window even
+    though the browser cookie's Max-Age is long."""
+    with _users_db() as conn:
+        row = conn.execute(_SESSION_SQL, (token,)).fetchone()
+        if row and _session_expired(row[4]):
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            return None, ""
+    if row and row[1] and guests.is_expired(row[5]):
+        return None, row[0]
+    return row, ""
+
+
+# The middleware's database reads run in worker threads — never on the event
+# loop, where one waiting on a lock (another connection writing users.db)
+# would stall every request and socket of the server. They get their own
+# token count, so a threadpool full of slow requests (PDF downloads, AI
+# calls) never makes the next request wait just to learn who is asking.
+AUTH_THREADS = 16
+_auth_limiter = RunVar("gamma_auth_limiter")  # one per event loop, like AnyIO's default limiter
+
+
+def _off_loop(fn, *args):
+    try:
+        limiter = _auth_limiter.get()
+    except LookupError:
+        limiter = anyio.CapacityLimiter(AUTH_THREADS)
+        _auth_limiter.set(limiter)
+    return anyio.to_thread.run_sync(fn, *args, limiter=limiter)
+
+
 async def session_middleware(request: Request, call_next):
     """Resolve the session cookie to request.state.user / is_guest / is_admin
-    / default_ws.
+    / default_ws (the database read in a worker thread, ``_off_loop``).
 
     A guest account past its lifetime (gamma/guests.py) is deleted on the
     spot and the request goes on signed out, its cookie cleared.
@@ -178,29 +223,20 @@ async def session_middleware(request: Request, call_next):
         # require_ws, never an admin, never a session to manage tokens or
         # accounts with (require_personal_user refuses it).
         from .integrations import resolve_token_scope  # local: integrations imports workspaces
-        found = resolve_token_scope(bearer)
+        found = await _off_loop(resolve_token_scope, bearer)
         if not found:
             resp = JSONResponse({"detail": "invalid or expired token"}, status_code=401)
             return _finish_request_log(request, resp, started, None, "bad-token")
         request.state.user, request.state.token_ws, request.state.token_scope = found
         request.state.auth = "token"
     if token:
-        with sqlite3.connect(str(USERS_DB)) as conn:
-            row = conn.execute(_SESSION_SQL, (token,)).fetchone()
-            if row and _session_expired(row[4]):
-                # Server-side expiry: a stolen token can't outlive its window
-                # even though the browser cookie's Max-Age is long.
-                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-                conn.commit()
-                row = None
-            if row and row[1] and guests.is_expired(row[5]):
-                expired_guest, row = row[0], None
-            if row:
-                username, is_guest, is_admin, default_ws, _created, _account_created = row
-                request.state.user = username
-                request.state.is_guest = bool(is_guest)
-                request.state.is_admin = bool(is_admin) and not is_guest
-                request.state.default_ws = default_ws or ""
+        row, expired_guest = await _off_loop(_middleware_session, token)
+        if row:
+            username, is_guest, is_admin, default_ws, _created, _account_created = row
+            request.state.user = username
+            request.state.is_guest = bool(is_guest)
+            request.state.is_admin = bool(is_admin) and not is_guest
+            request.state.default_ws = default_ws or ""
     if expired_guest:
         # The guest's lifetime is over: the account and its workspace go now
         # (off the event loop — it removes a directory), the request goes on
@@ -230,7 +266,8 @@ async def session_middleware(request: Request, call_next):
         if expired_guest:
             resp.delete_cookie(SESSION_COOKIE)
         return _finish_request_log(request, resp, started, expected, "session-mismatch")
-    # Only interactive PDF operations may use the caller's publisher sessions.
+    # Bind publisher sessions for interactive PDF operations. AI fetch_paper
+    # binds its authenticated caller separately inside the tool worker.
     # Public/share reads and guest accounts must never borrow credentials.
     publisher_user = (request.state.user
                       if request.url.path in publisher_sessions.PDF_PATHS
@@ -259,12 +296,34 @@ def _api_bearer(request: Request) -> str:
     return value
 
 
-def require_user(request: Request) -> str:
-    """Return the session username or raise 401. Identity only — endpoints
-    that touch a workspace's data use require_ws / resolve_ws instead."""
+TOKEN_REFUSAL = "an integration token cannot do this — sign in"
+
+
+def is_token(request: Request) -> bool:
+    """Whether the request came with an integration token (a bearer on the
+    HTTP API) rather than a browser session."""
+    return getattr(request.state, "auth", "session") == "token"
+
+
+def signed_in(request: Request) -> str:
+    """The account behind the request — a session's, or an integration
+    token's — or 401. What the workspace helpers build on; an endpoint asks
+    require_user (the account itself) or require_ws (its data) instead."""
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401)
+    return user
+
+
+def require_user(request: Request) -> str:
+    """Return the session username or raise 401. For ACCOUNT-level
+    endpoints (AI providers and usage, preferences, the workspace list,
+    backups, ...), so an integration token gets 403: it is bound to one
+    workspace and reaches that workspace's data only — endpoints that touch
+    a workspace use require_ws / resolve_ws instead."""
+    user = signed_in(request)
+    if is_token(request):
+        raise HTTPException(403, TOKEN_REFUSAL)
     return user
 
 
@@ -273,8 +332,6 @@ def require_personal_user(request: Request, detail: str) -> str:
     username = require_user(request)
     if request.state.is_guest:
         raise HTTPException(403, detail)
-    if getattr(request.state, "auth", "session") == "token":
-        raise HTTPException(403, "an integration token cannot do this — sign in")
     return username
 
 
@@ -322,10 +379,10 @@ def require_ws(request: Request, write: bool = False) -> str:
     """The workspace this session request works in (401 without a session,
     403 when the account is not a member — or is only a viewer and ``write``
     is set). Cached on request.state as ``ws`` / ``ws_role``."""
-    user = require_user(request)
+    user = signed_in(request)
     ws = getattr(request.state, "ws", None)
     if ws is None:
-        if getattr(request.state, "auth", "session") == "token":
+        if is_token(request):
             # A token names its workspace; a request may only repeat it.
             wanted = requested_ws(request)
             if wanted and wanted != request.state.token_ws:
@@ -334,14 +391,33 @@ def require_ws(request: Request, write: bool = False) -> str:
         else:
             ws, role = workspace_access(user, requested_ws(request), request.state.default_ws)
         request.state.ws, request.state.ws_role = ws, role
-    role = request.state.ws_role
-    if not role:
+    if not request.state.ws_role:
         raise HTTPException(status_code=403, detail="you are not a member of this workspace")
-    if write and role == "viewer":
-        raise HTTPException(status_code=403, detail="you can only view this workspace")
-    if write and getattr(request.state, "auth", "session") == "token" and request.state.token_scope != "write":
-        raise HTTPException(status_code=403, detail="this token is read-only")
+    refusal = _write_refusal(request) if write else ""
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
     return ws
+
+
+def _write_refusal(request: Request) -> str:
+    """Why this request may not change its (resolved) workspace, "" when it
+    may: a viewer only reads, and an integration token writes only with the
+    write scope."""
+    if request.state.ws_role == "viewer":
+        return "you can only view this workspace"
+    if is_token(request) and request.state.token_scope != "write":
+        return "this token is read-only"
+    return ""
+
+
+def can_write(request: Request) -> bool:
+    """Whether the request may change its workspace — an editor or owner,
+    and a write-scope token when it comes with one: the rule
+    ``require_ws(write=True)`` enforces, for a caller that offers less
+    instead of refusing (the AI chat arms no mutating tools). 403 for a
+    non-member, like ``require_ws``."""
+    require_ws(request)
+    return not _write_refusal(request)
 
 
 def ws_role(request: Request) -> str | None:
@@ -397,13 +473,17 @@ class ShareScope:
         return bool(self.folder)
 
     def allows_page(self, conn, page_id: str) -> bool:
-        """Whether ``page_id`` is a root page inside the scope."""
-        if self.page:
-            return page_id == self.page
+        """Whether ``page_id`` is a root page inside the scope (a page in
+        Recently deleted is none: its share reaches nothing until it is
+        restored)."""
+        if self.page and page_id != self.page:
+            return False
         row = conn.execute(
             "SELECT properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone()
         if not row:
             return False
+        if self.page:
+            return True
         try:
             props = json.loads(row[0] or "{}")
         except ValueError:
@@ -415,15 +495,18 @@ class ShareScope:
         root = page_root_id(conn, block_id)
         return bool(root) and self.allows_page(conn, root)
 
+    def pages(self, conn) -> list[str]:
+        """Every root page in the scope, by the ``allows_page`` rule — what
+        a read across the shared pages walks instead of the workspace."""
+        candidates = [self.page] if self.page else [
+            r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")]
+        return [p for p in candidates if self.allows_page(conn, p)]
+
     def block_ids(self, conn) -> set[str]:
         """Every block in reach — the pages and everything inside them — for
         a read that scans the workspace (block search) and must see only
         what the share opens."""
-        if self.page:
-            pages = [self.page]
-        else:
-            pages = [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")
-                     if self.allows_page(conn, r[0])]
+        pages = self.pages(conn)
         if not pages:
             return set()
         marks = ",".join("?" * len(pages))
@@ -447,7 +530,7 @@ def share_lookup(token: str) -> dict | None:
     OR a folder (exactly one of ``page_id`` / ``folder`` is set)."""
     if not token:
         return None
-    with sqlite3.connect(str(USERS_DB)) as conn:
+    with _users_db() as conn:
         row = conn.execute(
             "SELECT workspace_id, page_id, folder, created_by, audience, role, allowed_users "
             "FROM shares WHERE token = ?", (token,)
@@ -466,9 +549,10 @@ def share_lookup(token: str) -> dict | None:
     }
 
 
-def share_access(share: dict, carrier):
-    """What this request's viewer may do with a share: ("edit" | "view", "")
-    when allowed, else (None, "login" | "forbidden").
+def share_access(share: dict, viewer: str | None, is_guest: bool):
+    """What ``viewer`` (the session's account, None without one) may do
+    with a share: ("edit" | "view", "") when allowed, else (None, "login" |
+    "forbidden").
 
     Notion-style and additive: a member of the page's workspace keeps their
     workspace role (editors and owners edit, viewers view — the share can
@@ -479,13 +563,10 @@ def share_access(share: dict, carrier):
     whoever holds it, attributed as ``link:<name>`` by actor_of), ``users``
     admits any signed-in non-guest account with the share's role, ``list``
     admits nobody beyond the invited. Guests count as not signed in.
-    ``carrier`` is a Request or a WebSocket (its ``state`` carries user /
-    is_guest).
     """
     from . import workspaces
 
-    viewer = carrier.state.user
-    signed_in = bool(viewer) and not carrier.state.is_guest
+    signed_in = bool(viewer) and not is_guest
     best = None
     if signed_in:
         role = workspaces.role_of(share["workspace_id"], viewer)
@@ -527,7 +608,7 @@ def share_grant(request: Request):
         if not share:
             note_share_miss(request)
         else:
-            level, _reason = share_access(share, request)
+            level, _reason = share_access(share, request.state.user, request.state.is_guest)
             if level:
                 grant = (share["workspace_id"], ShareScope.of(share), level)
     request.state._share_grant = grant

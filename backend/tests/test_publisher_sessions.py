@@ -1,20 +1,75 @@
 """Publisher credentials stay private to an account and exact HTTPS host."""
 
+import json
 import time
 from urllib.request import Request
 
 import pytest
 
-from conftest import login, make_user, make_page
+from ai_fixtures import FakeResp
+from conftest import guest_name, login, make_user, make_page
+from gamma import ai_web
 from gamma import publisher_sessions as sessions
 from gamma.db import connect_users_db
 from gamma.net_guard import guarded_urlopen
 from test_net_guard import transport  # noqa: F401 -- fake urllib transport fixture
+from test_ai_tools_web import _text_pdf
 
 HOST = "journals.aps.org"
 SECRET = "private-publisher-session"
 COOKIE = {"name": "access", "value": SECRET, "domain": ".aps.org",
           "hostOnly": False, "path": "/"}
+AI_SOURCE = "https://doi.org/10.1103/ai-session-test"
+AI_PDF = f"https://{HOST}/prl/pdf/10.1103/ai-session-test"
+AI_TEXT = "Subscriber-only research findings."
+
+
+@pytest.fixture
+def ai_fetch(accounts, monkeypatch):
+    """Real chat/tool/resolver/cookie path; only the model and HTTP are fake."""
+    import gamma.routers.ai as ai_mod
+    import gamma.routers.pdf as pdf_mod
+
+    for caller in accounts:
+        response = caller.post("/api/ai/providers", json={
+            "protocol": "anthropic", "base_url": "https://ai-provider.invalid",
+            "api_key": "sk-test-key-123", "models": "claude-solo"})
+        assert response.status_code == 200, response.text
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kwargs):
+        # Neither the provider nor its tool specs receive the credentials.
+        assert SECRET not in json.dumps([messages, system, kwargs])
+        assert sessions.current_user.get() is None
+        if messages[-1]["role"] == "tool":
+            return FakeResp([{"type": "content_block_delta", "delta": {
+                "type": "text_delta", "text": "Finished reading."}}])
+        return FakeResp([
+            {"type": "content_block_start", "content_block": {
+                "type": "tool_use", "id": "fetch1", "name": "fetch_paper"}},
+            {"type": "content_block_delta", "delta": {"type": "input_json_delta",
+                # A model-supplied identity must not override the caller.
+                "partial_json": json.dumps({"source": AI_SOURCE, "publisher_user": "pub_alice"})}},
+            {"type": "content_block_stop"},
+        ])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *args: (0, ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    ai_web.clear_cache()
+
+    def fetch(caller, *, stream=True, permissions=None, **kwargs):
+        response = caller.post("/api/ai/chat", json={
+            "prompt": "Read the cited paper", "agent_scope": "folder", "stream": stream,
+            "permissions": permissions or {}}, **kwargs)
+        assert response.status_code == 200, response.text
+        assert SECRET not in response.text
+        actions = ([line["action"] for line in map(json.loads, response.text.splitlines())
+                    if "action" in line] if stream else response.json()["actions"])
+        action, = actions
+        return action
+
+    yield fetch
+    ai_web.clear_cache()
 
 
 @pytest.fixture
@@ -126,6 +181,118 @@ def test_connected_cookies_in_pdf_flow_but_not_share(accounts, transport):
     share = alice.post(f"/api/share/{page['id']}").json()["token"]
     alice.get("/api/pdf", params={"source_url": pdf, "share": share})
     assert seen == [(pdf, None)]
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_ai_fetch_uses_callers_cookies_and_private_cache(accounts, transport, ai_fetch, stream):
+    alice, bob = accounts
+    routes, seen = transport
+    routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf([AI_TEXT]))
+    assert connect(alice).status_code == 200
+
+    action = ai_fetch(alice, stream=stream)
+    assert action["kind"] == "fetch" and AI_TEXT in action["result"]
+    assert (AI_SOURCE, None) in seen
+    assert all(cookie == "access=" + SECRET for url, cookie in seen if url == AI_PDF)
+    seen.clear()
+    assert AI_TEXT in ai_fetch(alice, stream=stream)["result"]
+    assert seen == []  # later windows reuse only this account's document
+
+    routes[AI_PDF] = (403, {}, b"")
+    for caller, kwargs in ((bob, {}), (alice, {"params": {"share": "public-view"}})):
+        action = ai_fetch(caller, stream=stream, **kwargs)
+        assert action["error"] and AI_TEXT not in action["result"]
+        assert seen and all(cookie is None for _, cookie in seen)
+        seen.clear()
+
+
+def test_ai_fetch_retries_cached_abstract_after_connect_and_refresh(accounts, transport, ai_fetch):
+    alice, _ = accounts
+    routes, seen = transport
+    routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+    routes[AI_PDF] = (200, {"Content-Type": "text/html"}, b"<p>Only the abstract.</p>")
+    assert "Fetched web page" in ai_fetch(alice)["result"]
+
+    assert connect(alice).status_code == 200
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf([AI_TEXT]))
+    seen.clear()
+    assert AI_TEXT in ai_fetch(alice)["result"]
+    assert (AI_PDF, "access=" + SECRET) in seen
+
+    assert connect(alice, [{**COOKIE, "value": "refreshed-access"}]).status_code == 200
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf(["New session content."]))
+    seen.clear()
+    assert "New session content." in ai_fetch(alice)["result"]
+    assert (AI_PDF, "access=refreshed-access") in seen
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_ai_fetch_cookie_permission_bypasses_private_cache_without_disconnecting(
+        accounts, transport, ai_fetch, stream):
+    alice, _ = accounts
+    routes, seen = transport
+    routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf([AI_TEXT]))
+    assert connect(alice).status_code == 200
+    assert AI_TEXT in ai_fetch(alice, stream=stream)["result"]
+
+    seen.clear()
+    routes[AI_PDF] = (200, {"Content-Type": "text/html"}, b"<p>Public abstract.</p>")
+    action = ai_fetch(alice, stream=stream, permissions={"publisher_cookies": False})
+    assert action["kind"] == "fetch" and "Public abstract." in action["result"]
+    assert AI_TEXT not in action["result"]
+    assert seen and all(cookie is None for _, cookie in seen)
+    assert alice.get("/api/publisher-sessions").json()["sessions"]
+
+    seen.clear()
+    assert AI_TEXT in ai_fetch(alice, stream=stream, permissions={"publisher_cookies": True})["result"]
+    assert seen == []  # the account's authenticated cache is still available
+
+
+@pytest.mark.parametrize("revoke", ["disconnect", "expire"])
+def test_ai_fetch_does_not_reuse_cache_after_session_revocation(
+        accounts, transport, ai_fetch, monkeypatch, revoke):
+    alice, _ = accounts
+    routes, seen = transport
+    now = time.time()
+    # One cookie expires earlier than its snapshot, which must also change
+    # the cache partition when that individual credential stops being usable.
+    assert connect(alice, [{**COOKIE, "expirationDate": now + 5},
+                           {**COOKIE, "name": "preferences", "value": "layout"}]).status_code == 200
+    routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf([AI_TEXT]))
+    assert AI_TEXT in ai_fetch(alice)["result"]
+    if revoke == "disconnect":
+        assert alice.delete(f"/api/publisher-sessions/{HOST}").status_code == 200
+    else:
+        monkeypatch.setattr(sessions.time, "time", lambda: now + 10)
+    routes[AI_PDF] = (403, {}, b"")
+    seen.clear()
+    action = ai_fetch(alice)
+    assert action["error"] and AI_TEXT not in action["result"]
+    assert seen and all(SECRET not in (cookie or "") for _, cookie in seen)
+
+
+def test_ai_fetch_guest_and_anonymous_do_not_borrow_sessions(
+        accounts, transport, ai_fetch, guest, anon):
+    from gamma.ai_settings import load_provider_entries, save_provider_entries
+
+    # Even if a guest somehow has stored credentials, the chat excludes them.
+    sessions.save(guest_name(), HOST, [COOKIE])
+    save_provider_entries(guest_name(), load_provider_entries("pub_alice"))
+    try:
+        routes, seen = transport
+        routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+        routes[AI_PDF] = (403, {}, b"")
+        assert ai_fetch(guest)["error"]
+        assert seen and all(cookie is None for _, cookie in seen)
+        seen.clear()
+        assert anon.post("/api/ai/chat", json={"prompt": "Read it"}).status_code == 401
+        assert seen == []
+    finally:
+        sessions.disconnect(guest_name(), HOST)
+        save_provider_entries(guest_name(), [])
 
 
 def test_connected_cookie_does_not_follow_external_redirect(accounts, transport):

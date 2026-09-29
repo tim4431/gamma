@@ -28,7 +28,10 @@ import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
+// Bypass immutable responses cached with text/plain before the server MIME
+// fix. Keep this stable: Vite's content hash handles later worker upgrades.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
 // a document's destroy() only tears down a worker pdf.js created itself, so
@@ -38,6 +41,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 let PDF_WORKER = null;
 try {
   PDF_WORKER = new pdfjsLib.PDFWorker({ name: "gamma-pdf" });
+  // Startup can fail before a document opens. getDocument still receives
+  // the rejection and reports it through the load-status UI when needed.
+  PDF_WORKER.promise.catch(() => {});
 } catch {}
 // getDocument parameters every open shares.
 const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } : params);
@@ -790,8 +796,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   useEffect(() => {
     if (!url) return;
-    let cancelled = false;
-    const report = (st) => { if (!cancelled) onLoadState?.(url, st); };
+    let cancelled = false, failed = false;
+    const report = (st) => {
+      if (st.phase === "error") failed = true;
+      if (!cancelled) onLoadState?.(url, st);
+    };
     (async () => {
       try {
         report({ phase: "open" });
@@ -807,7 +816,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         // fetching; for an uncached upload it also decides the transport.
         const manifestP = fetchManifest(url);
         manifestP.then((m) => {
-          if (cancelled || displayedDocRef.current || skeletonRef.current) return;
+          // A late manifest must not replace a worker/download error with
+          // another "Preparing document" skeleton that can never finish.
+          if (cancelled || failed || displayedDocRef.current || skeletonRef.current) return;
           const lay = layoutFromManifest(m, { width: FALLBACK_W, height: FALLBACK_H });
           if (lay) commitSkeleton(url, lay);
         });
@@ -822,7 +833,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           if (cancelled) return;
           openedByRange = chooseTransport({ url, bytes }) === "range";
           if (!openedByRange) {
-            data = await fetchPdfData(url, onLoadState, () => cancelled);
+            data = await fetchPdfData(url, (_url, st) => report(st), () => cancelled);
             if (!data || cancelled) return;
           }
         }
@@ -890,7 +901,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         }
         heightsExactRef.current = true; // layout is final — the zoom settle loop can stand down
       } catch (e) {
-        if (!cancelled) onLoadState?.(url, { phase: "error", detail: e?.message || t("failed to open the PDF") });
+        report({ phase: "error", detail: e?.message || t("failed to open the PDF") });
       }
     })();
     return () => {
@@ -1147,7 +1158,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const translateKeyRef = useRef(translateKey);
   translateKeyRef.current = translateKey;
   const translateParallelRef = useRef(3);
-  translateParallelRef.current = Math.min(32, Math.max(1, translateParallel || 3));
+  translateParallelRef.current = Math.min(TRANSLATE_PARALLEL_MAX, Math.max(1, translateParallel || 3));
   const curPageRef = useRef(1);
   curPageRef.current = curPage;
   const numPagesRef = useRef(0);

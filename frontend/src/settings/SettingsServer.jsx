@@ -3,8 +3,8 @@
 // update check), the storage defaults every account inherits, guests and
 // demo mode (SettingsGuests.jsx), the shared AI provider every account may
 // use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
-// whole-data-directory snapshots (SettingsBackups.jsx ServerBackups) and the
-// scrubbed server log with a level filter. Per-account things — including each account's personal
+// the database check, whole-data-directory snapshots (SettingsBackups.jsx
+// ServerBackups) and the scrubbed server log with a level filter. Per-account things — including each account's personal
 // workspaces — stay in Users; per-workspace backups in Backups.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
@@ -15,8 +15,8 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
-import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
-import { t } from "../shared/i18n/i18n.js";
+import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, DatabaseIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
   const [signInAction, setSignInAction] = React.useState(null);
@@ -40,6 +40,9 @@ export function ServerSettings({ value }) {
       </Section>
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
+      <Section title={t("Databases")}>
+        <DatabaseCheck setStatus={value.setStatus} />
+      </Section>
       <ServerBackups setStatus={value.setStatus} confirm={value.confirm} />
       <Section title={t("Log")}>
         <ServerLogBox setStatus={value.setStatus} />
@@ -51,9 +54,9 @@ export function ServerSettings({ value }) {
 function fmtUptime(seconds) {
   const s = Math.max(0, Number(seconds) || 0);
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
-  return `${m}m`;
+  if (d) return t("{d}d {h}h", { d, h });
+  if (h) return t("{h}h {m}m", { h, m });
+  return t("{m}m", { m });
 }
 
 // What the update row says: newer / current / unknown, in that order of use.
@@ -105,10 +108,10 @@ function ServerDashboard() {
   const updateTone = info.update_available ? "warn" : "";
   return <>
     <div className="setStats">
-      <StatText icon={ServerIcon} label="version" value={info.version ? `v${info.version}` : "dev build"}
+      <StatText icon={ServerIcon} label={t("version")} value={info.version ? `v${info.version}` : t("dev build")}
         hint={info.commit ? t("build {commit}", { commit: info.commit }) : info.frozen ? t("desktop app") : t("run from a checkout")}
         title={t("Gamma {label} · Python {python} · {platform} · data schema {schema_version}", { label: info.label, python: info.python, platform: info.platform, schema_version: info.schema_version })} />
-      <StatText icon={ActivityIcon} label="uptime" value={fmtUptime(info.uptime_seconds)}
+      <StatText icon={ActivityIcon} label={t("uptime")} value={fmtUptime(info.uptime_seconds)}
         hint={t("since {started}", { started: new Date(info.started_at).toLocaleString() })} />
       <StatText icon={AlertCircleIcon} label={t("warnings · errors")} value={`${counts.warning || 0} · ${counts.error || 0}`}
         hint={t("{info} info lines since start", { info: counts.info || 0 })} tone={logTone}
@@ -154,10 +157,12 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
   React.useEffect(() => {
     apiJson(`${API}/admin/settings`).then(setSaved).catch((err) => setError(err.message));
   }, []);
+  // The box commits only after an edit, so every commit is sent: a check
+  // against `saved` could read a value an earlier save has already replaced
+  // on the server and drop this one.
   async function commit(key, raw, min) {
     const n = Number.parseInt(String(raw).trim(), 10);
     if (!Number.isFinite(n) || n < min) return; // the box shows the stored value again once the commit settles
-    if (n === saved[key]) return;
     setError("");
     try {
       // Only this field: two boxes committing back to back must not overwrite each other.
@@ -180,6 +185,48 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
           onCommit={(raw) => commit("quota_mb", raw, 0)} />
       </Row>
     </> : !error ? <p className="setNotice">{t("Loading…")}</p> : null}
+    {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
+  </>;
+}
+
+// POST /api/admin/check-databases: SQLite's quick check of users.db and of
+// every workspace's pages.db and data.db, on demand. Snapshots check their
+// copies the same way; damage found either way is also a notice for admins
+// (gamma/integrity.py). The row says how the last check came out and each
+// damaged file what SQLite found.
+function DatabaseCheck({ setStatus }) {
+  const [result, setResult] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  async function run() {
+    setBusy(true);
+    setError("");
+    try {
+      const d = await apiJson(`${API}/admin/check-databases`, { method: "POST" });
+      setResult(d);
+      setStatus(d.ok ? t("Every database passed its check.") : t("The database check found damage."));
+    } catch (err) {
+      setError(t("Could not check: {message}", { message: err.message }));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const files = result?.files || [];
+  const bad = files.filter((f) => !f.ok);
+  const hint = !result ? t("a quick check of every account and workspace database")
+    : bad.length ? tn("{n} damaged database file (of {total})", "{n} damaged database files (of {total})", bad.length, { total: files.length })
+      : tn("{n} database file passed · {time}", "All {n} database files passed · {time}", files.length,
+        { time: new Date(result.checked_at).toLocaleTimeString() });
+  return <>
+    <Row icon={DatabaseIcon} label={t("Check databases")} hint={hint}
+      title={t("Runs SQLite's quick_check on users.db and on every workspace's pages.db and data.db. Nothing is changed; a damaged file is best replaced from a backup.")}>
+      <button className="uiBtn sm" disabled={busy} onClick={run}>{busy ? t("Checking…") : t("Check now")}</button>
+    </Row>
+    {bad.map((f) => (
+      <p key={f.file} className="settingsPaneHint aiKeysError" role="alert">
+        {t("{name} {file}: {result}", { name: f.name ? `${f.name} ·` : "", file: <code>{f.file}</code>, result: f.result })}
+      </p>
+    ))}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;
 }

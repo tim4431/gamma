@@ -27,7 +27,9 @@ pages' subtrees and assets (share_grant / share_scope).
 The token lives until "Stop sharing" (DELETE; sharing again mints a new
 one). A folder share follows the folder's renames (``move_folder_shares``,
 POST /folders/rename) and dies with the folder. Unknown tokens are counted
-per IP (gamma/auth.py note_share_miss).
+per IP (gamma/auth.py note_share_miss). A change that can take access away
+re-checks the open page sockets of the workspace (``collab.revalidate``),
+so a stopped share stops the live updates too.
 """
 
 import json
@@ -37,9 +39,10 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import collab
 from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws, serialize_share_users,
                     share_access, share_lookup)
-from ..blocks_store import page_attachment, root_pages
+from ..blocks_store import TRASH, page_attachment, root_pages
 from ..db import connect_pages_db, connect_users_db, page_now
 from ..foldertags import clean_path, path_within
 
@@ -74,11 +77,12 @@ def _find(ws: str, target: ShareScope) -> dict | None:
 
 
 def _require_page(ws: str, page_id: str) -> ShareScope:
-    """The page target; 404/400 unless page_id is one of the workspace's root pages."""
+    """The page target; 404/400 unless page_id is one of the workspace's root
+    pages (a page in Recently deleted is not found)."""
     with connect_pages_db(ws) as conn:
         row = conn.execute(
             "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if not row:
+    if not row or row[0] == TRASH:
         raise HTTPException(status_code=404, detail="page not found")
     if row[0] != "root":
         raise HTTPException(status_code=400, detail="only pages can be shared")
@@ -155,16 +159,16 @@ def _create(ws: str, request: Request, target: ShareScope, payload: ShareSetting
         return _settings(existing)
     fields = _validated(request.state.user, {"audience": "anyone", "role": "view", "users": []},
                         payload or ShareSettings())
-    token = secrets.token_urlsafe(12)
     with connect_users_db() as conn:
+        # One share per target (the unique indexes): when another request
+        # created it since the lookup above, that link stands and is answered.
         conn.execute(
-            "INSERT INTO shares (token, workspace_id, page_id, folder, created_by, audience, role, allowed_users, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (token, ws, target.page, target.folder, request.state.user, fields["audience"],
+            "INSERT OR IGNORE INTO shares (token, workspace_id, page_id, folder, created_by, audience, role, "
+            "allowed_users, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (secrets.token_urlsafe(12), ws, target.page, target.folder, request.state.user, fields["audience"],
              fields["role"], serialize_share_users(fields["users"]), page_now()),
         )
-        conn.commit()
-    return _settings(share_lookup(token))
+    return _settings(_find(ws, target))
 
 
 def _get(ws: str, target: ShareScope) -> dict:
@@ -179,11 +183,13 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
         raise HTTPException(status_code=404, detail=f"{what} is not shared")
     fields = _validated(request.state.user, share, payload)
     with connect_users_db() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE shares SET audience = ?, role = ?, allowed_users = ? WHERE token = ?",
             (fields["audience"], fields["role"], serialize_share_users(fields["users"]), share["token"]),
         )
-        conn.commit()
+    if not cur.rowcount:  # stopped by another request meanwhile
+        raise HTTPException(status_code=404, detail=f"{what} is not shared")
+    collab.revalidate(ws)
     return _settings(share_lookup(share["token"]))
 
 
@@ -193,6 +199,7 @@ def _delete(ws: str, target: ShareScope) -> dict:
         cur = conn.execute("DELETE FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
                            (ws, target.page, target.folder))
         conn.commit()
+    collab.revalidate(ws)
     return {"ok": True, "removed": cur.rowcount}
 
 
@@ -203,6 +210,7 @@ def move_folder_shares(ws: str, src: str, dst: str) -> int:
     ``dst`` is "" (the folder is gone). Returns how many rows changed."""
     changed = 0
     with connect_users_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")  # the reads and the moves as one step
         rows = conn.execute("SELECT token, folder FROM shares WHERE workspace_id = ? AND folder != ''",
                             (ws,)).fetchall()
         for token, folder in rows:
@@ -216,13 +224,15 @@ def move_folder_shares(ws: str, src: str, dst: str) -> int:
                 conn.execute("DELETE FROM shares WHERE token = ?", (token,))
             changed += 1
         conn.commit()
+    if changed:
+        collab.revalidate(ws)
     return changed
 
 
 # ---- folder shares (before the page routes: "folder" is a static segment) ---
 
 @router.post("/share/folder")
-async def create_folder_share(request: Request, name: str, payload: ShareSettings | None = None):
+def create_folder_share(request: Request, name: str, payload: ShareSettings | None = None):
     """Create the folder's share link (``?name=<path>``; defaults anyone,
     view) or return the existing one unchanged; workspace editors and owners."""
     ws = require_ws(request, write=True)
@@ -230,20 +240,20 @@ async def create_folder_share(request: Request, name: str, payload: ShareSetting
 
 
 @router.get("/share-settings/folder")
-async def get_folder_share_settings(request: Request, name: str):
+def get_folder_share_settings(request: Request, name: str):
     """A member's view of a folder's share: its settings, or ``{"token": null}``."""
     ws = require_ws(request)
     return _get(ws, _require_folder(ws, name))
 
 
 @router.put("/share-settings/folder")
-async def update_folder_share_settings(request: Request, name: str, payload: ShareSettings):
+def update_folder_share_settings(request: Request, name: str, payload: ShareSettings):
     ws = require_ws(request, write=True)
     return _update(ws, request, ShareScope(folder=clean_path(name or "")), payload, "folder")
 
 
 @router.delete("/share-settings/folder")
-async def delete_folder_share(request: Request, name: str):
+def delete_folder_share(request: Request, name: str):
     ws = require_ws(request, write=True)
     return _delete(ws, ShareScope(folder=clean_path(name or "")))
 
@@ -251,7 +261,7 @@ async def delete_folder_share(request: Request, name: str):
 # ---- page shares ------------------------------------------------------------
 
 @router.post("/share/{page_id}")
-async def create_share(page_id: str, request: Request, payload: ShareSettings | None = None):
+def create_share(page_id: str, request: Request, payload: ShareSettings | None = None):
     """Create the page's share link (defaults: anyone, view) or return the
     existing one unchanged — root blocks only; workspace editors and owners."""
     ws = require_ws(request, write=True)
@@ -259,7 +269,7 @@ async def create_share(page_id: str, request: Request, payload: ShareSettings | 
 
 
 @router.get("/share-settings/{page_id}")
-async def get_share_settings(page_id: str, request: Request):
+def get_share_settings(page_id: str, request: Request):
     """A member's view of a page's share: its settings, or ``{"token": null}``
     when the page isn't shared."""
     ws = require_ws(request)
@@ -267,13 +277,13 @@ async def get_share_settings(page_id: str, request: Request):
 
 
 @router.put("/share-settings/{page_id}")
-async def update_share_settings(page_id: str, payload: ShareSettings, request: Request):
+def update_share_settings(page_id: str, payload: ShareSettings, request: Request):
     ws = require_ws(request, write=True)
     return _update(ws, request, ShareScope(page=page_id), payload, "page")
 
 
 @router.delete("/share-settings/{page_id}")
-async def delete_share(page_id: str, request: Request):
+def delete_share(page_id: str, request: Request):
     ws = require_ws(request, write=True)
     return _delete(ws, ShareScope(page=page_id))
 
@@ -281,7 +291,7 @@ async def delete_share(page_id: str, request: Request):
 # ---- resolving a link -------------------------------------------------------
 
 @router.get("/share/{token}")
-async def get_share(token: str, request: Request):
+def get_share(token: str, request: Request):
     """Resolve a link for the viewer: 404 unknown, 401 when signing in could
     grant access, 403 when this signed-in account isn't allowed. Otherwise
     what the link shares plus what this viewer may do (``can_edit``): a page
@@ -296,11 +306,16 @@ async def get_share(token: str, request: Request):
     if not share:
         note_share_miss(request)
         raise HTTPException(status_code=404, detail="share not found")
-    level, reason = share_access(share, request)
+    level, reason = share_access(share, request.state.user, request.state.is_guest)
     if not level:
         if reason == "login":
             raise HTTPException(status_code=401, detail="sign in to open this shared page")
         raise HTTPException(status_code=403, detail="this page is shared with specific people only")
+    if share["page_id"]:
+        with connect_pages_db(share["workspace_id"]) as conn:
+            if not ShareScope.of(share).allows_page(conn, share["page_id"]):
+                # deleted, or in Recently deleted: the link opens nothing until a restore
+                raise HTTPException(status_code=404, detail="share not found")
     out = {"page_id": share["page_id"], "folder": share["folder"],
            "username": share["created_by"], "workspace_id": share["workspace_id"],
            "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",

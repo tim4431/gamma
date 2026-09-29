@@ -1,0 +1,35 @@
+import { T } from "../../shared/i18n/i18n.js";
+
+export default {
+  id: "windows",
+  version: 1,
+  title: T("Arrange windows"),
+  requires: { phone: false },
+  show: "windows",
+  trigger: { event: "page.opened", requires: { view: "pdf" } },
+  offerAnchor: "chat.grip",
+  offer: {
+    title: T("Make room for your paper"),
+    line: T("Collapse, reopen and rearrange Chat and Notes."),
+  },
+  steps: [
+    { id: "window-collapse", anchor: "chat.grip", placement: "left",
+      title: T("Collapse Chat to its title bar"),
+      body: T("Double-click the Chat title to make more room."),
+      advanceOn: { event: "window.collapsed", match: { id: "chat", collapsed: true } } },
+    { id: "window-expand", anchor: "chat.grip", placement: "left",
+      title: T("Bring Chat back"),
+      body: T("Double-click the same title again to expand the window."),
+      advanceOn: { event: "window.collapsed", match: { id: "chat", collapsed: false } } },
+    { id: "window-move", anchor: "chat.grip", placement: "left",
+      title: T("Drag Chat to a new position"),
+      body: T("Drag its title left, right or down, then release over the highlighted area."),
+      advanceOn: { event: "window.moved", match: { id: "chat" } } },
+    { id: "window-notes", anchor: "notes.grip", placement: "left", requires: { dockedNotes: true }, optional: true,
+      title: T("Notes works the same way"),
+      body: T("Double-click its title to collapse or expand; drag it to rearrange your windows.") },
+    { id: "window-reopen", anchor: "header.view", placement: "bottom",
+      title: T("Reopen a closed window"),
+      body: T("After closing a window with ×, open View and choose AI Chat or Notes to bring it back.") },
+  ],
+};

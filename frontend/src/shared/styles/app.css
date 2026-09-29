@@ -1203,6 +1203,18 @@ body {
   vertical-align: -1px;
   line-height: 1.3;
 }
+/* A [[ref]] to a page in Recently deleted: the page's title struck through,
+   in the unlinked chip's muted dashed look (a click offers Restore). */
+.blockRefChip.trashedRef,
+.blockRefChip.trashedRef:hover {
+  background: none;
+  color: var(--text-muted);
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+  text-decoration: line-through;
+}
+/* An embed whose source is in Recently deleted or gone: the card, quiet. */
+.blockEmbedCard.gone { border-left-color: var(--border); }
 
 /* External-link chip (LinkChip): favicon + label, quieter than a ref chip. */
 .linkChip {
@@ -1761,6 +1773,11 @@ body {
 }
 .statusPill.fading { opacity: 0; }
 .statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); }
+/* An error is read in full (a note too long to save, edits waiting): its
+   text wraps rather than ending in "…", on a phone too, and a pill of two
+   or three lines rounds like a card. */
+.statusPill.error { border-radius: var(--radius-lg); }
+.statusPill.error .pillText { white-space: normal; overflow-wrap: anywhere; text-align: center; }
 .statusPill.interactive { pointer-events: auto; } /* has a Retry button */
 /* Keep feedback away from the handwriting strip, including expanded options. */
 .main:has(.pdfInkBar) > .statusPill {
@@ -3185,10 +3202,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow: hidden;
 }
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */
-.chatSettingsPop { min-width: 250px; }
-.chatSettingsPop .setSlider { padding: 0 4px; }
+/* Anchor to the whole header so a narrow chat dock cannot clip the controls. */
+.dockWindowHeader:has(.chatPanelHeaderBtns) { position: relative; }
+.chatPanelHeaderBtns [data-popover="chatsettings"] { position: static; }
+.chatSettingsPop { right: 8px; width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+.chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
+.chatSettingsPop .setRange { flex: 1; min-width: 0; }
 .chatToolPicker { padding: 2px 4px; }
-.chatToolPicker .toggleGroup { justify-content: flex-start; }
 /* Chat history popover (header clock): search box over the bucket's earlier
    conversations; the active one leads, highlighted. Layout only — rows are
    plain hover rows, actions are ctlBtn icons, rename is an aiKeyInput. */
@@ -3358,6 +3378,77 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow-wrap: anywhere;
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
 }
+/* A fetch the server could not make, handed to the user's browser
+   (FetchHandoffCards.jsx): what stopped it, what to do next, Open / Upload /
+   Dismiss. A PDF dropped on the card is uploaded to it. */
+.chatHandoffs { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+.chatHandoff {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-bg-light);
+  color: var(--text-primary);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatHandoff.dragOver { border-style: dashed; border-color: var(--accent); background: var(--accent-bg); }
+.chatHandoff.done {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+.chatHandoff:is(.dismissed, .gone) { padding: 7px 10px; border-color: var(--border); background: transparent; color: var(--text-muted); }
+.chatHandoffHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; }
+.chatHandoffHead svg { flex: none; margin-top: 0.15em; color: var(--accent); }
+.chatHandoff.done .chatHandoffHead svg { color: var(--ok); }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffHead { font-weight: 500; }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffHead svg { color: inherit; }
+.chatHandoffHead .transferSpin { margin-top: 0.3em; }
+.chatHandoffText { margin-top: 2px; color: var(--text-secondary); }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffText { color: inherit; }
+.chatHandoffSource {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatHandoffError { margin-top: 4px; color: var(--danger); }
+.chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatHandoffContinue { align-self: flex-start; }
+/* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
+   saved into the library together. */
+.chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
+.chatPapers {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.45;
+}
+.chatPaper { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 4px 0; }
+.chatPaper + .chatPaper { border-top: 1px solid var(--border-subtle); }
+.chatPaperCheck { flex: none; margin: 0.25em 0 0; accent-color: var(--accent); }
+.chatPaperText { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.chatPaperTitle { overflow-wrap: anywhere; color: var(--text-primary); }
+.chatPaperMeta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatPaperNote { color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+.chatPaperError { color: var(--danger); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+.chatPaperState { display: flex; flex: none; align-items: center; gap: 4px; margin-top: 0.1em; }
+.chatPaperState .chatChangeLink { display: inline-flex; align-items: center; gap: 3px; font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+.chatPaper.saved .chatPaperState .chatChangeLink { color: var(--ok); }
+.chatPapersFoot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
 /* Markdown inside answers: explicit text sizes must follow the same
    transcript scale as body text, including nested headings and code. */
 .chatBubble.ai p { margin: 0 0 10px; }

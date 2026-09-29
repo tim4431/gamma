@@ -5,10 +5,56 @@ import { FAKE_AI_MODELS } from "../harness.mjs";
 
 export async function contextualGuideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
+  await step("guide: arrange windows collapses, expands, docks and reopens", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([["Arrange your reading windows."]]), "windows.pdf", "application/pdf");
+    const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Window tour", source_url: up.source_url } });
+    const ctx = await alice.context(browser);
+    await ctx.route("**/api/ai/models*", (route) => route.fulfill({ json: { enabled: false, models: [], default: "" } }));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
+    try {
+      await page.locator('[data-guide="notes.grip"]').waitFor();
+      await page.getByRole("button", { name: "Close Chat", exact: true }).click();
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="windows"]');
+      await page.waitForSelector('[data-guide-overlay="window-collapse"]');
+      const grip = page.locator('[data-guide="chat.grip"]');
+      await grip.dblclick();
+      await page.waitForSelector('[data-guide-overlay="window-expand"]');
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 1);
+      await grip.dblclick();
+      await page.waitForSelector('[data-guide-overlay="window-move"]');
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0);
+      const box = await grip.boundingBox();
+      const viewport = page.viewportSize();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(viewport.width * 0.4, viewport.height * 0.85, { steps: 12 });
+      await page.mouse.up();
+      await page.waitForSelector('[data-guide-overlay="window-notes"]');
+      assertEq(await page.locator('[data-panel-id="slot-bottom"] [data-guide="chat.grip"]').count(), 1);
+      await page.locator('.guideCard .primary').click();
+      await page.waitForSelector('[data-guide-overlay="window-reopen"]');
+      await page.locator('.guideCard .primary').click();
+      await until(async () => await page.locator('.guideCard').count() === 0);
+      // Both titles remain usable, and the last step's recovery path works.
+      await page.locator('[data-guide="notes.grip"]').dblclick();
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').count(), 1);
+      await page.locator('[data-guide="notes.grip"]').dblclick();
+      for (const [title, menu] of [["Chat", "AI Chat"], ["Notes", "Notes"]]) {
+        await page.getByRole("button", { name: `Close ${title}`, exact: true }).click();
+        await page.click('[data-guide="header.view"]');
+        await page.locator('.menuPopover').getByRole("button", { name: menu, exact: true }).click();
+        await page.getByRole("button", { name: `Close ${title}`, exact: true }).waitFor();
+      }
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
   const openTours = async (page, paperId) => {
     await page.click('[data-guide="header.account"]');
     await page.click('[data-guide="account.tour"]');
     const tours = page.getByRole("menu", { name: "Tours" });
+    assertEq(await tours.locator('[data-tour="windows"]').count(), page.viewportSize().width < 600 ? 0 : 1, "window tour follows the desktop layout");
     assertEq(await tours.locator('[data-tour="first-run"], [data-tour="ai-chat"]').count(), 2, "submenu lists both tours");
     assertEq(await tours.locator('[data-tour="sharing"]').count(), paperId ? 1 : 0, "sharing is listed on a page, not in the library");
     assertEq(await tours.locator('[data-tour="math-keys"], [data-tour="quick-open"]').count(), 0, "hints are never listed");

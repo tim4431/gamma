@@ -7,12 +7,13 @@ import json
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .. import collab
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
-                    ShareScope, note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
-                    share_access, share_lookup, share_scope, workspace_access)
+                    note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
+                    share_lookup, share_scope, workspace_access)
 from ..db import connect_pages_db
 from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
@@ -35,13 +36,18 @@ def _scope_page(request: Request, ws: str, page_id: str):
 
 
 @router.post("/pages/{page_id}/ops")
-async def post_ops(page_id: str, payload: OpsRequest, request: Request):
-    """Apply a batch of block ops to a page: ``{client, ops, cursor?}`` →
-    ``{seq, at, ops}`` with the ops as applied (positions the server had to
-    re-key carry their final value). ``cursor`` (``{block, anchor, head}``,
-    the writer's caret in the text after the batch) is fanned out with the
-    batch and stored as the writer's presence. A workspace editor or an
-    edit share."""
+def post_ops(page_id: str, payload: OpsRequest, request: Request):
+    """Apply a batch of block ops to a page: ``{client, batch?, ops,
+    cursor?}`` → ``{seq, at, ops}`` with the ops as applied (positions the
+    server had to re-key carry their final value). ``cursor`` (``{block,
+    anchor, head}``, the writer's caret in the text after the batch) is
+    fanned out with the batch and stored as the writer's presence. A batch
+    id already applied for this client gets the same answer again, nothing
+    re-applied. A refused batch: ``{detail, missing?, conflict?, index?}``
+    (gamma/ops.py ``OpError``). A workspace editor or an edit share. Sync
+    def, like every endpoint that touches a database: the batch may wait on
+    the workspace's write lock, and the fan-out (``collab.publish``) is
+    scheduled on the sockets' loop from the worker thread."""
     ws = require_ws_writer(request)
     link_ratelimit(request, "ops", LINK_OPS_PER_MINUTE, 60)
     scope = _scope_page(request, ws, page_id)
@@ -53,19 +59,21 @@ async def post_ops(page_id: str, payload: OpsRequest, request: Request):
     try:
         result = commit_ops(ws, page_id, ops, actor=actor_of(request),
                             client=payload.client[:32], share_scoped=scope is not None,
-                            cursor=cursor)
+                            cursor=cursor, batch_id=payload.batch[:64])
     except OpError as e:
-        body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {})}
+        body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
+                **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
         return JSONResponse(status_code=e.status, content=body)
-    return {"seq": result["seq"], "at": result["at"], "ops": result["ops"],
-            "removed_uploads": result["removed_uploads"]}
+    return {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
 
 
 @router.get("/pages/{page_id}/ops")
-async def get_ops(page_id: str, request: Request, since: int = 0):
+def get_ops(page_id: str, request: Request, since: int = 0):
     """The page's op log after ``since`` (a reconnecting client's catch-up):
     ``{seq, batches: [{seq, actor, client, at, ops}]}``; 410 when the log was
-    pruned past ``since`` — reload the tree instead."""
+    pruned past ``since`` or the batches after it are more than a catch-up
+    carries (ops.CATCHUP_MAX_BATCHES / CATCHUP_MAX_BYTES) — reload the tree
+    instead."""
     ws = resolve_ws(request)
     _scope_page(request, ws, page_id)
     with connect_pages_db(ws) as conn:
@@ -80,20 +88,20 @@ async def get_ops(page_id: str, request: Request, since: int = 0):
     return {"seq": seq, "batches": batches}
 
 
-def _socket_access(sock: WebSocket, page_id: str):
-    """Who may join a page's room: ``(workspace, viewer_user, name, can_edit,
-    seq)`` or None. The HTTP middleware never sees a websocket, so the
-    session cookie, the workspace (``?ws=`` or the account's default) and
-    the share token are resolved here with the same rules as HTTP
-    (``auth.share_access``): a member joins with their workspace role; a
-    share token admits its audience, view or edit. A visitor without an
-    account shows under the display name in ``?name=`` (else Anonymous)."""
+def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | None:
+    """Who may join a page's room: ``(workspace, the peer to be)`` — not in
+    a room yet, its client id and colour still to come — or None. The HTTP
+    middleware never sees a websocket, so the session cookie, the workspace
+    (``?ws=`` or the account's default) and the share token are resolved
+    here; whether they admit the viewer is ``collab.peer_access`` — the rule
+    ``revalidate`` applies again when access changes. A visitor without an
+    account shows under the display name in ``?name=`` (else Anonymous).
+    Reads users.db and pages.db: the handshake runs it in a worker thread."""
     sess = session_lookup(sock.cookies.get(SESSION_COOKIE))
     sock.state.user = sess[0] if sess else None
     sock.state.is_guest = bool(sess and sess[1])
     sock.state.is_admin = bool(sess and sess[2])
     token = sock.query_params.get("share") or ""
-    scope = None
     if token:
         share = share_lookup(token)
         if not share:
@@ -102,28 +110,33 @@ def _socket_access(sock: WebSocket, page_id: str):
             except HTTPException:
                 pass  # the socket is closed either way
             return None
-        level, _reason = share_access(share, sock)
-        if not level:
-            return None
-        ws, can_edit, scope = share["workspace_id"], level == "edit", ShareScope.of(share)
+        ws = share["workspace_id"]
     elif sock.state.user:
-        ws, role = workspace_access(sock.state.user, requested_ws(sock), sess[3])
-        if not role:
-            return None
-        can_edit = role != "viewer"
+        ws, _role = workspace_access(sock.state.user, requested_ws(sock), sess[3])
     else:
         return None
-    with connect_pages_db(ws) as conn:
-        row = conn.execute(
-            "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not row or row[0] != "root":
-            return None
-        if scope is not None and not scope.allows_page(conn, page_id):
-            return None
-        seq = latest_seq(conn, page_id)
+    account, is_guest = sock.state.user or "", sock.state.is_guest
+    can_edit = collab.peer_access(ws, page_id, account, is_guest, token)
+    if can_edit is None:
+        return None
     if is_link_visitor(sock):
-        return ws, "", link_name(sock.query_params.get("name", "")), can_edit, seq
-    return ws, sock.state.user or "", sock.state.user or ANONYMOUS_NAME, can_edit, seq
+        user, name = "", link_name(sock.query_params.get("name", ""))
+    else:
+        user, name = account, account or ANONYMOUS_NAME
+    return ws, collab.Peer(ws=sock, client="", user=user, name=name, color=0, can_edit=can_edit,
+                           account=account, is_guest=is_guest, token=token)
+
+
+def _log_position(ws: str, page_id: str) -> int:
+    with connect_pages_db(ws) as conn:
+        return latest_seq(conn, page_id)
+
+
+def _still_admitted(ws: str, page_id: str, peer: collab.Peer) -> bool | None:
+    """``collab.peer_access`` once more, for a peer in the room: a revoke
+    that landed between the handshake's check and the join found no peer
+    to close (``revalidate`` walks the rooms); this finds it."""
+    return collab.peer_access(ws, page_id, peer.account, peer.is_guest, peer.token)
 
 
 @router.websocket("/ws/page/{page_id}")
@@ -131,24 +144,49 @@ async def page_socket(sock: WebSocket, page_id: str):
     """The page's live channel. Server → client: ``hello {client, color,
     seq, peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
     {client, block, anchor, head}``, ``ops {seq, actor, client, at, ops}``
-    for every applied batch, ``reload`` for changes ops can't express.
+    for every applied batch, ``reload`` for changes ops can't express (a
+    restore included), ``trashed`` when the page went to Recently deleted.
     Client → server: ``cursor {block, anchor, head}`` only — writes are
-    ``POST /pages/{id}/ops``."""
-    access = _socket_access(sock, page_id)
+    ``POST /pages/{id}/ops``. Closed with 4403 when access is refused or
+    revoked (``collab.revalidate``), 4409 when the same tab joined again.
+    The database reads (the access check, the log position) run in worker
+    threads; the room itself lives on the loop. A client gone at any point
+    of the handshake (navigated away as the socket opened) is an ordinary
+    close, never an error."""
+    access = await run_in_threadpool(_socket_access, sock, page_id)
     if not access:
-        await sock.close(code=4403)
+        await collab.close_quietly(sock, collab.CLOSE_REVOKED)
         return
-    ws, user, name, can_edit, seq = access
-    await sock.accept()
-    client = (sock.query_params.get("client") or secrets.token_urlsafe(6))[:32]
-    room = collab.room_for(ws, page_id)
-    color = room.next_color() if room else 0
-    peer = collab.Peer(ws=sock, client=client, user=user, name=name, color=color, can_edit=can_edit)
-    room = collab.join(ws, page_id, peer)
-    await sock.send_text(json.dumps({"t": "hello", "client": client, "color": color, "seq": seq,
-                                     "peers": room.presence()}))
-    await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
+    ws, peer = access
+    room = None
     try:
+        await sock.accept()
+        client = peer.client = (sock.query_params.get("client") or secrets.token_urlsafe(6))[:32]
+        room = collab.room_for(ws, page_id)
+        same_tab = room.peers.get(client) if room else None  # a reconnect keeps its colour
+        peer.color = same_tab.color if same_tab else room.next_color() if room else 0
+        room = collab.join(ws, page_id, peer)
+        # The log position is read only now that the peer is in the room: a
+        # batch committed before this read is counted in the hello (the client
+        # catches up on it), one after it reaches the peer as it is fanned out —
+        # possibly just before the hello, which the client's ordered inbox takes
+        # as it takes any batch.
+        seq = await run_in_threadpool(_log_position, ws, page_id)
+        await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
+                                         "peers": room.presence()}))
+        await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
+        # Access once more now that the peer is in the room (after the hello,
+        # which stays the first message a socket gets): a revoke that landed
+        # while it joined closes it here, as revalidate would have.
+        can_edit = await run_in_threadpool(_still_admitted, ws, page_id, peer)
+        if can_edit is None:
+            if collab.leave(room, peer):
+                collab.publish(ws, page_id, {"t": "leave", "client": client})
+            await collab.close_quietly(sock, collab.CLOSE_REVOKED)
+            return
+        if can_edit != peer.can_edit:
+            peer.can_edit = can_edit
+            collab.publish(ws, page_id, {"t": "join", "peer": peer.public()}, exclude=client)
         while True:
             msg = await sock.receive_json()
             if not isinstance(msg, dict):
@@ -166,5 +204,8 @@ async def page_socket(sock: WebSocket, page_id: str):
         # Announce through publish (its own task on the loop), never by
         # awaiting here: a handler being torn down may be inside a cancelled
         # scope, and a cancelled send would leave the others with a ghost peer.
-        collab.leave(room, client)
-        collab.publish(ws, page_id, {"t": "leave", "client": client})
+        # Nothing to announce when a newer socket of this tab took its place,
+        # access was revoked (revalidate announced it) or a failed send
+        # dropped it (the room announced it).
+        if room is not None and collab.leave(room, peer):
+            collab.publish(ws, page_id, {"t": "leave", "client": peer.client})

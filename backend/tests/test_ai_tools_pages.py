@@ -320,20 +320,15 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
 def test_document_map_starts_after_the_excerpt(org):
     """The map lists the pages the excerpt doesn't show in full — the
     model picks the next page to read from it, not one it already has."""
-    import sqlite3
     from gamma.ai_context import document_map
-    from gamma.db import page_now, ws_db_path
-    from gamma.pdf_index import ensure_schema
-    from gamma.textnorm import INDEX_VERSION
+    from gamma.db import connect_data_db
+    from gamma.pdf_index import store_doc
 
     _, ids = org
     doc = "f" * 24
-    with sqlite3.connect(ws_db_path(ids["ws"], "data.db")) as db:
-        ensure_schema(db)
-        db.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
-                       [(doc, n, f"Section {n} opens here with words") for n in range(1, 31)])
-        db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
-                   "VALUES (?, ?, 30, ?)", (doc, page_now(), INDEX_VERSION))
+    # stored the way the indexer stores a paper (the rowid side table too)
+    with connect_data_db(ids["ws"]) as db:
+        store_doc(db, doc, [(n, f"Section {n} opens here with words") for n in range(1, 31)])
     whole = document_map(ids["ws"], doc)
     assert "30-page PDF" in whole and "  p.1: Section 1" in whole and "from page" not in whole
     later = document_map(ids["ws"], doc, from_page=10)

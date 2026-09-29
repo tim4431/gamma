@@ -7,24 +7,17 @@ tolerance, stale index versions, the reindex endpoint, the tasks shape."""
 import sqlite3
 
 from conftest import login, make_page, make_user, workspace_of
-from gamma.db import ws_db_path
+from gamma.db import connect_data_db, ws_db_path
+from gamma.pdf_index import store_doc
 from gamma.textnorm import INDEX_VERSION, normalize_text
 
 
 def _index_pdf(user, doc_id, pages):
-    """Insert index rows directly, the way _index_doc stores them (normalized
-    text, current version — otherwise the endpoint schedules a re-index that
-    would race the test and delete these rows)."""
-    from gamma.pdf_index import ensure_schema
-
-    with sqlite3.connect(ws_db_path(workspace_of(user), "data.db")) as conn:
-        ensure_schema(conn)
-        conn.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (doc_id,))
-        conn.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
-                         [(doc_id, p, normalize_text(text)) for p, text in pages])
-        conn.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
-                     "VALUES (?, '2026', ?, ?)", (doc_id, len(pages), INDEX_VERSION))
-        conn.commit()
+    """Store index rows the way _index_doc does (pdf_index.store_doc:
+    normalized text, current version — otherwise the endpoint schedules a
+    re-index that would race the test and delete these rows)."""
+    with connect_data_db(workspace_of(user)) as conn:
+        store_doc(conn, doc_id, [(p, normalize_text(text)) for p, text in pages])
 
 
 def _block(c, parent, content, props=None):
@@ -140,9 +133,10 @@ def test_dirty_page_reindex_follows_every_write():
     (hit,) = _search(c, "beta")["results"]
     assert hit["block_id"] == b and hit["page_id"] == page["id"] and hit["title"] == "Dirty page"
 
-    # Deleting a page prunes its rows.
+    # A page in Recently deleted is out of the search; deleted for good, its rows go.
     assert c.delete(f"/api/blocks/{page['id']}").status_code == 200
     assert _search(c, "delta")["results"] == [] and _search(c, "beta")["results"] == []
+    assert c.delete(f"/api/trash/{page['id']}").status_code == 200
     assert _meta("searcher", page["id"]) is None
 
     # A stale index version rebuilds lazily too (what search-reindex stamps).

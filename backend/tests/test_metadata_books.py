@@ -4,6 +4,9 @@ stored record carries ``meta.unverified``, and the slide citation is generated
 together with the metadata instead of on first share.
 """
 
+import json
+import urllib.parse
+
 from conftest import make_page
 from test_metadata_verify import CITED_META, _paper_page
 
@@ -75,6 +78,29 @@ def test_pick_book_match_needs_title_and_author_agreement():
     # Without AI, the text has to carry title + author
     assert _pick_book_match([OTHER_BOOK, OL_HIT], BOOK_TEXT)["title"] == "Lasers"
     assert _pick_book_match([OTHER_BOOK], BOOK_TEXT) is None
+
+
+def test_book_search_asks_open_library_then_google_books(monkeypatch):
+    """Both registries are asked, five hits at most each, and a Google Books
+    volume becomes a candidate _pick_book_match can accept."""
+    asked = []
+
+    def fake_get(url, accept="", timeout=20):
+        asked.append(url)
+        if url.startswith("https://openlibrary.org/"):
+            return b'{"docs": []}'
+        return json.dumps({"items": [{"volumeInfo": {
+            "title": "Lasers", "authors": ["Anthony E. Siegman"], "publishedDate": "1986-01-01",
+            "publisher": "University Science Books",
+            "industryIdentifiers": [{"type": "ISBN_10", "identifier": "0935702113"}],
+        }}]}).encode()
+    monkeypatch.setattr(metadata, "_http_get", fake_get)
+    cands = metadata._book_search("Lasers", "Anthony E. Siegman")
+    assert len(asked) == 2 and asked[1].startswith("https://www.googleapis.com/books/v1/volumes?maxResults=5&q=")
+    assert "intitle" in urllib.parse.unquote(asked[1]) and "Siegman" in urllib.parse.unquote(asked[1])
+    assert [(c["title"], c["source"], c["isbns"]) for c in cands] == [("Lasers", "googlebooks", ["0935702113"])]
+    rec = _pick_book_match(cands, BOOK_TEXT)
+    assert rec["source"] == "googlebooks" and rec["isbn"] == "0935702113" and rec["year"] == "1986"
 
 
 def test_book_bibtex():

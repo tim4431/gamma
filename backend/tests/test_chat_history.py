@@ -8,6 +8,11 @@ def _msgs(*texts):
     return [{"role": "user" if i % 2 == 0 else "ai", "text": t} for i, t in enumerate(texts)]
 
 
+def _unversioned(chat):
+    """A chat answer without its version (``updated_at`` — test_chat_versions.py)."""
+    return {k: v for k, v in chat.items() if k != "updated_at"}
+
+
 def _sessions(client, bucket):
     r = client.get("/api/chat-history", params={"bucket": bucket})
     assert r.status_code == 200, r.text
@@ -17,7 +22,7 @@ def _sessions(client, bucket):
 def test_active_chat_carries_a_title(guest):
     key = "home:hist/title"
     assert guest.put(f"/api/chats/{key}", json={"messages": _msgs("hello")}).status_code == 200
-    assert guest.get(f"/api/chats/{key}").json() == {"messages": _msgs("hello"), "title": ""}
+    assert _unversioned(guest.get(f"/api/chats/{key}").json()) == {"messages": _msgs("hello"), "title": ""}
     # A save without a title keeps the stored one; an explicit title renames.
     guest.put(f"/api/chats/{key}", json={"messages": _msgs("hello"), "title": "  My   chat "})
     assert guest.get(f"/api/chats/{key}").json()["title"] == "My chat"
@@ -51,8 +56,8 @@ def test_open_swaps_conversations_and_keeps_titles(guest):
     r = guest.post(f"/api/chat-history/{entry_id}/open",
                    json={"bucket": key, "messages": second, "title": "Second"})
     assert r.status_code == 200
-    assert r.json() == {"messages": first, "title": "First"}
-    assert guest.get(f"/api/chats/{key}").json() == {"messages": first, "title": "First"}
+    assert _unversioned(r.json()) == {"messages": first, "title": "First"}
+    assert _unversioned(guest.get(f"/api/chats/{key}").json()) == {"messages": first, "title": "First"}
     # The opened entry left history; the previous active one took its place.
     sessions = _sessions(guest, key)
     assert [s["title"] for s in sessions] == ["Second"]
@@ -94,8 +99,10 @@ def test_folder_rename_carries_history(guest):
     assert [s["title"] for s in _sessions(guest, "home:hr2")] == ["root"]
     assert [s["title"] for s in _sessions(guest, "home:hr2/sub")] == ["sub"]
     assert [s["title"] for s in _sessions(guest, "home:hrx")] == ["other"]
+    # a folder delete keeps the history where it was (the folder may come back)
     guest.post("/api/folders/rename", json={"src": "hr2", "dst": ""})
-    assert _sessions(guest, "home:hr2") == [] and _sessions(guest, "home:hr2/sub") == []
+    assert [s["title"] for s in _sessions(guest, "home:hr2")] == ["root"]
+    assert [s["title"] for s in _sessions(guest, "home:hr2/sub")] == ["sub"]
 
 
 def test_page_delete_drops_its_history(guest):
@@ -104,5 +111,7 @@ def test_page_delete_drops_its_history(guest):
     guest.post("/api/chat-history/archive", json={"bucket": page["id"], "messages": _msgs("old")})
     assert len(_sessions(guest, page["id"])) == 1
     assert guest.delete(f"/api/blocks/{page['id']}").status_code == 200
+    assert len(_sessions(guest, page["id"])) == 1  # kept while it is in Recently deleted
+    assert guest.delete(f"/api/trash/{page['id']}").status_code == 200
     assert _sessions(guest, page["id"]) == []
     assert guest.get(f"/api/chats/{page['id']}").json()["messages"] == []

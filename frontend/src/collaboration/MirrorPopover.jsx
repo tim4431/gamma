@@ -45,7 +45,7 @@ export const ACTION_TEXT = {
   "deleted here": t("deleted on remote — removed here"),
   "deleted there": t("deleted here — removed on remote"),
   "restored here": t("restored from remote (edited there after it was deleted here)"),
-  "restored there": t("restored on remote (edited here after it was deleted there)"),
+  "restored there": t("restored on remote (kept here after it was deleted there)"),
   "replaced here": t("force-pulled: remote's version replaced this one"),
   "replaced there": t("force-pushed: this version replaced remote's"),
 };
@@ -237,7 +237,7 @@ function StateBlock({ info, busy, pending, onConflicts }) {
 // Force pull / force push / remove origin ask once, inline: a warning line
 // with Yes / No.
 function Confirm({ what, busy, onYes, onNo }) {
-  const text = what === "pull" ? t("Force pull: make this clone identical to the remote? Where texts differ, local ones are kept as conflicts.") : what === "push" ? t("Force push: make the remote identical to this clone? Where texts differ, remote ones are kept as conflicts.") : t("Remove origin? The workspace stays; it never syncs again.");
+  const text = what === "pull" ? t("Force pull: make this clone identical to the remote? Local texts it replaces or removes are kept as conflicts.") : what === "push" ? t("Force push: make the remote identical to this clone? Remote texts it replaces or removes are kept as conflicts.") : t("Remove origin? The workspace stays; it never syncs again.");
   return (
     <div className="mirrorConfirm">
       <AlertCircleIcon size={14} />

@@ -66,8 +66,8 @@ def test_block_search_reports_kinds(guest):
               json={"properties": {"highlight_id": "h2", "link_page_id": page["id"]}})
 
     kinds = {b["content"]: b["kind"]
-             for b in guest.get("/api/block-search", params={"q": "plaino|hilite|linky",
-                                                             "regex": 1, "limit": 50}).json()["blocks"]}
+             for q in ("plaino", "hilite", "linky")
+             for b in guest.get("/api/block-search", params={"q": q, "limit": 50}).json()["blocks"]}
     assert kinds["a plaino note"] == "note"
     assert kinds["a hilite quote"] == "highlight"
     assert kinds["a linky region"] == "link"
@@ -80,6 +80,9 @@ def test_delete_purges_chats(guest):
     assert guest.get(f"/api/chats/{page['id']}").json()["messages"]
     r = guest.delete(f"/api/blocks/{page['id']}")
     assert r.status_code == 200
+    # in Recently deleted the chat stays; deleted for good, it goes
+    assert guest.get(f"/api/chats/{page['id']}").json()["messages"]
+    assert guest.delete(f"/api/trash/{page['id']}").status_code == 200
     assert guest.get(f"/api/chats/{page['id']}").json()["messages"] == []
 
 

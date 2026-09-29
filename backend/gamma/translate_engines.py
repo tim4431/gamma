@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import HTTPException
 
-from .db import get_pref, page_now, set_pref
+from .db import get_pref, page_now, update_pref
 from .logbuf import log
 
 ENGINES_PREF_KEY = "translate-engines"
@@ -127,11 +127,26 @@ def free_failing(user: str) -> dict | None:
 
 # --- stored credentials -------------------------------------------------------
 
-def load(user: str) -> dict:
-    value, _ = get_pref(user, ENGINES_PREF_KEY)
+def _engines_of(value) -> dict:
     if not isinstance(value, dict):
         return {}
     return {k: v for k, v in value.items() if k in ENGINES and isinstance(v, dict)}
+
+
+def load(user: str) -> dict:
+    return _engines_of(get_pref(user, ENGINES_PREF_KEY)[0])
+
+
+def _update(user: str, change) -> None:
+    """Read-modify-write the stored engines in one transaction
+    (db.update_pref): ``change(saved)`` edits the dict in place and may
+    raise to abort, so saving one engine never drops another saved
+    meanwhile."""
+    def apply(value):
+        saved = _engines_of(value)
+        change(saved)
+        return saved
+    update_pref(user, ENGINES_PREF_KEY, apply)
 
 
 def _complete(engine: str, conf: dict | None) -> bool:
@@ -173,28 +188,26 @@ def save(user: str, engine: str, fields: dict) -> None:
         raise HTTPException(status_code=404, detail="unknown translation engine")
     if not ENGINES[engine]["fields"]:
         raise HTTPException(status_code=400, detail=f"{ENGINES[engine]['label']} needs no key")
-    saved = load(user)
-    old = saved.get(engine) or {}
-    conf = {}
-    for f in ENGINES[engine]["fields"]:
-        value = fields.get(f["id"])
-        value = value.strip() if isinstance(value, str) else ""
-        if len(value) > MAX_FIELD_LEN:
-            raise HTTPException(status_code=400, detail=f"{f['id']} is too long")
-        if not value and f["secret"]:
-            value = old.get(f["id"]) or ""
-        if not value:
-            raise HTTPException(status_code=400, detail=f"{f['id']} is required")
-        conf[f["id"]] = value
-    conf["updated_at"] = page_now()
-    saved[engine] = conf
-    set_pref(user, ENGINES_PREF_KEY, saved)
+    def change(saved):
+        old = saved.get(engine) or {}
+        conf = {}
+        for f in ENGINES[engine]["fields"]:
+            value = fields.get(f["id"])
+            value = value.strip() if isinstance(value, str) else ""
+            if len(value) > MAX_FIELD_LEN:
+                raise HTTPException(status_code=400, detail=f"{f['id']} is too long")
+            if not value and f["secret"]:
+                value = old.get(f["id"]) or ""
+            if not value:
+                raise HTTPException(status_code=400, detail=f"{f['id']} is required")
+            conf[f["id"]] = value
+        conf["updated_at"] = page_now()
+        saved[engine] = conf
+    _update(user, change)
 
 
 def remove(user: str, engine: str) -> None:
-    saved = load(user)
-    if saved.pop(engine, None) is not None:
-        set_pref(user, ENGINES_PREF_KEY, saved)
+    _update(user, lambda saved: saved.pop(engine, None))
 
 
 def engine_of(model: str) -> str:

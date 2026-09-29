@@ -24,7 +24,7 @@ from fastapi import APIRouter, Request
 
 from .. import workspaces
 from ..auth import require_ws, ws_role
-from ..db import connect_pages_db, page_now
+from ..db import connect_pages_db, format_stamp
 
 router = APIRouter(prefix="/api", tags=["sync"])
 
@@ -42,8 +42,7 @@ def _cursor(at: str, block_id: str = "") -> str:
 
 
 def _grace_cursor() -> str:
-    now = datetime.strptime(page_now(), "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-    return (now - timedelta(seconds=GRACE_SECONDS)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return format_stamp(datetime.now(timezone.utc) - timedelta(seconds=GRACE_SECONDS))
 
 
 def changes(conn, since: str, limit: int) -> dict:
@@ -82,7 +81,7 @@ def changes(conn, since: str, limit: int) -> dict:
 
 
 @router.get("/sync/whoami")
-async def sync_whoami(request: Request):
+def sync_whoami(request: Request):
     """Who the credential is and what it may do here: ``{user, workspace:
     {id, name}, role, scope}`` — ``scope`` is the integration token's
     (``read`` / ``write``), ``session`` for a signed-in browser. A mirror
@@ -95,7 +94,7 @@ async def sync_whoami(request: Request):
 
 
 @router.get("/sync/changes")
-async def sync_changes(request: Request, since: str = "", limit: int = 500):
+def sync_changes(request: Request, since: str = "", limit: int = 500):
     """Pages changed and pages deleted since ``since`` (``""`` = everything),
     at most ``limit`` entries, with the cursor to continue from."""
     ws = require_ws(request)

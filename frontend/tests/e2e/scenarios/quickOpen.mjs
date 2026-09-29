@@ -126,6 +126,7 @@ export async function quickOpenScenarios(env) {
   await step("quickopen: a link to a page that isn't here says so, and Search the library opens the palette", async () => {
     const gone = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Soon deleted" } });
     await user.api(`/api/blocks/${gone.id}`, { method: "DELETE" });
+    await user.api(`/api/trash/${gone.id}`, { method: "DELETE" }); // gone for good (trash.mjs covers Recently deleted)
     const holder = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Links to a gone page" } });
     await user.api("/api/blocks", { method: "POST", body: { parent_id: holder.id, content: `see [the old page](/?page=${gone.id})` } });
     const ctx = await user.context(browser);
@@ -181,7 +182,7 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("Escape");
       await row.click();
       await page.keyboard.press("Delete");
-      const confirm = page.locator(".confirmModal", { hasText: "Delete this page and all its notes?" });
+      const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
       await row.waitFor();
@@ -195,6 +196,89 @@ export async function quickOpenScenarios(env) {
         { what: "the page is filed in the folder" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("tabs: closing follows viewing order through page links and tab switches", async () => {
+    const made = [];
+    for (const title of ["Return first", "Return second", "Return third"]) {
+      made.push(await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } }));
+    }
+    for (let i = 0; i < made.length - 1; i++) {
+      await user.api("/api/blocks", { method: "POST", body: {
+        parent_id: made[i].id, content: `[Next return page](/?page=${made[i + 1].id})`,
+      } });
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${made[0].id}&ws=${user.ws}`);
+    const tab = (i) => page.locator(".tabStrip .tab", { hasText: made[i].content });
+    const onPage = async (i) => {
+      await until(() => new URL(page.url()).searchParams.get("block") === made[i].id, { what: `${made[i].content} opens` });
+      await until(() => tab(i).evaluate((el) => el.classList.contains("active")), { what: "the tab is active" });
+    };
+    try {
+      await onPage(0);
+      await page.locator(".gammaLinkCard", { hasText: "Next return page" }).click();
+      await onPage(1);
+      await page.locator(".gammaLinkCard", { hasText: "Next return page" }).click();
+      await onPage(2);
+      // The previously viewed tab is third even though first is leftmost.
+      await tab(0).click();
+      await onPage(0);
+      await tab(0).click({ button: "middle" });
+      await onPage(2);
+      await tab(0).waitFor({ state: "detached" });
+      // Context-menu close takes the same route; repeated closes skip first.
+      await tab(2).click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Close tab" }).click();
+      await onPage(1);
+      await tab(2).waitFor({ state: "detached" });
+      await tab(1).getByRole("button", { name: `Close ${made[1].content}`, exact: true }).click();
+      await page.locator(".homeListBar").waitFor();
+      assertEq(await page.locator(".tabStrip .tab").count(), 0, "closing the last tab returns home without reopening closed pages");
+
+      // Closing a background tab keeps the active page and removes that
+      // background page from subsequent return destinations.
+      await page.locator(".fileRow", { hasText: made[0].content }).dblclick();
+      await onPage(0);
+      await page.locator(".gammaLinkCard", { hasText: "Next return page" }).click();
+      await onPage(1);
+      await page.locator(".gammaLinkCard", { hasText: "Next return page" }).click();
+      await onPage(2);
+      await tab(1).getByRole("button", { name: `Close ${made[1].content}`, exact: true }).click();
+      await tab(1).waitFor({ state: "detached" });
+      assertEq(new URL(page.url()).searchParams.get("block"), made[2].id, "background close leaves the current page open");
+      await tab(2).getByRole("button", { name: `Close ${made[2].content}`, exact: true }).click();
+      await onPage(0);
+      assertEq(await tab(1).count(), 0, "the closed background tab stays closed");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("tabs: closing returns to the folder or label it opened from, even with another tab open", async () => {
+    const filed = await user.api("/api/blocks", { method: "POST", body: {
+      parent_id: "root", content: "Return to library view", properties: { folder: "return/nested", category: "return-label" },
+    } });
+    const other = papers["Atomic clocks"];
+    for (const category of ["", "return-label"]) {
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: other.id, title: other.content }] } });
+      const ctx = await user.context(browser);
+      const page = await openPage(ctx, `${server.base}/?folder=return/nested&category=${category}&ws=${user.ws}`);
+      try {
+        const row = page.locator(".fileRow", { hasText: filed.content });
+        await row.dblclick();
+        const active = page.locator(".tabStrip .tab.active", { hasText: filed.content });
+        await active.waitFor();
+        await active.getByRole("button", { name: `Close ${filed.content}`, exact: true }).click();
+        await row.waitFor();
+        const params = new URL(page.url()).searchParams;
+        assertEq(params.get("folder"), "return/nested", "closing restores the nested folder");
+        assertEq(params.get("category") || "", category, "closing restores the label filter");
+        assertEq(await page.locator(".tabStrip .tab", { hasText: other.content }).count(), 1, "the other tab stays open");
+        assertEq(await page.locator(".tabStrip .tab.active").count(), 0, "the source library view takes priority over other tabs");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("tabs: the active tab stays in view, and ⌄ lists every open tab and opens the pick", async () => {

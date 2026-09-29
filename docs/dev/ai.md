@@ -15,7 +15,12 @@ There are NO env API keys; providers are GUI entries: each account's own
 (Settings → AI › Connections), plus the server's shared ones an admin adds
 (below). An account's entries are stored under the reserved account-wide
 `ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
-via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
+via `POST/PUT/DELETE /api/ai/providers[/{id}]`. Every change to the list is
+one read-modify-write transaction (`ai_settings.update_provider_entries`,
+over `db.update_pref`), never a list read earlier and saved back. So a
+ChatGPT sign-in, which stores its entry before asking for its first models,
+or a token refresh writing back its entry's tokens never drops a key another
+tab added meanwhile. An entry offers exactly the
 models picked for it (from the provider's live listing in the form): there is
 no built-in default model, so an entry with none picked offers nothing and its
 Test button says so (migration step 15 wrote the old defaults into entries
@@ -200,6 +205,22 @@ Settings → AI. How each caller surfaces it:
   allowance is used up.
 - Model listings and the context-window lookup spend nothing and are never
   refused.
+
+**Calls open at once.** The same choke point caps the provider calls one
+account may have open: `ai_client.MAX_OPEN_CALLS` (6). An open call holds a
+server worker thread for as long as the provider takes, and those threads
+serve every other request too (a PDF page read included). So the seventh is
+refused with `TooManyCalls`, a 429 whose detail points at the translation's
+parallel requests. `open_ai` takes a slot before it connects and returns the
+response wrapped (`_OpenCall`), which frees the slot when it is closed. Every
+caller closes its response when the reply ends or fails, a stream's
+generator also when its client goes away; a response dropped unread frees
+its slot when it is collected, and a failed connect at once. Both refusals
+derive from `CallRefused`, so every caller above treats them alike
+(`failure_kind` calls this one `rate`). The streamed translation checks both
+before its stream starts (`check_call_slot`). Dictation and the model
+listings bypass `open_ai` and are not counted. The pool itself is raised
+from AnyIO's 40 to `app.THREAD_TOKENS` (100) at startup.
 
 ### The chatgpt protocol (OAuth)
 
@@ -666,30 +687,42 @@ scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
 which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
 
-### Permissions and knobs (Settings → Assistant)
+The changing tools (rename, move, the note editors) are armed only when
+`auth.can_write` lets the request write: an editor or owner, and through an
+integration token only a write-scope one. A workspace viewer or a read-scope
+token gets the reading tools only (the prompt then says changes are not
+available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-The single **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
-governs tool use in every chat; every chat starts with tools on. The Tools
-button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
-chat only. New chat resets the switch back to on.
+### Permissions and knobs (Settings → Chat)
+
+The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
+governs tool use in every chat. The chat header's Tools button and settings
+popover edit the same account preference; New chat does not reset it.
+Under the permission table, **Fetch blocked papers in the background**
+(`gamma-ai-fetch-background`, default off) lets a blocked fetch's card hand
+the page to Gamma Connector without a click
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 Which tools a chat may use is configured per chat KIND — there are three
-(`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/SettingsDialog.jsx`):
+(`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
 
 - **Folder chat** — the home/folder view (`agent_scope: "folder"`).
 - **PDF chat** — a page with a PDF attached (`agent_scope: "page"`).
 - **Notes chat** — a page without one (`agent_scope: "page"`).
 
-Settings → Assistant → Tool configuration shows one row per kind whose
-control is a `ToggleGroup` of icon + short-name chips (List, Read, Blocks,
-Search, Rename, Move, Edit — folder scope offers all, page scope the reading
-tools and the note-block editors); clicking a chip allows or forbids that
-tool for every chat of the kind. The stored map is localStorage JSON
+Settings → Chat → Tools compares permissions in a table: named, explained
+rows grouped into **Read your library**, **Web research**, and **Make changes**,
+with a column for each chat kind. Unavailable tools show a dash. On narrow
+panes, each tool's labeled switches sit below its description. Each column
+offers **Read library** (library reading only), **Read & search** (reading,
+web search and fetching), and **All tools** (also editing) presets; individual
+changes show **Custom**. The stored map is account-synced, with localStorage JSON
 `gamma-ai-agent-perms` = `{folder, pdf, notes}` → `{list, read, block_read,
-view, search, web_search, web_read, rename, move, block_edit}` (a pre-kind flat map is applied to every
+view, search, web_search, web_read, publisher_cookies, rename, move, block_edit}` (a pre-kind flat map is applied to every
 kind on read). The chat header's ⚙ popover carries the same picker for the
-kind of the chat it is opened in (`AgentToolPicker` in `settings/SettingsDialog.jsx`,
-bound to the same map), so a change in either place is the same change.
+kind of the chat it is opened in (`AgentToolPicker` in `settings/AssistantTools.jsx`,
+grouped checkbox rows and the same presets, bound to the same map), so a change
+in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
@@ -701,9 +734,16 @@ scan or a figure), Search library (`search_library` — notes and PDF text; the 
 still `search`), Search papers online (`web_search` → `search_papers`), Fetch
 documents (`web_read` → `fetch_paper`; both web tools are read-only and
 described in [ai_tools.md](ai_tools.md)), Rename pages, Move pages, and Edit
-note blocks (one chip arming `edit_block`/`create_block`/`move_block`
+note blocks (one switch arming `edit_block`/`create_block`/`move_block`
 together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
-includes the two web tools and the page viewer. Plus:
+includes the two web tools and the page viewer. **Use journal sign-ins**
+(`publisher_cookies`, default on) controls whether `fetch_paper` may use the
+caller's connected publisher cookies; the browser handoff for a blocked fetch
+needs no switch of its own. The backend excludes that identity when
+the permission is false, including from the authenticated text cache. This
+switch requires **Fetch documents**; disabling fetching preserves its stored
+choice. Turning cookie use off does not disconnect publishers or affect
+interactive PDF saves. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -755,6 +795,13 @@ the reload is skipped — [collab.md](collab.md)). A `view_pdf_page` result
 also carries the rendered page: the loop lifts it off the action into the
 tool message's `images` before yielding the chip, so the model sees the
 picture and the saved chat never holds it ([ai_tools.md](ai_tools.md)).
+A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
+`handoff`; after the reply's text the chat shows a card for it
+(`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
+continues the conversation once it arrives
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
+or named papers ends with a **Save to library** list of them
+(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`.
 
 ### Watching the agent work (live footprint)
 
@@ -843,8 +890,10 @@ A whole-document job queues pages nearest the current page first (forward before
 equal distance), so the page being read paints immediately. The queue lives
 in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
 segments queued pages in order and feeds one flat list of ~6-paragraph /
-1200-char chunks, while N workers (Settings → Reading → parallel requests,
-typed, 1–32) stream through it across page boundaries — the first request is
+1200-char chunks, while N workers (Settings → Translation → parallel
+requests, 1–`TRANSLATE_PARALLEL_MAX` = 4 in `app/prefDefs.js`, below the six
+AI calls an account may have open at once; a larger stored value reads as 4)
+stream through it across page boundaries — the first request is
 in flight while later pages are still segmenting, chunks paint as they land,
 char-weighted progress shows under the button and as a background-tasks row.
 Halting aborts the in-flight requests (each job carries an AbortController)
@@ -1030,12 +1079,21 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 - **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30
-  days, first_at, keep_days, allowance}`. `allowance` is the shared
+  days, daily: [{date, calls, input, output, cache_read, cache_write}],
+  first_at, keep_days, allowance}`. `daily` contains 365 consecutive UTC
+  dates ending today, including zero-usage days. `allowance` is the shared
   entries' 24-hour allowance (above), null when no shared entry applies.
   `DELETE /api/ai/usage` forgets the account's rows except those the
   allowance still counts. Settings → AI › Connections → **Token usage**
-  renders three tiles (today / 7 days / 30 days), the allowance row, the
-  all-time line with Reset, and a by-model table (plus a by-kind block when
+  renders one usage card (`UsageChart.jsx`): the overall retained totals
+  from `windows.all` (tokens, input/output, calls, cache percentage, start
+  date), an accent-colored bar chart, and Reset. There are no separate
+  today/week/month total tiles. The chart switches between the latest 30
+  UTC days and the latest 12 calendar months, and between tokens and calls;
+  monthly bars sum the daily data (the current month is partial). Left/right
+  arrows select bars; Home/End select the first/last. The chart fits narrow
+  screens without scrolling. The allowance row and a by-model table follow
+  (plus a by-kind block when
   more than one kind ran). A guest sees it without Reset while a shared
   entry applies. No prices anywhere: they differ per provider and change;
   the tokens are what every provider agrees on.
@@ -1047,10 +1105,14 @@ Focused page id in the paper view, `home` at the library root,
 switching folders re-scopes the next message. The
 `/api/chats/{block_id:path}` routes take the `:path` converter for the nested
 keys, and folder rename/move/delete calls `POST /api/folders/rename`
-(`chats.move_folder_buckets`; {src, dst}, dst "" deletes) BEFORE rewriting the tags so the destination
+(`chats.move_folder_buckets`; {src, dst}, dst "" for a delete) BEFORE rewriting the tags so the destination
 bucket exists when ChatDock reloads (a destination holding a real conversation
-wins; empty save-echo rows are overwritten) — folder conversations follow
-renames and moves, and are deleted with their folder.
+stays active and the moved-in one is filed into its history; empty save-echo
+rows are overwritten) — folder conversations follow renames and moves. No
+conversation is ever dropped with a folder: a delete ("Keep pages" and
+"Delete pages too" alike) files each active one into its own bucket's
+history, which stays under the folder's key, so a page restored from
+Recently deleted brings its folder back with its chats.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1064,34 +1126,75 @@ carries the bucket so a background reply finishing does not clear the open
 page's live edit preview (`handleAgentEvent`). Covered by
 `tests/chatSession.test.mjs` and the e2e `chat navigation` steps.
 
+Two tabs, or two members, can hold the same bucket's conversation, so a save
+never replaces a copy it hasn't seen. The active row's `updated_at` is the
+conversation's version. `GET /chats/{key}` returns it, the session keeps the
+one it last read or wrote per bucket (`seen`, `version`), and every save
+sends it (`PUT /chats/{key}` `{messages, updated_at}`). A save made from an
+older copy is refused with 409 and the stored conversation. The session then
+merges the two (`mergeChats`, three-way from the copy it had read). Every
+message either side added stays, ours after the message it follows, else at
+the end. Our newer version of a message wins, theirs wins where ours is
+unchanged, and what either side dropped since the copy was read goes: this
+tab's edit-and-resend, and the other side's New chat (the stored
+conversation is then empty, or another one opened from history) or
+edit-and-resend, so a stale tab never brings an archived conversation back.
+A turn (a question and the replies after it) this tab changed since stays
+whole: a reply that finished here after another tab's New chat starts the
+new conversation with its question. The session shows the merge and saves
+it against the stored version; a reply still streaming is rebased onto it
+on its next update. A tab that comes back into focus (`focus`,
+`visibilitychange`) reads the stored conversation again and shows it when
+its version is not the tab's, as long as the tab's copy is saved and no
+reply streams there; the composer's draft stays. Messages carry
+a client-minted `id`, so the versions of one streamed reply are one message;
+older messages match by content. A save that fails on the network or with a
+5xx is retried (1, 3, 8 s). One that still fails, or a refusal, marks the
+bucket in the session's `failed` map, and the dock shows "This conversation
+isn't saved" with Retry until a save goes through. Covered by `tests/chatConflicts.test.mjs`,
+`backend/tests/test_chat_versions.py` and the e2e step "two tabs asking in
+one conversation".
+
+Chats belong to the workspace, and only its editors change them
+(`require_ws(write=True)` on every chat write). A workspace viewer asks the
+AI with the reading tools, but its conversation stays in the tab: App's
+save does nothing for it, the dock shows a "Not saved" tag, hides History,
+and New chat starts over locally.
+
 ### Chat history
 
 Each bucket keeps its earlier conversations. `chats` (data.db) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
-plus a `title` column (added lazily by `connect_data_db`); `chat_history`
+plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
 updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
 
 - **New chat** (+ in the header) archives the conversation: it POSTs
-  `/chat-history/archive` `{bucket, messages, title}`, which files it into
-  history and clears the active row. The title is the user's, else the first
-  user message's first non-quote line (`derive_title`). The client sends its
-  own copy of the messages, so a reply still inside the 500 ms autosave
-  debounce is kept. An empty conversation archives to nothing.
+  `/chat-history/archive` `{bucket, messages, title, updated_at}`, which
+  files it into history and clears the active row. The title is the user's,
+  else the first user message's first non-quote line (`derive_title`). The
+  client sends its own copy of the messages, so a reply still inside the
+  500 ms autosave debounce is kept. An empty conversation archives to
+  nothing. A stored conversation newer than the copy (another tab kept
+  talking) is archived too, never deleted. Whichever of the two holds every
+  message of the other is archived alone; otherwise both are.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
   in the tooltip), with a search box filtering on title + first message.
   Clicking an entry POSTs `/chat-history/{id}/open` with the current
-  conversation: the current one is archived, the entry becomes the active
-  row and leaves history. A conversation is always in exactly one place.
+  conversation and its version: the current one is archived (a newer stored
+  one too, as for New chat), the entry becomes the active row and leaves
+  history, and the answer carries the new version. A conversation is always
+  in exactly one place.
   - Rename: inline `aiKeyInput`. The active chat's title goes through
-    `PUT /chats/{key}` `{messages, title}`, an entry's through
-    `PUT /chat-history/{id}`. The autosave never sends a title, so it can't
-    roll a rename back.
+    `PUT /chats/{key}` `{title}`, which leaves the messages and the version
+    as they are; an entry's through `PUT /chat-history/{id}`. The autosave
+    never sends a title, so it can't roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
 - History follows its bucket: `POST /folders/rename` rewrites entry
-  buckets along with the active rows, and `purge_page_data` drops a deleted
-  page's entries. The gamma export/import and the account-merge path copy
+  buckets along with the active rows (a folder delete leaves them), and
+  `purge_page_data` drops the entries of a page deleted for good (a page in
+  Recently deleted keeps its chats). The gamma export/import and the account-merge path copy
   only the active `chats` rows, not history.

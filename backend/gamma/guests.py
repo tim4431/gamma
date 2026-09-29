@@ -6,50 +6,42 @@ own personal workspace with the welcome page, and — when
 ``GAMMA_GUEST_SEED`` names a workspace backup zip — that zip restored into
 it. A guest account lives ``guest_ttl_hours`` (gamma/server_settings.py)
 after ``users.created_at``; then the session middleware treats it as signed
-out and deletes it on the spot (gamma/auth.py), and ``lifespan``'s sweeper
-deletes the ones nobody came back for, every ``SWEEP_INTERVAL_S``. Both go
-through ``workspaces.delete_account``, the one account deletion.
+out and deletes it on the spot (gamma/auth.py), and ``delete_expired``, the
+sweeper the app lifespan runs every ``SWEEP_INTERVAL_S`` (gamma/app.py),
+deletes the ones nobody came back for. Both go through
+``workspaces.delete_account``, the one account deletion.
 """
 
-import asyncio
 import secrets
 import sqlite3
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from . import config, workspaces
-from .db import connect_users_db, page_now
+from .db import connect_users_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
-SWEEP_INTERVAL_S = 600
+SWEEP_INTERVAL_S = 600  # the app lifespan runs ``delete_expired`` at startup and this often
 NAME_PREFIX = "guest-"
-
-
-def _parse(ts: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
 
 
 def expires_at(created_at: str, ttl_hours: int | None = None) -> str:
     """When a guest account created at ``created_at`` goes (UTC ISO, the
     ``page_now`` shape); "" for an unparseable time."""
-    created = _parse(created_at)
+    created = parse_stamp(created_at)
     if created is None:
         return ""
     hours = guest_ttl_hours() if ttl_hours is None else ttl_hours
-    return (created + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    return format_stamp(created + timedelta(hours=hours))
 
 
 def is_expired(created_at: str, *, now: datetime | None = None, ttl_hours: int | None = None) -> bool:
     """True once a guest account created at ``created_at`` has outlived the
     guest lifetime. An unparseable time counts as expired (fail closed)."""
-    created = _parse(created_at)
+    created = parse_stamp(created_at)
     if created is None:
         return True
     hours = guest_ttl_hours() if ttl_hours is None else ttl_hours
@@ -122,28 +114,3 @@ def delete_expired(*, now: datetime | None = None, everyone: bool = False) -> li
     if gone:
         log.info(f"[guests] deleted {len(gone)} guest account(s)" + ("" if everyone else " past their lifetime"))
     return gone
-
-
-@asynccontextmanager
-async def lifespan():
-    """The sweeper: ``delete_expired`` at startup and every
-    ``SWEEP_INTERVAL_S`` while the app runs."""
-    stop = asyncio.Event()
-
-    async def loop():
-        while not stop.is_set():
-            try:
-                await asyncio.to_thread(delete_expired)
-            except Exception:
-                log.exception("[guests] sweep failed")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=SWEEP_INTERVAL_S)
-            except asyncio.TimeoutError:
-                pass
-
-    task = asyncio.create_task(loop())
-    try:
-        yield
-    finally:
-        stop.set()
-        await task

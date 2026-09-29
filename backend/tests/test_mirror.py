@@ -459,7 +459,8 @@ def test_force_pull_and_push_make_one_side_identical(monkeypatch):
     assert local.texts(page["id"])["fc1"] == "original"
     assert extra["id"] not in local.pages() and extra["id"] not in remote.pages()
     c = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
-    assert [(x["kind"], x["mine"]) for x in c] == [("diverged", "copy's edit")]
+    # the replaced text and the removed page are both kept to look at
+    assert sorted((x["kind"], x["mine"]) for x in c) == [("diverged", "copy's edit"), ("dropped", "Only in the copy")]
     st = local.client.get(f"/api/mirrors/{local.ws}").json()["status"]
     assert "adopt" not in st and "prune" not in st
     # and the other way

@@ -9,13 +9,15 @@ import sqlite3
 from urllib.request import Request as URLRequest
 
 from .blocks_store import fetch_subtree, page_attachment, page_for_doc, page_root_id
-from .db import connect_pages_db, page_now, pdf_upload_path, ws_db_path
+from .db import connect_data_db, connect_pages_db, page_now, pdf_upload_path
 from .foldertags import parse_tags
 from .logbuf import log
 from .net_guard import guarded_urlopen
+from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
 from .server_settings import can_store
+from .storage import write_atomic
 from .textnorm import normalize_text
 
 
@@ -219,13 +221,15 @@ def request_note_selections(payload) -> list[dict]:
     return out
 
 
-def notes_focus_section(ws: str, payload) -> str:
+def notes_focus_section(ws: str, payload, notes_seen: dict | None = None) -> str:
     """The user's pointer into their notes, as one context section: the
     block their cursor is on and the blocks they attached to this message,
     each as ``[id] text`` with its sub-blocks indented — the same id-labelled
     form ``read_block`` gives, so an agent can edit them straight away. Only
     blocks of the request's context pages are served (a chip from another
-    page is silently dropped). Empty when there is nothing to point at."""
+    page is silently dropped). Empty when there is nothing to point at.
+    ``notes_seen`` receives ``{block_id: text}`` for every block shown in
+    full — what an edit_block replace may start from (ai_tools.notes_seen)."""
     focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
@@ -284,11 +288,15 @@ def notes_focus_section(ws: str, payload) -> str:
                             return
                         used += len(entry)
                         lines.append(entry)
+                        if notes_seen is not None:
+                            notes_seen[row[0]] = row[3] or ""
                         walk(row[0], depth + 1)
 
                 head = line(own, 0)
                 if len(head) > budget:
                     head = head[:budget] + "…"
+                elif notes_seen is not None:
+                    notes_seen[own[0]] = own[3] or ""
                 used = len(head)
                 lines.append(head)
                 walk(block_id, 1)
@@ -585,8 +593,7 @@ def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:
         if not can_store(ws, len(pdf_data)):
             log.info(f"[ai_chat] not caching {doc_id} ({len(pdf_data)} bytes): over storage limits")
             return
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(pdf_data)
+        write_atomic(pdf_path, pdf_data)
         log.info(f"[ai_chat] downloaded {len(pdf_data)} bytes from {source}")
     except Exception as error:
         log.warning(f"[ai_chat] download failed: {error}")
@@ -660,10 +667,9 @@ def ensure_indexed(ws: str, doc_id: str) -> bool:
     exist by the next turn even when the model never calls search. Returns
     True when the paper is already current."""
     # Local import: keep gamma.* module load free of the routers package.
-    from .pdf_index import pdf_missing
     from .routers.search import _index_missing_async
     try:
-        with sqlite3.connect(ws_db_path(ws, "data.db")) as connection:
+        with connect_data_db(ws) as connection:
             missing = pdf_missing(connection, [doc_id])
     except sqlite3.OperationalError as e:
         log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
@@ -682,12 +688,10 @@ def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET, from_page: int 
     docs re-index lazily through the search paths anyway. ``from_page``
     starts the map after the pages the excerpt already shows in full."""
     try:
-        with sqlite3.connect(ws_db_path(ws, "data.db")) as connection:
-            rows = connection.execute(
-                f"SELECT page, substr(content, 1, {_MAP_LINE_CHARS + 10}) FROM pdf_fts "
-                "WHERE doc_id = ? ORDER BY page", (doc_id,)).fetchall()
+        with connect_data_db(ws) as connection:
+            rows = doc_pages(connection, doc_id, _MAP_LINE_CHARS + 10)
     except sqlite3.OperationalError:
-        return ""  # index tables don't exist yet
+        return ""  # the index is busy: no map this turn
     if len(rows) < 3:
         return ""  # too short to need a map
     total = rows[-1][0]
@@ -1193,7 +1197,8 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                         pdf_offset: int = 0, pdf_page: int = 1,
                         document_text: str | None = None,
                         include_notes: bool = True, notes_budget: int = 0,
-                        report: dict | None = None) -> str | None:
+                        report: dict | None = None,
+                        notes_seen: dict | None = None) -> str | None:
     """Render one page as context: title, properties, the attachment's text
     (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
     ``pdf_page`` — read_page's shape — or ``document_text`` when the caller
@@ -1208,7 +1213,9 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     ``(page, box)`` of the area highlights shown whose picture the caller
     should attach (the first MAX_AREA_CROPS per page; the lines say
     "picture N attached" for those, and name the page for the rest). None
-    when the page doesn't exist."""
+    when the page doesn't exist. ``notes_seen`` receives ``{block_id:
+    text}`` for every note shown in full — what an edit_block replace may
+    start from."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -1236,11 +1243,13 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
             quote = (child_properties.get("quote") or "").strip()
             content = (row[3] or "").strip()
             area = area_highlight(child_properties) if child_properties.get("highlight_id") else None
+            shown_as = None
             if quote:
                 entry = f'- Highlighted: "{quote}"'
                 if content:
                     entry += f"\n  User note: {content}"
                 highlights.append(entry)
+                shown_as = entry
             elif area:
                 page, box = area
                 per_page[page] = per_page.get(page, 0) + 1
@@ -1253,9 +1262,15 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                 if content:
                     entry += f"\n  User note: {content}"
                 highlights.append(entry)
+                shown_as = entry
             elif content:
-                notes.append("  " * depth + f"- {content}")
+                shown_as = "  " * depth + f"- {content}"
+                notes.append(shown_as)
+            if shown_as and (quote or content):
+                seen_rows.append((row[0], row[3] or "", shown_as))
             walk(row[0], depth + 1)
+
+    seen_rows: list = []  # (block id, its stored text, the lines that show it)
 
     if include_notes:
         walk(page_id, 0)
@@ -1304,13 +1319,20 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     if notes_budget > 0 and len(text) > notes_budget:
         text = (text[:notes_budget] + f"\n… (+{len(text) - notes_budget:,} more chars of notes not "
                 "shown — read_block(block_id=<page id>) lists them with ids)")
+    if notes_seen is not None:
+        # Only a note shown whole can be the base of a replace: the budget
+        # above may cut one off, or leave it out.
+        for block_id, stored, shown_as in seen_rows:
+            if shown_as in text:
+                notes_seen[block_id] = stored
     if text:
         sections.append(text)
     return "\n\n".join(sections)
 
 
 def gather_inputs(ws: str, payload, allow_native: bool,
-                  crops: list | None = None) -> tuple[list[str], str, list[dict], str]:
+                  crops: list | None = None,
+                  notes_seen: dict | None = None) -> tuple[list[str], str, list[dict], str]:
     """Collect the chat's context: native PDF attachments and the text
     sections for the request's pages.
 
@@ -1345,7 +1367,11 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     (``selection_context``'s located entries).
 
     ``crops``, when given, receives pictures of selected regions whose text
-    is unreliable (``selection_crops``) for the caller to send as images."""
+    is unreliable (``selection_crops``) for the caller to send as images.
+    ``notes_seen``, when given, receives ``{block_id: text}`` for every note
+    block the context shows in full (``page_report_section``,
+    ``notes_focus_section``) — the texts an agent's edit_block replace may
+    start from this turn."""
     pdf_b64s = []
     context_sections = []
     message_sections = []
@@ -1433,7 +1459,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             shown: dict = {}
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
-                                          include_notes=with_notes, report=shown)
+                                          include_notes=with_notes, report=shown,
+                                          notes_seen=notes_seen)
             if section:
                 context_sections.append(section)
                 if not doc_id:
@@ -1472,7 +1499,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
 
     # Where the user is pointing inside the notes (cursor block, attached
     # block chips) belongs to this message, right before the question.
-    focus_section = notes_focus_section(ws, payload)
+    focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen)
     if focus_section:
         message_sections.append(focus_section)
 

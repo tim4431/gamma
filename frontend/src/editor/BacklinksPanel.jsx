@@ -5,7 +5,7 @@
 // preference (backlinksCollapsed). App fetches the list (/blocks/{id}/backlinks)
 // and does the navigation.
 import React, { useEffect, useMemo } from "react";
-import { BlockMarkdown } from "./BlockTree";
+import { BlockMarkdown, refLabelOf } from "./BlockTree";
 import { FileGlyph } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -30,7 +30,7 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
     for (const bl of backlinks) {
       for (const [, id] of (bl.content || "").matchAll(REF_RE)) {
         if (id === pageId) out[id] = { content: pageTitle };
-        else if (refCache?.[id]) out[id] = { content: refCache[id].content, page_title: refCache[id].page_title };
+        else if (refCache?.[id]) out[id] = refLabelOf(refCache[id]);
       }
     }
     return out;

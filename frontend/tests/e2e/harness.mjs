@@ -210,6 +210,7 @@ async function lastLook(page) {
 // API answers that are a designed "no" rather than a failure.
 const EXPECTED_FAILURES = [
   /POST \/api\/metadata\/fetch -> 404/, // a PDF without an arXiv id / DOI: nothing to fetch
+  /PUT \/api\/chats\/\S+ -> 409/, // a chat save from an older copy: the session merges and saves again
 ];
 
 // A page that records every API failure, console error and page error so a

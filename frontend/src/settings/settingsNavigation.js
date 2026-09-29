@@ -21,7 +21,7 @@ const e = (pane, label, section, hint, keywords, target) => ({ pane, label, sect
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
-  e("appearance", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
+  e("translation", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
   e("appearance", t("Interface size"), t("Interface"), t("Text, buttons, icons and switches."), "zoom text buttons controls scale touch"),
   e("appearance", t("Status bar"), t("Interface"), t("Show the latest activity below your tabs."), "notifications messages"),
@@ -44,7 +44,7 @@ const entries = [
   e("translation", t("Translate with"), t("Service"), t("A chat model, or a translation service below"), "translation model engine service AI Google Youdao"),
   e("translation", t("Translation services"), t("Service"), t("Microsoft for free; Google or Youdao with a key"), "translation engine API key Google Cloud Youdao Microsoft"),
   e("translation", t("Translation effort"), t("Speed"), t("Low makes reasoning models translate much faster"), "translation reasoning thinking speed"),
-  e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–32)"), "translation concurrency speed"),
+  e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–4)"), "translation concurrency speed"),
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),
   e("ai", t("Connections"), null, t("AI providers, keys and ChatGPT sign-in"), "provider credentials API key ChatGPT login service"),
@@ -58,6 +58,9 @@ const entries = [
   e("assistant", t("Default reasoning effort"), t("Chat"), t("Each model gets the nearest level it takes"), "chat thinking effort reasoning level"),
   e("assistant", t("Clear snapshots on click"), t("Chat"), t("A plain click in the PDF also drops pending snapshots"), "chat images selections"),
   e("assistant", t("Assistant tools"), t("Tools"), t("Let chats read, search and edit your library"), "allow master switch permissions agent"),
+  e("assistant", t("Search papers online"), t("Tools"), t("Find papers on Crossref and arXiv"), "web internet research references", t("Tools")),
+  e("assistant", t("Fetch documents"), t("Tools"), t("Read a DOI or URL without saving it to your library"), "download web internet PDF", t("Tools")),
+  e("assistant", t("Use journal sign-ins"), t("Tools"), t("Use connected publisher cookies when fetching documents"), "cookies publisher journals session access", t("Tools")),
   e("assistant", t("Folder chat"), t("Tools"), t("Home and folder views"), "permissions tools read search edit rename move"),
   e("assistant", t("PDF chat"), t("Tools"), t("Pages with a PDF"), "permissions tools read search edit"),
   e("assistant", t("Notes chat"), t("Tools"), t("Note pages"), "permissions tools read search edit"),
@@ -96,6 +99,7 @@ const entries = [
   e("server", t("Allowance per guest"), t("Shared AI provider"), t("Tokens a day for each guest; 0 = unlimited"), "administration shared AI tokens daily limit quota budget guests"),
   e("server", t("Guest workspaces last"), t("Guests"), t("Then the guest's account and workspace are deleted"), "administration guests temporary expiry hours delete throwaway"),
   e("server", t("Demo mode"), t("Guests"), t("The login page leads with Try the demo"), "administration guests try the demo public login page first-run tour"),
+  e("server", t("Check databases"), t("Databases"), t("a quick check of every account and workspace database"), "administration integrity corruption damaged sqlite quick_check health"),
   e("diagnostics", t("Debug logging"), t("Tracing"), t("Trace reading-position, restore and sync events"), "diagnostics tracing browser system log"),
 ];
 export const SETTINGS_SEARCH = entries;

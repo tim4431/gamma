@@ -24,7 +24,6 @@ const sections = (table) => Object.freeze(Object.fromEntries(
 export const SECTION_PREFS = Object.freeze({
   appearance: sections({
     Theme: ["theme"],
-    Language: ["language"],
     "PDF pages": ["pdfDarkPage"],
     Library: ["recentThumbs", "fileLabels"],
     Tours: ["suggestTours"],
@@ -34,6 +33,7 @@ export const SECTION_PREFS = Object.freeze({
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),
   translation: sections({
+    Language: ["language"],
     "Viewer & selection": ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
     Speed: ["translateEffort", "translateParallel"],
   }),
@@ -49,7 +49,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   assistant: sections({
     Chat: ["chatEffort", "chatImgAutoClear"],
-    Tools: ["agentEnabled", "agentPerms"],
+    Tools: ["agentEnabled", "agentPerms", "fetchInBackground"],
   }),
   advanced: sections({
     "Tool limits": ["toolRounds", "agentReadChars"],

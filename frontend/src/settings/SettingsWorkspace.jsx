@@ -154,7 +154,7 @@ export function AccessRows({ info, canEdit, onUpdate }) {
         <Row icon={HardDriveIcon} label={t("Workspace quota")} hint={t("total uploads · blank or 0 = unlimited")}
           title={t("A shared workspace's own storage cap. It counts against nobody's personal quota; the per-file limit is the server default.")}>
           <UnitInput
-            unit="MB" min={0} placeholder="unlimited" value={info.quota_mb ?? ""}
+            unit="MB" min={0} placeholder={t("unlimited")} value={info.quota_mb ?? ""}
             onCommit={(raw) => {
               const n = raw.trim() === "" ? 0 : Number.parseInt(raw, 10);
               if (!Number.isFinite(n) || n < 0) return;
@@ -271,7 +271,7 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
           <Field label={t("Gamma Cloud username")} hint={t("They join on their first sign-in here")}>
             <input
               className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
-              placeholder="username" value={cloudName}
+              placeholder={t("username")} value={cloudName}
               onChange={(e) => setCloudName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             />
@@ -405,11 +405,16 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   function destroy() {
     confirm({
       title: T("Delete workspace"),
-      message: t("Delete \"{name}\" with ALL its pages, PDFs, chats and backups{member}? This can't be undone.", { name: info?.name, member: isPersonal ? "" : t(", for every member") }),
+      message: t("Delete \"{name}\" with ALL its pages, PDFs, chats and backups{member}? The server keeps one final copy of it, which an administrator can restore.", { name: info?.name, member: isPersonal ? "" : t(", for every member") }),
       confirmLabel: t("Delete"), danger: true,
       onConfirm: async () => {
         const d = await ws.destroy();
-        if (d) { done(d.warning || t("Deleted {name}.", { name: info?.name })); onClose(); onLeft?.(wsId); }
+        if (d) {
+          done(d.warning || (d.final_copy ? t("Deleted {name}. The server kept a final copy.", { name: info?.name })
+            : t("Deleted {name}.", { name: info?.name })));
+          onClose();
+          onLeft?.(wsId);
+        }
       },
     });
   }
@@ -523,9 +528,9 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 ) : null}
                 {canDelete ? (
                   <Row icon={Trash2Icon} label={t("Delete workspace")} hint={isPersonal
-                    ? t("Deletes every page, PDF, chat and backup in it. Can't be undone.")
-                    : tn("Deletes every page, PDF, chat and backup in it, for its {n} member. Can't be undone.",
-                      "Deletes every page, PDF, chat and backup in it, for all {n} members. Can't be undone.", members.length)}>
+                    ? t("Deletes every page, PDF, chat and backup in it; the server keeps one final copy.")
+                    : tn("Deletes every page, PDF, chat and backup in it, for its {n} member; the server keeps one final copy.",
+                      "Deletes every page, PDF, chat and backup in it, for all {n} members; the server keeps one final copy.", members.length)}>
                     <button className="uiBtn sm danger" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
                   </Row>
                 ) : null}

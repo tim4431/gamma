@@ -100,6 +100,8 @@ On the home page or in a folder, the chat can act on your library: list, read an
 
 In a paper or a notes page it can also edit your notes when you ask — rewrite a block, add one, append to it, move it — if the **Edit note blocks** permission is on.
 
+**Settings → Chat → Tools** compares permissions for folder, PDF and notes chats. Start with **Read library**, **Read & search**, or **All tools**, then adjust individual switches. Online paper search, document fetching and **Use journal sign-ins** are separate choices. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+
 While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
@@ -109,6 +111,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 - **Folders** are paths: drop a paper into `qc/neutral-atom` and the hierarchy builds itself — a **qc** folder with a **neutral-atom** subfolder; add `qc/superconducting` and the sibling appears. A paper can live in several folders at once (dragging onto a folder *adds* it there). Drop a paper on the **back row** inside a folder to take it out; drag a folder onto another folder to move its whole subtree.
 - **Labels** are flat tags for cross-cutting facets (an author, a keyword); a paper can carry several, and each is one click to filter by. Edit both from the label row under a paper's title: type `name/` for a folder, anything else for a label.
 - **Selection works like a file manager**: click selects, Ctrl+click toggles, Shift+click extends, **double-click opens** (on a phone or tablet a single tap opens), Escape clears. Right-click a page for Open / Rename · Pin / **Add label** / **Move to folder** (flyouts with checkmarks) / Duplicate · Copy link / Share… / Export… / Ask AI about this page · Delete — acting on a multi-selection applies to all of it. A folder's menu has **New page here** and **New subfolder**, Share… and **Export…** for everything inside it.
+- **Recently deleted**: a deleted page is kept for 30 days with its notes, highlights, files and chats — the trash button at the right end of the library's toolbar (or *Recently deleted* in Ctrl+Shift+P) lists them with who deleted each and when. **Restore** puts a page back in the folders it was in; the trash icon (or **Empty**) deletes for good. Deleting a folder's pages with the folder sends them there too. Viewers of a shared workspace can neither delete nor restore.
 - **Sort** (modified / added / viewed / title) is remembered per folder; toggles switch grid/list and folders/files. The list view reads as a table: each row's kind (PDF, Page, or a folder's page count) and the date the sort uses (modified, viewed or added — the column header says which). Pin papers to keep them in a strip at the top. Card strips scroll sideways with a plain mouse wheel.
 - **Files inside notes**: any upload (a PDF, a markdown file, a dataset) dropped on a block becomes a small file card. Right-click a PDF or markdown card → *Add to library* turns it into a page of its own.
 
@@ -225,7 +228,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 ## Backups
 
 - **A workspace**: Settings → Workspaces → the row's *Data* menu → **Export** downloads a zip (pages, notes, highlights, uploaded PDFs); **Import** there restores or merges it. **Export all** takes every personal workspace at once.
-- **Snapshots**: Settings → Backups keeps server-side snapshots per workspace you can roll back to. **Add task** schedules them (hourly, daily, weekly, monthly or a cron expression); daily and weekly times are in your own time zone.
+- **Snapshots**: Settings → Backups keeps server-side snapshots per workspace you can roll back to; rolling back first keeps the current state as a *Before restore* snapshot. **Add task** schedules them (hourly, daily, weekly, monthly or a cron expression); daily and weekly times are in your own time zone.
 - **The whole server** (administrators): Settings → Server → *Server backups* snapshots every account and workspace; restore with the server stopped (`manage.py backups --restore`).
 
 Account credentials and private AI keys are never part of an export.
@@ -244,8 +247,9 @@ The installed web app still needs the server to be reachable. For a library that
 
 - The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
 - **Tabs** sync to your account across devices. Each shows whether it is a paper or a page; the tab you are on always scrolls into view, and a plain mouse wheel over the strip scrolls it sideways. When they don't all fit, **⌄** with the count lists every open tab, with a filter. Middle-click closes a tab; right-click pins it (pinned tabs move to the front, show a pin in place of × — click it to unpin — and can't be middle-closed); drag to reorder.
+- Closing the active tab returns to the page you were viewing before it, at its saved reading position, or to the folder or label view you opened it from. Closed tabs are skipped. Closing a background tab keeps your current page open.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
-- A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing.
+- A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing. A link to a page in Recently deleted says so and offers **Restore**.
 - On a phone, and on a tablet held upright, everything becomes full-screen views behind one bottom bar: **Library** (home), the page's **PDF** and **Notes**, **Chat**, then **Add**, **Search**, a page's **Share** and **More** — your account and settings, background tasks (a spinner on More while something runs), Import/Export and the PDF window toggle. The top bar shows only while tabs are open. Turn the tablet sideways for the docked windows.
 
 ## Report a problem
@@ -254,7 +258,7 @@ Something broke? Open the account menu and choose **Report a problem…** (it is
 
 ## Settings at a glance
 
-A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release or errors in the server log. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
+A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release, errors in the server log or a damaged database. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
 
 Settings (account menu → Settings) has one sidebar: your account card on top (it opens Account & sync), four groups under it, and Help & diagnostics at the bottom. The search box at the top (Ctrl+F) finds any setting by name and says what it does and where it lives — Enter opens the first match, ↑/↓ walk the list.
 
@@ -273,7 +277,7 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 | Library | Workspaces | Personal and shared workspaces, export / import |
 | | Backups | Scheduled backup tasks and server-side snapshots |
 | | Maintenance | Storage, search-index rebuild, metadata health table |
-| Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
+| Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, the database check, server backups, the log |
 | Help & diagnostics | | This browser's session log, debug tracing, Report a problem |
 
 Preferences apply immediately. Each section is tagged *account* (it follows your account to every browser) or *browser* (this device only, like the interface size and handwriting).
@@ -289,7 +293,7 @@ Preferences apply immediately. Each section is tagged *account* (it follows your
 | Ctrl+P | Quick open: pick a page, folder or label (recent pages first); in it, Ctrl+Enter searches everywhere, Shift+Enter creates the page |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
 | F2 | Rename the page (on the home page, the selected one) |
-| Del | On the home page: delete the selected pages (asks first) |
+| Del | On the home page: move the selected pages to Recently deleted (asks first) |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
 | Alt+← | Back through link jumps |
 | Enter / Shift+Enter | In search: next / previous match. In notes: line break / new note (swappable). In chat: send / newline |

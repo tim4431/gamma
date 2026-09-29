@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from .. import cloud_auth, guests, ratelimit, version, workspaces, ws_backup
-from ..auth import require_user, requested_ws, set_session_cookie
+from ..auth import TOKEN_REFUSAL, is_token, require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
 
@@ -145,7 +145,7 @@ def import_data(request: Request, file: UploadFile = File(...), mode: str = "rep
         with open(zpath, "wb") as out:
             shutil.copyfileobj(file.file, out)
         try:
-            return {"ok": True, **ws_backup.restore_zip(target, zpath, mode)}
+            return {"ok": True, **ws_backup.restore_zip(target, zpath, mode, by=request.state.user)}
         except ws_backup.BackupError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -169,7 +169,7 @@ def new_session(username: str, via: str = "") -> str:
 
 
 @router.post("/login")
-async def login(payload: LoginRequest, request: Request):
+def login(payload: LoginRequest, request: Request):
     # Throttle guessing: per-IP and per-username fixed windows. bcrypt is slow
     # by design, but that alone doesn't stop distributed/patient guessing.
     ip = client_ip(request)
@@ -213,7 +213,7 @@ def logout(request: Request):
 
 
 @router.get("/session")
-async def get_session(request: Request):
+def get_session(request: Request):
     """Who am I, plus the workspaces I belong to (``workspaces``: [{id,
     name, role, personal, members}]) and my default one — enough for the
     frontend to pick a workspace and paint the switcher without another
@@ -223,6 +223,8 @@ async def get_session(request: Request):
     build = version.build_info()
     if not user:
         return {"user": None, "build": build}
+    if is_token(request):  # a token is no session: GET /api/sync/whoami says who it is
+        raise HTTPException(status_code=403, detail=TOKEN_REFUSAL)
     out = {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
            "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
            "workspaces": workspaces.list_for_user(user), "build": build}
@@ -232,7 +234,7 @@ async def get_session(request: Request):
 
 
 @router.get("/accounts")
-async def list_accounts(request: Request, q: str = ""):
+def list_accounts(request: Request, q: str = ""):
     """The account directory — ``{accounts: [{username, is_admin}]}``, every
     non-guest account by name — for the invite and owner pickers. Any
     signed-in non-guest account may read it (a self-hosted server's

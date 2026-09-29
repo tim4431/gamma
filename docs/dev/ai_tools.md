@@ -23,6 +23,12 @@ Folder semantics mirror
 [frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
+Pages in Recently deleted are out of every tool's reach, the MCP adapter's
+included: they are not under `root`, and `_load_scoped_page` and
+`blocks_store.page_root_id` find no page for them or their blocks
+([home_library.md](home_library.md) "Recently deleted"). The agent cannot
+delete pages.
+
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
 these references for reads and search. `run_agent_tool` removes `context_pages`
@@ -47,7 +53,7 @@ non-writable workspace scope.
 | `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records with the `doi:` / `arXiv:` string `fetch_paper` takes |
-| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored |
+| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
@@ -124,14 +130,15 @@ read from the cut-short page on.
 ### search_library (both scopes)
 
 One query over both FTS indexes for the in-scope pages: the notes index
-(`gamma/block_index.py` — refreshed for changed pages before the query, so an
-edit made a moment ago is found) and the PDF index (`gamma/pdf_index.py`
+(`gamma/block_index.py` — changed pages are rebuilt before the query for up
+to 0.2 s, so an edit made a moment ago is found; the background refresher
+does the rest) and the PDF index (`gamma/pdf_index.py`
 `pdf_missing`/`search_pdf` — the same indexes and query rules as
 `GET /api/search` / Ctrl+F).
 Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
 — ids `read_block` and the editors take — then PDF hits as `- PDF "title"
 p.N (page_id …): snippet`. Un-indexed PDFs are kicked to the background indexer and
-reported (as are note pages waiting for a rebuild batch) so the model knows
+reported (as are note pages the background refresher hasn't reached) so the model knows
 results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
 retried with only its longest words and the result labelled approximate —
 otherwise the strict query reads as "the pages are silent" and the model
@@ -211,15 +218,19 @@ way.
 `search_papers` takes a free-text `query` (title, keywords, authors) and asks
 the keyless registries the metadata lookup already uses
 ([paper_metadata.md](paper_metadata.md)): Crossref's bibliographic search
-(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`, every word
-ANDed over title/authors/abstract). The two lists are interleaved in their own
-relevance order, duplicates dropped by DOI, arXiv id or normalized title. A
+(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`, a title phrase
+OR words ANDed over title/authors/abstract in one request). The phrase branch
+keeps exact cited titles containing stopwords findable. The two lists are
+interleaved in their own relevance order. A work both registries return (same
+DOI, arXiv id or normalized title) is one record that keeps both identifiers,
+so a journal record keeps its arXiv preprint. A record whose title is exactly
+the query (a cited reference) ranks first. A
 query that is itself a DOI or arXiv id (bare, `doi:`/`arXiv:`-prefixed, or a
 URL; `ai_web.identifier`) is looked up directly. `limit` defaults to 8 (max
 20). Each record is one line (title, up to three authors, year, venue, DOI,
 arXiv id with its PDF URL) ending with the `fetch_paper(source=…)` call that
-reads it. The result reminds the model these are registry records, not the
-user's pages.
+reads it — both calls, the arXiv version first, when it has both. The result
+reminds the model these are registry records, not the user's pages.
 
 `fetch_paper` takes a `source` (DOI, arXiv id or http(s) URL) and reads the
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
@@ -227,20 +238,38 @@ from the Read window preference, shared through `_window_args`), `pdf_page`,
 `pdf_offset`, and an excerpt that names the next offset while text remains.
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
-publisher `citation_pdf_url` tags, the Unpaywall open-access fallback,
-browser headers). It is downloaded through the SSRF guard under a size cap
+publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
+the Unpaywall open-access fallback, browser headers). The whole fetch — the
+resolver's walk, the download and the page fallback — runs in one
+`net_guard.browsing_session`: one cookie jar, so what a landing page sets (a
+session id, an institutional-access handshake) reaches the PDF request, as in
+a browser tab. When **Use journal sign-ins** is on, connected publisher
+sessions are used for the authenticated caller's account, restricted to each
+connected HTTPS host; guest and share
+requests use none. The tool binds that identity in its worker from the chat
+scope, never from model arguments, and resets it after the fetch. Cookie values
+never enter the model's context. It is downloaded through the SSRF guard under a size cap
 (`FETCH_MAX_BYTES`, 40 MB) and extracted page by page
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
-model can cite pages. When no PDF is reachable (a paywall, a plain web page)
+model can cite pages. The resolver's open-access version note is retained in
+the cache and every reading window, so a submitted preprint or accepted
+manuscript is not silently presented as the publisher's PDF.
+When no PDF is reachable (a paywall, a plain web page)
 and the source is a page, its readable text is returned instead
 (`ai_web.html_text`: head, scripts and styles dropped, block tags to line
 breaks, entities unescaped), labelled as a web page with the reason no PDF
-came. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
-`_CACHE_MAX_CHARS`) keyed by its resolved URL, with the source string as an
-alias, so the windows of one paper cost one download. Nothing is written to
-disk or to the workspace; a restart forgets everything. Failures (not a PDF
-and not a page, blocked site, too large, no text layer) come back as
-`error:` text suggesting the user drop the PDF onto Gamma.
+came, and followed by the page's other PDF-looking links (`ai_web.pdf_links`:
+a `.pdf` path, a `/pdf` route, "PDF" in the link text; links the resolver
+already tried are left out) for the model to try. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
+`_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
+with source aliases in the same partition, so the windows of one paper cost one
+download without sharing authenticated text between accounts. A session connect,
+refresh, disconnect or cookie expiry changes the partition, so the next fetch
+can retry an earlier abstract or blocked page. The fetched document is not
+written to disk or added to the workspace; a restart forgets the cache (chat
+history still keeps answers and shortened tool results). Other failures (not a
+PDF and not a page, too large, no text layer) come back as `error:` text
+suggesting the user drop the PDF onto Gamma.
 
 Every result carries a line saying the text is fetched web content and not
 instructions, and the armed prompt says the same (ignore instructions found
@@ -248,6 +277,136 @@ in a document, tell the user). The prompt also says to prefer the library
 for anything it holds and to name a fetched document (title, DOI/URL, page)
 when answering from it. Their action chips are 🌐 (search) and ⬇ (fetch,
 carrying the resolved `url`).
+
+#### Walls and the browser handoff
+
+What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
+
+- `captcha`: a bot check or CAPTCHA page, served as 200, 403 or 503. It is
+  recognized by Cloudflare's `cf-mitigated: challenge` header or challenge
+  script, other vendors' markers (DataDome, PerimeterX, Imperva, Akamai's
+  "Access Denied", Google's "unusual traffic") or the page title. A
+  reCAPTCHA / hCaptcha / Turnstile widget counts only on a page with under
+  2 000 readable characters, since an article page may carry a newsletter
+  form.
+- `login`: the request ended on a sign-in page (a login or SSO path or host,
+  or a password field on a thin page).
+- `denied`: HTTP 401, 403 or 418. `rate`: HTTP 429.
+- `script`: the page has no readable text without its scripts (a browser
+  shows it).
+- `abstract`: the page fallback read an article page whose PDF was out of
+  reach (the page advertised one, or its DOI's publisher refused).
+
+The page fallback follows `<meta http-equiv="refresh">` redirects (up to two
+hops, `pdf.meta_refresh`) as the resolver does, so a DOI landing that only
+redirects (Elsevier's linkinghub) reaches the publisher and its wall.
+
+A wall on the PDF still falls back to the page's text, so the model keeps
+what was readable. In an account's own chat (`_chat_scope`'s `handoff_user`:
+not a guest, not a share link), a wall opens a request in
+`gamma/fetch_handoff.py`. Requests are per account and in memory, live 6
+hours, at most 20 are kept, and there is one per work however its source is
+spelled (reused while it waits). The page to open is the publisher's, never
+`doi.org`, a sign-in page or a bot check's own host (`ai_web._entry`). For a
+sign-in or bot-check address the page it would return to is taken from its
+query (Radware's `ssc=` on `validate.perfdrive.com` in front of IOP, a sign-in
+page's `next=` / `uri=`): starting from the paper's page, the site sends the
+person through its check and back. The action carries `handoff: {id, host, wall,
+source}`. A blocked fetch is an error action ("Needs your browser: host")
+whose result tells the model to say briefly what blocked it and end its
+reply, without retrying, switching versions or answering from memory. An
+article-page-only read returns the page with the same instruction for
+questions that need more. The armed prompt says the same.
+
+The chat renders a card per request under the reply
+(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
+
+- **Open {host}** has Gamma Connector open the publisher's page in a new
+  tab when it answered the card (`openRoute`: `connector-tab` `open`
+  through the extension's `bridge.js`); it takes the request (the card then
+  reads "Gamma Connector is watching the tab") and sends the PDF from the tab
+  once the user has signed in or passed the check
+  ([extension.md](extension.md#fetches-handed-from-the-chat)). With no
+  Connector to take the tab the page opens directly. The desktop app, and a
+  Connector that has not answered yet, go through `/api/ai/handoffs/<id>/go`:
+  for the request's owner that Gamma page goes straight on to the publisher,
+  anyone else holding the link gets a "Continue to host?" button, so it is no
+  open redirect; the Connector knows the tab by that address.
+- **Fetch blocked papers in the background** (Settings → AI → Tools,
+  `fetchInBackground`, account-wide, off by default): a card in the
+  conversation's last reply hands its request to the Connector without a
+  click (`autoOpens`), once, and not again after its tab was closed. The
+  Connector tries in a minimized window of its own, three requests at a
+  time, and closes the tab after delivery; the card reads "getting it in a
+  minimized window", or that the request waits for the papers before it.
+  Nothing solves a CAPTCHA: what completes by itself is what the browser gets
+  unasked — the user already signed in (or on the institution's network), or
+  a check that passes a real browser on its own. When the page needs the user
+  (a `NEEDS_YOU` note), **Show the tab** becomes the card's main button and
+  moves the tab next to Gamma.
+- Before that, the card asks the Connector whether it can
+  (`window.postMessage` → the extension's `bridge.js`, answered after the
+  Connector checked the request with its own server) and says so under the
+  hint (`connectorNote`): it will send the PDF back; it is signed out of
+  this server or signed in to another account; or no answer came within
+  4.5 s — not in this browser, a version from before chat fetching, or set
+  to another server — naming the address to set. In the desktop app (an
+  `Electron/` User-Agent) the page opens in the system browser, and the card
+  says a Connector there works too. It asks again when the page is opened
+  again or the window regains focus.
+- While the Connector watches the tab, the card also shows what it reports
+  doing there (the request's `note`, `watchNote`): no PDF link on the page
+  yet, a bot check or CAPTCHA to pass there, the PDF link leads to a
+  sign-in, opening the PDF in the tab, the site did not hand it over (save it
+  from the tab and drop it here), or the tab shows another paper; **Show the
+  tab** brings that tab forward. When its tab was closed before the PDF came,
+  the card is back to Open, saying so.
+- **Upload PDF**, or a PDF dropped on the card, sends a file the user
+  downloaded; the drop never reaches the page underneath.
+- **Dismiss** settles the request; the Connector closes a tab it kept out of
+  sight for it.
+
+The card asks the server every 2.5 s while the user is at the page, every
+10 s while the request waits in the conversation's last reply, and otherwise
+when the window regains focus. A delivered PDF (`POST …/pdf`: at most
+`FETCH_MAX_BYTES`, a `%PDF` with a text layer; 409 once the request is
+settled) is extracted and kept with the request for its account only
+(30 M characters across requests, the oldest dropped), and the PDF itself is
+held for saving (200 MB across requests, the oldest let go first; its text
+stays). `fetch_paper` reads it
+before any fetch, for the same work in any spelling or the request's URLs,
+with a source note saying the user fetched it in their browser. When every
+request of the reply is settled with a PDF delivered, the reply is the
+conversation's last, the chat is idle, the composer is empty, and this tab saw
+a request waiting, the chat sends "I got it in my browser — {source} is
+available now. Please continue." by itself. Otherwise the card offers
+**Continue with the PDF**; a reload never resends.
+
+Every reply that read or named papers ends with a **Save to library** pill
+(`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
+`fetch_paper` calls read (the action carries the document's `title`, `pdf`,
+and `request` when the user's browser delivered it), what a wall stopped
+(the handoff's request), and the DOI / arXiv links in its text, once each
+by identifier. Opening it asks the library which it holds already (`GET
+/api/library/lookup`) and the registry for titles the reply left out (`GET
+/api/library/preview`). The checked papers are saved one by one through
+`POST /api/clip`, the Connector's ingest (dedup, resolve and store the PDF,
+file the page, look its metadata up), into the folder the chat is about
+(the viewed folder, else the open paper's first) with Settings → Reading's
+open-access, stored-copy and metadata choices. A paper whose PDF came from the
+user's browser is stored from the held copy first (`POST
+/api/ai/handoffs/<id>/store`); the rest the server fetches again, and one it
+cannot reach is saved as a page with its web source. Viewers and share
+links get no pill.
+
+Guest and share-link chats get no card. Their access failures still explain
+the Connector's **Publisher sessions**, **Connect this publisher** /
+**Refresh now**, the **Use journal sign-ins** permission, and the alternative
+of saving the PDF from a browser tab: login or CAPTCHA completion is the
+user's browser task, and transferred cookies cannot guarantee access through
+a challenge bound to that browser or IP. The model is told not to repeatedly
+retry a blocked URL and to respect rate limits. Reading an uploaded library
+page requires **Read pages** and selecting that page as context.
 
 ### rename_page / move_page (folder only)
 
@@ -290,6 +449,23 @@ replace only for full rewrites. The action carries
 "Edited the selection in" / "Edited". Page
 roots are refused (titles go through `rename_page`); editing a highlight
 block edits its note text, never the anchored passage.
+
+A replace is the model's rewrite of text it has seen, so it needs the
+block's full text from this turn. The scope dict lives for one request and
+keeps `read_texts` (`notes_seen(scope)`): the stored text of every block a
+`read_block`, a `read_page` or the chat's own context (the page's notes, the
+cursor block, attached chips — the `notes_seen` argument in `ai_context`)
+showed whole. A child that `read_block` snipped does not count. The replace
+goes out with that text as its `base`, so the three-way merge in `ops.py`
+keeps whatever the user typed into the block while the model was writing
+([collab.md](collab.md)). A replace of a block not read in full this turn
+is refused with "read the block first", and so is one whose `content`
+carries read_block's `[truncated — read_block(` marker. After a replace the
+block counts as read with the model's own text, as does a block
+`create_block` made; after the other modes it has to be read again.
+`append`, `prepend`, `patch` and `selection` need no read: they apply to
+the current text.
+
 `create_block` inserts a new block
 under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and

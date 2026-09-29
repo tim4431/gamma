@@ -11,13 +11,20 @@
 #     (disposable);
 #   - no host port: the account project's Caddy, which owns 80/443, reaches
 #     it as `gamma-demo:9001` over the shared external network `gamma-edge`
-#     (`docker network create gamma-edge`, once per host).
+#     (`docker network create --subnet 10.202.0.0/24 gamma-edge`, once per
+#     host), whose subnet .env names as EDGE_SUBNET: the one address range
+#     whose X-Forwarded-For the demo believes.
 
 services:
   demo:
     image: ghcr.io/tim4431/gamma:${GAMMA_TAG:?set GAMMA_TAG=sha-<short> in .env}
     restart: unless-stopped
     env_file: demo.env
+    environment:
+      # Caddy's X-Forwarded-For (the visitor, from CF-Connecting-IP) is
+      # believed from gamma-edge's subnet only — the image trusts loopback
+      # only. Without it every visitor shares Caddy's guest-login limit.
+      FORWARDED_ALLOW_IPS: ${EDGE_SUBNET:?set EDGE_SUBNET in .env to gamma-edge's subnet (docker network inspect gamma-edge)}
     volumes:
       - ./data:/data
     networks:

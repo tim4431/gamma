@@ -38,10 +38,11 @@ no cloud link, no integrations, no notices, no provider editing, the
 bounded default quota (`server_settings.user_limits` decides by `is_guest`,
 never by name), and the shared AI keys only while the admin's switch is on.
 `workspaces.is_guest_workspace` means "a personal workspace whose owner is
-a guest": backup import and the reviewed Gamma import refuse it, it keeps
-no snapshots, and scheduled backups skip it. Admins may set a guest's
-storage limits and delete it, but never give it a password, the admin flag
-or a new name.
+a guest": backup import and the reviewed Gamma import refuse it, and
+scheduled backups skip it. It keeps no snapshots: neither the final copy a
+deleted workspace leaves nor the "pre-restore" one a restore of
+`GAMMA_GUEST_SEED` would take. Admins may set a guest's storage limits and
+delete it, but never give it a password, the admin flag or a new name.
 
 **Expiry.** A guest account lives `guest_ttl_hours` after
 `users.created_at` (a server setting, default 24; `GAMMA_GUEST_TTL_HOURS`
@@ -54,9 +55,10 @@ existing guests at once. Two places enforce it:
   cookie. A tab that still sends `X-Gamma-User: guest-…` gets the usual 409
   "reload the tab". `auth.session_lookup` (the websocket handshake) answers
   None for an expired guest;
-- the sweeper `gamma/guests.py` runs in the app lifespan (every 10 minutes,
-  shaped like `backup_schedule.lifespan`) deletes the expired guest
-  accounts nobody came back for.
+- the sweeper `guests.delete_expired`, which the app lifespan runs at
+  startup and every 10 minutes (`app.every`, like the trash's and the
+  grant check's rounds), deletes the expired guest accounts nobody came
+  back for.
 
 Both call `workspaces.delete_account(username)`, the one account deletion:
 sessions, identities and the cloud grant, integration tokens, publisher
@@ -164,7 +166,10 @@ allowance work the same on every server.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next
 to the account server's (`GAMMA_DEMO=1` in its `demo.env`), reached through
-the account project's Caddy over the shared Docker network `gamma-edge`. It
+the account project's Caddy over the shared Docker network `gamma-edge`,
+whose subnet (`EDGE_SUBNET` in the folder's `.env`) is the one range whose
+`X-Forwarded-For` it believes — the image trusts loopback only, and without
+it every visitor would share Caddy's ten guest logins an hour. It
 runs the `sha-<short>` tag of a branch build (`docker.yml` dispatched on the
 branch, which never moves `:latest`), named by `GAMMA_TAG` in the folder's
 `.env`: setup in [cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),

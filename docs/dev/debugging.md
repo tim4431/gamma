@@ -117,6 +117,13 @@ tests need `ziamath` from `requirements.txt`, and a system/conda `python`
 without it fails them with "ziamath is not importable" rather than a
 puzzling path count.
 
+`conftest.py` also holds what several files share: the `data_dir` fixture
+(a data directory of the test's own, for the migration, backup and startup
+tests that must not touch the worker's shared one), `at_once` / `together`
+(callables in threads started on one barrier), `slowed` (widens a writer's
+window between its check and its write, so a race test fails without the
+lock) and `recv` (the next message of a kind on a page socket).
+
 The AI agent's tests are split by area — `test_ai_tools_registry.py`
 (scopes, permissions, the system prompt), `test_ai_tools_pages.py`,
 `test_ai_tools_blocks.py`, `test_ai_tools_search.py` (the executors),
@@ -202,7 +209,16 @@ half the CPUs, at most 6; one with `--only`) forks N workers, each with its
 own backend, data dir and browser; a worker takes the next group off the
 queue, longest first, and the group's lines print as one block when it
 ends. A group must not rely on another group's data: put scenarios that do
-in the same group. Without `--continue` a failure stops handing out groups
+in the same group. Workers reuse their accounts between groups: restore an
+account preference changed for one scenario in `finally`, after closing its
+browser context. Otherwise a later group can inherit a different Enter-key
+binding or other setting. To check this isolation, run the affected groups
+together with `--jobs 1` as well as on their own. Tour scenarios must also
+set up prior tour progress explicitly when an earlier automatic offer would
+take the one-offer-per-load slot (for example, the windows offer on a PDF
+before testing citations).
+
+Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
 (settings and the first-run guide, about a minute each), so split one of
 those before adding workers.
@@ -428,9 +444,40 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   workspace `guest_ttl_hours` (default 24) later or on logout
   ([guests.md](guests.md)) — don't park test data there. In backend tests
   the `guest` fixture's account name is `conftest.guest_name()`.
-- Slow endpoints (downloads, AI calls, PyPDF2) are deliberately **sync
-  `def`** so FastAPI's threadpool runs them; don't convert them to
-  `async def` while they hold blocking calls.
+- Every endpoint that touches a database or files, and every slow one
+  (downloads, AI calls, PyPDF2), is a **sync `def`**, so FastAPI's
+  threadpool runs it. One uvicorn process serves every request and page
+  socket from one event loop, and SQLite calls block: an `async def`
+  endpoint waiting on a workspace's write lock (`db.BUSY_TIMEOUT_S`, 10 s)
+  holds up everything else. `async def` is only for handlers that must
+  await something (a request body stream, the page socket, the MCP SDK's
+  OAuth handlers, the upload of an ink file); they hand their database work
+  to `run_in_threadpool`. The session middleware reads users.db through
+  `auth._off_loop`, a worker thread with its own token count, so a pool
+  full of slow requests never delays learning who is asking.
+  `tests/test_event_loop.py` fails on an async route handler that awaits
+  nothing, checks that the session read, an op batch and the socket
+  handshake run off the loop, and times a `GET /api/session` while a write
+  lock is held for two seconds.
+- Those endpoints run side by side, so a check followed by a write must be
+  one step: take the write lock before the check (`BEGIN IMMEDIATE`,
+  `blocks_store.write_lock`) or let a constraint decide (`INSERT OR
+  IGNORE`, `ON CONFLICT`). `tests/test_concurrent_writes.py` starts
+  several requests on a barrier (a page shared twice, one page id created
+  twice, two owners demoting each other, op batches, cover snapshots).
+  Module-level caches that threadpool code touches carry a lock.
+- The pool also runs streamed replies and file responses, so the app raises
+  it from AnyIO's 40 threads to `app.THREAD_TOKENS` (100) at startup: at
+  40, 45 slow PDF-proxy downloads in flight made a PDF range read time out.
+  Each account's AI calls open at once are capped too ([ai.md](ai.md)
+  "Calls open at once").
+- A connection is closed when its `with` block ends: the `db.connect_*`
+  helpers return `db.Connection`, whose `__exit__` commits (or rolls back)
+  and then closes. sqlite3's own only commits and leaves the closing to the
+  garbage collector, and on Windows an open connection keeps a deleted
+  workspace's directory on disk. Never use a connection after its `with`
+  block, and close a raw `sqlite3.connect` with `contextlib.closing`.
+  `tests/test_db_connections.py` runs with the collector off.
 - All state is SQLite + files under the data dir (`GAMMA_DATA_DIR`, default
   the repo's `data/`): global `users.db` (accounts, workspaces, memberships,
   shares, personal prefs), per-workspace `workspaces/<id>/pages.db`,
@@ -452,3 +499,6 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
+  `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
+  back (None when unreadable — whether that means expired, due or now is
+  the caller's decision).

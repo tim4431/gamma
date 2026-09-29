@@ -294,7 +294,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- Integration tokens grant access to exactly one workspace: `read` (the default; the MCP endpoint and the HTTP API's reads) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). On the HTTP API a manual token is a bearer credential — the account behind it, confined to its workspace, never an admin ([api.md](api.md) "Integrations"). Tool arguments,
+- Integration tokens grant access to exactly one workspace: `read` (the default; the MCP endpoint and the HTTP API's reads) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). On the HTTP API a manual token is a bearer credential — the account behind it, confined to its workspace, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included). `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. Tool arguments,
   `?ws=`, and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - Tokens expire after 90 days by default (API range: 1–365 days); accounts may

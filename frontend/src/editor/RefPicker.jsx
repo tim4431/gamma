@@ -2,14 +2,16 @@
 // then blocks under their section titles, the typed text marked as in
 // Search and Quick Open (MarkedText), and a key-hint footer. editor/BlockTree.jsx owns the trigger, the lists
 // (editor/refLists.js) and the keys; `rows` are
-// {kind: "page" | "block", id, title, meta, isPdf}.
+// {kind: "page" | "block", id, title, meta, isPdf}. `partial`: the block
+// search stopped at the server's time budget, so the footer asks for more
+// letters.
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
 import { FileGlyph } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
-export function RefPickerPopup({ rows, selected, anchor, query, onPick }) {
+export function RefPickerPopup({ rows, selected, anchor, query, partial = false, onPick }) {
   const [ref, style] = useCaretAnchored(anchor, false, [rows]);
   useEffect(() => {
     ref.current?.querySelector(".refPopupItem.selected")?.scrollIntoView({ block: "nearest" });
@@ -33,7 +35,10 @@ export function RefPickerPopup({ rows, selected, anchor, query, onPick }) {
           </button>
         </React.Fragment>
       ))}
-      <div className="refPopupFooter">{t("↑↓ choose · Enter link · Esc keep text")}</div>
+      <div className="refPopupFooter">
+        {partial ? <div>{t("Block search stopped early — type more to narrow it.")}</div> : null}
+        {t("↑↓ choose · Enter link · Esc keep text")}
+      </div>
     </div>
   );
 }

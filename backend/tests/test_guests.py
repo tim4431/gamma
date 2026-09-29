@@ -4,7 +4,6 @@ guest_ttl_hours — the middleware signs an expired guest out and deletes it,
 the sweeper deletes the rest; the live-guest cap, the seed library, the
 admin settings and the server-config fields."""
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -149,21 +148,6 @@ def test_sweeper_deletes_expired_guests_only(gadmin):
     assert not guests.is_expired("2020-01-01T00:00:00.000000Z", ttl_hours=24,
                                  now=datetime(2020, 1, 1, 23, tzinfo=timezone.utc))
     assert guests.is_expired("garbage")  # fail closed
-
-
-def test_the_sweeper_runs_in_the_app_lifespan(monkeypatch):
-    from gamma import guests
-    calls = []
-    monkeypatch.setattr(guests, "delete_expired", lambda: calls.append(1) or [])
-
-    async def run():
-        async with guests.lifespan():
-            for _ in range(100):
-                if calls:
-                    break
-                await asyncio.sleep(0.01)
-    asyncio.run(run())
-    assert calls
 
 
 def test_delete_account_takes_everything_that_is_only_the_accounts():

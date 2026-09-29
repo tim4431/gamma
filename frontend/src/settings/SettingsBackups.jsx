@@ -2,7 +2,8 @@
 // take one now (everything, or databases only), for one workspace or for
 // all of yours at once; download, restore in place (replace or merge),
 // delete. Every snapshot is a full copy that restores on its own; each
-// workspace keeps at most a fixed number. GUI for
+// workspace keeps at most a fixed number of manual ones, and a replace
+// first keeps the current state as a "Before restore" snapshot. GUI for
 // /api/workspaces/{ws}/backups* (gamma/ws_backup.py).
 //
 // Also here: ServerBackups — the admin's whole-data-directory snapshots
@@ -102,7 +103,7 @@ export function WorkspaceBackups({ value }) {
       title: merging ? t("Merge backup") : t("Restore backup"),
       message: merging
         ? t("Merge the snapshot from {b} into \"{name}\"? Pages and chats it has that the workspace lacks are added; everything already there is kept.", { b: when(b), name: w.name })
-        : t("Restore \"{name}\" to the snapshot from {b}? ALL of its current pages and chats are REPLACED by the snapshot; uploaded PDFs are merged in. This cannot be undone.", { name: w.name, b: when(b) }),
+        : t("Restore \"{name}\" to the snapshot from {b}? ALL of its current pages and chats are REPLACED by the snapshot's. Files the snapshot holds come back; files only the current pages use are cleaned up later. The current state is saved first as a \"Before restore\" snapshot, so you can go back.", { name: w.name, b: when(b) }),
       confirmLabel: merging ? t("Merge") : t("Replace"),
       danger: !merging,
       onConfirm: async () => {
@@ -115,6 +116,7 @@ export function WorkspaceBackups({ value }) {
             return;
           }
           setStatus(merging ? t("Merged into {name}: {pages_added} pages added.", { name: w.name, pages_added: d.pages_added ?? 0 }) : t("Restored {name}.", { name: w.name }));
+          loadList(w.id); // the "Before restore" snapshot joins the list
         } catch (e) {
           setStatus(merging ? t("Merge failed: {message}", { message: e.message }) : t("Restore failed: {message}", { message: e.message }));
         }
@@ -143,7 +145,7 @@ export function WorkspaceBackups({ value }) {
   function group(w) {
     const list = lists[w.id];
     const owner = w.role === "owner";
-    const full = list && list.backups.filter((b) => !b.scheduled).length >= list.max;
+    const full = list && list.backups.filter((b) => !b.scheduled && !b.auto).length >= list.max;
     return (
       <Section
         key={w.id}
@@ -179,10 +181,12 @@ export function WorkspaceBackups({ value }) {
             <span className="aiProvMeta">
               <span className="aiProvName">
                 {when(b)}
-                <span className="uiTag">{b.scheduled ? t("Automatic") : b.label || t("backup")}</span>
+                <span className="uiTag">{b.scheduled ? t("Automatic") : b.auto ? t("Before restore") : b.label || t("backup")}</span>
               </span>
               <span className="aiProvDesc">
                 {[fmtBytes(b.size_bytes), b.uploads ? tn("{n} upload", "{n} uploads", b.upload_files) : t("databases only"),
+                  b.missing_uploads ? tn("{n} file was missing", "{n} files were missing", b.missing_uploads) : "",
+                  b.damaged?.length ? t("damaged database: {files}", { files: b.damaged.join(", ") }) : "",
                   b.by ? t("by {name}", { name: b.by }) : ""].filter(Boolean).join(" · ")}
               </span>
             </span>
@@ -324,7 +328,8 @@ export function ServerBackups({ setStatus, confirm }) {
             <span className="aiProvDesc">
               {[fmtBytes(b.size_bytes), tn("{n} database file", "{n} database files", (b.files || []).length),
                 b.uploads ? tn("{n} upload", "{n} uploads", b.upload_files || 0) : t("databases only"),
-                b.schema_version != null ? t("schema v{version}", { version: b.schema_version }) : ""].filter(Boolean).join(" · ")}
+                b.schema_version != null ? t("schema v{version}", { version: b.schema_version }) : "",
+                b.damaged?.length ? t("damaged database: {files}", { files: b.damaged.join(", ") }) : ""].filter(Boolean).join(" · ")}
             </span>
           </span>
           <span className="aiProvActions">

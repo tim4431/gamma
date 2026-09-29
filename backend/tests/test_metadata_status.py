@@ -1,10 +1,9 @@
 """GET /api/metadata/status — the Settings pane's library-wide health list."""
 
-import sqlite3
-
 from conftest import make_page, workspace_of, guest_name
-from gamma.db import ws_db_path
-from gamma.textnorm import INDEX_VERSION
+from gamma.db import connect_data_db
+from gamma.pdf_index import store_doc
+from gamma.textnorm import normalize_text
 
 
 def _paper(r, block_id):
@@ -50,23 +49,20 @@ def test_status_lists_papers_not_notes(guest):
 def test_status_reads_index_state(guest):
     doc = "b" * 24
     page = make_page(guest, "Indexed paper", properties={"doc_id": doc})
-    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "data.db")) as conn:
-        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS pdf_fts USING fts5(doc_id UNINDEXED, page UNINDEXED, content)")
-        conn.execute("CREATE TABLE IF NOT EXISTS pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER, ver INTEGER NOT NULL DEFAULT 0)")
-        conn.execute("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, 1, ?)", (doc, "hello " * 20))
-        conn.execute("INSERT INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) VALUES (?, 'now', 1, ?)", (doc, INDEX_VERSION))
-        conn.commit()
+    text = normalize_text("hello " * 20)
+    ws = workspace_of(guest_name())
+    with connect_data_db(ws) as conn:
+        store_doc(conn, doc, [(1, text)])  # as the indexer stores a paper
 
     r = guest.get("/api/metadata/status")
     p = _paper(r, page["id"])
     assert p["indexed"] is True
     assert p["index_stale"] is False
-    assert p["text_chars"] == len("hello " * 20)
+    assert p["text_chars"] == len(text)
 
     # Bumped extraction version → the doc reads as stale, not indexed.
-    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "data.db")) as conn:
+    with connect_data_db(ws) as conn:
         conn.execute("UPDATE pdf_fts_docs SET ver = ver - 1 WHERE doc_id = ?", (doc,))
-        conn.commit()
     r = guest.get("/api/metadata/status")
     p = _paper(r, page["id"])
     assert p["indexed"] is False

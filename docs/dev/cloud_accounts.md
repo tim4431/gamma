@@ -686,8 +686,8 @@ stays in memory until two minutes before its `expires_in`; the sign-in's
 own access token starts the cache. A 401 from the account server drops the
 cached token.
 
-**The grant check** (`cloud_sync.check_all`, run by `cloud_sync.lifespan`
-at startup and then every hour) refreshes every identity holding a refresh
+**The grant check** (`cloud_sync.check_all`, run by the app lifespan
+(`app.every`) at startup and then every hour) refreshes every identity holding a refresh
 token. `invalid_grant` means the grant is gone: the person signed this
 server out on the Devices page, changed their password or deleted the
 account. Then the refresh token is dropped, the identity gets

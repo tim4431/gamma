@@ -199,8 +199,8 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     confirm({
       title: direction === "pull" ? t("Force pull") : t("Force push"),
       message: direction === "pull"
-        ? t("Make “{m}” identical to {remote_name} on {remote_url}? Only differing pages are written; where texts differ, yours are kept as conflicts.", { m: nameOf(m), remote_name: m.remote_name, remote_url: hostOf(m.remote_url) })
-        : t("Make {remote_name} on {remote_url} identical to “{m}”? Only differing pages are written; where texts differ, origin's are kept as conflicts.", { remote_name: m.remote_name, remote_url: hostOf(m.remote_url), m: nameOf(m) }),
+        ? t("Make “{m}” identical to {remote_name} on {remote_url}? Only differing pages are written; your texts it replaces or removes are kept as conflicts.", { m: nameOf(m), remote_name: m.remote_name, remote_url: hostOf(m.remote_url) })
+        : t("Make {remote_name} on {remote_url} identical to “{m}”? Only differing pages are written; origin's texts it replaces or removes are kept as conflicts.", { remote_name: m.remote_name, remote_url: hostOf(m.remote_url), m: nameOf(m) }),
       confirmLabel: direction === "pull" ? t("Force pull") : t("Force push"), danger: true,
       onConfirm: () => call(m, "/force", json({ direction }), t("{action} running in the background.", { action: direction === "pull" ? t("Force pull") : t("Force push") })),
     });

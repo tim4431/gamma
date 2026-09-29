@@ -12,21 +12,24 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..auth import require_ws
+from ..ops import StorableBody
 from . import chats, shares
 
 router = APIRouter(prefix="/api", tags=["folders"])
 
 
-class FolderRenameRequest(BaseModel):
+class FolderRenameRequest(StorableBody):
     src: str
     dst: str
 
 
 @router.post("/folders/rename")
-async def rename_folder(payload: FolderRenameRequest, request: Request):
+def rename_folder(payload: FolderRenameRequest, request: Request):
     """Carry a folder's chat buckets and share links along a rename / move
-    (``dst`` the new path) or drop them (``dst`` ""). Workspace editors; never
-    through a share link."""
+    (``dst`` the new path). On a delete (``dst`` "") the folder's shares go
+    and its conversations are filed into their own history, never dropped
+    (``chats.move_folder_buckets``). Workspace editors; never through a
+    share link."""
     if request.query_params.get("share"):
         raise HTTPException(status_code=403, detail="folders cannot be changed through a share link")
     ws = require_ws(request, write=True)

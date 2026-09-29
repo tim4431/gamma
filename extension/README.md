@@ -32,6 +32,13 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
 
 ## Use
 
+- In options, enter an address and **Connect** to remember it. Each saved
+  server has its own row: click the address to switch or **×** to forget it.
+  Click the server name in the popup's footer for the same switcher, including
+  when signed out or offline. The current server has a checkmark; removing it
+  disconnects the Connector until you choose another address. Switching or
+  removing an address does not sign out of its browser session. Saving
+  defaults remain shared across servers.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when
@@ -56,7 +63,10 @@ account the cookies go to. While the snapshot uploads the cookie spins, and
 a green check confirms the connection.
 
 This explicitly transfers the publisher cookies to Gamma for later backend
-PDF downloads. Normal Save actions still transfer only the PDF. Connected
+PDF downloads, including the AI chat's **Fetch documents** tool. The AI receives
+the fetched text, never the cookie values. Settings → Chat → Tools controls
+**Use journal sign-ins** separately for folder, PDF and notes chats. Normal Save
+actions still transfer only the PDF. Connected
 journals are **refreshed automatically**: when you visit one and Gamma's copy
 of its cookies is over an hour old, the Connector sends a fresh copy (at most
 once every ten minutes per journal). Journals you never connected are never

@@ -35,6 +35,8 @@ def test_read_block_outline_with_ids(notes):
 def test_edit_block(notes):
     c, ids = notes
     scope = folder("sandbox")
+    # A replace rewrites what the model read this turn (test_writer_races.py).
+    run_agent_tool(ids["ws"], scope, "read_block", {"block_id": ids["child"]})
     text, action = run_agent_tool(ids["ws"], scope, "edit_block",
                                   {"block_id": ids["child"], "content": "sharper detail"})
     assert text.startswith("ok"), text

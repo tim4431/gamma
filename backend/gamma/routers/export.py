@@ -19,7 +19,8 @@ from starlette.background import BackgroundTask
 
 from .. import ink as inkmod
 from ..auth import resolve_ws, share_scope
-from ..blocks_store import BLOCK_COLUMNS, assert_block_in_scope, block_to_dict, fetch_subtree
+from ..blocks_store import (
+    BLOCK_COLUMNS, TRASH, assert_block_in_scope, block_to_dict, fetch_subtree, page_root_id)
 from ..db import connect_pages_db
 from ..db import (
     PAGES_SCHEMA,
@@ -38,13 +39,13 @@ from ..logseq_graph_export import (
     render_hls_md,
 )
 from ..markdown_export import (
-    UPLOAD_RE,
     build_tree,
     collect_and_rewrite,
     render_readable,
     slugify,
 )
 from ..logbuf import log
+from ..storage import upload_refs
 from ..obsidian_export import APP_JSON, VaultContext, referenced_blocks, render_vault_page
 from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text
@@ -534,13 +535,10 @@ class _GammaBuilder(_Builder):
                 f"INSERT OR IGNORE INTO unified_blocks ({BLOCK_COLUMNS}) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)", tuple(row))
             # Referenced uploads: any /api/uploads/<file> in content or
-            # properties (source_url, pasted images), plus the doc_id PDF —
-            # the same reference rule storage.cleanup_orphan_uploads applies.
-            for text in (row[3] or "", row[4] or ""):
-                self.upload_names.update(UPLOAD_RE.findall(text))
-        doc_id = (page.get("properties") or {}).get("doc_id")
-        if doc_id:
-            self.upload_names.add(f"{doc_id}.pdf")
+            # properties (source_url, pasted images), plus a doc_id's PDF —
+            # the one reference rule (storage.upload_refs) the orphan
+            # bookkeeping keeps files by.
+            self.upload_names |= upload_refs(row[3] or "", row[4] or "{}")
 
     def finish(self):
         self.db.commit()
@@ -584,7 +582,8 @@ class _GammaBuilder(_Builder):
 def _block_ref_resolver(conn):
     """id → {content, page_title, page_id} for [[refs]], ``![[embeds]]`` and
     internal document links — walks the parent chain for the root page, with a
-    per-render cache (the same ref often appears many times)."""
+    per-render cache (the same ref often appears many times). A block in
+    Recently deleted resolves to nothing, like a deleted one."""
     cache = {}
 
     def resolve(block_id):
@@ -598,7 +597,7 @@ def _block_ref_resolver(conn):
             content, parent = row
             page_id, title = block_id, ""
             for _ in range(64):                  # parent chain → the page block
-                if not parent or parent == "root":
+                if not parent or parent in ("root", TRASH):
                     break
                 up = conn.execute(
                     "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
@@ -608,8 +607,9 @@ def _block_ref_resolver(conn):
                 page_id, title, parent = parent, (up[0] or ""), up[1]
             if page_id == block_id:              # the ref IS a page block
                 title = content or ""
-            result = {"content": content or "", "page_title": title.strip(),
-                      "page_id": page_id}
+            if parent != TRASH:
+                result = {"content": content or "", "page_title": title.strip(),
+                          "page_id": page_id}
         cache[block_id] = result
         return result
 
@@ -696,7 +696,7 @@ def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
-        if row is None:
+        if row is None or page_root_id(conn, block_id) is None:  # none, or in Recently deleted
             raise HTTPException(status_code=404, detail="page not found")
         return _run_export(conn, ws, mode, [block_id], slugify(row[0], block_id), opts)
 
@@ -707,7 +707,7 @@ def page_markdown(ws: str, page_id: str, *, highlights=True, notes=True) -> tupl
     hand over the text itself (the MCP export); downloads bundle through
     ``_MarkdownBuilder``."""
     with connect_pages_db(ws) as conn:
-        page = build_tree(fetch_subtree(conn, page_id), page_id)
+        page = build_tree(fetch_subtree(conn, page_id), page_id) if page_root_id(conn, page_id) else None
         if page is None:
             raise HTTPException(status_code=404, detail="page not found")
         md = render_readable(page, highlights=highlights, notes=notes,
@@ -730,7 +730,7 @@ def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, autho
     is. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
-        rows = fetch_subtree(conn, block_id)
+        rows = fetch_subtree(conn, block_id) if page_root_id(conn, block_id) else []
     if not rows:
         raise HTTPException(status_code=404, detail="page not found")
     blocks = [block_to_dict(r) for r in rows]

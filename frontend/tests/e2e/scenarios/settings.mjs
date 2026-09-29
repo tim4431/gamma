@@ -34,11 +34,75 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
+  await step("settings: usage chart combines overall totals with themed daily and monthly bars", async () => {
+    const daily = Array.from({ length: 365 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),
+      calls: index < 356 ? 0 : index % 7 + 1,
+      input: index < 356 ? 0 : (index % 13 + 1) * 1000,
+      output: index < 356 ? 0 : 200,
+      cache_read: index < 356 ? 0 : 300, cache_write: 0,
+    }));
+    let empty = false;
+    const { ctx, page } = await setup(undefined, async (context) => {
+      await context.route("**/api/ai/usage", async (route) => {
+        const response = await route.fetch();
+        const data = await response.json();
+        await route.fulfill({ json: { ...data, first_at: "2025-09-01T00:00:00", windows: { ...data.windows,
+          all: { input: 900000, output: 10000, calls: 100, cache_read: 180000, cache_write: 0 } },
+          daily: empty ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
+      });
+    });
+    try {
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const graph = page.locator(".usageChart");
+      await graph.scrollIntoViewIfNeeded();
+      assertEq(await graph.locator("button.usageChartBar").count(), 30);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k", "totals include retained usage outside the chart window");
+      assertEq(await page.locator(".settingsPane .setStats").count(), 0, "no separate period totals");
+      const today = graph.locator('[data-date="2026-09-28"]');
+      await today.click();
+      assert((await graph.locator(".usageChartDetail").innerText()).includes("1 call"));
+      await today.press("ArrowLeft");
+      assertEq(await graph.locator('button[aria-pressed="true"].usageChartBar').getAttribute("data-date"), "2026-09-27");
+      await graph.getByRole("button", { name: "Calls", exact: true }).click();
+      assertEq(await today.getAttribute("data-value"), "1");
+      await graph.getByRole("button", { name: "Tokens", exact: true }).click();
+      assertEq(await today.getAttribute("data-value"), "1200");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-light.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Monthly · last 12 months", exact: true }).click();
+      assertEq(await graph.locator("button.usageChartBar").count(), 12);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k");
+      const september = graph.locator('[data-date="2026-09-01"]');
+      assertEq(Number(await september.getAttribute("data-value")), daily.reduce((sum, day) => sum + day.input + day.output, 0));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-monthly.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Daily · last 30 days", exact: true }).click();
+      await today.click();
+      const color = await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "sepia"; document.documentElement.dataset.scheme = "light"; });
+      assert((await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor)) !== color, "bars follow the theme accent");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-sepia.png` });
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-dark.png` });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await graph.scrollIntoViewIfNeeded();
+      assert(await graph.evaluate((el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-mobile.png` });
+      empty = true;
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await until(() => graph.locator(".usageChartDetail").innerText().then((text) => text.includes("No AI calls in this period")));
+      assertEq(await graph.locator('button.usageChartBar:not([data-value="0"])').count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a translation service is set up in the Translation pane and picked as the translator", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Translation").click();
+      await nav(page, "Language and Translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));
@@ -602,17 +666,18 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".libraryDisplayCard .labelTagBadge").count(), 0);
       assertEq(await page.locator(".libraryDisplayCard .folderTagBadge").count(), 1);
       await search(page, "translation concurrency", "Parallel requests");
+      // 7 is past the cap (TRANSLATE_PARALLEL_MAX): it is stored as 4
       await row(page, "Parallel requests").locator("input").fill("7");
       await row(page, "Parallel requests").locator("input").press("Tab");
-      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "4"));
       // An account preference reaches the account's profile; a device one never does.
-      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 7));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 4));
       assert(!("uiScale" in (await user.api("/api/prefs/profile")).value), "interface size stays with the browser");
       // A fresh browser signed in to the same account picks the profile up.
       const other = await user.context(browser);
       try {
         const fresh = await openPage(other, server.base);
-        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "4"));
         assertEq(await fresh.evaluate(() => localStorage.getItem("gamma-theme")), "solarized");
         assertNoProblems(fresh);
       } finally { await other.close(); }
@@ -675,6 +740,61 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // An account keeps at most five tasks (backup_schedule.MAX_TASKS): at five,
+  // Add task and Duplicate are disabled and a line under the table says why.
+  await step("settings: at five backup tasks, Add task is disabled and says why", async () => {
+    const made = [];
+    for (let i = 1; i <= 5; i++) {
+      made.push(await user.api("/api/backup-tasks", { method: "POST", body: { name: `Task ${i}`, scope: "all_owned", cron: "0 3 * * *" } }));
+    }
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const add = page.getByRole("button", { name: "Add task", exact: true });
+      await page.getByRole("region", { name: "Periodic backup tasks" }).locator("tr", { hasText: "Task 5" }).waitFor();
+      assert(await add.isDisabled(), "Add task is disabled at the limit");
+      await page.getByText("You can keep up to 5 backup tasks. Delete one to add another.").waitFor();
+      const actions = page.getByRole("button", { name: "Actions for Task 1", exact: true });
+      await actions.click();
+      const duplicate = page.getByRole("button", { name: "Duplicate task", exact: true });
+      assert(await duplicate.isDisabled(), "Duplicate too");
+      await actions.click(); // (Escape would close Settings)
+      await duplicate.waitFor({ state: "detached" });
+      await user.api(`/api/backup-tasks/${made[0].id}`, { method: "DELETE" });
+      await until(async () => !(await add.isDisabled()), { what: "a deleted task frees a place", timeout: 15000 });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const task of made.slice(1)) await user.api(`/api/backup-tasks/${task.id}`, { method: "DELETE" });
+    }
+  });
+
+  // A replace restore first keeps the workspace as it is (ws_backup's
+  // automatic pre-restore snapshot); restoring a workspace other than the
+  // open one reloads its list in place, where that snapshot shows its tag.
+  await step("settings: a replace restore lists the state before it as a \"Before restore\" snapshot", async () => {
+    const lab = await user.api("/api/workspaces", { method: "POST", body: { name: "Restore lab" } });
+    await user.api(`/api/workspaces/${lab.id}/backups`, { method: "POST", body: { label: "e2e-restore", uploads: false } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const snapshot = page.locator(".aiProvRow", { hasText: "e2e-restore" });
+      await snapshot.waitFor();
+      const beforeRestore = page.locator(".aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "Before restore" }) });
+      assertEq(await beforeRestore.count(), 0, "no pre-restore snapshot yet");
+      await snapshot.getByRole("button", { name: "Restore", exact: true }).click();
+      await page.getByRole("button", { name: "Replace…", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Replace", exact: true }).click();
+      await beforeRestore.waitFor({ timeout: 15000 });
+      assertEq(await beforeRestore.count(), 1, "one pre-restore snapshot");
+      const kept = (await user.api(`/api/workspaces/${lab.id}/backups`)).backups.filter((b) => b.auto);
+      assertEq(kept.length, 1, "the server keeps it as an automatic snapshot");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: prompt and connection drafts have save, cancel, and dismissal protection", async () => {
     const { ctx, page } = await setup();
     try {
@@ -727,14 +847,16 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await search(page, "token", "Token usage");
-      const section = page.locator(".settingsPane");
-      await row(page, "All time").waitFor();
-      assert((await row(page, "All time").innerText()).includes("No AI calls recorded yet"));
-      assertEq(await row(page, "All time").getByRole("button", { name: "Reset" }).isDisabled(), true);
+      const chart = page.locator(".settingsPane .usageChart");
+      await chart.waitFor();
+      assertEq(await chart.locator(".usageChartHeadline strong").innerText(), "0");
+      assert((await chart.locator(".usageChartTotals").innerText()).includes("0 calls"));
+      assertEq(await chart.getByRole("button", { name: "Reset", exact: true }).isDisabled(), true);
       const usage = await user.api("/api/ai/usage");
       assertEq(usage.windows.all.calls, 0);
       assertEq((await user.api("/api/ai/usage", { method: "DELETE" })).deleted, 0);
-      assert((await section.innerText()).includes("no calls"), "the window tiles say no calls");
+      assertEq(await chart.locator('.usageChartBar[data-value="0"]').count(), 30, "every daily bar is empty");
+      assertEq(await chart.locator(".usageChartDetail span").innerText(), "No AI calls in this period");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -768,15 +890,80 @@ export async function settingsScenarios(env) {
       assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
       await nav(page, "Chat").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
-      // the per-chat chips: turning Rename off for folder chats
-      await row(page, "Folder chat").getByRole("button", { name: /^Rename/ }).click();
+      // The matrix and chat popover edit the same per-kind permissions.
+      await page.getByRole("checkbox", { name: "Rename pages — Folder chat", exact: true }).uncheck();
+      await page.getByRole("checkbox", { name: "Use journal sign-ins — Folder chat", exact: true }).uncheck();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       assertEq(await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).isChecked(), true);
-      assertEq(await popover.getByRole("button", { name: "Rename", exact: true }).getAttribute("aria-pressed"), "false");
-      assertEq(await popover.getByRole("button", { name: "Read", exact: true }).getAttribute("aria-pressed"), "true");
+      assertEq(await popover.getByRole("checkbox", { name: "Rename pages", exact: true }).isChecked(), false);
+      assertEq(await popover.getByRole("checkbox", { name: "Read pages", exact: true }).isChecked(), true);
+      assertEq(await popover.getByRole("checkbox", { name: "Use journal sign-ins", exact: true }).isChecked(), false);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: tool permissions compare chat types, preserve choices, and fit narrow screens", async () => {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      const { ctx, page } = await setup(viewport);
+      try {
+        await openSettings(page);
+        if (viewport.width < 600) await page.getByRole("button", { name: "Back", exact: true }).click();
+        await nav(page, "Chat").click();
+        const master = page.getByRole("checkbox", { name: "Assistant tools", exact: true });
+        const matrix = page.getByRole("group", { name: "Tool permissions by chat type" });
+        const permission = (tool, kind = "Folder chat") => matrix.getByRole("checkbox", { name: `${tool} — ${kind}`, exact: true });
+        const preset = (kind) => matrix.getByRole("button", { name: `${kind} permissions`, exact: true });
+        const choosePreset = async (kind, label) => {
+          await preset(kind).click();
+          await page.locator(".uiSelectMenu").getByRole("button", { name: label, exact: true }).click();
+        };
+        await master.check();
+        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "All tools");
+        assertEq(await permission("Rename pages", "PDF chat").count(), 0);
+        assertEq(await permission("List pages", "Notes chat").count(), 0);
+
+        await choosePreset("Folder chat", "Read library");
+        for (const tool of ["Search papers online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
+          assertEq(await permission(tool).isChecked(), false, `${tool} is off in read-library mode`);
+        }
+        assertEq(await permission("Read pages").isChecked(), true);
+        assertEq(await permission("Fetch documents", "PDF chat").isChecked(), true);
+        await permission("Fetch documents").check();
+        assertEq(await permission("Use journal sign-ins").isDisabled(), false);
+        await permission("Use journal sign-ins").check();
+        await permission("Fetch documents").uncheck();
+        assertEq(await permission("Use journal sign-ins").isDisabled(), true);
+        assertEq(await permission("Use journal sign-ins").isChecked(), true, "dependent choices are remembered");
+        await permission("Fetch documents").check();
+        await permission("Use journal sign-ins").uncheck();
+        assertEq(await preset("Folder chat").innerText(), "Custom");
+        await choosePreset("PDF chat", "Read & search");
+        assertEq(await permission("Edit note blocks", "PDF chat").isChecked(), false);
+        assertEq(await permission("Search papers online", "PDF chat").isChecked(), true);
+
+        await master.uncheck();
+        assertEq(await preset("Folder chat").isDisabled(), true);
+        assertEq(await permission("Read pages").isDisabled(), true);
+        await master.check();
+        assertEq(await permission("Use journal sign-ins").isChecked(), false);
+        assertEq(await permission("Use journal sign-ins", "PDF chat").isChecked(), true);
+        const fits = await matrix.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+        assert(fits.scroll <= fits.width + 1, `tool permissions fit ${viewport.width}px: ${JSON.stringify(fits)}`);
+        // Every switch has a full accessible name and is reachable by keyboard.
+        await permission("Use journal sign-ins").focus();
+        await page.keyboard.press("Space");
+        assertEq(await permission("Use journal sign-ins").isChecked(), true);
+        await page.keyboard.press("Space");
+        if (flags.keep) {
+          await row(page, "Tools").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `${server.dir}/tool-permissions-${viewport.width}.png`, animations: "disabled" });
+          await permission("Use journal sign-ins").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `${server.dir}/tool-permissions-web-${viewport.width}.png`, animations: "disabled" });
+        }
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("settings: the composer's mic shows only when a connection can transcribe; Full PDF only with a PDF in context", async () => {
@@ -1020,6 +1207,10 @@ export async function settingsScenarios(env) {
       await page.getByText("could not check", { exact: false }).waitFor();
       await page.locator(".settingsPane .segGroup button", { hasText: "Warnings" }).click();
       await page.getByText("Shared workspaces", { exact: true }).waitFor();
+      // Databases: the on-demand integrity check of every database file
+      await row(page, "Check databases").getByRole("button", { name: "Check now", exact: true }).click();
+      await until(() => row(page, "Check databases").innerText().then((text) => /database files? passed/.test(text)),
+        { what: "the database check's result" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

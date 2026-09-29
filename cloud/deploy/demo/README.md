@@ -10,7 +10,8 @@ is metered per guest. What demo mode changes and how guests work:
 ```
 deploy/demo/
   compose.yml        the demo alone: the image by GAMMA_TAG, ./data, the gamma-edge network
-  .env.example       → .env: GAMMA_TAG, the sha-<short> tag to run (the skill writes it)
+  .env.example       → .env: GAMMA_TAG, the sha-<short> tag to run (the skill writes it), and
+                       EDGE_SUBNET, gamma-edge's subnet (the one proxy range the demo trusts)
   demo.env.example   → demo.env: demo mode, guest lifetime and cap, first admin, seed library
 ```
 
@@ -29,6 +30,13 @@ container's alias on `gamma-edge`, an external Docker network both projects
 join. Caddy resolves the name per request, so the demo can restart or be
 absent (a 502 for its name only) without Caddy noticing anything else.
 
+Guest logins are limited per visitor address, which Caddy passes as
+`X-Forwarded-For` (from Cloudflare's `CF-Connecting-IP`). The Gamma image
+believes that header from loopback only, so the demo's `compose.yml` sets
+`FORWARDED_ALLOW_IPS` to `gamma-edge`'s subnet, `EDGE_SUBNET` in `.env`
+(compose refuses to start without it). A wrong value makes every visitor
+share Caddy's one limit of ten guests an hour.
+
 The image is pinned to the `sha-<short>` tag of a branch build (`docker.yml`
 dispatched on the branch, which never moves `:latest`), named by
 `GAMMA_TAG` in the folder's `.env`. The `update-demo-server` skill
@@ -43,8 +51,13 @@ dispatched on the branch, which never moves `:latest`), named by
    refuses to start without it too:
 
    ```bash
-   docker network inspect gamma-edge >/dev/null 2>&1 || docker network create gamma-edge
+   docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge
+   docker network inspect gamma-edge --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
    ```
+
+   The second line prints the subnet `.env`'s `EDGE_SUBNET` must hold: the
+   example's `10.202.0.0/24` for a network made here, its own for an older
+   one.
 
 3. **The folder.** Copy this folder's files and fill in the settings:
 
@@ -52,7 +65,7 @@ dispatched on the branch, which never moves `:latest`), named by
    mkdir -p ~/Container/gamma-demo && cd ~/Container/gamma-demo
    B=https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/demo
    curl -o compose.yml $B/compose.yml
-   curl -o .env $B/.env.example        # then set GAMMA_TAG to the build to run
+   curl -o .env $B/.env.example        # then set GAMMA_TAG to the build to run (and EDGE_SUBNET)
    curl -o demo.env $B/demo.env.example
    chmod 600 demo.env
    # optional in demo.env: GAMMA_ADMIN_PASSWORD, GAMMA_GUEST_MAX, GAMMA_GUEST_SEED

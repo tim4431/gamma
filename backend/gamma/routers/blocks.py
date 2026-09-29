@@ -2,8 +2,11 @@
 
 import json
 import secrets
+import sqlite3
+import time
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
@@ -17,21 +20,32 @@ from ..blocks_store import (
     delete_children,
     fetch_subtree,
     flatten_tree,
+    free_position,
     get_or_create_doc_page,
     page_for_doc,
     page_root_id,
+    subtree_refs,
+    trash_entry,
+    trashed_ids,
+    valid_block_id,
+    write_lock,
 )
-from .. import block_index
-from ..db import connect_pages_db, page_now, ws_uploads_dir
+from .. import block_index, cloud_auth, upload_gc
+from ..db import connect_pages_db, page_now
 from ..markdown_export import build_tree
-from ..ops import OpError, commit_ops, delete_page, latest_seq, note_reload, record_ops
-from ..storage import cleanup_orphan_uploads
-from ..textnorm import fuzzy_pattern
+from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, note_reload,
+                   record_ops, trash_page)
+from ..storage import upload_refs
+from ..textnorm import fuzzy_pattern, literal_runs
 
 router = APIRouter(prefix="/api", tags=["blocks"])
 
+# The Ctrl+F notes scan answers with what it found so far (``partial``)
+# once it has run this long.
+BLOCK_SEARCH_BUDGET_S = 2.0
 
-class UBCreateRequest(BaseModel):
+
+class UBCreateRequest(StorableBody):
     parent_id: str
     content: str = ""
     properties: dict = {}
@@ -39,8 +53,9 @@ class UBCreateRequest(BaseModel):
     after: str | None = None    # fractional position of the sibling after this one
 
 
-class UBUpdateRequest(BaseModel):
+class UBUpdateRequest(StorableBody):
     content: str | None = None
+    base: str | None = None     # the text `content` was edited from: merged, not replaced (ops.py)
     properties: dict | None = None
 
 
@@ -77,52 +92,100 @@ def _block_kind(parent_id: str, properties: str) -> str:
     return "note"
 
 
+def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int, skip,
+                 reach: set | None = None) -> tuple[list, bool]:
+    """The ``limit`` most recently edited blocks (none of ``skip``; only
+    ones in ``reach`` when a share token limits what is seen) whose
+    text the fuzzy ``pattern`` matches, as ``(rows, partial)``. Its
+    separator-tolerant rules ("3000" hits "3,000-qubit") can't be SQL, but
+    every match contains the query's literal ``runs``
+    (textnorm.literal_runs), so SQLite drops the other blocks (outside the
+    GIL) and Python runs the pattern over the candidates only, newest first,
+    until it has ``limit``. Past BLOCK_SEARCH_BUDGET_S it stops with what it
+    found (``partial``)."""
+    where, args = "", []
+    for run in runs[:3]:
+        if case:
+            where += " AND instr(content, ?) > 0"
+            args.append(run)
+        else:
+            where += " AND content LIKE ? ESCAPE '\\'"
+            args.append("%" + run.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    deadline = time.monotonic() + BLOCK_SEARCH_BUDGET_S
+    conn.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)
+    rows = []
+    try:
+        for n, r in enumerate(conn.execute(
+                "SELECT id, content, parent_id, properties FROM unified_blocks "
+                f"WHERE content != ''{where} ORDER BY updated_at DESC", args)):
+            if r[0] not in skip and (reach is None or r[0] in reach) and pattern.search(r[1]):
+                rows.append(r)
+                if len(rows) >= limit:
+                    break
+            if n % 1000 == 999 and time.monotonic() > deadline:
+                return rows, True
+    except sqlite3.OperationalError as e:
+        if "interrupt" not in str(e):
+            raise
+        return rows, True
+    finally:
+        conn.set_progress_handler(None, 0)
+    return rows, False
+
+
 @router.get("/block-search")
-async def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
-                       case: int = 0, whole: int = 0, regex: int = 0):
+def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
+                 case: int = 0, whole: int = 0, regex: int = 0):
+    """Blocks by id (``ids``), recently edited ones (no ``q``), or the fuzzy
+    notes search behind Ctrl+F and the [[ref]] popup (``case`` / ``whole``
+    word). ``partial`` when the scan ran out of time. A pattern of the
+    caller's (``regex``) is refused: one catastrophic regex holds the GIL,
+    and with it the whole server. Sync def: the scan runs in the
+    threadpool."""
+    if regex:
+        raise HTTPException(status_code=400, detail="regex search is not supported")
     results = []
+    partial = False
     # Through a share token: the blocks it reaches, silently — a ref chip or
     # link title in the share view resolves when its target is shared, and
-    # nothing reveals whether anything else exists.
+    # nothing reveals whether anything else exists. Recently deleted is out
+    # of everyone's reach: a [[ref]] to a trashed block resolves to nothing,
+    # and no search lists one.
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         reach = scope.block_ids(conn) if scope is not None else None
+        gone = trashed_ids(conn)
         if ids:
             id_list = [i.strip() for i in ids.split(",") if i.strip()]
             if not id_list:
                 return {"blocks": []}
             placeholders = ",".join("?" * len(id_list))
-            rows = conn.execute(
+            rows = [r for r in conn.execute(
                 f"SELECT id, content, parent_id, properties FROM unified_blocks WHERE id IN ({placeholders})",
                 id_list,
-            ).fetchall()
-        elif not q and not regex:
+            ) if r[0] not in gone]
+        elif not q:
             # Empty query: recently edited blocks, so the [[ref]] popup (and
             # the "/link" slash command) can suggest something before the
             # user types a filter.
-            rows = conn.execute(
+            rows = [r for r in conn.execute(
                 "SELECT id, content, parent_id, properties FROM unified_blocks "
                 "WHERE content != '' AND id != 'root' ORDER BY updated_at DESC"
                 + (" LIMIT ?" if reach is None else ""),
-                (limit,) if reach is None else (),
-            ).fetchall()
+                (limit + len(gone),) if reach is None else (),
+            ) if r[0] not in gone]
         else:
-            # Scan in Python: separator-tolerant matching ("3000" hits
-            # "3,000-qubit") and the VSCode-style options can't be expressed
-            # as SQLite LIKE, and per-user note DBs are small.
-            pattern = fuzzy_pattern(q, bool(case), bool(whole), bool(regex))
+            pattern = fuzzy_pattern(q, bool(case), bool(whole))
             if pattern is None:
-                return {"blocks": [], "error": "invalid regex" if regex else "empty query"}
-            rows = [r for r in conn.execute(
-                "SELECT id, content, parent_id, properties FROM unified_blocks "
-                "WHERE content != '' ORDER BY updated_at DESC",
-            ) if pattern.search(r[1] or "")]
+                return {"blocks": [], "error": "empty query"}
+            rows, partial = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case), limit,
+                                         gone, reach)
         if reach is not None:
             rows = [r for r in rows if r[0] in reach]
         if not ids:
             rows = rows[:limit]
         if not rows:
-            return {"blocks": []}
+            return {"blocks": [], "partial": True} if partial else {"blocks": []}
 
         ancestors_by_id, page_root_by_id = ancestor_chains(conn, [r[0] for r in rows])
 
@@ -138,7 +201,7 @@ async def block_search(request: Request, q: str = "", ids: str = "", limit: int 
                 block["page_root_id"] = block_id
                 block["page_title"] = content
             results.append(block)
-    return {"blocks": results}
+    return {"blocks": results, "partial": True} if partial else {"blocks": results}
 
 
 # Route order matters: static-prefix routes must come before /{block_id}
@@ -147,7 +210,7 @@ async def block_search(request: Request, q: str = "", ids: str = "", limit: int 
 # pages are created by POST /api/pages (routers/pages.py).
 
 @router.get("/blocks/by-doc/{doc_id}")
-async def ub_get_by_doc(doc_id: str, request: Request):
+def ub_get_by_doc(doc_id: str, request: Request):
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
@@ -161,7 +224,7 @@ async def ub_get_by_doc(doc_id: str, request: Request):
 
 
 @router.post("/blocks/by-doc/{doc_id}")
-async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Request):
+def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Request):
     # The page carrying this PDF, created when absent (PDF ingest from the
     # app and the extension, and "Open as document" on a PDF file block) — a
     # write, so it requires a real session (never the ?share= read principal).
@@ -172,8 +235,22 @@ async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: 
             folder=payload.folder or "", ws=ws, actor=request.state.user or "")
 
 
+def _not_found(conn, block_id: str) -> JSONResponse:
+    """The 404 of a block no page holds. For one in Recently deleted it says
+    so (``trashed``: its page's trash entry, blocks_store.trash_entry) —
+    what the app's "That page is in Recently deleted" notice offers Restore
+    from. Members only: a share is refused before it learns anything."""
+    entry = trash_entry(conn, block_id)
+    if entry:
+        return JSONResponse(status_code=404, content={"detail": "page is in Recently deleted", "trashed": entry})
+    return JSONResponse(status_code=404, content={"detail": "block not found"})
+
+
 @router.get("/blocks/{block_id}/children")
-async def ub_get_children(block_id: str, request: Request):
+def ub_get_children(block_id: str, request: Request):
+    """A block's children; for ``root``, the library listing, every page with
+    its ``preview``. Sync def: a big library's listing is thousands of
+    queries, in the threadpool."""
     scope = share_scope(request)
     if scope is not None and block_id == "root" and not scope.lists_library:
         # A page share may not enumerate the owner's library; a folder share
@@ -184,13 +261,15 @@ async def ub_get_children(block_id: str, request: Request):
             if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="block not found")
             assert_block_in_scope(conn, block_id, scope)
+            if page_root_id(conn, block_id) is None:
+                return _not_found(conn, block_id)
         rows = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
         ).fetchall()
         if scope is not None and block_id == "root":
             rows = [r for r in rows if scope.allows_page(conn, r[0])]
-        previews = _page_previews(conn) if block_id == "root" else None
+        previews = _page_previews(conn, [r[0] for r in rows]) if block_id == "root" else None
     children = [block_to_dict(r) for r in rows]
     if previews is not None:
         for child in children:
@@ -202,41 +281,38 @@ PREVIEW_CHARS = 240
 _PREVIEW_BLOCKS = 5
 
 
-def _page_previews(conn) -> dict:
+def _page_previews(conn, page_ids) -> dict:
     """{page_id: preview} for the library listing — the first ~PREVIEW_CHARS
     characters of each page's first few non-highlight child blocks, joined
-    with " · ". One window query over all pages' direct children (the listing
-    is hot; never N+1). Pages without children are absent (→ "")."""
-    rows = conn.execute(
-        f"""
-        SELECT parent_id, content FROM (
-            SELECT c.parent_id, c.content,
-                   ROW_NUMBER() OVER (PARTITION BY c.parent_id ORDER BY c.position) AS rn
-            FROM unified_blocks c
-            JOIN unified_blocks p ON p.id = c.parent_id AND p.parent_id = 'root'
-            WHERE c.content != ''
-              AND json_extract(c.properties, '$.highlight_id') IS NULL
-        ) WHERE rn <= {_PREVIEW_BLOCKS}
-        ORDER BY parent_id, rn
-        """
-    ).fetchall()
+    with " · ". One index seek per page (idx_ub_parent walks a page's
+    children in order and stops at the fifth), so the cost follows the
+    pages listed, never the blocks in the library. Pages without such
+    children are absent (→ "")."""
     previews: dict = {}
-    for page_id, content in rows:
-        current = previews.get(page_id, "")
-        if len(current) >= PREVIEW_CHARS:
-            continue
-        piece = " ".join((content or "").split())
-        previews[page_id] = (current + " · " + piece) if current else piece
-    return {k: v[:PREVIEW_CHARS] for k, v in previews.items()}
+    for page_id in page_ids:
+        preview = ""
+        for (content,) in conn.execute(
+                "SELECT content FROM unified_blocks WHERE parent_id = ? AND content != '' "
+                "AND json_extract(properties, '$.highlight_id') IS NULL ORDER BY position LIMIT ?",
+                (page_id, _PREVIEW_BLOCKS)):
+            if len(preview) >= PREVIEW_CHARS:
+                break
+            piece = " ".join(content.split())
+            preview = f"{preview} · {piece}" if preview else piece
+        if preview:
+            previews[page_id] = preview[:PREVIEW_CHARS]
+    return previews
 
 
 @router.get("/blocks/{block_id}/subtree")
-async def ub_get_subtree(block_id: str, request: Request):
+def ub_get_subtree(block_id: str, request: Request):
     """The block with its whole subtree. For a page, ``seq`` is the op log's
     position this tree reflects — the live session catches up from it."""
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         assert_block_in_scope(conn, block_id, scope)
+        if page_root_id(conn, block_id) is None:
+            return _not_found(conn, block_id)
         # One read snapshot for the tree and its seq: a batch committed
         # between two separate reads would be counted but missing, and the
         # client would never learn of it (a block it deleted stays on screen).
@@ -250,23 +326,26 @@ async def ub_get_subtree(block_id: str, request: Request):
     out = {"block": build_tree(rows, block_id)}
     if seq is not None:
         out["seq"] = seq
-    return out
+    # Serialized here, in the worker thread: a returned dict is encoded on the
+    # event loop, which a 5,000-block page would stall for a fifth of a second.
+    return JSONResponse(out)
 
 
 @router.get("/blocks/{block_id}/backlinks")
-async def ub_get_backlinks(block_id: str, request: Request):
+def ub_get_backlinks(block_id: str, request: Request):
     """Return all blocks that reference `block_id` via [[block_id]] syntax."""
     # Backlinks span the whole library by nature, so a share link can't use
     # them without leaking other pages.
     if share_scope(request) is not None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with connect_pages_db(resolve_ws(request)) as conn:
-        rows = conn.execute(
+        gone = trashed_ids(conn)  # a page in Recently deleted links to nothing
+        rows = [r for r in conn.execute(
             "SELECT id, content, parent_id FROM unified_blocks "
             "WHERE id != ? AND content LIKE ? "
-            "ORDER BY updated_at DESC LIMIT 50",
-            (block_id, f"%[[{block_id}]]%"),
-        ).fetchall()
+            "ORDER BY updated_at DESC LIMIT ?",
+            (block_id, f"%[[{block_id}]]%", 50 + len(gone)),
+        ) if r[0] not in gone][:50]
         if not rows:
             return {"backlinks": []}
 
@@ -285,10 +364,12 @@ async def ub_get_backlinks(block_id: str, request: Request):
 
 
 @router.get("/blocks/{block_id}")
-async def ub_get_block(block_id: str, request: Request):
+def ub_get_block(block_id: str, request: Request):
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         assert_block_in_scope(conn, block_id, scope)
+        if page_root_id(conn, block_id) is None:
+            return _not_found(conn, block_id)
         row = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
             (block_id,),
@@ -313,7 +394,7 @@ def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dic
 
 
 @router.post("/blocks")
-async def ub_create_block(payload: UBCreateRequest, request: Request):
+def ub_create_block(payload: UBCreateRequest, request: Request):
     block_id = secrets.token_urlsafe(9)
     ws = require_ws_writer(request)
     scope = share_scope(request)
@@ -321,10 +402,12 @@ async def ub_create_block(payload: UBCreateRequest, request: Request):
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
             raise HTTPException(status_code=403, detail="not accessible via this share link")
-        try:
-            new_pos = generate_key_between(payload.before, payload.after)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
+        new_pos = ""  # neither neighbour named: last in the library
+        if payload.before is not None or payload.after is not None:
+            try:
+                new_pos = generate_key_between(payload.before, payload.after)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
         with connect_pages_db(ws) as conn:
             return create_page(conn, payload.content, payload.properties,
                                block_id=block_id, position=new_pos)
@@ -346,8 +429,11 @@ async def ub_create_block(payload: UBCreateRequest, request: Request):
 
 
 @router.put("/blocks/{block_id}")
-async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
-    """Content and/or a properties PATCH (a null value deletes the key)."""
+def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
+    """Content and/or a properties PATCH (a null value deletes the key).
+    With ``base`` (the text the client's ``content`` was computed from) the
+    edit is merged into a block that changed meanwhile instead of replacing
+    it — the answer's ``content`` is the text actually stored."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
@@ -357,14 +443,19 @@ async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Requ
     op = {"op": "set", "id": block_id}
     if payload.content is not None:
         op["content"] = payload.content
+        if payload.base is not None:
+            op["base"] = payload.base
     if payload.properties is not None:
         op["props"] = payload.properties
     result = _ops(ws, page_id, [op], request, scope)
-    return {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
+    out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
+    if payload.content is not None:
+        out["content"] = result["ops"][0].get("content", payload.content)
+    return out
 
 
 @router.delete("/blocks/{block_id}")
-async def ub_delete_block(block_id: str, request: Request):
+def ub_delete_block(block_id: str, request: Request):
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot delete root block")
     ws = require_ws_writer(request)
@@ -374,51 +465,95 @@ async def ub_delete_block(block_id: str, request: Request):
         if not page_id:
             raise HTTPException(status_code=404, detail="block not found")
         if page_id == block_id:
-            # Deleting a page: not an op on the page's blocks. Its room (if
-            # any) is told to reload, which surfaces the 404.
+            # Deleting a page: not an op on the page's blocks. It goes to
+            # Recently deleted (gamma/trash.py) — on a share host, whose pages
+            # are published copies, for good. Its room (if any) is told to
+            # reload, which surfaces the 404.
             if scope is not None:
                 raise HTTPException(status_code=403, detail="share editors cannot delete the shared page")
-            result = delete_page(ws, conn, block_id, actor=request.state.user or "")
-            return {"ok": True, "id": block_id, "removed_uploads": result["removed_uploads"]}
-    result = _ops(ws, page_id, [{"op": "delete", "id": block_id}], request, scope)
-    return {"ok": True, "id": block_id, "removed_uploads": result["removed_uploads"]}
+            actor = request.state.user or ""
+            if cloud_auth.settings()["share_host"]:
+                delete_page(ws, conn, block_id, actor=actor)
+                return {"ok": True, "id": block_id}
+            try:
+                entry = trash_page(ws, conn, block_id, actor=actor)
+            except OpError as e:
+                raise HTTPException(status_code=e.status, detail=e.detail)
+            return {"ok": True, "id": block_id, "trashed": entry}
+    _ops(ws, page_id, [{"op": "delete", "id": block_id}], request, scope)
+    return {"ok": True, "id": block_id}
+
+
+def _tree_rows(blocks: list, parent_id: str, now: str) -> list[dict]:
+    """``flatten_tree`` of a request's nested blocks, validated like the ops
+    it stands in for: objects only, ids of the block-id shape and never a
+    reserved one (a node without one gets a fresh id), text no longer than
+    an op may write."""
+    rows: list = []
+    try:
+        flatten_tree(blocks, parent_id, rows, now)
+    except (AttributeError, TypeError):
+        raise HTTPException(status_code=400, detail="blocks must be a tree of objects")
+    for r in rows:
+        if not valid_block_id(r["id"]):
+            raise HTTPException(status_code=400, detail=f"invalid block id: {r['id']!r}")
+        if not isinstance(r["content"], str):
+            raise HTTPException(status_code=400, detail=f"block {r['id']}: content must be text")
+        if len(r["content"]) > MAX_CONTENT:
+            raise HTTPException(status_code=413, detail="content too long")
+    return rows
 
 
 @router.put("/blocks/{block_id}/children")
-async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Request):
+def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Request):
     """Replace all children of a block with the provided nested tree (bulk
-    paths — imports, tests; the editor sends ops). The page's room is told
-    to reload."""
+    paths — a duplicated page, tests; the editor sends ops), in one
+    transaction: a tree that cannot be written (an id another block
+    already has: 409) leaves the old children in place. The page's room is
+    told to reload. Never the library itself: ``root``'s children are the
+    pages, created and deleted one by one."""
+    if block_id == "root":
+        raise HTTPException(status_code=400, detail="cannot replace the children of root")
     now = page_now()
-    rows: list = []
-    flatten_tree(payload.blocks, block_id, rows, now)
+    rows = _tree_rows(payload.blocks, block_id, now)
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
-        if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="block not found")
-        assert_block_in_scope(conn, block_id, scope)
-        delete_children(conn, block_id)
-        for r in rows:
-            conn.execute(
-                "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (r["id"], r["parent_id"], r["position"], r["content"],
-                 r["properties"], r["created_at"], r["updated_at"]),
-            )
-        conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, block_id))
-        conn.commit()
-        removed = cleanup_orphan_uploads(conn, ws_uploads_dir(ws))
+        write_lock(conn)
+        try:
+            if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
+                raise HTTPException(status_code=404, detail="block not found")
+            assert_block_in_scope(conn, block_id, scope)
+            if page_root_id(conn, block_id) is None:
+                raise HTTPException(status_code=404, detail="block not found")  # in Recently deleted
+            old_refs = subtree_refs(r for r in fetch_subtree(conn, block_id) if r[0] != block_id)
+            delete_children(conn, block_id)
+            try:
+                conn.executemany(
+                    "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [(r["id"], r["parent_id"], r["position"], r["content"],
+                      r["properties"], r["created_at"], r["updated_at"]) for r in rows])
+            except sqlite3.IntegrityError:
+                raise HTTPException(status_code=409, detail="a block id in the tree is already taken")
+            conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, block_id))
+            new_refs = set().union(*(upload_refs(r["content"], r["properties"]) for r in rows))
+            upload_gc.claim(conn, new_refs - old_refs)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        upload_gc.schedule(ws, old_refs - new_refs)
         page_id = page_root_id(conn, block_id)
         if page_id != block_id:
             block_index.mark_page_dirty(ws, page_id)
-        if page_id and page_id != "root":
+        if page_id:
             note_reload(ws, conn, page_id, request.state.user or "")
-    return {"ok": True, "count": len(rows), "updated_at": now, "removed_uploads": removed}
+    return {"ok": True, "count": len(rows), "updated_at": now}
 
 
 @router.post("/blocks/{block_id}/reorder")
-async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request):
+def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request):
     """Move a block: within its page (an op) or to another page
     (``parent_id`` there — the source room sees a delete, the target
     room reloads)."""
@@ -433,6 +568,9 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
     with connect_pages_db(ws) as conn:
+        # One snapshot for the checks and a cross-page move's writes, which
+        # commit together with the source page's log row (record_ops).
+        write_lock(conn)
         src_page = page_root_id(conn, block_id)
         if not src_page:
             raise HTTPException(status_code=404, detail="block not found")
@@ -450,6 +588,7 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
                 raise HTTPException(status_code=403, detail="not accessible via this share link")
             if parent in {r[0] for r in fetch_subtree(conn, block_id)}:
                 raise HTTPException(status_code=400, detail="cannot move a block into its own subtree")
+            new_pos = free_position(conn, parent, new_pos, block_id)  # re-keyed like an op's move
             now = page_now()
             conn.execute(
                 "UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",

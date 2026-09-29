@@ -32,7 +32,16 @@ own compose project in `/root/Container/gamma-demo/`
 ([demo/README.md](demo/README.md), the `update-demo-server` skill); this
 project's Caddy only routes its name to it over the external network
 `gamma-edge`, which must exist before this file starts
-(`docker network create gamma-edge`, once per host).
+(`docker network create --subnet 10.202.0.0/24 gamma-edge`, once per host;
+the demo trusts that subnet's `X-Forwarded-For`).
+
+The Gamma image believes `X-Forwarded-For` from loopback only
+(`FORWARDED_ALLOW_IPS`), so every proxied Gamma here names its proxy: the
+share host trusts this project's default network, whose subnet
+`compose.yml` pins (`10.201.0.0/24`), and the demo trusts `gamma-edge`'s
+(`EDGE_SUBNET` in its `.env`). Without that every visitor would share the
+proxy's rate limits. A host whose default network predates the pin needs
+`docker compose down && docker compose up -d` once to recreate it.
 
 ## First deployment on a VPS
 
@@ -56,7 +65,7 @@ project's Caddy only routes its name to it over the external network
    # fill in .env: SMTP, Turnstile; CADDY_HOST is the hostname above
    chmod 600 .env
    # the network Caddy shares with the demo (demo/README.md), once per host
-   docker network inspect gamma-edge >/dev/null 2>&1 || docker network create gamma-edge
+   docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge
    docker compose up -d
    ```
 

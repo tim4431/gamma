@@ -120,6 +120,27 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await ctx.close();
   });
 
+  await step("files: a duplicated document page shows the PDF but leaves it one page — the original", async () => {
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?ws=${account.ws}&folder=${encodeURIComponent("Projects/Rydberg")}`);
+    const original = await account.api(`/api/blocks/${docPageId}`);
+    await page.locator(".fileRow", { hasText: "supplement.pdf" }).first().click({ button: "right" });
+    await page.locator(".ctxMenuItem", { hasText: "Duplicate" }).click();
+    const copyRow = page.locator(".fileRow", { hasText: "supplement.pdf (copy)" });
+    await copyRow.waitFor({ timeout: 8000 });
+    const pages = (await account.api("/api/blocks/root/children")).children;
+    const copy = pages.find((p) => p.content === "supplement.pdf (copy)");
+    assert(copy && !copy.properties.doc_id, "the copy doesn't carry the PDF's doc_id");
+    assertEq(copy.properties.source_url, original.properties.source_url, "it shows the same file");
+    const byDoc = await account.api(`/api/blocks/by-doc/${original.properties.doc_id}`);
+    assertEq(byDoc.id, docPageId, "the PDF's page is still the original");
+    await copyRow.dblclick();
+    await until(async () => new URL(page.url()).searchParams.get("block") === copy.id, { what: "the copy opened" });
+    await waitForPdf(page, 1);
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
   await step("files: a markdown chip's 'Add to library' imports it as a note page; the file stays", async () => {
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?page=${projectId}&ws=${account.ws}`);

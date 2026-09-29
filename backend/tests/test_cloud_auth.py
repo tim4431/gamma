@@ -876,22 +876,6 @@ def test_sync_status(cloud, monkeypatch):
     monkeypatch.delenv("GAMMA_CLOUD_ISSUER")
     assert status(c)["profile"]["state"] == "off"
 
-def test_grant_check_runs_at_startup(monkeypatch):
-    import asyncio
-    seen = []
-    monkeypatch.setattr(cloud_sync, "check_all", lambda: seen.append(1))
-
-    async def run():
-        async with cloud_sync.lifespan():
-            for _ in range(100):
-                if seen:
-                    break
-                await asyncio.sleep(0.01)
-
-    asyncio.run(run())
-    assert seen == [1]
-
-
 def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
     """The account server and the share host sit behind Cloudflare, which
     blocks the bare Python-urllib signature: every call carries Gamma's

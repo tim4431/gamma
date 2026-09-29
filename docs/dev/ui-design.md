@@ -365,8 +365,8 @@ An irreversible action in a settings pane or editor dialog lives in its
 **Danger zone**: settingsKit's `Section tone="danger"` (red label and rule,
 the rows in a `--danger-border` box). Its buttons are `uiBtn sm danger`,
 red at rest, and each row's hint says what is lost in one line ("Deletes
-every page, PDF, chat and backup in it, for all 2 members. Can't be
-undone."). The workspace manager (Leave, Delete workspace) and the Users
+every page, PDF, chat and backup in it, for all 2 members; the server keeps
+one final copy."). The workspace manager (Leave, Delete workspace) and the Users
 account editor (Delete account) use it; a menu row that replaces data (a
 backup restore) is a `danger` row.
 
@@ -427,6 +427,40 @@ account on this server" divider. A failed sign-in says why (wrong password,
 too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
 box, and a refused password also takes the focus and a red border.
 
+## Block editor interactions
+
+`editor/BlockTree.jsx` owns row interactions and the editor's popups;
+`editor/BlockCmEditor.jsx` supplies the CodeMirror facade. Opening rendered
+text maps the clicked character through `clickToSource.js` and keeps that
+line under the pointer. A drag that began on rendered text continues as a
+selection in the editor. A blur while the window is unfocused (Alt+Tab or
+a file dialog) must not close the editor: `document.hasFocus()` gates the
+blur callback, and the browser restores the active element on return.
+
+The row gutter (`.rowHandles`) holds the drag/menu handle and an out-of-flow
+add button so one-line rows stay one line tall. Add uses the same sibling
+creation path as Enter: below by default, above with Alt+click; a home-library
+row creates a page. The handle menu copies a link or the subtree as Markdown,
+attaches the block to chat (also Ctrl+click), duplicates with fresh IDs and
+without highlight anchors, moves to another page, or deletes.
+
+Clipboard handling preserves Markdown storage:
+
+- A URL offers the existing link/mention/embed choices; Gamma page/citation
+  links are stored without host or workspace ([PDF citations](pdf_citations.md)).
+- Strict TSV offers Table / Text / Blocks; other multiline text offers Text /
+  Blocks. Blocks uses `POST /api/markdown-blocks`, the Markdown import parser,
+  and inserts siblings, replacing an empty block without children.
+- A clipboard containing one HTML table becomes a formatted Markdown table.
+  Files upload and insert at the caret ([files and documents](block_centric.md#stage-4--files-and-documents-done-2026-09-13)).
+
+An editable `![[embed]]` card writes to its source block, including checkbox,
+image, table, and raw-text edits. Same-page sources use `onChangeText` and the
+page's normal save path; cross-page sources use `PUT /blocks/{id}` with `base`
+and reconcile the reference cache with the response ([collaboration](collab.md)).
+Its editor shares `useMathUi`, completion, preview, and image/table paste with
+the ordinary row editor. The card footer navigates to the source.
+
 ## File map (frontend/src)
 
 | File | Owns |
@@ -464,11 +498,12 @@ box, and a refused password also takes the focus and a red border.
 | `editor/clickToSource.js` | maps the rendered view back to the raw source by text (the layouts differ too much for coordinates): the clicked character a new editor opens on (`sourceOffsetAtPoint`), the gap line between two rendered blocks (`renderedBlocks`, `renderedGaps`, `blockStartInSource`, `gapInSource`), a Ctrl-selection's source range for the chat (`sourceRangeOfSelection`), and other people's carets placed on the rendered view (`renderedCaretRect`, via `locateInRendered`); `locateInSource` / `locateInRendered` / `gapInSource` are pure and unit-tested |
 | `editor/mdMarks.js` | the inline-mark table (regex + class per marker) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections). `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters |
 | `editor/SlashMenu.jsx` | the "/" command catalog + popup (link, embed, equations, highlight, headings, to-do, lists, quote, callout, code, mermaid, divider, table, image, date, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches) and the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link); the bare "/" list comes under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style) with a key-hint footer, a typed query as one ranked list; blockTree owns trigger detection and key handling |
-| `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip. blockTree owns the trigger, the keys and the insertion |
+| `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip. blockTree owns the trigger, the keys and the insertion |
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the fold is the browser pref `backlinksCollapsed` |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (used by mdPreprocess's exclusions and BlockTree's Enter/Tab-in-fence handling) and `fenceInnerAt` |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
+| `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | folder-tag semantics (mirrored by `backend/gamma/foldertags.py`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |

@@ -30,6 +30,15 @@ const intIn = (min, max) => ({
     return Number.isFinite(value) && value >= min && value <= max ? value : undefined;
   },
 });
+// Like intIn, but a number out of range is pulled into it rather than
+// dropped: for a range that narrowed, so a value stored under the old one
+// keeps its intent ("as many as allowed").
+const intClamped = (min, max) => ({
+  parse: (raw) => {
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : undefined;
+  },
+});
 const json = (normalize) => ({
   parse: (raw) => { try { return normalize(JSON.parse(raw)); } catch { return undefined; } },
   serialize: JSON.stringify,
@@ -67,6 +76,12 @@ export function defaultTranslateLang(languages = typeof navigator === "undefined
 // The translation service that needs no setup (Microsoft's free endpoint).
 export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
 
+// The most translation calls in flight at once (the translateParallel
+// preference). The server lets an account have ai_client.MAX_OPEN_CALLS (6)
+// AI calls open and answers 429 past that, so translation leaves room for a
+// chat.
+export const TRANSLATE_PARALLEL_MAX = 4;
+
 // What translation sends for the "Translate with" pick, given the set-up
 // services and the chat models on offer: the pick while it is still
 // offered; with no chat model at all, the free service; else "" (follow
@@ -86,7 +101,7 @@ export function translateModelFor(pick, engines, models) {
 export const CHAT_KINDS = ["folder", "pdf", "notes"];
 const TOOL_PERMS_DEFAULT = {
   list: true, read: true, block_read: true, view: true, search: true,
-  web_search: true, web_read: true,
+  web_search: true, web_read: true, publisher_cookies: true,
   rename: true, move: true, block_edit: true,
 };
 const AGENT_PERMS = json((value) => {
@@ -186,9 +201,8 @@ export const PREFS = {
   translateLang: pref("gamma-translate-lang", ACCOUNT, defaultTranslateLang(), oneOf(TRANSLATE_LANGS.map(([code]) => code))),
   // Parallel translation requests: chunks of a page are translated this many
   // at a time — the whole-document queue never exceeds it either. Clamped to
-  // 1–32 (a chunk is ~1200 chars, so even 32 stays well under provider rate
-  // limits for most accounts).
-  translateParallel: pref("gamma-translate-parallel", ACCOUNT, 3, intIn(1, 32)),
+  // 1–TRANSLATE_PARALLEL_MAX, a stored value above it included.
+  translateParallel: pref("gamma-translate-parallel", ACCOUNT, 3, intClamped(1, TRANSLATE_PARALLEL_MAX)),
   // Reasoning effort for translation calls. "" = provider default (param
   // omitted — some models reject it outright, so that stays the safe
   // default); Low/Minimal is the speed lever for reasoning models, which
@@ -250,6 +264,10 @@ export const PREFS = {
   agentEnabled: flag("gamma-ai-agent-enabled", ACCOUNT, true),
   agentPerms: pref("gamma-ai-agent-perms", ACCOUNT,
     Object.fromEntries(CHAT_KINDS.map((k) => [k, { ...TOOL_PERMS_DEFAULT }])), AGENT_PERMS),
+  // Off by default: a chat fetch a publisher stopped waits for the user to
+  // open the page. On, the card hands it to Gamma Connector by itself, which
+  // tries in a minimized window (chat/FetchHandoffCards.jsx).
+  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, false),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
   // Per-read_page-call cap on document text the folder/paper agent may pull.

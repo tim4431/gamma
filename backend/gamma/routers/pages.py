@@ -20,12 +20,15 @@ from .. import block_index, publish
 from ..auth import require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
+    TRASH,
     attachment_props,
     block_to_dict,
     create_page,
     page_attachment,
     page_for_doc,
     pages_for_docs,
+    valid_block_id,
+    write_lock,
 )
 from ..db import connect_pages_db, safe_doc_id
 from ..foldertags import clean_path
@@ -38,13 +41,10 @@ router = APIRouter(prefix="/api", tags=["pages"])
 ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
 
 
-PAGE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
 class PageCreate(BaseModel):
     title: str = ""
     folder: str = ""
-    id: str = ""              # a mirror bringing a page over keeps its id (409 when taken)
+    id: str = ""              # a mirror bringing a page over keeps its id (409 when a live block has it)
     properties: dict = {}     # ...and its page properties
 
 
@@ -57,7 +57,7 @@ class AttachRequest(BaseModel):
 def _load_page(conn, page_id: str):
     row = conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if not row:
+    if not row or row[1] == TRASH:
         raise HTTPException(status_code=404, detail="page not found")
     if row[1] != "root":
         raise HTTPException(status_code=400, detail="not a page (only root blocks carry attachments)")
@@ -65,7 +65,7 @@ def _load_page(conn, page_id: str):
 
 
 @router.post("/pages")
-async def create_page_endpoint(payload: PageCreate, request: Request):
+def create_page_endpoint(payload: PageCreate, request: Request):
     """A new text-only page: ``{title?, folder?}`` → the page's block dict.
     Title defaults to "Untitled"; ``folder`` (a path like ``a/b``) becomes
     ``properties.folder``. On a share host, 402 with ``{detail, limit,
@@ -77,10 +77,16 @@ async def create_page_endpoint(payload: PageCreate, request: Request):
     folder = clean_path(payload.folder or "")
     if folder:
         props["folder"] = folder
-    if payload.id and not PAGE_ID_RE.match(payload.id):
+    if payload.id and not valid_block_id(payload.id):
         raise HTTPException(status_code=400, detail="invalid page id")
     with connect_pages_db(ws) as conn:
-        if payload.id and conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone():
+        # The checks and the insert as one step: two requests bringing the
+        # same page id over (a mirror's retry) get one page and a 409, and
+        # the plan's cap counts every page created before this one.
+        write_lock(conn)
+        taken = payload.id and conn.execute(
+            "SELECT parent_id FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone()
+        if taken and taken[0] != TRASH:  # a page of that id in Recently deleted gives way (create_page)
             raise HTTPException(status_code=409, detail="a block with that id exists")
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
@@ -93,7 +99,7 @@ class DocsLookup(BaseModel):
 
 
 @router.post("/pages/by-docs")
-async def pages_by_docs(payload: DocsLookup, request: Request):
+def pages_by_docs(payload: DocsLookup, request: Request):
     """Which pages these stored files became: ``{doc_ids: [<hash>, ...]}`` →
     ``{"pages": {hash: {id, title}}}`` — a hash matches the page carrying it
     as its PDF (``doc_id``) or the note page made from it (a markdown file's
@@ -113,7 +119,7 @@ class FromFile(BaseModel):
 
 
 @router.post("/pages/from-file")
-async def page_from_file(payload: FromFile, request: Request):
+def page_from_file(payload: FromFile, request: Request):
     """"Open as page" on a markdown file chip: the stored upload becomes a
     note page through the same importer as POST /import/markdown (title from
     front matter else the file name, blocks from the body), filed in
@@ -131,6 +137,7 @@ async def page_from_file(payload: FromFile, request: Request):
     if not path:
         raise HTTPException(status_code=404, detail="file not found")
     with connect_pages_db(ws) as conn:
+        write_lock(conn)  # the lookup and the import as one step: one page per file
         hit = pages_for_docs(conn, [m.group(1)]).get(m.group(1))
         if hit:
             row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (hit["id"],)).fetchone()
@@ -144,7 +151,7 @@ async def page_from_file(payload: FromFile, request: Request):
 
 
 @router.post("/pages/{page_id}/attachment")
-async def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
+def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
     """Attach a PDF to an existing page that has none. Body: ``doc_id``
     (validated shape only — like ``by-doc``, a URL-opened PDF's id is the URL
     hash and the file is fetched lazily by the proxy) and/or ``source_url``,
@@ -165,6 +172,9 @@ async def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
     if not doc_id and not source_url:
         raise HTTPException(status_code=400, detail="doc_id or source_url required")
     with connect_pages_db(ws) as conn:
+        # The checks below and the write as one step: two pages attaching the
+        # same PDF at once can't both pass "no other page carries it".
+        write_lock(conn)
         page = _load_page(conn, page_id)
         props = dict(page["properties"])
         if page_attachment(props):
@@ -191,13 +201,15 @@ async def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
 
 
 @router.delete("/pages/{page_id}/attachment")
-async def detach_pdf(page_id: str, request: Request):
+def detach_pdf(page_id: str, request: Request):
     """Remove the page's PDF attachment (``doc_id`` / ``source_url`` /
     ``original_filename``). Highlight blocks keep their ``pdf_position``;
-    the file itself is deleted by the orphan sweep unless another page still
-    references it. → ``{"ok", "block", "removed_uploads"}``."""
+    the file stays on disk, and unless something else references it the
+    orphan bookkeeping purges it after 30 days (gamma/upload_gc.py) — a
+    re-attach before then finds it. → ``{"ok", "block"}``."""
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
+        write_lock(conn)  # the check and the write as one step, like attach_pdf
         page = _load_page(conn, page_id)
         props = dict(page["properties"])
         if not page_attachment(props):
@@ -208,5 +220,4 @@ async def detach_pdf(page_id: str, request: Request):
             conn, page_id, [{"op": "set", "id": page_id,
                              "props": props_patch(page["properties"], props)}], actor=request.state.user or ""))
         block_index.purge_page_data(ws, conn, [])
-    return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]},
-            "removed_uploads": result["removed_uploads"]}
+    return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}

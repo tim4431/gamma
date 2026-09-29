@@ -53,20 +53,16 @@ def org(client, request):
 
 @pytest.fixture(scope="module")
 def indexed_pdf(org):
-    """Page a's PDF with a searchable hit on physical page 3."""
-    import sqlite3
-    from gamma.db import page_now, ws_db_path
-    from gamma.pdf_index import ensure_schema
-    from gamma.textnorm import INDEX_VERSION
+    """Page a's PDF with a searchable hit on physical page 3, stored the way
+    the indexer stores a paper (pdf_index.store_doc)."""
+    from gamma.db import connect_data_db
+    from gamma.pdf_index import store_doc
+    from gamma.textnorm import normalize_text
 
     _, ids = org
     doc = "d" * 24
-    with sqlite3.connect(ws_db_path(ids["ws"], "data.db")) as db:
-        ensure_schema(db)
-        db.execute("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
-                   (doc, 3, "quantum error correction with cat qubits"))
-        db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
-                   "VALUES (?, ?, 1, ?)", (doc, page_now(), INDEX_VERSION))
+    with connect_data_db(ids["ws"]) as db:
+        store_doc(db, doc, [(3, normalize_text("quantum error correction with cat qubits"))])
     return doc
 
 

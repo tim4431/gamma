@@ -1,6 +1,6 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), six
+**Status: the engine, the two manual tours (first paper, AI chat), seven
 triggered tours, seven hints and the welcome page with its sample PDF are
 built. The first paper tour is also offered to every new library.** A synced
 `onboarding` pref and a checklist are not built (see "Not built").
@@ -123,6 +123,17 @@ show Done before advancing automatically.
 
 ## Triggered tours and hints (implemented)
 
+**Arrange windows** (`tours/windows.js`) is available under Account → Tours
+on desktop, including without an AI connection. It also offers once after
+opening a PDF (`page.opened`). Starting it reveals and expands Chat and,
+when the PDF is visible, Notes. Three practice steps wait for double-clicks
+to collapse and expand Chat (`window.collapsed {id, collapsed}`), then a
+title drag and drop (`window.moved {id, side}`). A Notes title spotlight
+explains the same controls when Notes is docked; the last step points at
+View to explain reopening a window closed with ×. The user's arrangement
+is kept. Phone layouts have no dock controls and do not list or offer this
+tour.
+
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
 control (focusing the chat composer offers nothing). The offer is a card
@@ -139,6 +150,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 | Guide | Offered when | Points at |
 |---|---|---|
+| Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: double-click to collapse and expand, drag to dock; Notes' title when docked; View to reopen closed windows |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |

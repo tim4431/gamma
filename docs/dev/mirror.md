@@ -30,8 +30,9 @@ the copy's `pages.db`). A **round** asks both servers' change feeds which
 pages moved since the last round and reconciles each one three ways from
 that saved tree: the remote's changes are applied locally through the
 normal op path (so the local server's own text merge keeps the local
-keystrokes and the page's open editors see them arrive), what still differs
-is pushed to the remote as an op batch under the mirror's write token, and
+keystrokes and the page's open editors see them arrive), the edits made
+here since are pushed to the remote as op batches under the mirror's write
+token (only those: a copy that made no edits writes nothing there), and
 the remote's tree is fetched back and becomes the new base. Nothing about
 the frontend changes: editing a mirror is editing a workspace.
 
@@ -39,16 +40,37 @@ the frontend changes: editing a mirror is editing a workspace.
 
 - **Pages and blocks**: the whole tree, root properties included (title,
   folder, labels, metadata), by block id and fractional position. Ids are
-  kept, so a block is the same block on both sides forever.
+  kept, so a block is the same block on both sides forever. A page that
+  comes over whole takes the remote's place in the library too (its root's
+  key, when no page here holds it).
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
   content or properties, a page's `doc_id`), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
   never duplicates. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
-  page landed but before its PDF did heals by itself.
+  page landed but before its PDF did heals by itself. A fetched file is
+  stored only when it is what its name says (`storage.matches_name`: a PDF
+  must be a PDF, anything else must hash to its name); a captive portal's
+  page is dropped with a warning and fetched again next round. It must
+  also have arrived whole: a body shorter than the `Content-Length` the
+  remote announced (the link dropped mid-file, where a streaming read just
+  stops) is an error of the page, never bytes to store (`Remote.get_bytes`).
+  What is stored is written whole (`storage.write_atomic`,
+  [user_db.md](user_db.md) "Stored files").
 - **Deletions**: pages through the tombstones (`deleted_pages`), blocks
-  through the diff.
+  through the diff. The trash ([home_library.md](home_library.md) "Recently
+  deleted") never travels; each side keeps its own.
+  - A page moved to Recently deleted writes the tombstone a hard delete
+    does, so to the other side it is deleted.
+  - A restored page is stamped and loses its tombstone, so the other side
+    takes it back whole as a new page. That holds for a copy that removed
+    its own copy meanwhile too: the tombstone its removal wrote here is no
+    deletion made here of a page it has no sync record of, while the
+    remote lists the page.
+  - `blocks_store.create_page` under an id the trash still holds replaces
+    the trashed copy. So does an op inserting a block the trash still holds
+    (a block the other side moved out of a page before deleting it).
 
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), chats, cover snapshots, search indexes (the
@@ -106,13 +128,16 @@ diff to nothing on the next round.
 
 | the page is… | what happens |
 |---|---|
-| new on the remote | created here under its id, the remote tree laid in, files fetched |
-| new here (two-way) | created there under its id (`POST /pages` with `id` + `properties`), the tree pushed, files uploaded |
+| new on the remote | files fetched, then created here under its id and the remote tree laid in |
+| new here (two-way) | created there under its id (`POST /pages` with `id` + `properties`), files uploaded, the tree pushed |
 | changed there only | the diff base → remote applied here |
 | changed here only | the diff base → here pushed there, with each set's `base` text so the remote merges against anything that landed meanwhile |
-| changed on both | the remote diff applied here first (merges recorded), then what still differs pushed, then the remote tree fetched back |
-| deleted there, untouched here | deleted here (a local tombstone, the sync state dropped) |
+| changed on both | the remote diff applied here first (merges recorded), then this copy's own edits pushed (below), then the remote tree fetched back |
+| gone here with no sync record, listed there | taken back whole as a new page (restored there after this copy's copy went) |
+| deleted there, untouched here | moved to Recently deleted here (a local tombstone, the sync state dropped) |
 | deleted there, edited here | re-created there with the local tree (`page_restored`) |
+| deleted there, never reconciled here (a link, a restored backup) | the same: the tombstone says nothing about this copy's page (`page_restored`); a receive-only copy keeps it here |
+| on both sides, never reconciled, no link or force | both kept: see "Rounds cut short" |
 | deleted here, untouched there | deleted there |
 | deleted here, edited there | re-created here from the remote (`page_restored_from_remote`) |
 
@@ -128,37 +153,70 @@ inside it was touched there. Same-block text edits
 merge by span through `gamma/textmerge.py` on whichever server applies the
 op; two edits to the same characters resolve by the remote's order.
 
+**Only this copy's own edits are pushed.** What still differs after the
+remote's changes landed here is split (`_split`): what this copy changed
+since the base (`_own_edits`: a block made or deleted here, a place, text
+or property changed here), what was typed while the round ran (`_touched`:
+the blocks a writer other than the engine touched in the page's op log
+since the round read it; a `reload` there, or a log that no longer reaches
+back, counts everything as typed) and every block only this copy holds go
+there. The rest can differ only through the engine's own writes — a key
+the server re-keyed on arrival, a block moved over from another page — and
+is put back here as the remote has it (`_strays`, where it can land as it
+says) instead of being pushed. So a copy that made no edits writes nothing
+to its origin, whatever the remote did. A block is *moved* here only when
+it has another parent or a key that puts it elsewhere among its siblings
+(`sync_tree.moved`): a key that changed while the base's key still falls
+between the same two neighbours is a re-key, not a move — neither pushed
+nor an edit that beats the remote's delete. That holds for such keys an
+older version left behind too.
+
 Three more rules keep the two trees identical in the odd cases
-(`tests/test_mirror_edges.py` pins each):
+(`tests/test_mirror_edges.py` and `tests/test_mirror_regressions.py` pin
+each):
 
 - **Positions.** The server re-keys a block that lands on a taken key, so
   when the remote's answer moves two siblings past each other, applying
   those moves here in order would re-key one of them and leave this side's
-  keys off the remote's — and every later round would push the difference
-  again. `_parked` (in `_apply_local`) moves the block that holds a
-  target key to a fresh key at the end first, so every move lands where it
-  says and one round settles it.
+  keys off the remote's. `_parked` (in `_apply_local`) moves the block that
+  holds a target key to a fresh key at the end first, so every move lands
+  where it says and one round settles it. A key re-keyed anyway (a batch
+  that deletes a block and inserts another at its key arrives inserts
+  first) is put back by `_strays` once the key is free.
 - **Cross-page moves.** A block id lives in one page. When the remote's ops
   insert a block that lives in another page here (moved there on the
-  remote, or edited here after the remote moved it), `_relocated` deletes
-  it from that page first and inserts it with the text it has *here*, which
-  the push then sends on; the page it left is reconciled at its own turn
-  (both sides deleted it there). The other way round — this copy still
-  holds the block in a page the remote moved it out of — the remote refuses
-  the push (`403 … outside this page`) and the page is deferred
-  (`PageDeferred`: kept on the retry list, not an error) while the
-  receiving page's round moves it over; the next round finds nothing left
-  to push.
+  remote), `_move_over` takes it out of that page first: it goes with
+  what the remote moved along with it (its subtree there) and with the
+  blocks this copy made under it (not in that page's base: they come along
+  as new blocks, pushed), while what was under it here and is not under it
+  there — moved elsewhere or deleted on the remote — stays in that page,
+  parked at its top level. That page's base follows every one of those
+  changes (the blocks that left are dropped from it, a parked block's entry
+  moves with it), so its own round, whenever it comes, applies the remote's
+  place or deletion to them and never reads the move as an edit made here.
+  The block arrives with the remote's text, plus what this copy changed in
+  it since that page's base (`_carry`: the text merged into the remote's,
+  a `merged` conflict when both changed it; the property keys changed here
+  laid over the remote's), which the push then sends on. When the round
+  reaches the page it left first, that page finds the block gone there and
+  kept here only if it was edited here: it stays (`kept_local_edit`), its
+  push is refused (`403 … outside this page`) and the page deferred
+  (`PageDeferred`: kept on the retry list, not an error), and the receiving
+  page's round moves it over with what it was at the base (`_left`, the
+  round's memory of such blocks), so the merge above still applies; the
+  next round finds nothing left to push.
 - **The same edit made on both sides** (or a retried batch) is one edit: an
   op whose content already is the block's text merges nothing (`ops.py`,
   `textmerge.merge`).
 
 Every decision the engine takes on its own is a row of `sync_conflicts`
-(`merged`, `kept_local_edit`, `restored_remote_edit`, `page_restored`,
-`page_restored_from_remote`) with the texts involved — for a `merged` block
-also `base`, the text before either side edited it, so the resolver can
-show what each side changed. Sync never blocks on one: the person looks at
-the list and, for a merge, can put back "mine" or "theirs" — an ordinary
+(`merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`,
+`page_restored`, `page_restored_from_remote`) with the texts involved. A
+`merged` row also keeps `base`, the text before either side edited it, so
+the resolver can show what each side changed. A `dropped` row's text is the
+removed block with what was under it as an indented list; its `base` names
+the block it was under. Sync never blocks on one: the person looks at the
+list and, for a merge, can put back "mine" or "theirs". That is an ordinary
 edit that the next round pushes, written from the text the conflict
 recorded as its `base`, so words typed into the block since the merge are
 kept over the chosen version rather than lost. The text is written into
@@ -178,6 +236,75 @@ role (while either is read-only, a two-way copy's round drops to pull only
 and reports that as its error). Switching back to two-way also resets the local cursor, for copies whose
 receive-only rounds moved it. The direction of a detached copy cannot be
 changed (400): reattaching restores the one it had.
+
+### Rounds cut short
+
+A round can stop anywhere: a refused file or push (507 storage full, a
+proxy's 413, a revoked token's 403), a dropped link, the app quit. Whatever
+it got done stays done and nothing is lost or applied twice, because a
+page's base is saved as each step lands, not only at the end:
+
+- **The bare page**, the moment the page exists on both sides: after
+  `create_page` here (whose files are fetched first, so a page here never
+  names a file this copy lacks), or on the way there already before
+  `POST /pages` goes, marked as a creation in flight (`pending`
+  `{create}`), and again with its answer. A first push or pull cut short
+  then goes on as an ordinary three-way merge from the empty page. A
+  creation whose answer was lost is never taken for a page the remote had
+  (under a link's adopt policy the remote's empty page would replace this
+  copy's), and one that never landed goes again (`creating`).
+- **The remote's tree**, right after its changes were applied here, so a
+  refused push never has the next round apply them again.
+- **What is pushed**, before it goes: its batches, each under a batch id of
+  its own (`batch`, [collab.md](collab.md) "Ops"), in the page's state
+  (`pending`, under a key of the stored base no block id can take); and
+  once it landed, what was pushed, until the remote's answer is read and
+  saved last.
+
+A push whose answer never came back (the link dropped on the way back, a
+proxy's 504, the app quit) is settled first thing the next round
+(`_confirm_push`): each batch goes again under its id, minus what the
+remote already shows (`_unlanded`: an insert that is there, a text that
+holds the change, a move or property the remote shows or overrode since).
+The remote answers a batch it applied without applying it again (it
+remembers ids for `ops.REPLAY_TTL`) and applies one it never got; one it
+forgot (a restart) is applied too, and since only what it does not show
+goes, nothing is merged twice. Either way what was pushed becomes the
+base, so a collaborator who typed in the pushed block meanwhile keeps the
+text and nothing is doubled. A delete of a subtree the remote changed since,
+and a change to a block the remote no longer holds, do not go again: the
+merge that follows decides (an edit beats a delete). A resend the remote
+refuses leaves the base with what landed; this copy's edits beyond it are
+pushed the ordinary way. A network error keeps the push pending for the
+next round.
+
+A base saved before the remote's answer was read has `remote_seq` −1
+(`UNKNOWN_SEQ`): the next round reads the page whatever the feed says, and a
+push from it uploads the files of the whole page (the page's own PDF is not
+in any op pushed again).
+
+The window left between a pull's writes here and its bookkeeping (the app
+quit in between) is covered by two rules of the merge itself:
+
+- **A block both sides hold that the base lacks** counts as known at the
+  remote's version, with only the property keys this copy has too (`_known`):
+  the remote adds what it alone has, and the text, place and property values
+  here stay and are pushed. Nothing is inserted twice or laid over later
+  typing; a remote text the text here does not contain is kept in a
+  `diverged` conflict.
+- **A remote text change the text here already holds**, with more typed
+  around it since, is not applied again (`textmerge.contains`: every span
+  it deletes is deleted here too and every insertion is here at the same
+  place, inside a longer one). Merging it in again would double it.
+
+A page both sides hold with no base at all and no link or force asking for
+one side (a round cut short before the bare page's base was saved, say) is
+reconciled the same way from an empty base: both sides' blocks are kept,
+and a remote text the text here does not contain waits in a `diverged`
+conflict. So is a page that appeared there while this round was about to
+create it: `POST /pages` answers 409 and the page is deferred to the next
+round (`PageDeferred`). Only a link or a force takes one side's version
+whole (below).
 
 ## Rounds and cadence
 
@@ -325,7 +452,9 @@ view, Settings.
   **Apply** confirms: on the preselected version it marks the conflict
   resolved as it is, on another it writes that text.
 - The non-textual kinds (*Kept local*, *Restored remote*, the page
-  restores) show the one text involved and an *OK*.
+  restores, *Removed*) show the one text involved and an *OK*. A *Removed*
+  row shows the side that lost the block or page (its text with what was
+  under it); one whose page is gone here has no button to open it.
 - `useConflicts(wsId)` loads a clone's open conflicts and posts a decision;
   the pill's review view and Settings share it.
 
@@ -478,11 +607,17 @@ drops the link and the sync state; the workspace stays.
 /api/mirrors` with `workspace_id` links a personal workspace of the caller's
 instead of making a new one. Its pages that exist on both sides have no
 common base, so the first round **adopts** one side's version whole
-(`adopt`: `theirs`, the original's — the default — or `mine`), and every
-block whose text differed becomes a `diverged` conflict holding both texts,
-resolvable like a merge. The same path serves a normal mirror whose round
-was cut short between a page's creation and its state. Pages one side alone
-has are created on the other, as always.
+(`adopt`: `theirs`, the original's, by default, or `mine`). Every block
+whose text differed becomes a `diverged` conflict holding both texts,
+resolvable like a merge; a block only the other side had becomes a
+`dropped` one holding its text. Both are written before anything is
+replaced. The policy is the link's (or a force's) only: once every page
+went through it, a page found on both sides without a base keeps both
+("Rounds cut short"). Pages one side alone has are created on the other,
+as always. A page the original deleted that this workspace still has goes
+back there whatever the policy (`page_restored`), since the tombstone
+predates the link: linking a restored backup to its original keeps the
+pages being recovered (a receive-only link keeps them here).
 
 **Force.** *Force pull* / *Force push* (`POST /api/mirrors/{ws}/force`
 `{direction: pull | push}`) makes one side identical to the other whatever
@@ -492,7 +627,8 @@ as it was), every page goes through the
 adopt policy (`theirs` for pull, `mine` for push), and pages the losing side
 alone has — including pages the winner deleted after a sync, whose
 tombstones say nothing during a force — are deleted there (`prune`); what
-the loser had is kept in `diverged` conflicts. A force pull reads the local
+the loser had is kept in conflicts: `diverged` for a text replaced,
+`dropped` for a block or a page removed. A force pull reads the local
 feed whatever the direction, so a receive-only clone's own pages go too.
 Cheap when little differs:
 a page whose trees are equal costs one read and no write, and only the
@@ -528,8 +664,9 @@ workspace there:
    exists: the page is added to its filter (with `adopt: mine` for the next
    round), and a token the share host no longer accepts is exchanged again
    for every publishing mirror of the account.
-3. One round runs at once; the page must have a base afterwards (else 502
-   with the round's error).
+3. One round runs at once; the page must have a base afterwards and not be
+   left on the retry list (a first push cut short keeps the bare page's
+   base) — else 502 with the round's error.
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
@@ -628,8 +765,13 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 | GET | `/api/mirrors/{ws}/conflicts[?resolved=1][&page=]` | the decisions to look at (`mine`, `theirs`, `result`, and `base` for a merge), one page's with `page` |
 | POST | `/api/mirrors/{ws}/conflicts/{id}` | `{choice: keep \| mine \| theirs}` |
 
-Session-only, the mirror's owner only, never a guest. Publishing's three
-endpoints are in [api.md](api.md) "Publishing".
+Session-only, the mirror's owner only, never a guest. The owner is the
+account `mirrors.owner` names that also owns the copy's workspace
+(`routers/mirrors._owns`): anyone else gets 404 and an empty list. Renaming
+an account moves its mirrors along (`routers/admin.rename_account_rows`), so
+a later account that takes the old name never reaches the copy's sync log,
+conflict texts or force-push. Publishing's three endpoints are in
+[api.md](api.md) "Publishing".
 
 ## Testing
 
@@ -640,7 +782,7 @@ every request is the real HTTP API with the real token. Covered: the first
 fill, edits both ways, different-block and same-span merges with the
 conflict rows and their resolution, edit-versus-delete both ways, pages
 created and deleted on either side, files by hash, pull-only, stopping.
-`test_sync_tree.py` pins the diff; `test_token_api.py` the bearer rules;
+`test_sync_tree.py` pins the diff, `apply` and `moved`; `test_token_api.py` the bearer rules;
 `test_sync_feed.py` the feed. `test_mirror_edges.py` is the odd cases:
 typing while a round is in flight, two clones of one remote editing the
 same blocks, a move against a delete (both ways: a block moved here out of
@@ -656,7 +798,27 @@ existing workspace, the force in both directions, the cadence and the
 sync-on-change trigger, a detach and a force asked for while a round runs,
 edits made while the remote had demoted the account, a force pull on a
 receive-only clone, and a conflict resolved after its block moved to
-another page are in `test_mirror.py` too. `test_publish.py`
+another page are in `test_mirror.py` too. `test_mirror_interrupted.py` is
+rounds cut short: a first push stopped by a refused file, a dropped link or
+half way through its batches, a first pull waiting for its PDF and stopped
+after its first batch, a page both sides hold without a base, a force and a
+link keeping what they remove, a remote change not applied twice after a
+refused push, a refused file or a cut wherever it falls after the push (the
+person typing on in between), a push whose answer was lost, a remote
+insert of a block already here, and a restored backup linked to its
+original under either policy and receive-only. `test_mirror_regressions.py`
+is what a campaign against two real servers found: a copy that made no
+edits writing nothing to its origin (a delete and an insert at one key, a
+receive-only round, a key an older version left, a block moved to another
+page there — edited there, holding blocks that had moved out of it, or
+edited on both sides whichever page the round reaches first), a move next
+to a block made here, typing while a round runs, a push whose answer was
+lost (a new block the remote then edited, the app quit after the push, the
+same block edited there with the batch remembered or forgotten, typing on
+both sides, a batch that never arrived), a page's creation whose answer
+was lost under a link, a page restored from the remote's Recently deleted,
+a file cut short on the way, and pages keeping the remote's place in the
+library. `test_publish.py`
 covers the page filter (pages and deletions outside it stay put both ways,
 a page added later goes over, a published page removed there leaves the
 filter), the share host's exchange against a fake account server, and

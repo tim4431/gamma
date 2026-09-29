@@ -35,9 +35,11 @@ def _named(ws: str, name: str) -> dict:
 
 
 @router.get("")
-async def list_backups(ws: str, request: Request):
+def list_backups(ws: str, request: Request):
     """``{backups: [{name, size_bytes, created_at, label, uploads,
-    upload_files, by}]}``, newest first, plus the per-workspace cap."""
+    upload_files, by, scheduled, task_id, auto, missing_uploads,
+    damaged}]}`` (``ws_backup.info``), newest first, plus the per-workspace
+    cap."""
     _member(request, ws, "viewer")
     return {"backups": ws_backup.list_backups(ws), "max": ws_backup.MAX_PER_WORKSPACE}
 
@@ -56,7 +58,7 @@ def create_backup(ws: str, payload: BackupCreate, request: Request):
 
 
 @router.get("/{name}/download")
-async def download_backup(ws: str, name: str, request: Request):
+def download_backup(ws: str, name: str, request: Request):
     _member(request, ws, "viewer")
     _named(ws, name)
     slug = "".join(c if c.isalnum() else "-" for c in (workspaces.get(ws) or {}).get("name", "")).strip("-")[:40] or ws
@@ -67,20 +69,21 @@ async def download_backup(ws: str, name: str, request: Request):
 # Sync def: unzip + sqlite restore runs in the threadpool.
 @router.post("/{name}/restore")
 def restore_backup(ws: str, name: str, request: Request, mode: str = "replace"):
-    """Restore the snapshot into its workspace: ``replace`` (owner) swaps the
-    databases, ``merge`` (editor) adds what is missing — the same rules as
-    /api/import-data."""
-    _member(request, ws, "owner" if mode == "replace" else "editor")
+    """Restore the snapshot into its workspace: ``replace`` (owner) keeps the
+    current state as a ``pre-restore`` snapshot (its name in
+    ``pre_restore``) and swaps the databases, ``merge`` (editor) adds what
+    is missing — the same rules as /api/import-data."""
+    user = _member(request, ws, "owner" if mode == "replace" else "editor")
     _not_guest(ws)
     _named(ws, name)
     try:
-        return {"ok": True, **ws_backup.restore_zip(ws, ws_backup.backup_path(ws, name), mode)}
+        return {"ok": True, **ws_backup.restore_zip(ws, ws_backup.backup_path(ws, name), mode, by=user)}
     except ws_backup.BackupError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{name}")
-async def delete_backup(ws: str, name: str, request: Request):
+def delete_backup(ws: str, name: str, request: Request):
     _member(request, ws, "owner")
     if not ws_backup.delete(ws, name):
         raise HTTPException(status_code=404, detail="no such backup")

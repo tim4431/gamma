@@ -1,9 +1,11 @@
-"""Startup stays SDK-free; simultaneous first MCP calls share one transport."""
+"""Startup stays SDK-free; simultaneous first MCP calls share one transport;
+the app lifespan starts the background rounds."""
 
 import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
@@ -52,3 +54,24 @@ def test_concurrent_first_mcp_requests_and_lifespan_restart():
             for response in responses:
                 assert response.status_code == 200, response.text
                 assert "tools" in response.json()["result"]
+
+
+def test_the_background_rounds_run_at_startup(monkeypatch):
+    """The app lifespan runs the grant check, the guest sweeper, the trash
+    sweeper and the leftover sweeps (snapshot temp files, deleted
+    workspaces' directories) once at startup (then each at its interval)."""
+    from gamma import cloud_sync, guests, trash, workspaces, ws_backup
+    from gamma.app import app
+
+    ran = []
+    monkeypatch.setattr(cloud_sync, "check_all", lambda: ran.append("grant check"))
+    monkeypatch.setattr(guests, "delete_expired", lambda: ran.append("guests"))
+    monkeypatch.setattr(trash, "sweep", lambda: ran.append("trash"))
+    monkeypatch.setattr(ws_backup, "sweep_stale_temp", lambda: ran.append("backup temp"))
+    monkeypatch.setattr(workspaces, "remove_leftovers", lambda: ran.append("leftovers"))
+    with TestClient(app):
+        for _ in range(100):
+            if len(ran) == 5:
+                break
+            time.sleep(0.01)
+    assert sorted(ran) == ["backup temp", "grant check", "guests", "leftovers", "trash"]

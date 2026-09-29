@@ -7,6 +7,7 @@
 
 export const DEFAULTS = {
   server: "",          // e.g. "http://gamma.local:9001"
+  servers: [],         // remembered origins for the options-page switcher
   folder: "",          // default folder for saves
   labels: [],          // default labels
   allowOa: true,       // open-access fallback behind paywalls
@@ -23,11 +24,28 @@ export class ApiError extends Error {
 
 export async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
-  return { ...DEFAULTS, ...stored };
+  const servers = [...new Set([...(stored.servers || []), stored.server]
+    .map(normalizeServer).filter(Boolean))];
+  return { ...DEFAULTS, ...stored, servers };
 }
 
 export async function setSettings(patch) {
+  if (Object.hasOwn(patch, "server")) {
+    const current = await getSettings();
+    const server = normalizeServer(patch.server);
+    patch = { ...patch, server, servers: [...new Set([...current.servers, server].filter(Boolean))] };
+  }
   await chrome.storage.sync.set(patch);
+}
+
+// Forgetting an active address disconnects, without logging out or selecting
+// another destination for saves. Write both keys together to avoid re-adding it.
+export async function removeServer(origin) {
+  const settings = await getSettings();
+  await chrome.storage.sync.set({
+    server: settings.server === origin ? "" : settings.server,
+    servers: settings.servers.filter((server) => server !== origin),
+  });
 }
 
 // "gamma.local:9001" → "http://gamma.local:9001"; keeps an explicit scheme.

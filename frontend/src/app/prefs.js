@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
-export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, UI_SCALE, themeScheme, translateModelFor } from "./prefDefs.js";
+export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, UI_SCALE, themeScheme, translateModelFor } from "./prefDefs.js";
 
 const PREF_NAMES = Object.keys(PREFS);
 
@@ -85,10 +85,12 @@ export function useProfileSync(prefs, user) {
   const [cloudChoice, setCloudChoice] = useState(false);
   const mark = (state, error = "") => setStatus((was) => (was.state === state && was.error === error ? was : { state, error }));
 
-  function apply(value) {
+  // The server's profile onto the settings, except the names in `keep`.
+  function apply(value, keep = NONE) {
     const read = readProfile(value);
     const current = latest.current.prefs;
     for (const [name, v] of Object.entries(read)) {
+      if (keep.has(name)) continue;
       if (JSON.stringify(current[name]) !== JSON.stringify(v)) current[setterName(name)](v);
     }
     return JSON.stringify(read);
@@ -153,6 +155,7 @@ export function useProfileSync(prefs, user) {
   }
 
   function pull(u) {
+    const startSnap = latest.current.snap;
     return apiJson(PROFILE_URL).then((d) => {
       // A local change waiting to go out, or on its way, is newer than what the server holds.
       if (latest.current.user !== u) return;
@@ -164,7 +167,15 @@ export function useProfileSync(prefs, user) {
         if (settled) { syncedRef.current = ""; confirmedRef.current = {}; } // never saved: seed from here
       } else {
         const read = readProfile(d.value);
-        if (JSON.stringify(read) !== syncedRef.current) { syncedRef.current = apply(d.value); settled = true; }
+        if (JSON.stringify(read) !== syncedRef.current) {
+          // A setting changed here while this pull was on its way (before the
+          // first load lands, nothing schedules a push yet) is newer than the
+          // server's copy: it stays, and goes out as the next push.
+          const was = JSON.parse(startSnap), now = JSON.parse(latest.current.snap);
+          const keep = new Set(Object.keys(now).filter((name) => JSON.stringify(now[name]) !== JSON.stringify(was[name])));
+          syncedRef.current = apply(d.value, keep);
+          settled = true;
+        }
         confirmedRef.current = perName(read);
       }
       if (settled) setFlight((f) => ({ ...f, failed: {} }));

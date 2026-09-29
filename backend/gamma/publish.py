@@ -471,7 +471,8 @@ def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, ro
     _mirror_for(user, ws, page_id, host, server_name)
     _check_cap(user, ws, page_id, host, server_name)
     status = sync_engine.sync_workspace(ws)
-    if not _synced(ws, page_id):
+    # A first push cut short leaves the bare page's base (so _synced holds) and the page on the retry list.
+    if not _synced(ws, page_id) or page_id in (status.get("retry") or {}):
         error = status.get("last_error") or ""
         if error.startswith(f"{page_id}: 402: "):
             # the cap reached between the check and the round: the share host's own words
