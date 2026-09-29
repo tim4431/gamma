@@ -125,9 +125,38 @@ def test_a_printed_doi_counts_only_for_the_doi_the_pdf_was_got_for():
     assert result["provenance"]["identity_evidence"] == "unverified"
 
 
+# Where doi.org sends a DOI (ai_web._registered_site asks its Handle API).
+REGISTERED = {"10.1103/physrevlett.84.439": "aps.org", "10.1103/physrevlett.110.133001": "aps.org"}
+
+
+@pytest.fixture(autouse=True)
+def _doi_registry(monkeypatch):
+    monkeypatch.setattr(ai_web, "_registered_site", lambda doi: REGISTERED.get(doi, ""))
+
+
+def _page_pdf(lines):
+    """One page whose text layer has ``lines``, one per line."""
+    shown = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)").encode() for line in lines]
+    stream = b"BT /F1 10 Tf 12 TL 72 740 Td " + b" T* ".join(b"(%s) Tj" % t for t in shown) + b" ET"
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R"
+            b" /Resources << /Font << /F1 3 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream)]
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, obj in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
 def _delivered(source, publisher, from_url, text):
     rid = fetch_handoff.open_request("reader", source, wall="captcha", url=publisher)["id"]
-    fetch_handoff.deliver("reader", rid, _text_pdf([text]), from_url)
+    fetch_handoff.deliver("reader", rid, _page_pdf(text.split("\n")), from_url)
     return fetch_handoff.delivered("reader", source)
 
 
@@ -153,6 +182,73 @@ def test_other_deliveries_stay_unverified_versions(from_url, text):
     doc = _delivered(source, "https://iopscience.iop.org/article/10.1088/0034-4885/77/12/124401", from_url, text)
     with pytest.raises(ai_web.FetchError, match="not verified as the published version"):
         ai_web.verify_document(doc, version_policy="published_only")
+
+
+KERMAN = "Beyond Optical Molasses: 3D Raman Sideband Cooling of Atomic Cesium to High Phase-Space Density"
+THOMPSON = "Coherence and Raman Sideband Cooling of a Single Atom in an Optical Tweezer"
+
+
+def test_a_publisher_pdf_without_a_printed_doi_asked_for_by_its_page_url():
+    # PRL in 2000 printed no DOI; the model named the paper by its APS page.
+    page = "https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.84.439"
+    doc = _delivered(page, page, "https://journals.aps.org/prl/pdf/10.1103/PhysRevLett.84.439",
+                     "VOLUME 84, NUMBER 3 PHYSICAL REVIEW LETTERS 17 JANUARY 2000\n"
+                     "Beyond Optical Molasses: 3D Raman Sideband Cooling of Atomic Cesium\n"
+                     "to High Phase-Space Density\nAndrew J. Kerman, Vladan Vuletic\n(Received 1999)")
+    provenance = ai_web.verify_document(doc, version_policy="published_only", expected_title=KERMAN,
+                                        expected_doi="10.1103/PhysRevLett.84.439")["provenance"]
+    assert provenance["identity_evidence"] == "title_in_opening_lines"
+    assert (provenance["version"], provenance["version_evidence"]) == ("publishedVersion", "publisher_site_in_browser")
+
+
+def test_a_publisher_pdf_asked_for_by_doi_needs_no_registry_lookup(monkeypatch):
+    monkeypatch.setattr(ai_web, "_registered_site", lambda doi: pytest.fail("the request's page is the publisher's"))
+    doc = _delivered("doi:10.1088/1674-1056/26/8/080701",
+                     "https://iopscience.iop.org/article/10.1088/1674-1056/26/8/080701",
+                     "https://iopscience.iop.org/article/10.1088/1674-1056/26/8/080701/pdf",
+                     "Chin. Phys. B Vol. 26, No. 8 (2017) 080701\n"
+                     "Raman sideband cooling of rubidium atoms in optical lattice\nWei Qi, Abstract")
+    provenance = ai_web.verify_document(doc, version_policy="published_only",
+                                        expected_title="Raman sideband cooling of rubidium atoms in optical lattice",
+                                        expected_doi="10.1088/1674-1056/26/8/080701")["provenance"]
+    assert provenance["version_evidence"] == "publisher_site_in_browser"
+
+
+MIT_COVER = ("Coherence and Raman Sideband Cooling of a Single Atom in an Optical Tweezer\n"
+             "The MIT Faculty has made this article openly available.\n"
+             "Citation Thompson, J. D. et al. Phys. Rev. Lett. 110, 133001 (2013)\n"
+             "As Published http://dx.doi.org/10.1103/PhysRevLett.110.133001\n"
+             "Publisher American Physical Society\n{version}\nCitable link http://hdl.handle.net/1721.1/79633")
+DSPACE = "https://dspace.mit.edu/entities/publication/6cdaae04-6ba5-4eec-863d-0dc9a7e3ac46"
+
+
+def test_a_repository_cover_sheet_names_the_version():
+    doc = _delivered(DSPACE, DSPACE, "https://dspace.mit.edu/bitstream/1721.1/79633/1/Thompson.pdf",
+                     MIT_COVER.format(version="Version\nFinal published version"))
+    provenance = ai_web.verify_document(doc, version_policy="published_only", expected_title=THOMPSON)["provenance"]
+    assert (provenance["version"], provenance["version_evidence"]) == ("publishedVersion", "repository_cover_sheet")
+    doc = _delivered(DSPACE + "?m", DSPACE, "https://dspace.mit.edu/bitstream/1721.1/79633/2/Thompson.pdf",
+                     MIT_COVER.format(version="Version: Author's final manuscript"))
+    # PDF text curls the apostrophe (StandardEncoding's quoteright).
+    with pytest.raises(ai_web.FetchError, match="cover sheet says it is the author['’]s final manuscript"):
+        ai_web.verify_document(doc, version_policy="published_only", expected_title=THOMPSON)
+
+
+@pytest.mark.parametrize("from_url, why", [
+    ("https://dspace.mit.edu/bitstream/1721.1/79633/1/Thompson.pdf",
+     r"came from dspace\.mit\.edu, not the publisher's site \(aps\.org\)"),
+    ("", "dropped on the card by hand"),
+])
+def test_an_unverified_delivery_says_why(from_url, why):
+    doc = _delivered(DSPACE + from_url[-5:], DSPACE, from_url, MIT_COVER.format(version=""))
+    with pytest.raises(ai_web.FetchError, match=why):
+        ai_web.verify_document(doc, version_policy="published_only", expected_title=THOMPSON)
+
+
+def test_a_printed_doi_with_other_hyphens_is_the_doi():
+    text = "Chin. Phys. B Vol. 26 DOI: 10.1088/1674‑1056/26/8/080701\nRaman sideband cooling in lattices"
+    provenance = ai_web.verify_document(document(text, requested_source="doi:10.1088/1674-1056/26/8/080701"))["provenance"]
+    assert provenance["identity_evidence"] == "doi_on_first_page"
 
 
 def test_a_delivered_pdf_that_fails_a_check_is_not_asked_for_again(org, monkeypatch):

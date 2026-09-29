@@ -1130,9 +1130,9 @@ def _fetch_failure(e, source: str, user, options: dict | None = None) -> tuple[s
     handoff = _open_handoff(user, source, e.wall, e.open_url, e.pdf_url, str(e))
     if handoff:
         continuation = (f'{_fetch_call(source, options)} checks identity and version before reading it: '
-                        "a PDF their browser takes from the publisher's own site that prints the DOI on "
-                        "its first page counts as the published version; a browser-delivered file "
-                        "without published-version evidence remains unverified."
+                        "a PDF their browser takes from the publisher's own site, or whose repository "
+                        "cover sheet names the published version, counts as the published version; a "
+                        "browser-delivered file without published-version evidence remains unverified."
                         if (options or {}).get("version_policy") == "published_only"
                         else f'{_fetch_call(source, options)} returns it.')
         return (f"error: {e}. No document text was retrieved: {WALLS[e.wall]} at {handoff['host']} "

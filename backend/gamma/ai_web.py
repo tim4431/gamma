@@ -21,6 +21,8 @@ would go, so the chat can hand the fetch to the user's browser
 """
 
 import html
+import json
+import os
 import re
 import threading
 import time
@@ -605,6 +607,81 @@ def _site(url: str) -> str:
     return ".".join(labels[-n:])
 
 
+_DOI_IN_TEXT_RE = re.compile(r"(?<![0-9a-z])10\.\d{4,9}/[^\s\"'<>,;?#&]+", re.I)
+# A repository's cover sheet (MIT's DSpace and others print one) naming the
+# version it holds, as "Version: Final published version".
+_COVER_VERSION_RE = re.compile(
+    r"^\s*version\s*:?\s*(final published version|published version|publisher['’]?s (?:version|pdf)|"
+    r"version of record|author['’]?s final manuscript|accepted manuscript|author['’]?s accepted manuscript|"
+    r"original manuscript|preprint)\s*$", re.I | re.M)
+_PUBLISHED_COVER = ("final published version", "published version", "publisher", "version of record")
+# Sites one publisher serves its DOIs' papers from (doi.org registers the first).
+_SAME_PUBLISHER = {"sciencedirect.com": "elsevier.com", "sciencedirectassets.com": "elsevier.com"}
+_registered_sites: dict[str, str] = {}
+
+
+def _doi_in(text: str) -> str:
+    """The first DOI in ``text`` (a URL path, a page), its tail trimmed."""
+    m = _DOI_IN_TEXT_RE.search(text or "")
+    if not m:
+        return ""
+    doi = m.group().rstrip(".)]")
+    return re.sub(r"/(?:e?pdf|full|abstract|abs|meta)$|\.pdf$", "", doi, flags=re.I).lower()
+
+
+def _publisher_site(url: str) -> str:
+    site = _site(url)
+    return _SAME_PUBLISHER.get(site, site)
+
+
+def _registered_site(doi: str) -> str:
+    """The site doi.org sends ``doi`` to (the URL its registrant set, from
+    the Handle API): the publisher's. "" when it cannot tell; answers are
+    kept for the process, failures not."""
+    if doi in _registered_sites:
+        return _registered_sites[doi]
+    if os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() in ("0", "off", "false", "no"):
+        return ""
+    try:
+        req = URLRequest(f"https://doi.org/api/handles/{quote(doi, safe='/')}?type=URL",
+                         headers={"Accept": "application/json", "User-Agent": "gamma-pdf-annotator/1.0"})
+        with guarded_urlopen(req, timeout=8) as resp:
+            values = json.loads(resp.read(200_000)).get("values") or []
+        url = next((str(v["data"]["value"]) for v in values
+                    if isinstance(v, dict) and v.get("type") == "URL" and isinstance(v.get("data"), dict)), "")
+    except Exception as e:
+        log.warning(f"[ai_web] doi.org has no address for {doi}: {e}")
+        return ""
+    if len(_registered_sites) >= 500:
+        _registered_sites.pop(next(iter(_registered_sites)))
+    _registered_sites[doi] = _publisher_site(url)
+    return _registered_sites[doi]
+
+
+def _browser_version(provenance: dict, paper_doi: str) -> str:
+    """Version evidence for a PDF the user's browser delivered, set on
+    ``provenance``; else why there is none, for the error."""
+    delivered_from = str(provenance.get("delivered_from") or "")
+    if not delivered_from:
+        return "it was dropped on the card by hand, so where it came from is unknown"
+    if not provenance.get("identity_verified"):
+        return "nothing ties it to the paper: no expected_title to check, and its first page does not print the DOI"
+    from_site = _publisher_site(delivered_from)
+    sites = []
+    # A request opened for a DOI opened the page doi.org led to: the publisher's.
+    if identifier(str(provenance.get("requested_source") or ""))[0] == "doi":
+        sites.append(_publisher_site(provenance.get("publisher_url") or ""))
+    if from_site not in sites and paper_doi:
+        sites.append(_registered_site(paper_doi))
+    if from_site and from_site in sites:
+        provenance.update(version="publishedVersion", version_verified=True,
+                          version_evidence="publisher_site_in_browser")
+        return ""
+    known = ", ".join(s for s in dict.fromkeys(sites) if s)
+    return (f"it came from {urlsplit(delivered_from).hostname}, not the publisher's site"
+            + (f" ({known})" if known else ""))
+
+
 def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
                     expected_title: str = "", expected_doi: str = "") -> dict:
     """Attach bounded identity evidence; never treat a search hit as proof.
@@ -614,10 +691,12 @@ def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
     lines, or when it was got for a DOI and prints that DOI on its first
     page, outside its references (a DOI there may cite another paper) — a
     supplied title then needs only most of its words in the opening text,
-    as a preprint's title can differ from the published one. A PDF the
-    user's browser took from the DOI's publisher site, printing the DOI, is
-    the published version. This also checks browser-delivered PDFs and
-    therefore cannot be bypassed by the handoff cache.
+    as a preprint's title can differ from the published one. Of an
+    identified PDF, a repository cover sheet naming its version is taken at
+    its word, and one the user's browser took from the site doi.org sends
+    the DOI to (the publisher's) is the published version. This also checks
+    browser-delivered PDFs and therefore cannot be bypassed by the handoff
+    cache.
     """
     validate_fetch_options(version_policy, expected_title, expected_doi)
     provenance = dict(doc.get("provenance") or {})
@@ -625,16 +704,21 @@ def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
                       version_policy=version_policy, identity_verified=False)
     if doc["kind"] == "pdf":
         head = doc["pages"][0][:20000] if doc["pages"] else ""
+        # PDF text spells a DOI's hyphens several ways.
+        head = re.sub("[‐‑‒–−]", "-", head)
         expected = identifier(expected_doi)[1].lower() if expected_doi else ""
         actual = str(provenance.get("doi") or "").lower()
         actual = identifier(actual)[1].lower() or actual
         if expected and actual and actual != expected:
             raise FetchError("PDF identity mismatch: the resolved DOI differs from expected_doi")
-        kind, asked = identifier(str(provenance.get("requested_source") or ""))
-        asked = asked.lower() if kind == "doi" else ""
+        requested = str(provenance.get("requested_source") or "")
+        kind, asked = identifier(requested)
+        # The DOI the source names: an identifier, or a publisher URL carrying it.
+        asked = asked.lower() if kind == "doi" else "" if kind else _doi_in(urlsplit(requested).path)
         doi = expected or actual or asked
         match = _REFERENCES_RE.search(head)
-        doi_shown = bool(doi) and doi in (actual, asked) and _doi_printed(head[:match.start()] if match else head, doi)
+        body = head[:match.start()] if match else head
+        doi_shown = bool(doi) and doi in (actual, asked) and _doi_printed(body, doi)
         title_matches = bool(expected_title and _opening_title_matches(head, expected_title))
         if expected_title and not title_matches and not (doi_shown and _shares_title(head, expected_title)):
             raise FetchError("PDF identity mismatch: the requested title was not found in its opening title lines. "
@@ -646,17 +730,27 @@ def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
             provenance["title_differs"] = True
         if expected and expected in head.lower():
             provenance["doi_in_text"] = True
-        delivered_from = str(provenance.get("delivered_from") or "")
-        if (provenance.get("source_kind") == "browser" and doi_shown and _site(delivered_from)
-                and _site(delivered_from) == _site(provenance.get("publisher_url") or "")):
+        cover_match = _COVER_VERSION_RE.search(head[:4000])
+        cover = cover_match.group(1).lower() if cover_match else ""
+        if (cover.startswith(_PUBLISHED_COVER) and provenance["identity_verified"]
+                and not provenance.get("version_verified")):
             provenance.update(version="publishedVersion", version_verified=True,
-                              version_evidence="publisher_site_in_browser")
+                              version_evidence="repository_cover_sheet")
+        gap = ""  # why no version evidence, for the error
+        if cover and not cover.startswith(_PUBLISHED_COVER):
+            gap = f"its repository cover sheet says it is the {cover}"
+        elif provenance.get("source_kind") == "browser" and not provenance.get("version_verified"):
+            # The paper's DOI: the one asked for, else the first an identified PDF prints.
+            paper_doi = doi or (_doi_in(body) if title_matches else "")
+            gap = _browser_version(provenance, paper_doi)
         actual_host = urlsplit(provenance.get("final_url") or doc["url"]).hostname
         if actual_host in ("arxiv.org", "www.arxiv.org", "export.arxiv.org"):
             provenance.update(version="submittedVersion", version_verified=True, version_evidence="arxiv_source")
+            gap = "it came from arXiv, a preprint server"
         if version_policy == "published_only" and (
                 provenance.get("version") != "publishedVersion" or not provenance.get("version_verified")):
-            raise FetchError("The fetched PDF is not verified as the published version. "
+            raise FetchError("The fetched PDF is not verified as the published version"
+                             + (f" ({gap})" if gap else "") + ". "
                              "Use the journal DOI to locate a verified published copy; "
                              "do not substitute this file under published_only.")
     return {**doc, "provenance": provenance}

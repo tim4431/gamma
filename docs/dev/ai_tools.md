@@ -522,16 +522,26 @@ URLs, and applies the current identity and version policy again. A passing
 document carries a source note saying the user fetched it in their browser.
 A delivery records where it came from (`source_kind` `browser`, the request's
 DOI and publisher page as `publisher_url`, and `delivered_from`, the address
-Gamma Connector took the PDF from; empty for a file dropped by hand). One the
-Connector took from the publisher page's own site (`_site`: the host's last
-two labels, three under `ac.uk`-style second levels) that prints the request's
-DOI on its first page is the published version (`version_evidence`
-`publisher_site_in_browser`), so `published_only` reads it. A dropped file, one
-from another site (a repository, arXiv) or one without the DOI keeps an
-unknown version, and `published_only` rejects it; then the tool tells the model
-it is the user's own delivery, not to ask for it again, and to read it only if
-the user accepts it (again with `allow_preprint`, or without `expected_title`),
-saying so. When every
+Gamma Connector took the PDF from; empty for a file dropped by hand). An
+identified one (by its title or its printed DOI) the Connector took from the
+publisher's site is the published version (`version_evidence`
+`publisher_site_in_browser`), so `published_only` reads it, whether or not it
+prints a DOI (PRL printed none in 2000). The publisher's site (`_site`: the
+host's last two labels, three under `ac.uk`-style second levels, Elsevier's
+`sciencedirect.com` as `elsevier.com`) is the request's page when the request
+was opened for a DOI (the resolver followed doi.org there), else where doi.org
+sends the paper's DOI (`_registered_site`, the Handle API, remembered per
+process; the DOI is `expected_doi`, one in the source URL's path, or the first
+an identified PDF prints). Any identified PDF whose repository cover sheet names
+its version on a line of its own ("Version: Final published version", MIT's
+DSpace style) is taken at its word (`repository_cover_sheet`), and one naming a
+manuscript is not published. A dropped file, one from another site (a
+repository without such a sheet, arXiv) or an unidentified one keeps an unknown
+version, and `published_only` rejects it, the error saying why (dropped by hand,
+"came from dspace.mit.edu, not the publisher's site (aps.org)", the cover
+sheet's words). The tool then tells the model it is the user's own delivery,
+not to ask for it again, and to read it only if the user accepts it (again with
+`allow_preprint`, or without `expected_title`), saying so. When every
 request of the reply is settled with a PDF delivered, the reply is the
 conversation's last, the chat is idle, the composer is empty, and this tab saw
 a request waiting, the chat sends "I got it in my browser — {source} is

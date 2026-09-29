@@ -258,6 +258,15 @@ The Connector now takes a PDF from a frame too. Three requests followed:
   under a reworded title, one the Connector took from the publisher's own
   site is the published version, and a delivery that still fails says so
   without asking for it again.
+- **Where the publisher is.** A second run (Raman sideband cooling) still had
+  all three rejected: the first rule wanted the DOI printed on page 1 and the
+  request opened for a bare DOI. PRL in 2000 printed no DOI and the model
+  named it by its APS page URL; Chinese Physics B's DOI did not turn up on
+  page 1. The publisher's site is now where doi.org sends the DOI (its Handle
+  API: `link.aps.org`, `iopscience.iop.org`), and an identified PDF from there
+  is the published version, printed DOI or not. The third came from MIT's
+  DSpace, a repository: its cover sheet ("Version: Final published version")
+  is taken at its word, and without one the error names where it came from.
 
 Checked in real Chromium with the real Connector against local fakes (see
 [extension.md](../dev/extension.md#testing)). That run also caught
