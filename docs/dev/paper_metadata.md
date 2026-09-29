@@ -1,7 +1,7 @@
 # Paper metadata and PDF resolution
 
 How a page block learns what paper it holds, and how a link or DOI becomes a
-stored PDF. Code: `gamma/routers/metadata.py`, `gamma/pdf.py`.
+stored PDF. Code: `gamma/routers/metadata.py`, `gamma/routers/pdf.py`.
 
 ## Metadata fetch / edit / cite
 
@@ -30,6 +30,21 @@ Every registry call goes through `_http_get` (20 s timeout);
 nothing (an offline server; the browser suite sets it — a slow Crossref
 otherwise held a page's first open, and a test's `networkidle` wait, for
 up to 40 s).
+
+The arXiv search and identifier paths include the Atom `summary` as `abstract`;
+Crossref search explicitly requests `abstract`, and DOI content negotiation
+keeps it when supplied in CSL JSON. `_plain_abstract` removes HTML/JATS markup,
+decodes entities, normalizes whitespace, separates paragraphs and preserves
+inline terms. Missing or invalid abstracts become an empty string. Parsing is
+bounded, and the plain-text excerpt is capped at `ABSTRACT_CHARS` (4,000
+characters, including the truncation marker). It is relevance context, not
+evidence for `_title_in_text`, `_pick_crossref_match`, or any identity decision.
+The chat shows at most 1,200 characters plus a marker and can fill a missing
+Crossref abstract from a duplicate arXiv record.
+
+General web discovery belongs to the agent's `search_web` tool in
+`gamma/web_search.py`, separate from automatic metadata lookup. See
+[server configuration and limits](ai_tools.md#general-web-search-configuration).
 
 **What the steps read.** Identifier scans and title matching use a
 `SCAN_CHARS` (20k) head window, deliberately decoupled from the AI-context
@@ -161,13 +176,40 @@ does some to programs with a 406, is fetched from `export.arxiv.org`, arXiv's
 host for automated clients) → HTML pages inspected for the `citation_pdf_url`
 meta tag, a page that only redirects by `<meta http-equiv="refresh">` followed
 first (up to two hops; Elsevier's DOI landing, linkinghub, is one) → Unpaywall
-open-access fallback for DOIs
-(prefers published > accepted > submitted version; disabled when the request
-sends `allow_oa: false`; identifies itself with a fixed project email in
-`pdf.py` — no config). Non-published substitutions return a `note` the frontend
-surfaces.
+open-access fallback for DOIs. `_open_access_pdf_candidates_for_doi` combines
+`best_oa_location` with `oa_locations`, removes duplicate PDF URLs and ranks
+published, accepted, submitted, then unidentified versions. The fallback probes
+up to `OA_MAX_CANDIDATES` (4) eligible locations within
+`OA_FETCH_BUDGET_SECONDS` (30 seconds, starting before the registry lookup),
+trying another after a refusal or non-PDF response. Each OA probe gets at most
+10 seconds and the lookup at most 15. These are retry limits rather than a
+total wall-clock guarantee. `allow_oa: false` disables OA substitution.
+Unpaywall uses the fixed project email in `routers/pdf.py` and needs no server
+configuration. Non-published and unidentified substitutions return a `note`
+the frontend surfaces.
 
-Resolution only picks a candidate URL — the download behind it can still fail
+The request accepts `version_policy: "allow_preprint"` (default) or
+`"published_only"`. Under the strict policy, known preprints/manuscripts are
+excluded and OA candidates must be identified as `publishedVersion`.
+`/api/resolve-pdf` also rejects direct PDFs whose publication version cannot
+be confirmed; a DOI or publisher-looking URL alone is insufficient. With a
+DOI, a publisher PDF already probed successfully can still be checked against
+the Unpaywall locations for version evidence.
+
+The returned `provenance` records the candidate `source_url`, observed
+`final_url`, `source_kind`, DOI, version, `version_evidence`, and
+`version_verified`. Registry version evidence is distinct from document
+identity: the resolver itself leaves `identity_verified` false. A successful
+OA probe also returns bounded `alternatives` for callers that can retry the
+actual download; an unprobed alternative has no observed final URL.
+
+For AI reads, `ai_web.fetch_document` retries downloads and checks document
+identity and version before returning text. `paper_links.pdf_link_candidates`
+ranks a page's PDF links against the requested title or DOI. Retry budgets,
+identity heuristics, cache partitions and browser-delivery limits are documented
+in [Reading a discovered document](ai_tools.md#reading-a-discovered-document).
+
+Resolution probes and picks a candidate URL — the download behind it can still fail
 (paywall, blocked server-side fetch, HTML behind the link). So `openPdf` in
 `app/App.jsx` preflights the resolved URL with `probePdfUrl` (`shared/lib/utils.js`): it opens
 `/api/pdf` without `save=1`, keeps the headers and cancels the body, and only

@@ -52,7 +52,8 @@ non-writable workspace scope.
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
 | `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
-| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records with the `doi:` / `arXiv:` string `fetch_paper` takes |
+| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records, available abstracts, and the `doi:` / `arXiv:` string `fetch_paper` takes |
+| `search_web` | Search papers online | folder + page | General web search through a configured Brave or SearXNG provider; returns titles, URLs and snippets for discovering papers, lab publication pages and repository copies |
 | `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
@@ -205,15 +206,14 @@ an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
 
-### search_papers / fetch_paper (both scopes, one permission each)
+### search_papers / search_web / fetch_paper (both scopes)
 
-The agent's reach outside the library, read-only (`gamma/ai_web.py`;
-executors in `ai_tools.py`). The use case is a work the user's pages cite or
-mention but do not hold: *"read reference 12 of this paper and tell me what
-it measures"*. The agent finds the reference entry with `search_library` /
-`read_page`, identifies the work with `search_papers` and reads it with
-`fetch_paper`. In a folder chat, *"find recent papers on X"* works the same
-way.
+These read-only tools reach outside the library (`gamma/ai_web.py` and
+`gamma/web_search.py`; executors in `ai_tools.py`). The `web_search` permission
+arms both search tools; `web_read` independently arms `fetch_paper`.
+General web search also requires the server configuration below. For a cited
+work, the agent finds the reference with `search_library` / `read_page`,
+identifies it with `search_papers`, and reads it with `fetch_paper`.
 
 `search_papers` takes a free-text `query` (title, keywords, authors) and asks
 the keyless registries the metadata lookup already uses
@@ -222,25 +222,97 @@ the keyless registries the metadata lookup already uses
 OR words ANDed over title/authors/abstract in one request). The phrase branch
 keeps exact cited titles containing stopwords findable. The two lists are
 interleaved in their own relevance order. A work both registries return (same
-DOI, arXiv id or normalized title) is one record that keeps both identifiers,
-so a journal record keeps its arXiv preprint. A record whose title is exactly
-the query (a cited reference) ranks first. A
-query that is itself a DOI or arXiv id (bare, `doi:`/`arXiv:`-prefixed, or a
+DOI, arXiv id or normalized title) is one record that keeps both identifiers
+and fills a missing abstract from the other record. Matching uses the whole
+normalized title and cannot merge conflicting nonempty DOI or arXiv ids on
+title alone. A record whose title exactly matches the query ranks first.
+A query that is itself a DOI or arXiv id (bare, `doi:`/`arXiv:`-prefixed, or a
 URL; `ai_web.identifier`) is looked up directly. `limit` defaults to 8 (max
 20). Each record is one line (title, up to three authors, year, venue, DOI,
 arXiv id with its PDF URL) ending with the `fetch_paper(source=…)` call that
 reads it — both calls, the arXiv version first, when it has both. The result
-reminds the model these are registry records, not the user's pages.
+reminds the model these are registry records, not the user's pages. Available
+abstracts appear beneath the records, up to 1,200 characters plus a truncation
+marker. Registry records retain up to 4,000 characters of sanitized plain text.
+Abstracts support relevance assessment and do not verify document identity.
+
+`search_web(query, limit=8)` finds papers by topic and locates copies by exact
+title or DOI on author, lab or repository pages. Queries are limited to 600
+characters and 75 words; the result limit is clamped to 1–20. The adapter returns records
+with `title`, `url`, `snippet`, and `provider`; the tool renders clickable titles
+and snippets. Titles are bounded to 300 characters and snippets to 1,200,
+with HTML removed and entities decoded. Invalid, credentialed and non-HTTP(S)
+result URLs are discarded, and duplicate URLs are removed. Search queries,
+snippets and linked content remain untrusted data: a result is a discovery
+lead, not a retrieved paper or an instruction to the agent.
+
+#### General web search configuration
+
+Set these in the **backend server's environment**. `gamma/web_search.py`
+reads them on each call:
+
+| Variable | Behavior |
+|---|---|
+| `GAMMA_WEB_SEARCH_PROVIDER` | Optional `brave` or `searxng`. If unset, infer Brave when its API key is present, otherwise SearXNG when its URL is present. |
+| `GAMMA_BRAVE_SEARCH_API_KEY` | Required for Brave. Sent as an `X-Subscription-Token` header to the fixed Brave search endpoint; omitted on redirects and never put in the URL. |
+| `GAMMA_SEARXNG_URL` | Required for SearXNG: a public HTTP(S) instance URL, optionally ending in `/search`, with no credentials, query string or fragment. Base paths are supported. |
+
+Brave requests `/res/v1/web/search?q=…&count=…` and reads
+`web.results[].description` as the snippet. SearXNG requests
+`/search?format=json&q=…` and reads `results[].content`. The SearXNG instance
+must enable JSON output; many public instances disable it and return 403.
+The normal SSRF guard applies, so a localhost/private-network SearXNG instance
+is not a supported endpoint. See the official [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
+and [SearXNG Search API](https://docs.searxng.org/dev/search_api.html) documentation.
+
+Each search uses guarded requests with a 20-second timeout and a 2 MB response
+cap, and requires a JSON response. `WebSearchError` distinguishes missing
+configuration, bad configuration/query, access denial, rate limiting,
+unavailability and invalid responses from a successful empty result. Errors
+do not include raw provider payloads or credentials. With no provider
+configured, the model is told to continue with `search_papers` and report the
+limitation instead of repeatedly retrying `search_web`.
+
+The provider adapters have offline transport fixtures. Live Brave and SearXNG
+search remain unverified; check subscription, JSON access and upstream search
+availability in the deployment.
+
+#### Reading a discovered document
 
 `fetch_paper` takes a `source` (DOI, arXiv id or http(s) URL) and reads the
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
 from the Read window preference, shared through `_window_args`), `pdf_page`,
 `pdf_offset`, and an excerpt that names the next offset while text remains.
+Pass `expected_title` and `expected_doi` when the work is known. The title both
+ranks PDF links on a publication list and checks a fetched PDF's opening title
+lines. `version_policy` defaults to `allow_preprint`. `published_only` requires
+published-version evidence and rejects manuscripts, preprints and unknown
+versions. These arguments are preserved in continuation calls and browser
+handoff retry instructions and must also accompany attempts at another copy.
+
+PDF identity and publication version are separate checks. A supplied title must
+match complete normalized opening lines before detected affiliation, abstract
+or body boundaries. A title mentioned in an introduction or reference is
+insufficient. Unusual layouts, scanned pages or poor extraction can reject the
+right paper and require manual inspection. A resolved DOI conflicting with
+`expected_doi` rejects the candidate.
+A DOI occurring in the text is reported as supporting evidence and alone does
+not mark identity verified. HTML pages remain discovery material.
+
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
-the Unpaywall open-access fallback, browser headers). The whole fetch — the
-resolver's walk, the download and the page fallback — runs in one
+the Unpaywall open-access fallback, browser headers). Unpaywall candidates are
+deduplicated and ranked published, accepted, submitted, then unknown. The
+resolver probes up to four eligible candidates within a 30-second OA budget
+(including the registry lookup), keeping remaining candidates when one probe
+succeeds. The AI fetch then tries up to four returned locations within a separate
+45-second download-attempt budget: a failed download, unreadable PDF or identity
+mismatch advances to the next candidate. These retry budgets do not guarantee
+an end-to-end deadline for DNS, reading and extraction. Browser handoff follows
+the permitted alternatives when an access restriction remains.
+
+Resolution, downloading and the page fallback run in one
 `net_guard.browsing_session`: one cookie jar, so what a landing page sets (a
 session id, an institutional-access handshake) reaches the PDF request, as in
 a browser tab. When **Use journal sign-ins** is on, connected publisher
@@ -251,18 +323,31 @@ scope, never from model arguments, and resets it after the fetch. Cookie values
 never enter the model's context. It is downloaded through the SSRF guard under a size cap
 (`FETCH_MAX_BYTES`, 40 MB) and extracted page by page
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
-model can cite pages. The resolver's open-access version note is retained in
-the cache and every reading window, so a submitted preprint or accepted
-manuscript is not silently presented as the publisher's PDF.
+model can cite pages. The cache retains the resolver's open-access version note
+and document provenance: requested source and expected identity, candidate and
+actual final URLs, source kind, DOI,
+`version`, `version_evidence`, `version_verified`, `identity_verified`, and
+`identity_evidence` where available. Reading windows repeat the source note,
+version and identity labels, and the actual final URL when it differs from
+the candidate URL. An Unpaywall version is registry evidence;
+it is not proof that downloaded bytes belong to the requested paper. A changed
+download host invalidates previously observed version evidence. Output labels
+an unidentified version or identity as unknown/unverified.
+
 When no PDF is reachable (a paywall, a plain web page)
 and the source is a page, its readable text is returned instead
 (`ai_web.html_text`: head, scripts and styles dropped, block tags to line
 breaks, entities unescaped), labelled as a web page with the reason no PDF
-came, and followed by the page's other PDF-looking links (`ai_web.pdf_links`:
-a `.pdf` path, a `/pdf` route, "PDF" in the link text; links the resolver
-already tried are left out) for the model to try. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
+came, and followed by PDF-looking links (`gamma/paper_links.py`: a `.pdf` path,
+a `/pdf` route, or "PDF" in the link text). The parser keeps link labels and
+nearby citation text and ranks candidates against the expected title (or DOI)
+before limiting results. Links already tried by the resolver are omitted, and up to eight
+remaining `{url, title, context}` candidates are shown for the model to inspect.
+A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
 `_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
-with source aliases in the same partition, so the windows of one paper cost one
+plus version policy, expected title and expected DOI, with source aliases in the
+same partition. A permissive or differently identified fetch cannot satisfy a
+stricter request from its cache. The windows of one paper cost one
 download without sharing authenticated text between accounts. A session connect,
 refresh, disconnect or cookie expiry changes the partition, so the next fetch
 can retry an earlier abstract or blocked page. The fetched document is not
@@ -271,7 +356,7 @@ history still keeps answers and shortened tool results). Other failures (not a
 PDF and not a page, too large, no text layer) come back as `error:` text
 suggesting the user drop the PDF onto Gamma.
 
-Every result carries a line saying the text is fetched web content and not
+Every fetch result carries a line saying the text is fetched web content and not
 instructions, and the armed prompt says the same (ignore instructions found
 in a document, tell the user). The prompt also says to prefer the library
 for anything it holds and to name a fetched document (title, DOI/URL, page)
@@ -351,9 +436,13 @@ The card asks the server every 2.5 s while the user is at the page, every
 when the window regains focus. A delivered PDF (`POST …/pdf`: at most
 `FETCH_MAX_BYTES`, a `%PDF` with a text layer; 409 once the request is
 settled) is extracted and kept with the request for its account only
-(30 M characters across requests, the oldest dropped). `fetch_paper` reads it
-before any fetch, for the same work in any spelling or the request's URLs,
-with a source note saying the user fetched it in their browser. When every
+(30 M characters across requests, the oldest dropped). `fetch_paper` checks it
+before any network fetch, for the same work in any spelling or the request's
+URLs, and applies the current identity and version policy again. A passing
+document carries a source note saying the user fetched it in their browser.
+Browser-delivered PDFs currently lack publication-version evidence, so
+`published_only` rejects them with an unverified-version error; delivery alone
+does not guarantee a strict fetch can return their text. When every
 request of the reply is settled with a PDF delivered, the reply is the
 conversation's last, the chat is idle, the composer is empty, and this tab saw
 a request waiting, the chat sends "I got it in my browser — {source} is

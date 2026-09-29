@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
+from html.parser import HTMLParser
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -56,6 +57,7 @@ router = APIRouter(prefix="/api", tags=["metadata"])
 # article's tail, and the paper's own title/DOI can sit 7k+ chars in — a
 # window sized for AI cost must not starve the free regex/matching steps.
 SCAN_CHARS = 20000
+ABSTRACT_CHARS = 4000
 
 _ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/(" + ARXIV_ID + ")", re.I)
 _ARXIV_TEXT_RE = re.compile(r"arXiv:\s*(" + ARXIV_ID + ")", re.I)
@@ -68,6 +70,53 @@ _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 # the browser suite): every lookup fails at once and finds nothing, instead
 # of waiting out its timeout.
 METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() not in ("0", "off", "false", "no")
+
+
+class _AbstractText(HTMLParser):
+    """Read text from HTML/JATS without executing or preserving markup."""
+
+    _BLOCKS = {"abstract", "p", "para", "div", "sec", "title", "br", "li"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.rsplit(":", 1)[-1]
+        if tag in {"script", "style"}:
+            self.hidden += 1
+        elif not self.hidden and tag in self._BLOCKS:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag):
+        tag = tag.rsplit(":", 1)[-1]
+        if tag in {"script", "style"}:
+            self.hidden = max(0, self.hidden - 1)
+        elif not self.hidden and tag in self._BLOCKS:
+            self.parts.append(" ")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def _plain_abstract(value) -> str:
+    """A bounded relevance excerpt, never an identifier or matching signal.
+
+    Registries can supply JATS (including unbound ``jats:`` prefixes), HTML,
+    or plain text. Keep inline terms intact while separating paragraphs.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    parser = _AbstractText()
+    # Bound parsing too, even if a registry accidentally returns full text.
+    parser.feed(value[:ABSTRACT_CHARS * 20])
+    parser.close()
+    text = re.sub(r"\s+", " ", "".join(parser.parts)).strip()
+    if len(text) > ABSTRACT_CHARS:
+        return text[:ABSTRACT_CHARS - 1].rstrip() + "…"
+    return text
 
 
 def _http_get(url: str, accept: str = "", timeout: int = 20) -> bytes:
@@ -374,6 +423,7 @@ def _arxiv_entry_meta(entry, arxiv_id: str = "") -> dict | None:
     return {
         "title": title,
         "authors": [a for a in authors if a],
+        "abstract": _plain_abstract(entry.findtext(f"{_ATOM}summary")),
         "year": (entry.findtext(f"{_ATOM}published") or "")[:4],
         "venue": journal_ref or f"arXiv:{arxiv_id}",
         "volume": "",
@@ -436,6 +486,7 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     date_parts = ((data.get("issued") or {}).get("date-parts") or [[None]])[0]
     meta = {
         "title": re.sub(r"\s+", " ", str(title)).strip(),
+        "abstract": _plain_abstract(data.get("abstract")),
         "authors": [
             " ".join(filter(None, [a.get("given"), a.get("family")])).strip()
             for a in (data.get("author") or [])
@@ -469,7 +520,7 @@ def _crossref_search(query: str, rows: int = 5) -> list[dict]:
     if not (query or "").strip():
         return []
     url = ("https://api.crossref.org/works?rows=%d" % rows
-           + "&select=DOI,title,author,container-title,volume,page,issued"
+           + "&select=DOI,title,author,container-title,volume,page,issued,abstract"
            + "&mailto=" + urllib.parse.quote(CONTACT_EMAIL)
            + "&query.bibliographic=" + urllib.parse.quote(query[:400]))
     try:
@@ -485,6 +536,7 @@ def _crossref_search(query: str, rows: int = 5) -> list[dict]:
         date_parts = ((it.get("issued") or {}).get("date-parts") or [[None]])[0]
         out.append({
             "title": re.sub(r"\s+", " ", str(title)).strip(),
+            "abstract": _plain_abstract(it.get("abstract")),
             "authors": [
                 " ".join(filter(None, [a.get("given"), a.get("family")])).strip()
                 for a in (it.get("author") or [])

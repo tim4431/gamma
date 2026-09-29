@@ -23,6 +23,7 @@ would go, so the chat can hand the fetch to the user's browser
 import html
 import re
 import threading
+import time
 from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest
@@ -33,6 +34,7 @@ from . import publisher_sessions
 from .logbuf import log
 from .net_guard import browsing_session, guarded_urlopen
 from .pdf_text import extract_pages
+from .paper_links import pdf_link_candidates, title_key
 
 SEARCH_LIMIT_DEFAULT = 8
 SEARCH_LIMIT_MAX = 20
@@ -118,7 +120,7 @@ def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT) -> list[dict]:
         return {k for k in (
             f"doi:{rec.get('doi', '').lower()}" if rec.get("doi") else "",
             f"arxiv:{rec.get('arxiv_id', '').lower()}" if rec.get("arxiv_id") else "",
-            "title:" + _title_key(rec.get("title", "")),
+            "title:" + title_key(rec.get("title", "")),
         ) if k and k != "title:"}
 
     for a, b in zip(crossref + [None] * len(arxiv), arxiv + [None] * len(crossref)):
@@ -126,7 +128,13 @@ def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT) -> list[dict]:
             if not rec:
                 continue
             keys = keys_of(rec)
-            twin = next((kept[k] for k in keys if k in kept), None)
+            # Shared identifiers are authoritative. Equal titles alone must
+            # not collapse distinct papers with conflicting identifiers.
+            twin = next((kept[k] for k in sorted(keys) if k in kept and
+                         (not k.startswith("title:") or all(
+                             not rec.get(f) or not kept[k].get(f)
+                             or rec[f].lower() == kept[k][f].lower()
+                             for f in ("doi", "arxiv_id")))), None)
             if twin is None:
                 twin = dict(rec)
                 out.append(twin)
@@ -134,19 +142,15 @@ def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT) -> list[dict]:
                 # The same work from the other registry: the kept record
                 # takes the identifiers it lacks, so a journal record keeps
                 # its arXiv preprint (and an arXiv record its DOI).
-                for field in ("doi", "arxiv_id"):
+                for field in ("doi", "arxiv_id", "abstract"):
                     if rec.get(field) and not twin.get(field):
                         twin[field] = rec[field]
             for k in keys | keys_of(twin):
                 kept.setdefault(k, twin)
     # A query that is a record's exact title (a cited reference) ranks it first.
-    want = _title_key(query)
-    out.sort(key=lambda rec: _title_key(rec.get("title", "")) != want)
+    want = title_key(query)
+    out.sort(key=lambda rec: title_key(rec.get("title", "")) != want)
     return out[:limit]
-
-
-def _title_key(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (title or "").lower())[:80]
 
 
 def format_records(records: list[dict]) -> str:
@@ -177,6 +181,9 @@ def format_records(records: list[dict]) -> str:
             source = f"arXiv:{rec['arxiv_id']}" if rec.get("arxiv_id") else f"doi:{rec['doi']}"
             parts.append(f'→ fetch_paper(source="{source}")')
         lines.append("- " + " · ".join(parts))
+        if rec.get("abstract"):
+            abstract = re.sub(r"\s+", " ", rec["abstract"]).strip()
+            lines.append("  Abstract: " + abstract[:1200] + ("…" if len(abstract) > 1200 else ""))
     return "\n".join(lines)
 
 
@@ -187,6 +194,7 @@ def _read_bounded(url: str, cap: int, headers: dict, timeout: int = 30) -> tuple
     guard, refusing bodies over ``cap`` bytes (by Content-Length up front,
     else while reading)."""
     req = URLRequest(url, headers=headers)
+    deadline = time.monotonic() + timeout
     with guarded_urlopen(req, timeout=timeout) as resp:
         ctype = (resp.headers.get("Content-Type") or "").lower()
         length = resp.headers.get("Content-Length")
@@ -194,6 +202,8 @@ def _read_bounded(url: str, cap: int, headers: dict, timeout: int = 30) -> tuple
             raise FetchError(f"document too large ({int(length) // 1_000_000} MB, cap {cap // 1_000_000} MB)")
         chunks, total = [], 0
         while True:
+            if time.monotonic() >= deadline:
+                raise FetchError("document download exceeded its time budget")
             chunk = resp.read(65536)
             if not chunk:
                 break
@@ -210,7 +220,6 @@ _BLOCK_TAG_RE = re.compile(
 _DROP_RE = re.compile(r"<(head|script|style|noscript|svg|template)\b.*?</\1\s*>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
-_HREF_RE = re.compile(r"""<a\b[^>]*?\bhref\s*=\s*["']([^"'#>]+)["'][^>]*>(.*?)</a\s*>""", re.I | re.S)
 
 
 def _decode(raw: bytes, ctype: str = "") -> str:
@@ -236,24 +245,6 @@ def html_text(raw: bytes, ctype: str = "") -> tuple[str, str]:
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return title, text
-
-
-def pdf_links(raw: bytes, base: str, ctype: str = "", limit: int = 8) -> list[str]:
-    """Links on a page that look like a PDF of it — a ``.pdf`` path, a
-    ``/pdf`` route, "PDF" in the link text: what the model can try next
-    when the page itself was all that came back (a lab page, a repository)."""
-    out = []
-    for href, label in _HREF_RE.findall(_decode(raw, ctype)):
-        url = urljoin(base, html.unescape(href.strip()))
-        if not url.lower().startswith(("http://", "https://")) or url in out:
-            continue
-        path = urlsplit(url).path.lower()
-        if (path.endswith((".pdf", "/pdf")) or "/pdf/" in path
-                or re.search(r"\bpdf\b", _TAG_RE.sub(" ", label), re.I)):
-            out.append(url)
-            if len(out) >= limit:
-                break
-    return out
 
 
 # Walls a person passes in a browser. A bot-check page is recognized by its
@@ -406,7 +397,8 @@ def pdf_document(url: str, data: bytes, note: str = "") -> dict:
             "chars": sum(len(p) for p in pages), "note": note}
 
 
-def fetch_document(source: str) -> dict:
+def fetch_document(source: str, *, version_policy: str = "allow_preprint",
+                   expected_title: str = "", expected_doi: str = "") -> dict:
     """The document behind ``source`` (a DOI, arXiv id or URL) as
     ``{"url", "kind": "pdf"|"html", "title", "pages": [text per page],
     "chars", "note"}`` — from the cache when it was fetched before. A web
@@ -416,7 +408,10 @@ def fetch_document(source: str) -> dict:
     source = (source or "").strip()
     if not source:
         raise FetchError("empty source — pass a DOI, an arXiv id or an http(s) URL")
-    scope = publisher_sessions.cache_scope()
+    validate_fetch_options(version_policy, expected_title, expected_doi)
+    # Never reuse a permissive or differently identified document for a
+    # stricter request; HTML candidates also depend on the requested title.
+    scope = (*publisher_sessions.cache_scope(), version_policy, expected_title, expected_doi)
     doc = cached(source, scope)
     if doc:
         return doc
@@ -424,43 +419,70 @@ def fetch_document(source: str) -> dict:
         raise FetchError("source must be a DOI (10.…), an arXiv id (2301.12345) or an http(s) URL")
     # One cookie jar for the resolver's walk, the download and the fallback.
     with browsing_session():
-        return _remember(source, _fetch(source), scope)
+        doc = _fetch(source, version_policy=version_policy, expected_title=expected_title,
+                     expected_doi=expected_doi)
+        return _remember(source, doc, scope)
 
 
-def _fetch(source: str) -> dict:
+def _fetch(source: str, *, version_policy: str = "allow_preprint",
+           expected_title: str = "", expected_doi: str = "") -> dict:
     from .routers.pdf import BROWSER_HEADERS, meta_refresh, resolve_source
 
-    reason = wall = source_note = referer = ""
+    reason = wall = ""
     trace: dict = {}
     try:
-        resolved = resolve_source(source, trace=trace)
+        resolved = resolve_source(source, trace=trace, version_policy=version_policy)
         pdf_url = resolved["source_url"]
-        source_note = resolved.get("note", "")
-        referer = resolved.get("referer", "")
     except HTTPException as e:
         reason, pdf_url = str(e.detail), ""
         wall = "denied" if trace.get("blocked") else ""
     page_url = trace.get("page_url") or _source_url(source)
     want_pdf = pdf_url or next(iter(trace.get("pdf_urls") or []), "")
     if pdf_url:
-        try:
-            final_url, ctype, data, headers = _read_bounded(
-                pdf_url, FETCH_MAX_BYTES, {**BROWSER_HEADERS, **({"Referer": referer} if referer else {})})
-        except FetchError:
-            raise
-        except HTTPError as e:
-            wall = _refusal(e)
-            reason = f"the PDF at {pdf_url} answered HTTP {e.code}"
-            if not wall:
-                raise FetchError(reason)
-        except (URLError, OSError, ValueError) as e:
-            raise FetchError(f"could not fetch the PDF at {pdf_url}: {e}")
-        else:
-            if "application/pdf" in ctype or data[:5] == b"%PDF-":
-                return pdf_document(pdf_url, data, source_note)
-            wall = access_wall(final_url, headers, data)
-            reason = (f"{pdf_url} is not a PDF ({ctype or 'no content type'})"
-                      + (f" — it is {WALLS[wall]}" if wall else ""))
+        # A successful header probe is not a successful paper fetch. Try
+        # remaining locations when the real download, extraction or identity
+        # check fails. The resolver already applies the version policy.
+        deadline = time.monotonic() + 45
+        seen, last_error = set(), None
+        for candidate in [resolved, *resolved.get("alternatives", [])][:4]:
+            candidate_url = candidate["source_url"]
+            if candidate_url in seen:
+                continue
+            seen.add(candidate_url)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            referer = candidate.get("referer", "")
+            try:
+                final_url, ctype, data, headers = _read_bounded(
+                    candidate_url, FETCH_MAX_BYTES,
+                    {**BROWSER_HEADERS, **({"Referer": referer} if referer else {})},
+                    timeout=min(30, remaining))
+                if "application/pdf" not in ctype and data[:5] != b"%PDF-":
+                    candidate_wall = access_wall(final_url, headers, data)
+                    wall = wall or candidate_wall
+                    raise FetchError(f"{candidate_url} is not a PDF ({ctype or 'no content type'})")
+                doc = pdf_document(candidate_url, data, candidate.get("note", ""))
+                provenance = dict(candidate.get("provenance") or {})
+                probed_url = provenance.get("final_url")
+                if (probed_url and urlsplit(probed_url).hostname != urlsplit(final_url).hostname):
+                    provenance["version_verified"] = False
+                    provenance["version_evidence"] = "download_redirect_changed"
+                provenance.update(requested_source=source, final_url=final_url)
+                doc["provenance"] = provenance
+                return verify_document(doc, version_policy=version_policy,
+                                       expected_title=expected_title, expected_doi=expected_doi)
+            except HTTPError as e:
+                wall = wall or _refusal(e)
+                reason = f"the PDF at {candidate_url} answered HTTP {e.code}"
+                last_error = FetchError(reason)
+            except (URLError, OSError, ValueError) as e:
+                last_error = FetchError(f"could not fetch the PDF at {candidate_url}: {e}")
+                reason = str(last_error)
+            except FetchError as e:
+                last_error, reason = e, str(e)
+        if last_error and not wall:
+            raise last_error
     # No PDF: the source's own page, if it is one, as readable text.
     fallback = _source_url(source)
     if wall and fallback == pdf_url:
@@ -498,14 +520,90 @@ def _fetch(source: str) -> dict:
                          pdf_url=want_pdf)
     # PDF links the resolver has not tried already (those met the wall).
     tried = {pdf_url, *(trace.get("pdf_urls") or [])}
-    links = [u for u in pdf_links(data, final_url, ctype) if u not in tried]
+    candidates = [c for c in pdf_link_candidates(_decode(data, ctype), final_url,
+                                                expected_title or expected_doi, limit=20)
+                  if c["url"] not in tried][:8]
+    links = [c["url"] for c in candidates]
     doc = {"url": final_url, "kind": "html", "title": title, "pages": [text],
-           "chars": len(text), "note": reason, "links": links}
+           "chars": len(text), "note": reason, "links": links, "link_candidates": candidates,
+           "provenance": {"requested_source": source, "final_url": final_url,
+                          "version": "", "identity_verified": False}}
     # An article page whose PDF was out of reach (it advertised one, or the
     # DOI's publisher refused): only a person with access gets the rest.
     if wall or trace.get("pdf_urls") or trace.get("doi"):
         doc.update(wall=wall or "abstract", open_url=final_url, pdf_url=want_pdf)
-    return doc
+    return verify_document(doc, version_policy=version_policy,
+                           expected_title=expected_title, expected_doi=expected_doi)
+
+
+def validate_fetch_options(version_policy: str, expected_title: str = "", expected_doi: str = ""):
+    if version_policy not in ("allow_preprint", "published_only"):
+        raise FetchError("version_policy must be allow_preprint or published_only")
+    if len(expected_title) > 1000 or len(expected_doi) > 300:
+        raise FetchError("expected paper title or DOI is too long")
+    if expected_title and not title_key(expected_title):
+        raise FetchError("expected_title must contain a paper title")
+    if expected_doi and identifier(expected_doi)[0] != "doi":
+        raise FetchError("expected_doi must be a DOI (10.… or doi:10.…)")
+
+
+def _opening_title_matches(page: str, expected_title: str) -> bool:
+    """Match complete title lines, before affiliation/abstract/body markers.
+
+    A title quoted in an introduction/reference or the prefix of a different
+    title is not evidence that this is the requested document.
+    """
+    lines = []
+    for line in page[:3500].splitlines()[:35]:
+        line = line.strip()
+        if re.match(r"^(?:abstract\b|(?:\d+\.?\s*)?introduction\b|references\b|"
+                    r"keywords\b|\(?received\b|department\b|university\b|institute\b)", line, re.I):
+            break
+        if line:
+            lines.append(title_key(line))
+    want = title_key(expected_title)
+    return any("".join(lines[i:j]) == want for i in range(len(lines))
+               for j in range(i + 1, min(i + 8, len(lines)) + 1))
+
+
+def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
+                    expected_title: str = "", expected_doi: str = "") -> dict:
+    """Attach bounded identity evidence; never treat a search hit as proof.
+
+    HTML publication lists are discovery results, not the requested paper.
+    Require a supplied title in the PDF's opening text; an isolated DOI may
+    be a reference, so DOI-only evidence is reported without confirming identity.
+    This also checks browser-delivered PDFs and therefore cannot be bypassed
+    by the handoff cache.
+    """
+    validate_fetch_options(version_policy, expected_title, expected_doi)
+    provenance = dict(doc.get("provenance") or {})
+    provenance.update(expected_title=expected_title, expected_doi=expected_doi,
+                      version_policy=version_policy, identity_verified=False)
+    if doc["kind"] == "pdf":
+        head = doc["pages"][0][:20000] if doc["pages"] else ""
+        title_matches = bool(expected_title and _opening_title_matches(head, expected_title))
+        if expected_title and not title_matches:
+            raise FetchError("PDF identity mismatch: the requested title was not found in its opening title lines. "
+                             "Do not use this document as the requested paper; inspect another candidate.")
+        expected = identifier(expected_doi)[1].lower() if expected_doi else ""
+        actual = str(provenance.get("doi") or "").lower()
+        actual = identifier(actual)[1].lower() or actual
+        if expected and actual and actual != expected:
+            raise FetchError("PDF identity mismatch: the resolved DOI differs from expected_doi")
+        provenance["identity_verified"] = title_matches
+        provenance["identity_evidence"] = "title_in_opening_lines" if title_matches else "unverified"
+        if expected and expected in head.lower():
+            provenance["doi_in_text"] = True
+        actual_host = urlsplit(provenance.get("final_url") or doc["url"]).hostname
+        if actual_host in ("arxiv.org", "www.arxiv.org", "export.arxiv.org"):
+            provenance.update(version="submittedVersion", version_verified=True, version_evidence="arxiv_source")
+        if version_policy == "published_only" and (
+                provenance.get("version") != "publishedVersion" or not provenance.get("version_verified")):
+            raise FetchError("The fetched PDF is not verified as the published version. "
+                             "Use the journal DOI to locate a verified published copy; "
+                             "do not substitute this file under published_only.")
+    return {**doc, "provenance": provenance}
 
 
 def window(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[str, int | None, int]:

@@ -43,7 +43,7 @@ def accounts(client):
 @pytest.fixture
 def web(transport, monkeypatch):
     routes, seen = transport
-    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdf_candidates_for_doi", lambda doi: [])
     ai_web.clear_cache()
     fetch_handoff.clear()
     yield routes, seen
@@ -114,7 +114,8 @@ def test_article_page_only_is_read_and_offers_the_full_text(web, fetch):
     assert "Abstract: the abstract only." in text  # the model still gets what was readable
     assert "Only the article page was readable" in text and "say so briefly and end your reply" in text
     # The page's other PDF links, for the model to try; the advertised one met the wall already.
-    assert "PDF links on the page (fetch_paper can read them): https://journals.example.org/suppl/wall-si.pdf\n" in text
+    assert "PDF candidates ranked for the requested paper" in text
+    assert "https://journals.example.org/suppl/wall-si.pdf" in text
     req = fetch_handoff.get(USER, action["handoff"]["id"])
     assert (req["wall"], req["url"], req["pdf_url"]) == ("abstract", landing, pdf)
 
@@ -309,7 +310,10 @@ def test_resolver_sends_the_article_page_as_referer(transport, monkeypatch):
         return real(self, req)
 
     monkeypatch.setattr(net_guard._BrowserAgent, "https_request", spy)
-    assert pdf_mod.resolve_source(page) == {"source_url": pdf, "referer": page}
+    resolved = pdf_mod.resolve_source(page)
+    assert resolved["source_url"] == pdf
+    assert resolved["referer"] == page
+    assert resolved["provenance"]["source_kind"] == "article_page"
     assert referers == [(page, None), (pdf, page)]
 
 

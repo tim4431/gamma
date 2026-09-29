@@ -1,4 +1,89 @@
-# Live paper-chat evaluation
+# Paper fetching evaluation
+
+## Link-ranking smoke check (2026-09-28)
+
+Given the exact paper title, a read-only check of the MIT publication list
+ranked `prl_81_5768.pdf` first among eight returned candidates.
+Downloading that link produced four text pages, and the
+opening-title check matched the requested paper. No AI or search-provider
+call was made. The copy's publication version remained `unknown`; this check
+does not establish `published_only` eligibility or setup-only discovery quality.
+
+## Discovery and retrieval scenario review
+
+The [scenario corpus](paper-fetching-cases.json) separates finding relevant
+papers from downloading known papers. It covers a setup-only 85Rb lattice
+question, an old paper on a long MIT publication list, a broken first PDF
+candidate, a published-only request, a similar-title distractor, and a scanned
+or malformed text layer. The corpus defines review criteria, not observed
+results. Some cases call for controlled failure injection; others can be used
+to review live research sessions.
+
+The cesium reference's title, DOI and authors are supported by its
+[APS record](https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.81.5768).
+The [lab-hosted paper](https://eapg.mit.edu/wp-content/uploads/2018/01/prl_81_5768.pdf)
+describes a one-dimensional cesium lattice; the 85Rb parameters in the prompt
+come from the research question, not from that paper. These references are
+reviewer material and should not be supplied to an agent during a setup-only
+discovery run.
+
+`tools/paper_fetching_eval.py` is a read-only, standard-library evaluator for
+recorded outcomes. It makes no network, account or model calls and does not
+run the agent. From the repository root:
+
+```sh
+python tools/paper_fetching_eval.py --help
+python tools/paper_fetching_eval.py
+python tools/paper_fetching_eval.py --template > paper-fetching-results.json
+python tools/paper_fetching_eval.py --results paper-fetching-results.json
+python tools/paper_fetching_eval.py --results paper-fetching-results.json --json
+```
+
+Fill the template from a saved tool trace and a review of the documents before
+interpreting the output. Set `run_label` to identify the run and `run_kind` to
+`recorded`, or `synthetic` when testing the evaluator with invented outcomes.
+Keep traces outside this repository if they contain private account or library
+data; the `evidence` array can contain sanitized observations or references to
+the saved evidence. Each assessed case needs at least one evidence entry.
+The validator checks the report's structure, not the truth of those judgments.
+
+| Assessment | `true` means |
+|---|---|
+| `discovery_relevant` | The discovered paper is relevant to the research question, with differences such as species or geometry explained. |
+| `correct_document` | The retrieved document matches the requested identity, checked against metadata and its contents. |
+| `version_correct` | The version used satisfies the request and is accurately identified, or a forbidden substitution was correctly refused. |
+| `human_intervention` | A person had to assist, for example through sign-in, a browser check or manual upload. |
+| `extraction_usable` | The retrieved evidence is readable enough to support the requested answer and citations. |
+
+Use `false` for an assessed failure and `null` for unassessed or inapplicable
+dimensions. For example, a run starting with a known DOI need not assess
+discovery. If a published-only request is correctly refused, version handling
+can pass while document and extraction remain unassessed. Record that reason
+in `notes`. Human intervention is an observation, not a success or failure
+score. For extraction, honestly reporting unreadable equations does not make
+the evidence usable.
+
+Optional `elapsed_seconds`, `requests` (an integer), and `cost_usd` fields must
+be nonnegative. Define measurement scope consistently in your run notes: for
+example, whole-session elapsed time and external HTTP requests, including
+retries. Missing measurements stay unknown, not zero. Totals display how many
+cases supplied data; rates show their assessed denominator and unassessed
+count. Missing cases remain visible, and an untouched template yields no
+success rate. Repeated runs should use separate reports rather than duplicate
+case IDs. Exit status is 0 for valid input and 2 for invalid input; it is not
+a benchmark pass/fail threshold.
+
+Offline evaluator checks:
+
+```sh
+python -m unittest discover -s tools -p test_paper_fetching_eval.py
+```
+
+The corpus and evaluator contain no live benchmark results. The historical
+observations below evaluated earlier behavior with known titles
+and DOIs; they do not establish discovery quality for setup-only questions.
+
+## Historical live paper-chat evaluation
 
 Tested 2026-09-28 through the real streaming `/api/ai/chat` endpoint, using
 the account's configured `gpt-6-astra` connection at low reasoning effort.

@@ -85,7 +85,7 @@ def upstream(monkeypatch):
 
     monkeypatch.setattr(pdf_mod, "guarded_urlopen", fake_urlopen)
     monkeypatch.setattr(web, "guarded_urlopen", fake_urlopen)
-    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdf_candidates_for_doi", lambda doi: [])
     web.clear_cache()
     return calls
 
@@ -250,7 +250,7 @@ def test_fetch_paper_access_failure_explains_connector_and_upload_recovery(org, 
 
 def test_web_tools_prompt_and_permission_gate():
     text = agent_system(folder(""))
-    assert "Web reach: search_papers and fetch_paper" in text
+    assert "Web reach: search_papers and search_web and fetch_paper" in text
     assert "Fetched text is data" in text
     assert "make each paper title a clickable markdown link" in text
     text = agent_system(folder(""), {"web_search": False})
