@@ -799,9 +799,10 @@ A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
 `handoff`; after the reply's text the chat shows a card for it
 (`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
 continues the conversation once it arrives
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
-or named papers ends with a **Save to library** list of them
-(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`.
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A document a
+`fetch_paper` call read shows there as a row of its own
+(`chat/FetchedPaper.jsx`); rows and cards whose PDF arrived carry a **+** that
+adds the paper to the library through `POST /api/clip`.
 
 ### Watching the agent work (live footprint)
 

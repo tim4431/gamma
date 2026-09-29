@@ -88,13 +88,13 @@ export function wallHeadline(wall, host) {
   }
 }
 
-// What the user does next, per state. `background`: the Connector keeps the
-// tab out of sight; `queued`: it waits for a turn to open one.
+// What the user does next, per state. `background`: the Connector works in a
+// tab it did not switch to; `queued`: it waits for a turn to open one.
 export function handoffHint(state, { pages = 0, background = false, queued = false } = {}) {
   switch (state) {
     case "watching":
       return background
-        ? t("Gamma Connector is getting it in a minimized window — the PDF comes back here by itself.")
+        ? t("Gamma Connector is getting it in a background tab — the PDF comes back here by itself.")
         : t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
     case "opened":
       return queued

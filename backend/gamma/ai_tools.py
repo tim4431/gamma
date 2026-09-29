@@ -1143,10 +1143,11 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
             publisher_sessions.current_user.reset(token)
     text, next_offset, total = window(doc, budget, offset, page)
     label = doc.get("title") or doc["url"]
-    # `title`, `pdf` and `request` (the handoff whose PDF the user's browser
-    # sent) let the chat offer the paper for the library (chat/chatPapers.js).
+    # `title`, `pdf`, `pages` and `request` (the handoff whose PDF the user's
+    # browser sent) show the paper under the reply, with its "Add to library"
+    # button (chat/chatPapers.js).
     action = {"kind": "fetch", "url": doc["url"], "title": (doc.get("title") or "")[:300],
-              "pdf": doc["kind"] == "pdf",
+              "pdf": doc["kind"] == "pdf", "pages": len(doc.get("pages") or []),
               "summary": (f"Read “{label[:60]}” from your browser" if doc.get("delivered")
                           else f"Fetched “{label[:60]}”")}
     if doc.get("delivered") and doc.get("request"):

@@ -115,7 +115,7 @@ test("the texts name the host, the wall and what arrived", () => {
   assert.match(handoffHint("done", { pages: 19 }), /19 pages/);
   assert.match(handoffHint("done", { pages: 1 }), /\(1 page\)/);
   assert.match(handoffHint("watching"), /Gamma Connector is watching/);
-  assert.match(handoffHint("watching", { background: true }), /minimized window/);
+  assert.match(handoffHint("watching", { background: true }), /in a background tab/);
   assert.equal(handoffHint("waiting"), "Open the page and sign in or pass the check there.");
   assert.equal(handoffHint("opened"), "Finish in the tab that opened.");
   assert.match(handoffHint("opened", { queued: true }), /once the papers before it are done/);

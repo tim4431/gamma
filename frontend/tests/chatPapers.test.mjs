@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clipPayload, lookupQuery, paperIds, paperPage, replyPapers } from "../src/chat/chatPapers.js";
+import { clipPayload, goodTitle, lookupQuery, paperIds, paperOf, paperPage, replyFetches } from "../src/chat/chatPapers.js";
 
 test("a source's DOI and arXiv id, however they are spelled", () => {
   assert.deepEqual(paperIds("doi:10.1103/PhysRevB.27.1031"), { doi: "10.1103/physrevb.27.1031", arxiv: "" });
@@ -16,48 +16,47 @@ test("a source's DOI and arXiv id, however they are spelled", () => {
   assert.deepEqual(paperIds("https://example.org/paper"), { doi: "", arxiv: "" });
 });
 
-test("a reply's papers: what it read, what was blocked, what it links — once each", () => {
+test("a reply's fetches: a card per request, a row per document read — once each, in call order", () => {
+  const wiley = { id: "req1", host: "onlinelibrary.wiley.com", wall: "captcha", source: "doi:10.1002/047134608X.W1312" };
   const actions = [
     { kind: "fetch", tool: "fetch_paper", args: { source: "arXiv:2301.01234" }, url: "https://arxiv.org/pdf/2301.01234",
-      title: "https://arxiv.org/pdf/2301.01234", pdf: true },
-    { kind: "fetch", tool: "fetch_paper", error: true, args: { source: "doi:10.1002/047134608X.W1312" },
-      handoff: { id: "req1", host: "onlinelibrary.wiley.com", wall: "captcha", source: "doi:10.1002/047134608X.W1312" } },
-    { kind: "fetch", tool: "fetch_paper", error: true, args: { source: "doi:10.9/gone" }, result: "error: 404" },
+      title: "", pdf: true, pages: 12 },
+    { kind: "fetch", tool: "fetch_paper", error: true, args: { source: wiley.source }, handoff: wiley },
+    // The model reads the next window of the same PDF: still one row.
+    { kind: "fetch", tool: "fetch_paper", args: { source: "https://arxiv.org/abs/2301.01234", pdf_offset: "20000" },
+      url: "https://arxiv.org/pdf/2301.01234", pdf: true, pages: 12 },
+    { kind: "fetch", tool: "fetch_paper", error: true, args: { source: "doi:10.9999/gone" }, result: "error: 404" },
     { kind: "fetch", tool: "fetch_paper", args: { source: "doi:10.1109/TMAG.1983.1062440" },
       url: "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?arnumber=1062440", title: "Josephson current in proximity junction",
-      pdf: true, request: "req2" },
+      pdf: true, pages: 4, request: "req2" },
+    { kind: "fetch", tool: "fetch_paper", error: true, args: { source: wiley.source }, handoff: { ...wiley } },
+    { kind: "fetch", tool: "fetch_paper", args: { source: "https://lab.example/report" }, url: "https://lab.example/report",
+      title: "A lab report", pdf: false },
     { kind: "search", summary: "Searched library" },
   ];
-  const text = [
-    "1. [Proximity effect in superconductors](https://arxiv.org/abs/2301.01234) — the one I read.",
-    "2. [Josephson junction review](https://doi.org/10.1142/9789811209260_0001)",
-    "3. Also see 10.1103/PhysRevB.27.1031 and arXiv:cond-mat/0101001.",
-    "```\n10.9999/in.code\n```",
-    "[the Gamma docs](https://example.org/docs)",
-  ].join("\n");
-  const papers = replyPapers(actions, text);
-  assert.deepEqual(papers.map((p) => p.key), [
-    "arxiv:2301.01234", "doi:10.1002/047134608x.w1312", "doi:10.1109/tmag.1983.1062440",
-    "doi:10.1142/9789811209260_0001", "doi:10.1103/physrevb.27.1031", "arxiv:cond-mat/0101001",
-  ]);
-  const [arxiv, wiley, ieee, linked, bare] = papers;
-  // The link's label names the paper the fetch only knew by its URL.
-  assert.equal(arxiv.title, "Proximity effect in superconductors");
-  assert.equal(arxiv.read, true);
-  assert.equal(arxiv.pdfUrl, "https://arxiv.org/pdf/2301.01234");
-  assert.equal(wiley.blocked, true);
-  assert.equal(wiley.request, "req1", "the handoff's PDF, if the browser sent it, is what gets saved");
-  assert.equal(ieee.request, "req2");
+  const got = replyFetches(actions);
+  assert.deepEqual(got.map((it) => (it.card ? `card:${it.card.id}` : it.paper.key)),
+    ["arxiv:2301.01234", "card:req1", "doi:10.1109/tmag.1983.1062440", "https://lab.example/report"]);
+  const [arxiv, , ieee, web] = got.map((it) => it.paper);
+  assert.deepEqual([arxiv.pdf, arxiv.pages, arxiv.pdfUrl, arxiv.title], [true, 12, "https://arxiv.org/pdf/2301.01234", ""]);
+  assert.equal(ieee.request, "req2", "the browser's PDF, held by the server, is what gets saved");
   assert.equal(ieee.title, "Josephson current in proximity junction");
-  assert.equal(linked.read, undefined);
-  assert.equal(linked.title, "Josephson junction review");
-  assert.equal(bare.title, "", "the registry names it when the list opens");
-  assert.deepEqual(replyPapers(undefined, ""), []);
+  assert.deepEqual([web.pdf, web.url, web.title], [false, "https://lab.example/report", "A lab report"]);
+  assert.deepEqual(replyFetches(undefined), []);
 });
 
-test("saving goes through the clip endpoint with the paper's identifiers", () => {
-  const [paper] = replyPapers([{ kind: "fetch", tool: "fetch_paper", args: { source: "doi:10.1234/x" },
-    url: "https://pub.example/x.pdf", title: "X", pdf: true }], "");
+test("a handoff card's paper, and titles worth showing", () => {
+  const p = paperOf("doi:10.1002/047134608X.W1312", { request: "req1" });
+  assert.deepEqual([p.key, p.doi, p.request, p.pdf], ["doi:10.1002/047134608x.w1312", "10.1002/047134608x.w1312", "req1", false]);
+  assert.equal(goodTitle("Ultracold Fermi gases with emergent SU(N) symmetry"), true);
+  for (const junk of ["", "https://arxiv.org/pdf/2301.01234", "paper.pdf", "10.1103/x", "doi:10.1103/x", "arXiv:2301.01234"]) {
+    assert.equal(goodTitle(junk), false, junk);
+  }
+});
+
+test("adding goes through the clip endpoint with the paper's identifiers", () => {
+  const [{ paper }] = replyFetches([{ kind: "fetch", tool: "fetch_paper", args: { source: "doi:10.1234/x" },
+    url: "https://pub.example/x.pdf", title: "X", pdf: true }]);
   assert.deepEqual(clipPayload(paper, { folder: "Physics/SC", allowOa: false, saveCopy: true, fetchMetadata: true }), {
     source_url: "https://doi.org/10.1234/x", pdf_url: "https://pub.example/x.pdf", doi: "10.1234/x", arxiv_id: "",
     title: "X", folder: "Physics/SC", labels: [], allow_oa: false, save_copy: true, fetch_metadata: true,

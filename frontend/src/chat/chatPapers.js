@@ -1,10 +1,9 @@
-// The papers a reply read or named, for its "Save to library" list
-// (ReplyPapers.jsx): the documents its fetch_paper calls read, the ones a
-// publisher stopped (the handoff cards — their PDF may have come from the
-// user's browser since), and the DOI / arXiv links in its text (search
-// results the model listed). Saving goes through POST /api/clip, the ingest
-// Gamma Connector's Save uses: dedup by identifier, resolve and store the
-// PDF, file the page, look its metadata up. Pure, so node tests it.
+// The papers a reply fetched, each shown under it (FetchHandoffCards.jsx):
+// a row for a document its fetch_paper read, the card for one a publisher
+// stopped — both with an "Add to library" button (FetchedPaper.jsx). Adding
+// goes through POST /api/clip, the ingest Gamma Connector's Save uses:
+// dedup by identifier, resolve and store the PDF, file the page, look its
+// metadata up. Pure, so node tests it.
 
 const DOI_RE = /\b(10\.\d{4,9}\/[-a-z0-9._;()/:+]+)/i;
 const ARXIV_RE = /(?:arxiv\.org\/(?:abs|pdf|html)\/|\barxiv:\s*|^)(\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?(?!\d)/i;
@@ -33,74 +32,47 @@ export function paperIds(source) {
 
 const isUrl = (s) => /^https?:\/\//i.test(s || "");
 
-// One key per work however it was spelled.
-function keyOf({ doi, arxiv, url, source }) {
-  if (arxiv) return `arxiv:${arxiv}`;
-  if (doi) return `doi:${doi}`;
-  return url || source || "";
-}
-
 // A title worth showing: not a URL, a file name or a bare identifier.
-function goodTitle(title) {
+export function goodTitle(title) {
   const s = String(title || "").trim();
   return !!s && !isUrl(s) && !/\.pdf$/i.test(s) && !/^(?:doi:\s*)?10\.\d{4,9}\//i.test(s) && !/^arxiv:/i.test(s);
 }
 
-// Markdown links and bare identifiers in a reply's text (the chat renders
-// bare DOIs / "arXiv:" ids as links too, shared/lib/remarkPaperLinks.js),
-// with their labels. Links to anything but a paper are left out.
-function linkedPapers(text) {
-  const out = [];
-  const body = String(text || "").replace(/```[\s\S]*?```/g, " ");
-  for (const m of body.matchAll(/\[([^\]\n]{1,400})\]\((https?:\/\/[^)\s]+)\)/g)) {
-    const ids = paperIds(m[2]);
-    if (ids.doi || ids.arxiv) out.push({ ...ids, title: m[1].replace(/[*_`]/g, "").trim(), url: m[2] });
-  }
-  const bare = body.replace(/\[[^\]\n]*\]\([^)\s]*\)/g, " ").replace(/https?:\/\/\S+/g, " ");
-  for (const m of bare.matchAll(/(?<![\w/])(?:10\.\d{4,9}\/[-a-z0-9._;()/:+]+|arxiv:\s*(?:\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?)/gi)) {
-    const ids = paperIds(m[0]);
-    if (ids.doi || ids.arxiv) out.push({ ...ids, title: "", url: "" });
-  }
-  return out;
+// The paper a source names, for a handoff card's "Add to library".
+export function paperOf(source, extra = {}) {
+  const s = String(source || "").trim();
+  const ids = paperIds(s);
+  return { key: ids.arxiv ? `arxiv:${ids.arxiv}` : ids.doi ? `doi:${ids.doi}` : s, source: s, ...ids,
+           url: isUrl(s) ? s : "", title: "", pdf: false, pdfUrl: "", pages: 0, request: "", ...extra };
 }
 
-// The reply's papers, once each, in the order the reply met them: what its
-// tool calls read (`read`, with the PDF address the server read it from
-// when it was a PDF — `pdf`), what a publisher stopped (`blocked`, with the
-// handoff request whose PDF the user's browser may have sent), then what its
-// text links to. `request` names the handoff whose delivered PDF the save
-// stores first (POST /api/ai/handoffs/<id>/store).
-export function replyPapers(actions, text) {
-  const byKey = new Map();
-  const add = (paper) => {
-    const key = keyOf(paper);
-    if (!key) return;
-    const have = byKey.get(key);
-    if (!have) { byKey.set(key, { key, ...paper }); return; }
-    for (const [k, v] of Object.entries(paper)) {
-      if (k === "title") { if (!goodTitle(have.title) && goodTitle(v)) have.title = v; }
-      else if (v && !have[k]) have[k] = v;
-    }
-    // Read wins over blocked: the PDF came after all.
-    if (paper.read) have.blocked = false;
-  };
+// What a reply's fetch_paper calls got, in call order: a card per request a
+// wall opened ({card: handoff}), and a row per document read ({paper}) —
+// once each, however many windows of it the model read.
+export function replyFetches(actions) {
+  const out = [];
+  const seen = new Set();
   for (const a of actions || []) {
     if (a?.kind !== "fetch" || a.tool !== "fetch_paper") continue;
-    const source = String(a.args?.source || a.handoff?.source || "").trim();
-    const ids = paperIds(source);
     if (a.handoff?.id) {
-      add({ ...ids, source, title: "", url: isUrl(source) ? source : "", blocked: true, read: false,
-            pdf: false, pdfUrl: "", request: a.handoff.id, host: a.handoff.host || "" });
+      if (!seen.has(`card:${a.handoff.id}`)) out.push({ card: a.handoff });
+      seen.add(`card:${a.handoff.id}`);
       continue;
     }
     if (a.error || !a.url) continue;
-    const got = paperIds(a.url);
-    add({ doi: ids.doi || got.doi, arxiv: ids.arxiv || got.arxiv, source, title: a.title || "",
-          url: isUrl(source) ? source : "", read: true, pdf: !!a.pdf, pdfUrl: a.pdf ? a.url : "",
-          request: a.request || "" });
+    const source = String(a.args?.source || "").trim() || a.url;
+    const read = paperIds(a.url);
+    const title = goodTitle(a.title) ? a.title : "";
+    const paper = paperOf(source, { title, pdf: !!a.pdf, pdfUrl: a.pdf ? a.url : "", pages: a.pages || 0,
+                                   request: a.request || "" });
+    if (!paper.doi) paper.doi = read.doi;
+    if (!paper.arxiv) paper.arxiv = read.arxiv;
+    if (paper.arxiv || paper.doi) paper.key = paper.arxiv ? `arxiv:${paper.arxiv}` : `doi:${paper.doi}`;
+    if (seen.has(paper.key)) continue;
+    seen.add(paper.key);
+    out.push({ paper });
   }
-  for (const link of linkedPapers(text)) add({ ...link, source: link.arxiv ? `arXiv:${link.arxiv}` : `doi:${link.doi}` });
-  return [...byKey.values()].map((p) => ({ ...p, title: goodTitle(p.title) ? p.title : "" }));
+  return out;
 }
 
 // The web page a saved paper keeps as its source (properties.web_url): its

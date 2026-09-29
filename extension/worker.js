@@ -209,8 +209,8 @@ async function autoRefreshPublisher(tabId, url, { force = false } = {}) {
 
 // A chat card whose fetch a publisher stopped (a CAPTCHA, a sign-in, a
 // paywall) asks the worker to open that page (bridge.js "connector-tab":
-// openHandoff) — next to the Gamma tab, or out of sight in a minimized
-// window when the user chose "in the background" — or its "Open" goes
+// openHandoff) — next to the Gamma tab, switched to, or left in the
+// background when the user chose "in the background" — or its "Open" goes
 // through <server>/api/ai/handoffs/<id>/go on its way there (no Connector
 // answered yet, or the desktop app's system browser). Either tab — and any
 // tab it opens, like a "PDF" link with target=_blank — is bound to that
@@ -220,12 +220,11 @@ async function autoRefreshPublisher(tabId, url, { force = false } = {}) {
 // those fail on the page's PDF links, the tab itself opens the first, as a
 // click would (handoff.js nextToOpen), and the PDF it ends on is taken on its
 // next load. The first real PDF goes to the request (POST …/pdf); a tab the
-// user saw brings the Gamma tab that asked forward, one out of sight closes;
+// user saw brings the Gamma tab that asked forward, one in the background closes;
 // a connected publisher's cookies are refreshed from the session that just
 // worked. What the Connector is doing shows on the card (noteHandoff).
 const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener, app, opened, from, away, background, note}
-const QUEUE_KEY = "handoff:queue";   // out-of-sight opens waiting for a turn (handoff.js backgroundBusy)
-const WINDOW_KEY = "handoff:window"; // the minimized window they load in
+const QUEUE_KEY = "handoff:queue";   // background opens waiting for a turn (handoff.js backgroundBusy)
 const harvesting = new Set();     // request ids with a download in flight
 const again = new Set();          // tabs that loaded while their request's download was in flight
 
@@ -267,7 +266,7 @@ function patchHandoffTab(tabId, patch) {
 }
 
 // The request is settled (or the card let it go): its tabs are no longer
-// bound, and the ones the Connector opened out of sight close.
+// bound, and the background ones the Connector opened close.
 async function releaseHandoff(id) {
   const closing = await changeHandoffs((all, queue) => {
     const out = [];
@@ -284,19 +283,13 @@ async function releaseHandoff(id) {
   pumpQueue();
 }
 
-// A blank tab in the minimized window out-of-sight fetches load in, made
-// when there is none (inside changeHandoffs, so two never make two).
-async function fetchWindowTab() {
-  const winId = (await chrome.storage.session.get(WINDOW_KEY))[WINDOW_KEY];
-  if (winId != null) {
-    try {
-      await chrome.windows.get(winId);
-      return await chrome.tabs.create({ windowId: winId, url: "about:blank", active: false });
-    } catch {}
-  }
-  const win = await chrome.windows.create({ url: "about:blank", focused: false, state: "minimized" });
-  await chrome.storage.session.set({ [WINDOW_KEY]: win.id });
-  return win.tabs[0];
+// A blank background tab for `binding`: next to the Gamma tab that asked,
+// not switched to (the last focused window's, when that tab is gone).
+async function backgroundTab(binding) {
+  let gamma = null;
+  if (binding.opener != null) { try { gamma = await chrome.tabs.get(binding.opener); } catch {} }
+  return chrome.tabs.create({ url: "about:blank", active: false,
+    ...(gamma ? { windowId: gamma.windowId, index: gamma.index + 1, openerTabId: gamma.id } : {}) });
 }
 
 // A freshly bound tab: tell the card the Connector took the request, then
@@ -314,7 +307,7 @@ function pumpQueue() {
       const started = await changeHandoffs(async (all, queue) => {
         if (!queue.length || backgroundBusy(all)) return null;
         const next = queue.shift();
-        const tab = await fetchWindowTab();
+        const tab = await backgroundTab(next);
         all[tab.id] = { ...next, background: true, note: "" };
         return { tabId: tab.id, binding: all[tab.id] };
       });
@@ -329,7 +322,8 @@ function pumpQueue() {
 }
 
 // The card asked to open its request's page ("connector-tab" open): next to
-// the Gamma tab that asked, or out of sight (`background`). A page already
+// the Gamma tab that asked, switched to or left in the background
+// (`background`). A page already
 // open for the request is shown instead (or left where it is). "opened",
 // or "queued" when every out-of-sight turn is taken.
 async function openHandoff(req, sender, background) {
@@ -342,7 +336,7 @@ async function openHandoff(req, sender, background) {
     if (background) {
       if (waiting >= 0) return { status: "queued" };
       if (backgroundBusy(all)) { queue.push(binding); return { status: "queued" }; }
-      const tab = await fetchWindowTab();
+      const tab = await backgroundTab(binding);
       all[tab.id] = binding;
       return { status: "opened", tabId: tab.id };
     }
@@ -361,8 +355,9 @@ async function openHandoff(req, sender, background) {
   return got.status;
 }
 
-// The card asked to see its request's tab ("connector-tab" show): one out
-// of sight moves next to the Gamma tab that asked, and it comes forward.
+// The card asked to see its request's tab ("connector-tab" show): it comes
+// forward (next to the Gamma tab that asked, if that moved to another
+// window), and is the user's from then on: it stays open after delivery.
 async function showHandoff(id, sender) {
   const entry = Object.entries(await handoffTabs()).find(([, b]) => b.id === id);
   if (!entry) return false;
@@ -371,6 +366,7 @@ async function showHandoff(id, sender) {
   try { tab = await chrome.tabs.get(tabId); } catch { await patchHandoffTab(tabId, null); return false; }
   if (entry[1].background) {
     const gamma = sender && sender.tab;
+    // Moved only when the Gamma tab is in another window now.
     if (gamma && gamma.windowId !== tab.windowId) {
       try { await chrome.tabs.move(tabId, { windowId: gamma.windowId, index: gamma.index + 1 }); } catch {}
     }
@@ -382,8 +378,7 @@ async function showHandoff(id, sender) {
   try {
     tab = await chrome.tabs.get(tabId);
     await chrome.tabs.update(tabId, { active: true });
-    const win = await chrome.windows.get(tab.windowId);
-    await chrome.windows.update(tab.windowId, win.state === "minimized" ? { state: "normal", focused: true } : { focused: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
   } catch {}
   return true;
 }
@@ -426,7 +421,7 @@ async function focusGamma({ opener, app }) {
 // page yet), "check" (the page is a bot check or CAPTCHA), "signin" (the PDF
 // link leads to a sign-in), "opening" (the tab opens one), "refused" (no link
 // gave a PDF), "other" (the tab shows another paper), "closed" (the user
-// closed the tab) — and whether the tab is out of sight. The request's
+// closed the tab) — and whether the tab is in the background. The request's
 // bindings remember it: a tab that waits for the user (NEEDS_YOU) frees its
 // turn.
 async function noteHandoff(bound, note) {
@@ -471,7 +466,7 @@ async function harvestHandoff(tabId, attempt = 0) {
     if (!urls.length) {
       // Publisher pages render their PDF link after they loaded, and a check
       // may pass by itself (a real browser often passes one unasked, more
-      // slowly in a tab out of sight): look again.
+      // slowly in a background tab): look again.
       const check = checkPage({ url: tab.url, title: tab.title, check: candidate.check });
       if (attempt < (check ? 4 : 2)) setTimeout(() => harvestHandoff(tabId, attempt + 1).catch(() => {}), 3000 * (attempt + 1));
       else await noteHandoff(bound, check ? "check" : "looking");
@@ -493,7 +488,7 @@ async function harvestHandoff(tabId, attempt = 0) {
         return;
       }
       // The session that just worked refreshes a connected publisher's
-      // cookies — before a tab out of sight closes with the release.
+      // cookies — before a background tab closes with the release.
       const refresh = !tab.incognito && /^https:/i.test(url)
         ? autoRefreshPublisher(tabId, tab.url, { force: true }).catch(() => {}) : null;
       if (((await handoffTabs())[tabId] || bound).background) {
@@ -809,7 +804,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
       // A chat card asking (bridge.js) to open its request's page — next to
-      // it, or out of sight — to show that tab, or to let it go (Dismiss).
+      // it, or in the background — to show that tab, or to let it go (Dismiss).
       // Only a request of this Connector's account, so a page learns nothing
       // and opens nothing without one of its ids.
       case "connector-tab": {

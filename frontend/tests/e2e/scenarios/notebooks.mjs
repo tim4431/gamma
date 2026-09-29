@@ -144,5 +144,5 @@ export async function notebookScenarios({ server, browser, alice, step, until, a
     await page.getByRole("checkbox", { name: "Replay handwriting" }).uncheck();
     assertNoProblems(page);
   });
-  await ctx.close();
+  if (ctx) await ctx.close();
 }

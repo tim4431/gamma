@@ -336,14 +336,15 @@ The chat renders a card per request under the reply
   `fetchInBackground`, account-wide, off by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
-  Connector tries in a minimized window of its own, three requests at a
-  time, and closes the tab after delivery; the card reads "getting it in a
-  minimized window", or that the request waits for the papers before it.
+  Connector tries in a background tab next to the Gamma tab (never switched
+  to), three requests at a time, and closes the tab after delivery; the card
+  reads "getting it in a background tab", or that the request waits for the
+  papers before it.
   Nothing solves a CAPTCHA: what completes by itself is what the browser gets
   unasked — the user already signed in (or on the institution's network), or
   a check that passes a real browser on its own. When the page needs the user
   (a `NEEDS_YOU` note), **Show the tab** becomes the card's main button and
-  moves the tab next to Gamma.
+  brings that tab forward.
 - Before that, the card asks the Connector whether it can
   (`window.postMessage` → the extension's `bridge.js`, answered after the
   Connector checked the request with its own server) and says so under the
@@ -382,22 +383,25 @@ a request waiting, the chat sends "I got it in my browser — {source} is
 available now. Please continue." by itself. Otherwise the card offers
 **Continue with the PDF**; a reload never resends.
 
-Every reply that read or named papers ends with a **Save to library** pill
-(`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
-`fetch_paper` calls read (the action carries the document's `title`, `pdf`,
-and `request` when the user's browser delivered it), what a wall stopped
-(the handoff's request), and the DOI / arXiv links in its text, once each
-by identifier. Opening it asks the library which it holds already (`GET
-/api/library/lookup`) and the registry for titles the reply left out (`GET
-/api/library/preview`). The checked papers are saved one by one through
-`POST /api/clip`, the Connector's ingest (dedup, resolve and store the PDF,
-file the page, look its metadata up), into the folder the chat is about
-(the viewed folder, else the open paper's first) with Settings → Reading's
-open-access, stored-copy and metadata choices. A paper whose PDF came from the
+Every paper a reply fetched shows under it, among the cards, in call order
+(`chat/FetchHandoffCards.jsx`, rules tested in `chat/chatPapers.js`): a row
+for each document a `fetch_paper` call read, once however many windows of it
+the model read (`chat/FetchedPaper.jsx`; the action carries the document's
+`title`, `pdf`, `pages`, and `request` when the user's browser delivered it),
+and the card for each one a wall stopped. A row names the paper — the
+fetch's title, else the registry's (`GET /api/library/preview`), else its
+source — and what was read ("PDF, 21 pages", a web page, from your browser).
+Rows and cards whose PDF arrived carry a **+** (Add to library), after asking
+the library whether it holds the paper already (`GET /api/library/lookup`;
+then it reads "In library" and opens the page). **+** saves through `POST
+/api/clip`, the Connector's ingest (dedup, resolve and store the PDF, file
+the page, look its metadata up), into the folder the chat is about (the
+viewed folder, else the open paper's first) with Settings → Reading's
+open-access, stored-copy and metadata choices. A PDF that came from the
 user's browser is stored from the held copy first (`POST
 /api/ai/handoffs/<id>/store`); the rest the server fetches again, and one it
 cannot reach is saved as a page with its web source. Viewers and share
-links get no pill.
+links see the rows without **+**.
 
 Guest and share-link chats get no card. Their access failures still explain
 the Connector's **Publisher sessions**, **Connect this publisher** /

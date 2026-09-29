@@ -121,9 +121,9 @@ export function checkPage({ url = "", title = "", check = false } = {}) {
   return CHECK_HOST.test(host) || CHECK_TITLE.test(title || "");
 }
 
-// Out-of-sight fetches (the chat's "in the background" setting) load in a
-// minimized window of their own, a few at a time; the rest wait their turn.
-// A tab that waits for the user (these notes) does not hold a turn.
+// Background fetches (the chat's "in the background" setting) load in tabs
+// the Connector does not switch to, a few at a time; the rest wait their
+// turn. A tab that waits for the user (these notes) does not hold a turn.
 export const MAX_BACKGROUND = 3;
 export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "other"]);
 

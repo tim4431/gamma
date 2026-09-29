@@ -724,17 +724,16 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: in the background the Connector takes a blocked fetch unasked; a reply's papers save to the library", async () => {
+  await step("chat navigation: in the background the Connector takes a blocked fetch unasked; each fetched paper adds to the library", async () => {
     const HID = "e2eHandoffBackground1";
     const handoff = { id: HID, host: "www.worldscientific.com", wall: "captcha", source: "doi:10.1142/e2e.bg" };
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
       { id: "bg-q", role: "user", text: "Find papers on proximity junctions" },
       { id: "bg-a", role: "ai",
-        text: "I read [Proximity effect in superconductors](https://arxiv.org/abs/2301.01234); see also "
-          + "[A junction review](https://doi.org/10.1234/e2e.review). World Scientific asked for a bot check.",
+        text: "I read the arXiv paper. World Scientific asked for a bot check.",
         actions: [
           { kind: "fetch", tool: "fetch_paper", summary: "Fetched “2301.01234”", args: { source: "arXiv:2301.01234" },
-            result: "Fetched PDF", url: "https://arxiv.org/pdf/2301.01234", title: "", pdf: true },
+            result: "Fetched PDF", url: "https://arxiv.org/pdf/2301.01234", title: "", pdf: true, pages: 12 },
           { kind: "fetch", error: true, summary: "Needs your browser: www.worldscientific.com", tool: "fetch_paper",
             args: { source: handoff.source }, result: "error: blocked", handoff },
         ] },
@@ -744,9 +743,13 @@ export async function chatNavigationScenarios(env) {
     let request = { ...handoff, url: "https://www.worldscientific.com/doi/10.1142/e2e.bg", pdf_url: "", detail: "",
       status: "waiting", watched: false, note: "", background: false, pages: 0, from_url: "" };
     const clips = [];
+    let stores = 0;
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    // Once the PDF arrives the chat continues by itself.
+    await ctx.route("**/api/ai/chat", (route) => route.fulfill({ contentType: "application/x-ndjson",
+      body: '{"delta":"Reading the delivered PDF now."}\n' }));
     await ctx.addInitScript(() => {
       window.connectorAsked = [];
       window.addEventListener("message", (e) => {
@@ -762,7 +765,11 @@ export async function chatNavigationScenarios(env) {
       });
     });
     await ctx.route(`**/api/ai/handoffs/${HID}**`, (route) => {
-      if (new URL(route.request().url()).pathname.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      if (new URL(route.request().url()).pathname.endsWith("/store")) {
+        stores += 1;
+        return route.fulfill({ json: { doc_id: "held-doc", source_url: "/api/uploads/held-doc.pdf", already_existed: false,
+          url: "https://www.worldscientific.com/doi/pdf/10.1142/e2e.bg" } });
+      }
       return route.fulfill({ json: request });
     });
     // The server's side of saving is POST /api/clip (tests/test_clip.py): here it only records.
@@ -772,7 +779,12 @@ export async function chatNavigationScenarios(env) {
       return route.fulfill({ json: { block_id: `saved-${clips.length}`, doc_id: `doc-${clips.length}`,
         title: body.title, existed: false, folder: body.folder, labels: [], open_url: "/" } });
     });
-    await ctx.route("**/api/library/preview*", (route) => route.fulfill({ status: 404, json: { detail: "no registry record" } }));
+    // The registry names the papers the fetches knew only by their ids.
+    await ctx.route("**/api/library/preview*", (route) => {
+      const arxiv = new URL(route.request().url()).searchParams.get("arxiv_id");
+      return route.fulfill({ json: { title: arxiv ? "Proximity effect in superconductors" : "A junction review",
+        authors: [], year: "2023", venue: "", doi: "", arxiv_id: arxiv || "", source: arxiv ? "arxiv" : "crossref" } });
+    });
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
       const card = page.locator(".chatHandoff");
@@ -781,7 +793,7 @@ export async function chatNavigationScenarios(env) {
         { what: "the card hands the request to the Connector without a click" });
       assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
       request = { ...request, watched: true, background: true };
-      await card.getByText("Gamma Connector is getting it in a minimized window").waitFor({ timeout: 8000 });
+      await card.getByText("Gamma Connector is getting it in a background tab").waitFor({ timeout: 8000 });
       // The page wants the user: the card says so and offers the tab.
       request = { ...request, note: "check" };
       await card.getByText("The site is showing a bot check or CAPTCHA").waitFor({ timeout: 8000 });
@@ -789,21 +801,25 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
         { what: "the card asks to show the tab" });
 
-      // The reply's papers: the one it read, the blocked one, the one it links.
-      const pill = page.getByRole("button", { name: /3 papers in this reply · Save to library/ });
-      await pill.click();
-      const list = page.getByRole("group", { name: "Papers in this reply" });
-      await list.getByText("Proximity effect in superconductors").waitFor();
-      await list.getByRole("checkbox", { name: "Proximity effect in superconductors" }).check();
-      await list.getByRole("checkbox", { name: "A junction review" }).check();
-      await list.getByRole("button", { name: "Save 2 papers to library" }).click();
-      await until(async () => (await list.getByText("Saved", { exact: true }).count()) === 2, { what: "both rows say Saved" });
-      assertEq(JSON.stringify(clips.map((c) => [c.arxiv_id, c.doi, c.pdf_url, c.source_url, c.title])), JSON.stringify([
-        ["2301.01234", "", "https://arxiv.org/pdf/2301.01234", "https://arxiv.org/abs/2301.01234", "Proximity effect in superconductors"],
-        ["", "10.1234/e2e.review", "", "https://doi.org/10.1234/e2e.review", "A junction review"],
+      // The paper it fetched by itself is a row of its own, named by the
+      // registry, with its + button.
+      const row = page.locator(".chatPaper", { hasText: "Proximity effect in superconductors" });
+      await row.getByText("arXiv:2301.01234 · PDF, 12 pages").waitFor();
+      await row.getByRole("button", { name: "Add “Proximity effect in superconductors” to your library" }).click();
+      await row.getByRole("button", { name: "In library" }).waitFor();
+      // The blocked one's card gets the + once its PDF arrived: the copy the
+      // server holds is stored first, then saved.
+      request = { ...request, status: "done", pages: 3 };
+      await card.getByText("The PDF arrived").waitFor({ timeout: 8000 });
+      await card.getByRole("button", { name: "Add “A junction review” to your library" }).click();
+      await card.getByRole("button", { name: "In library" }).waitFor();
+      assertEq(stores, 1, "the delivered PDF was stored");
+      assertEq(JSON.stringify(clips.map((c) => [c.arxiv_id, c.doi, c.pdf_url, c.source_url, c.title, c.doc_id || ""])), JSON.stringify([
+        ["2301.01234", "", "https://arxiv.org/pdf/2301.01234", "https://arxiv.org/abs/2301.01234", "Proximity effect in superconductors", ""],
+        ["", "10.1142/e2e.bg", "", "https://doi.org/10.1142/e2e.bg", "A junction review", "held-doc"],
       ]));
-      assert(clips.every((c) => c.folder === "" && c.save_copy === true && !c.doc_id), "into the library root, stored");
-      assertNoProblems(page, [/api\/library\/(lookup|preview)/, /status of 404/]);
+      assert(clips.every((c) => c.folder === "" && c.save_copy === true), "into the library root, stored");
+      assertNoProblems(page);
     } finally {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
