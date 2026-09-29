@@ -9,7 +9,6 @@ packages:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    TARGETED_DEVICE_FAMILY: '2'
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: '0.2.0'
     CURRENT_PROJECT_VERSION: '1'
@@ -20,6 +19,8 @@ targets:
     sources: [GammaIPad]
     settings:
       base:
+        # Target settings override XcodeGen's default iPhone + iPad preset.
+        TARGETED_DEVICE_FAMILY: '2'
         PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Gamma
@@ -43,6 +44,7 @@ targets:
       - target: GammaIPad
     settings:
       base:
+        TARGETED_DEVICE_FAMILY: '2'
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad.tests
   GammaIPadUITests:
@@ -53,6 +55,7 @@ targets:
       - target: GammaIPad
     settings:
       base:
+        TARGETED_DEVICE_FAMILY: '2'
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad.uitests
         TEST_TARGET_NAME: GammaIPad

@@ -115,6 +115,9 @@ successful commit. Changes to the frontend dependency manifests and source
 app icon also trigger the workflow. Build logs, XCTest results and screenshots are
 retained as artifacts. An unsigned `.app` still requires Apple signing before
 installation; the workflow does not publish to TestFlight or the App Store.
+The device archive is checked for its iPad-only device family and bundled ink
+and icon resources. The device family is set on each target so XcodeGen's
+target defaults cannot override it with iPhone support.
 
 Before distributing, exercise real Pencil latency, pressure/tilt, palm
 rejection, rotated/cropped PDFs, Split View, long recordings, interrupted

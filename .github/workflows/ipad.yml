@@ -74,6 +74,17 @@ jobs:
           set -o pipefail
           xcodebuild -project GammaIPad.xcodeproj -scheme GammaIPad -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO build | tee build-device.log
+          python3 - <<'PY'
+          import pathlib, plistlib
+          app = pathlib.Path('build/device/Build/Products/Release-iphoneos/GammaIPad.app')
+          with (app / 'Info.plist').open('rb') as f:
+              info = plistlib.load(f)
+          assert info['UIDeviceFamily'] == [2], f"Expected iPad-only app, got {info['UIDeviceFamily']}"
+          assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Expected a device build'
+          for resource in [info['CFBundleExecutable'], 'gamma-ink.js', 'Assets.car']:
+              assert (app / resource).is_file(), f'Missing app resource: {resource}'
+          print('Verified iPad device bundle and shared ink resources')
+          PY
           ditto -c -k --sequesterRsrc --keepParent build/device/Build/Products/Release-iphoneos/GammaIPad.app build/GammaIPad-unsigned-device.zip
       - name: Export screenshots
         if: always()
