@@ -11,7 +11,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation") | API keys, ChatGPT OAuth, Google / Youdao translation keys |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys use the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"). Web-search choices and encrypted dedicated keys use `web-search-settings` (`/api/ai/web-search`, [ai_tools.md](ai_tools.md#general-web-search-configuration)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, preferred search service |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest |
 
@@ -326,6 +326,18 @@ AI:
   (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
+  **Web search** is available even before an AI provider is added
+  (`WebSearchSettings.jsx`). Its Search service row shows the effective
+  service, with **Manage** and **Test search**. Manage opens a `SubDialog`:
+  preferred service (Automatic / OpenAI / Brave Search / SearXNG / Off),
+  eligible OpenAI connection, search model, dedicated keys and SearXNG address.
+  Automatic shows all service fields. Blank key inputs preserve saved keys;
+  removal checkboxes take effect on Save. The dialog protects unsaved edits,
+  and new keys stay in React state until saved. Test search uses the saved
+  settings and is disabled while editing. It makes a provider request and can
+  incur provider charges. Guests can view the section but cannot manage or
+  test personal search connections. Selection rules and limits are in
+  [Agent tools](ai_tools.md#general-web-search-configuration).
 - **Chat**: **Chat** (the default reasoning effort — every level, since
   each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
   and the snapshot-clearing switch), then **Tools**: the master switch and, per chat

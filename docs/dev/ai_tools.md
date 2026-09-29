@@ -57,7 +57,7 @@ non-writable workspace scope.
 | `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records, available abstracts, and the `doi:` / `arXiv:` string `fetch_paper` takes |
-| `search_web` | Search papers online | folder + page | General web search through a configured Brave or SearXNG provider; returns titles, URLs and snippets for discovering papers, lab publication pages and repository copies |
+| `search_web` | Search papers online | folder + page | General web search through the account's configured OpenAI, Brave or SearXNG service; returns titles, URLs and snippets for discovering papers, lab publication pages and repository copies |
 | `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
@@ -215,7 +215,7 @@ Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
 These read-only tools reach outside the library (`gamma/ai_web.py` and
 `gamma/web_search.py`; executors in `ai_tools.py`). The `web_search` permission
 arms both search tools; `web_read` independently arms `fetch_paper`.
-General web search also requires the server configuration below. For a cited
+General web search also requires the account configuration below. For a cited
 work, the agent finds the reference with `search_library` / `read_page`,
 identifies it with `search_papers`, and reads it with `fetch_paper`.
 
@@ -252,34 +252,73 @@ lead, not a retrieved paper or an instruction to the agent.
 
 #### General web search configuration
 
-Set these in the **backend server's environment**. `gamma/web_search.py`
-reads them on each call:
+Settings → AI → Connections → **Web search** manages the preferred service,
+OpenAI connection/model or dedicated key, Brave key, and SearXNG URL.
+**Automatic** chooses an available OpenAI credential, then Brave, then SearXNG.
+Choosing a service explicitly keeps that choice: a missing credential or
+provider error does not switch services. **Off** disables general web search.
 
-| Variable | Behavior |
-|---|---|
-| `GAMMA_WEB_SEARCH_PROVIDER` | Optional `brave` or `searxng`. If unset, infer Brave when its API key is present, otherwise SearXNG when its URL is present. |
-| `GAMMA_BRAVE_SEARCH_API_KEY` | Required for Brave. Sent as an `X-Subscription-Token` header to the fixed Brave search endpoint; omitted on redirects and never put in the URL. |
-| `GAMMA_SEARXNG_URL` | Required for SearXNG: a public HTTP(S) instance URL, optionally ending in `/search`, with no credentials, query string or fragment. Base paths are supported. |
+OpenAI can use the account's own official OpenAI API connection or a dedicated
+search key. A selected connection takes precedence over the dedicated key;
+with automatic connection selection, the dedicated key precedes the first
+eligible connection. ChatGPT OAuth, shared entries and custom-compatible
+endpoints are excluded. This search connection is independent of the chat
+model, so chats using other providers can call the same Gamma tool.
+
+**Test search** uses saved settings and makes a provider request, which may
+incur charges. Draft editing, key hints and removal controls are described in
+[Settings](settings.md#the-settings-dialog).
+
+`gamma/web_search_settings.py` manages the reserved account pref
+`web-search-settings`, encrypting dedicated keys with the data directory's
+Fernet key. Generic preference endpoints cannot read or write it.
+Configuration comes from the authenticated caller, never model arguments.
+Guests and share-link chats cannot use these personal credentials.
+When configuration is unavailable or Off, `search_web` is omitted from the
+chat's tools; keyless `search_papers` remains available under the search
+permission.
+
+Legacy server variables apply only before the account has saved search
+settings and when no own OpenAI credential is available:
+`GAMMA_WEB_SEARCH_PROVIDER` selects `brave` or `searxng`,
+`GAMMA_BRAVE_SEARCH_API_KEY` supplies the Brave key, and `GAMMA_SEARXNG_URL`
+supplies the SearXNG URL. Without an explicit legacy provider, Brave takes
+precedence. Saving settings, including Off or empty credentials, suppresses
+this fallback.
+
+OpenAI calls the fixed `https://api.openai.com/v1/responses` endpoint with the
+selected search model (default `gpt-4.1-mini`) and native `web_search` tool.
+Search is required; the response and its search calls must complete.
+Records use URLs from
+`url_citation` annotations and `web_search_call.action.sources`, with cited
+sources first. Snippets are labelled model-generated search summaries; they
+are not quoted paper text. Results and answers using them retain clickable
+source links. See the official
+[OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
 
 Brave requests `/res/v1/web/search?q=…&count=…` and reads
 `web.results[].description` as the snippet. SearXNG requests
-`/search?format=json&q=…` and reads `results[].content`. The SearXNG instance
+`/search?format=json&q=…` and reads `results[].content`. The SearXNG URL must be
+public HTTP(S), without credentials, query string or fragment. Base paths and
+an optional `/search` suffix are supported. The SearXNG instance
 must enable JSON output; many public instances disable it and return 403.
 The normal SSRF guard applies, so a localhost/private-network SearXNG instance
 is not a supported endpoint. See the official [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
 and [SearXNG Search API](https://docs.searxng.org/dev/search_api.html) documentation.
 
-Each search uses guarded requests with a 20-second timeout and a 2 MB response
-cap, and requires a JSON response. `WebSearchError` distinguishes missing
-configuration, bad configuration/query, access denial, rate limiting,
+Requests use the SSRF guard, a 2 MB response cap and JSON responses. OpenAI
+has a 60-second request timeout; Brave and SearXNG have 20 seconds. API keys
+are headers omitted on redirects, never URL parameters. `WebSearchError`
+distinguishes missing configuration, bad configuration/query, access denial, rate limiting,
 unavailability and invalid responses from a successful empty result. Errors
 do not include raw provider payloads or credentials. With no provider
-configured, the model is told to continue with `search_papers` and report the
-limitation instead of repeatedly retrying `search_web`.
+configured, scholarly discovery remains available through `search_papers`.
 
-The provider adapters have offline transport fixtures. Live Brave and SearXNG
-search remain unverified; check subscription, JSON access and upstream search
-availability in the deployment.
+Provider adapters have offline transport fixtures. Live searches remain
+unverified; use Test search to check model access, subscription, JSON output
+and upstream search availability in the deployment. OpenAI search tokens are
+recorded separately in [account usage](ai.md#token-usage); provider tool charges
+are not estimated.
 
 #### Reading a discovered document
 

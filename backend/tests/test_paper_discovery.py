@@ -168,19 +168,21 @@ def test_delivered_document_must_satisfy_current_policy(org, monkeypatch):
 
 def test_search_web_tool_results_permissions_and_unconfigured_error(org, monkeypatch):
     calls = []
-    def search(query, limit):
+    scope = {**folder(""), "search_user": org[1]["user"]}
+    def search(query, limit, *, user):
+        assert user == org[1]["user"]
         calls.append(query)
         return [{"title": "A [paper]", "url": "https://lab.example.org/a(b).pdf", "snippet": "Citation", "provider": "brave"}]
     monkeypatch.setattr(web_search, "search_web", search)
-    text, action = ai_tools.run_agent_tool(org[1]["ws"], folder(""), "search_web", {"query": "cooling atoms"})
+    text, action = ai_tools.run_agent_tool(org[1]["ws"], scope, "search_web", {"query": "cooling atoms"})
     assert "untrusted search snippets" in text and "a%28b%29.pdf" in text
     assert action["kind"] == "websearch" and len(calls) == 1
     allowed = ai_tools.agent_tools("folder", {"web_search": False})
     assert not {"search_web", "search_papers"} & {s["name"] for s in allowed}
     _, action = ai_tools.run_agent_tool(org[1]["ws"], folder(""), "search_web", {"query": "x"}, allowed_tools=[s["name"] for s in allowed])
     assert action["error"] and len(calls) == 1
-    def unavailable(*args):
+    def unavailable(*args, **kwargs):
         raise web_search.WebSearchError("General web search is not configured.", code="not_configured")
     monkeypatch.setattr(web_search, "search_web", unavailable)
-    text, action = ai_tools.run_agent_tool(org[1]["ws"], folder(""), "search_web", {"query": "cooling"})
+    text, action = ai_tools.run_agent_tool(org[1]["ws"], scope, "search_web", {"query": "cooling"})
     assert action["error"] and "not configured" in text and "0 results" not in text

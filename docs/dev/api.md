@@ -182,8 +182,9 @@ public workspaces the account can merely open.
 
 The generic preference endpoints scope `profile` and `ai-provider` to the
 account without requiring workspace access. Other supported preference keys
-require access to the named workspace. `ai-settings` remains reserved and is
-never returned by the generic endpoint.
+require access to the named workspace. Credential prefs, including
+`ai-settings` and `web-search-settings`, remain reserved and are never returned
+by the generic endpoint.
 
 ### Blocks (`blocks.py`) — the core data model
 | Method | Path | Purpose |
@@ -345,7 +346,11 @@ the request's workspace — the extension names none, so its personal one.
 | POST | `/metadata/cite` | BibTeX → PPT-style citation via AI (regenerate / fallback; the fetch already produces one) |
 | GET | `/metadata/status` | library-wide health table (feeds Settings → Maintenance): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records) |
 
-### AI (`ai.py`) — all config is GUI entries (each account's own plus the server's shared ones), no env API keys
+### AI (`ai.py`, `web_search.py`)
+
+Chat-model connections are GUI entries owned by the account or shared by the
+server. Web-search connections have separate account settings; see
+[provider selection and legacy configuration](ai_tools.md#general-web-search-configuration).
 
 Chat tool `permissions` accept `allow` / `ask` / `deny` and legacy booleans.
 Missing reads allow; changes and publisher sign-ins ask. An ask call pauses
@@ -363,6 +368,9 @@ See [the approval lifecycle](ai.md#approving-a-proposed-action).
 | POST | `/ai/approvals/{id}` | answer a live tool proposal with `{decision: "allow_once" / "allow_always" / "deny"}` → `{permission, decision}`; requires the originating account's session and workspace, rejects integration tokens, unknown/closed IDs (404), duplicate/expired decisions (409), and invalid decisions (422). A grant cannot exceed the caller's workspace role or the original tool scope |
 | GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself, and `shared`: it comes from a server entry, `server:<id>:<model>`) + default prompts (feeds the model chip and prompt editor) + `transcribe` (some connection takes dictation: the chat's mic shows) + `efforts` (the reasoning efforts offered for a model whose own levels are unknown) + `allowance` (`{limit, used, exhausted}` for the shared entries, `limit` 0 = unlimited; null when none applies — [guests.md](guests.md)) |
 | GET | `/ai/settings` | masked provider list (key hints only, each with its display `label`), then the server's shared entries the account may use as read-only rows (`shared: true`, key hint for admins only), plus the `protocols` and named `services` (e.g. DeepSeek) the add form offers, each with the key field's `key_placeholder` and `key_url` ("" for a sign-in protocol) |
+| GET | `/ai/web-search` | account search settings: `provider`, `openai_model`, `openai_connection`, `searxng_url`, masked `openai_key_hint` / `brave_key_hint`, eligible own OpenAI `connections`, `can_edit`, `configured`, `effective_provider`, and optional `configuration_error`. No API key is returned |
+| PUT | `/ai/web-search` | partial update: `provider` (`auto`, `openai`, `brave`, `searxng`, `off`), `openai_model`, `openai_connection`, `searxng_url`, and write-only `openai_api_key` / `brave_api_key`. Blank keys preserve saved values; `clear_openai_api_key` / `clear_brave_api_key` explicitly remove them. Returns the masked settings |
+| POST | `/ai/web-search/test` | fixed sample search using saved settings; no draft credentials or document content. Returns `{ok, provider, count}` or `{ok: false, provider, error, code}`. A successful empty result has `count: 0` |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage the account's own provider entries (a shared `server:` id is a 404 here) |
 | POST | `/ai/providers/{id}/test` | live probe of one credential (model: the entry's `test_model`, else the request's `model` — the client sends its metadata model — else the first model); failures carry an `auth` flag for expired/rejected credentials and the failure's `kind` (as on `/ai/chat`). Admins may name a shared entry (`server:<id>`) |
 | POST | `/ai/providers/{id}/usage` | ChatGPT subscription allowance windows; explicitly unavailable for generic API-key providers; an expired sign-in returns `{available: false, auth: true}` in-body |
@@ -385,6 +393,12 @@ See [the approval lifecycle](ai.md#approving-a-proposed-action).
 | POST | `/ai/handoffs/{id}/store` | writable workspace: the delivered PDF (while held, `held: true`) into the workspace's uploads, content-hash deduped like `POST /uploads` → `{doc_id, source_url, already_existed, url}` (`url`: where the browser got it), for `POST /clip {doc_id}`; 404 when nothing is held |
 | DELETE | `/ai/handoffs/{id}` | dismiss the request |
 | GET | `/ai/handoffs/{id}/go` | no auth: the HTML page the card's Open leads to when it cannot hand the tab to Gamma Connector (desktop app, no answer yet) — for the request's owner it goes straight on to `url`, anyone else gets a "Continue to host?" link; 404 page when expired |
+
+Web-search settings endpoints require an account session; integration and
+share tokens cannot manage credentials. Guests may read masked settings but
+cannot save or test them. Saving even an empty configuration disables legacy
+environment fallback for that account. See
+[Agent tools](ai_tools.md#general-web-search-configuration) for selection rules.
 
 ### Chats (`chats.py`, prefix `/api/chats`)
 
@@ -427,7 +441,7 @@ token reads chats and history, and gets 403 on each write below.
 ### Prefs (`prefs.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `pinned-folders`, `read-pos` are stored per workspace (the request's), `profile` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); reading `profile` first syncs it with Gamma Cloud when the last sync is over a minute old, and its answer carries `cloud_choice` (a first sync waits for the person's choice); values over 64 KB get 413; refuses the reserved `ai-settings`, `translate-engines` and `profile-base` keys |
+| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `pinned-folders`, `read-pos` are stored per workspace (the request's), `profile` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); reading `profile` first syncs it with Gamma Cloud when the last sync is over a minute old, and its answer carries `cloud_choice` (a first sync waits for the person's choice); values over 64 KB get 413; refuses the reserved `ai-settings`, `translate-engines`, `web-search-settings` and `profile-base` keys |
 | PATCH | `/prefs/profile` | `{set: {name: value}}`: sets those entries of the profile and keeps every other one as stored (`db.patch_profile`) — how the web app saves, so a tab's stale copy of an entry it did not touch never undoes one synced from elsewhere; answers `{key, value, updated_at}` with the whole profile; 413 over 64 KB |
 | GET | `/page-snaps` | all recents-card cover thumbnails `{snaps: {pageId: {img, at}}}`; `?after=<iso>` returns only newer ones (the focus-pull delta) |
 | PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side); the covers are the workspace's, so workspace editors only (a viewer's stay in its browser) |

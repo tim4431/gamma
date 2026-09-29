@@ -16,7 +16,7 @@ const PANE_FILES = {
   reading: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
-  ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
+  ai: ["SettingsDialog.jsx", "SettingsAi.jsx", "WebSearchSettings.jsx"],
   assistant: ["SettingsDialog.jsx", "AssistantTools.jsx"],
   "ai-advanced": ["SettingsDialog.jsx"],
   prompts: ["SettingsDialog.jsx"],
@@ -70,4 +70,7 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   assert.equal(searchSettings("enter key", all)[0].label, "Enter makes");
   assert.equal(searchSettings("delete", all)[0].target, "Personal", "a Manage-page setting jumps to the list it sits under");
   assert.ok(searchSettings("microsoft", all).some((r) => r.label === "Translation services"), "the hint is searched");
+  for (const query of ["brave", "searxng", "search service", "preferred openai"]) {
+    assert.ok(searchSettings(query, all).some((r) => r.pane === "ai" && r.target === "Web search"), query);
+  }
 });

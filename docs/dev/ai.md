@@ -11,7 +11,7 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 
 ## Provider and models
 
-There are NO env API keys; providers are GUI entries: each account's own
+Chat-model credentials are GUI entries: each account's own
 (Settings → AI › Connections), plus the server's shared ones an admin adds
 (below). An account's entries are stored under the reserved account-wide
 `ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
@@ -107,6 +107,15 @@ protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
+
+### Web search connections
+
+`search_web` runs independently of the chat model. OpenAI uses a separate
+Responses request with native web search, the query, fixed discovery
+instructions and `store: false`. Brave and SearXNG return search records
+directly. Settings → AI → Connections manages the service and credentials.
+See [search configuration](ai_tools.md#general-web-search-configuration) for
+provider selection, eligible personal keys, testing and legacy configuration.
 
 ### Protocol adapters
 
@@ -219,7 +228,9 @@ its slot when it is collected, and a failed connect at once. Both refusals
 derive from `CallRefused`, so every caller above treats them alike
 (`failure_kind` calls this one `rate`). The streamed translation checks both
 before its stream starts (`check_call_slot`). Dictation and the model
-listings bypass `open_ai` and are not counted. The pool itself is raised
+listings bypass `open_ai` and are not counted. OpenAI web search also bypasses
+this concurrency cap through `guarded_urlopen`. It accepts personal keys only,
+so the shared-provider allowance does not apply. The pool itself is raised
 from AnyIO's 40 to `app.THREAD_TOKENS` (100) at startup.
 
 ### The chatgpt protocol (OAuth)
@@ -736,8 +747,9 @@ One permission per capability: List pages (`list_pages` and the folder tree
 `list_folders`), Read pages (`read_page` and the page and folder chats
 `read_chats`), Read note blocks, View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure), Search library (`search_library` — notes and PDF text; the stored key is
-still `search`), Search papers online (`web_search` → `search_papers`), Fetch
-documents (`web_read` → `fetch_paper`; both web tools are read-only and
+still `search`), Search papers online (`web_search` → `search_papers` and
+configured `search_web`), Fetch documents (`web_read` → `fetch_paper`; the web
+tools are read-only and
 described in [ai_tools.md](ai_tools.md)), Rename pages, Move pages, and Edit
 note blocks (one permission covering `edit_block`/`create_block`/`move_block`
 together). Reading capabilities include the web tools and page viewer
@@ -1126,9 +1138,13 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the
   call sites bind (`rt["user"]` names the account). Kinds: `chat` (every
   chat turn, agent rounds included), `translate` (each batch), `metadata`
-  (AI extraction), `cite` (the slide citation), `test` (the Test button and
-  the login test). Dictation has no token report. Rows older than
-  `KEEP_DAYS` (400) go on the next write. Recording never raises.
+  (AI extraction), `cite` (the slide citation), `test` (the AI provider Test
+  button and login test), and `web_search` (OpenAI discovery, including
+  Test search). Search uses provider id `web-search:openai` and its selected
+  model. Its tokens appear in account usage, separately from the main chat
+  reply's token footer. Search-tool charges are not estimated. Dictation has
+  no token report. Rows older than `KEEP_DAYS` (400) go on the next write.
+  Recording never raises.
 - **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30

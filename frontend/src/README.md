@@ -16,7 +16,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `library/` | Library cards and browsing controls (`FileBrowser.jsx`), a new library's "Start your library" panel (`LibraryEmpty.jsx`), the Ctrl+P page palette and Ctrl+Shift+P command palette (`QuickOpen.jsx`), the Recently deleted dialog (`RecentlyDeleted.jsx`), folder/page rules, title scoring, and `library.css` |
 | `pdf/` | `PdfViewer.jsx`, document loading, citations, translation, and scroll alignment |
 | `search/` | Workspace search (`SearchPanel.jsx`) and its pure result text: notes as one plain line, the query's matches mapped back through the normalized text (`snippets.js`) |
-| `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), the profile sync reading (`syncState.js`), navigation, integration setup, and `settings.css` |
+| `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), account search service/key editor (`WebSearchSettings.jsx` in Connections), the profile sync reading (`syncState.js`), navigation, integration setup, and `settings.css` |
 | `sharing/` | The Share popover (`SharePopover.jsx`, a page or a folder as its target): link, access, invited people, stop sharing; the share view's access pill (`ShareAccess.jsx`) |
 | `support/` | Report a problem: the dialog (`ReportProblem.jsx`) and the pure report builder it and the tests share (`problemReport.js`) |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |

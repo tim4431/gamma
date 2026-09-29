@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from .db import connect_users_db, page_now
 from .logbuf import log
 
-KINDS = ("chat", "translate", "metadata", "cite", "test")
+KINDS = ("chat", "translate", "metadata", "cite", "test", "web_search")
 # The provider ids of the server's shared entries (ai_settings.SERVER_ID_PREFIX
 # is this constant): their rows are what the shared allowance meters.
 SHARED_PREFIX = "server:"
