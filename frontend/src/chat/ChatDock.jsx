@@ -8,7 +8,9 @@ import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } 
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
-import FetchHandoffCards from "./FetchHandoffCards";
+import { FetchStep, PinnedFetches, ReplyFetches } from "./FetchHandoffCards";
+import { FetchingPaper } from "./FetchedPaper";
+import { replyFetches } from "./chatPapers";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -137,11 +139,12 @@ function ChatErrorCard({ message, compact, actions }) {
 }
 
 // The agent's work in a reply (chat/agentSteps.js): one pill summing up its
-// steps, which expands to every call's chip (arguments and output), and
-// under it the changes — renamed or filed pages, edited or added notes —
-// each old → new with a link to what changed. While the reply streams, the
-// pill names the step running now.
-function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
+// steps, which expands to every call's chip (arguments and output) — a paper
+// fetch's as its card — and under it the changes — renamed or filed pages,
+// edited or added notes — each old → new with a link to what changed. While
+// the reply streams, the pill names the step running now. `pinned` shows
+// under the pill whether or not the steps are open (PinnedFetches).
+function AgentSteps({ actions, running, open, onToggle, titleOf, pinned = null, children }) {
   const { failed } = splitActions(actions);
   const live = !!running;
   return (
@@ -153,6 +156,7 @@ function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
       </button>
+      {pinned}
       {open ? children : null}
     </div>
   );
@@ -262,6 +266,17 @@ const toolCallText = (a) => {
   const head = `${a.tool || a.kind}(${args})`;
   return [head, a.result].filter(Boolean).join("\n\n");
 };
+
+// The fetch_paper steps a reply shows as cards, by action index
+// (chatPapers.replyFetches); null for none. A finished reply's actions never
+// change, so each list is worked out once.
+const fetchCards = new WeakMap();
+function fetchesAt(actions) {
+  if (!actions?.length) return null;
+  if (!fetchCards.has(actions)) fetchCards.set(actions, new Map(replyFetches(actions).map((item) => [item.index, item])));
+  const found = fetchCards.get(actions);
+  return found.size ? found : null;
+}
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
 // attached block or selected note text. Two lines: what it is, in words
@@ -1607,6 +1622,8 @@ export default function ChatDock({
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
+            const fetches = isUser ? null : fetchesAt(m.actions);
+            const stepsOpen = openActions.has(`${i}:steps`);
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
@@ -1661,9 +1678,15 @@ export default function ChatDock({
                         trimmed={m.trimmed} truncated={m.truncated} />
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
+                      // A paper fetch shows at its step as a card; one still
+                      // waiting for the user stays in view under the folded pill.
+                      <ReplyFetches actions={m.actions} isLast={i === chatMessages.length - 1}
+                        busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
+                        autoOpen={fetchInBackground} save={paperSaving} onContinue={(text) => sendChat(text)}>
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
-                        open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
-                        titleOf={(id) => citeTitles.titleOf(id)?.title || ""}>
+                        open={stepsOpen} onToggle={() => toggleAction(`${i}:steps`)}
+                        titleOf={(id) => citeTitles.titleOf(id)?.title || ""}
+                        pinned={fetches ? <PinnedFetches open={stepsOpen} /> : null}>
                       <div className="chatToolActions">
                         {(m.actions || []).map((a, j) => {
                           const Icon = ACTION_ICONS[a.kind] || FolderIcon;
@@ -1672,6 +1695,11 @@ export default function ChatDock({
                           const hasDetail = !!(a.tool || a.result);
                           const key = `${i}:${j}`;
                           const open = openActions.has(key);
+                          const fetched = fetches?.get(j);
+                          if (fetched) {
+                            return <FetchStep key={j} item={fetched}
+                              detail={hasDetail ? { open, onToggle: () => toggleAction(key), text: toolCallText(a) } : null} />;
+                          }
                           return (
                             <div key={j} className={`chatToolAction${a.error ? " err" : ""}`}>
                               {hasDetail ? (
@@ -1692,8 +1720,12 @@ export default function ChatDock({
                             </div>
                           );
                         })}
+                        {isResponding && m.step?.tool === "fetch_paper" ? (
+                          <div className="chatToolAction chatFetchStep"><FetchingPaper source={m.step.args?.source || ""} /></div>
+                        ) : null}
                       </div>
                       </AgentSteps>
+                      </ReplyFetches>
                     ) : null}
                     {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
@@ -1702,11 +1734,6 @@ export default function ChatDock({
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
-                    {!isUser && m.actions?.some((a) => a.kind === "fetch") ? (
-                      <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
-                        busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
-                        autoOpen={fetchInBackground} save={paperSaving} onContinue={(text) => sendChat(text)} />
-                    ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}

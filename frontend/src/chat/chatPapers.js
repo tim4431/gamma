@@ -1,6 +1,7 @@
-// The papers a reply fetched, each shown under it (FetchHandoffCards.jsx):
-// a row for a document its fetch_paper read, the card for one a publisher
-// stopped — both with an "Add to library" button (FetchedPaper.jsx). Adding
+// The papers a reply fetched, each shown at its step (FetchHandoffCards.jsx):
+// a file card for a document its fetch_paper read, the handoff card for one
+// a publisher stopped, which turns into a file card once its PDF arrived —
+// file cards carry an "Add to library" button (FetchedPaper.jsx). Adding
 // goes through POST /api/clip, the ingest Gamma Connector's Save uses:
 // dedup by identifier, resolve and store the PDF, file the page, look its
 // metadata up. Pure, so node tests it.
@@ -47,19 +48,20 @@ export function paperOf(source, extra = {}) {
 }
 
 // What a reply's fetch_paper calls got, in call order: a card per request a
-// wall opened ({card: handoff}), and a row per document read ({paper}) —
-// once each, however many windows of it the model read.
+// wall opened ({index, card: handoff}), and a file card per document read
+// ({index, paper}) — once each, at the step (`index` into the actions) that
+// first got it, however many windows of it the model read.
 export function replyFetches(actions) {
   const out = [];
   const seen = new Set();
-  for (const a of actions || []) {
-    if (a?.kind !== "fetch" || a.tool !== "fetch_paper") continue;
+  for (const [index, a] of (actions || []).entries()) {
+    if (a?.kind !== "fetch") continue;
     if (a.handoff?.id) {
-      if (!seen.has(`card:${a.handoff.id}`)) out.push({ card: a.handoff });
+      if (!seen.has(`card:${a.handoff.id}`)) out.push({ index, card: a.handoff });
       seen.add(`card:${a.handoff.id}`);
       continue;
     }
-    if (a.error || !a.url) continue;
+    if (a.tool !== "fetch_paper" || a.error || !a.url) continue;
     const source = String(a.args?.source || "").trim() || a.url;
     const read = paperIds(a.url);
     const title = goodTitle(a.title) ? a.title : "";
@@ -70,7 +72,7 @@ export function replyFetches(actions) {
     if (paper.arxiv || paper.doi) paper.key = paper.arxiv ? `arxiv:${paper.arxiv}` : `doi:${paper.doi}`;
     if (seen.has(paper.key)) continue;
     seen.add(paper.key);
-    out.push({ paper });
+    out.push({ index, paper });
   }
   return out;
 }

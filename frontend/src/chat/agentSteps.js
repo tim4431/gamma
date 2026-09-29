@@ -22,10 +22,12 @@ export function changePlace(a) {
   return a.kind === "rename" || (a.kind === "move" && !a.block_id) ? "library" : "notes";
 }
 
+// `failed` leaves out a fetch handed to the user's browser: its card says
+// how that goes (chat/FetchHandoffCards.jsx).
 export function splitActions(actions = []) {
   const library = [], notes = [];
   for (const a of actions) if (isChange(a)) (changePlace(a) === "library" ? library : notes).push(a);
-  return { library, notes, failed: actions.filter((a) => a.error).length };
+  return { library, notes, failed: actions.filter((a) => a.error && !a.handoff).length };
 }
 
 // The pill's words for the reading steps, in the order they first ran.

@@ -42,6 +42,15 @@ evidence for `_title_in_text`, `_pick_crossref_match`, or any identity decision.
 The chat shows at most 1,200 characters plus a marker and can fill a missing
 Crossref abstract from a duplicate arXiv record.
 
+Titles from doi.org and Crossref go through `_plain_title`: Crossref deposits
+carry MathML, JATS and HTML markup in titles (APS writes
+`the<mml:math>…</mml:math>Optical`, no spaces). It reads them as text —
+sub- and superscripts in Unicode where every character has a form
+(`¹S₀-³P₀`, `Bi₂Se₃`), else plain; fractions as `a/b`; inline math spaced
+off the words around it unless it starts with a script. Title matching
+folds the scripts back (NFKC), so `_title_in_text` still finds the PDF's
+own `1S0-3P0`. arXiv titles are LaTeX source and stay as they are.
+
 General web discovery belongs to the agent's `search_web` tool in
 `gamma/web_search.py`, separate from automatic metadata lookup. See
 [server configuration and limits](ai_tools.md#general-web-search-configuration).

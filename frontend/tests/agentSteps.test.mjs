@@ -23,6 +23,9 @@ test("changes are split by where they landed; failures and no-ops are not change
   assert.deepEqual(library.map((a) => a.to), ["B", "ML"]);
   assert.deepEqual(notes.map((a) => a.block_id), ["b1"]);
   assert.equal(failed, 1);
+  // A fetch handed to the user's browser is not a failure: its card says how it goes.
+  const handedOver = { kind: "fetch", tool: "fetch_paper", error: true, summary: "Needs your browser: x.org", handoff: { id: "r" } };
+  assert.equal(splitActions([...actions, handedOver]).failed, 1);
   // Chats saved before `tool`, `noop` and the structured fields.
   assert.equal(changePlace({ kind: "move", block_id: "x" }), "notes");
   assert.equal(changePlace({ kind: "rename" }), "library");

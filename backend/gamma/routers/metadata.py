@@ -119,6 +119,125 @@ def _plain_abstract(value) -> str:
     return text
 
 
+class _MarkupTree(HTMLParser):
+    """A registry title's markup as a tree of (tag, children) nodes, text
+    as strings; namespace prefixes (``mml:``, ``jats:``) dropped."""
+
+    _EMPTY = {"br", "hr", "img", "wbr", "none", "mprescripts", "mspace", "malignmark"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = ("", [])
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = (tag.rsplit(":", 1)[-1], [])
+        self.stack[-1][1].append(node)
+        if node[0] not in self._EMPTY:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        self.stack[-1][1].append((tag.rsplit(":", 1)[-1], []))
+
+    def handle_endtag(self, tag):
+        tag = tag.rsplit(":", 1)[-1]
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                break
+
+    def handle_data(self, data):
+        self.stack[-1][1].append(data)
+
+
+_SUP = dict(zip("0123456789+-−=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻⁼⁽⁾ⁿⁱ"))
+_SUB = dict(zip("0123456789+-−=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ"))
+_MATH_SCRIPTS = {"msub", "msup", "msubsup"}
+
+
+def _script(text: str, table: dict) -> str:
+    """Sub- or superscript text in Unicode where every character has a
+    form ("¹S₀"), else as plain text."""
+    text = text.strip()
+    return "".join(table[c] for c in text) if text and all(c in table for c in text) else text
+
+
+def _math_head(node):
+    """The first element a MathML node shows, through its wrappers."""
+    while node[0] in ("math", "mrow", "mstyle", "semantics"):
+        kids = [k for k in node[1] if not isinstance(k, str)]
+        if not kids:
+            break
+        node = kids[0]
+    return node
+
+
+def _markup_text(node, math: bool = False) -> str:
+    if isinstance(node, str):
+        return "" if math and not node.strip() else node
+    tag, kids = node
+    if tag in ("script", "style", "annotation", "annotation-xml"):
+        return ""
+    math = math or tag == "math"
+    if tag in ("sub", "sup"):
+        return _script("".join(_markup_text(k, math) for k in kids), _SUB if tag == "sub" else _SUP)
+    els = [k for k in kids if not isinstance(k, str)]
+    if math and els:
+        text = [_markup_text(e, True) for e in els]
+        if tag in _MATH_SCRIPTS:
+            scripts = text[1:] + ["", ""]
+            sub, sup = {"msub": (scripts[0], ""), "msup": ("", scripts[0])}.get(tag, scripts[:2])
+            return text[0] + _script(sub, _SUB) + _script(sup, _SUP)
+        if tag in ("munder", "mover", "munderover"):  # accents and limits: the base
+            return text[0]
+        if tag == "mmultiscripts":  # base, (sub, sup) pairs, <mprescripts/>, (sub, sup) pairs
+            split = next((i for i, e in enumerate(els) if e[0] == "mprescripts"), len(els))
+
+            def pairs(lo, hi, which):
+                return "".join(t for e, t in zip(els[lo:hi][which::2], text[lo:hi][which::2]) if e[0] != "none")
+
+            post_sub, post_sup = pairs(1, split, 0), pairs(1, split, 1)
+            pre_sub, pre_sup = pairs(split + 1, len(els), 0), pairs(split + 1, len(els), 1)
+            return (_script(pre_sup, _SUP) + _script(pre_sub, _SUB) + text[0]
+                    + _script(post_sub, _SUB) + _script(post_sup, _SUP))
+        if tag == "mfrac" and len(text) == 2:
+            return f"{text[0]}/{text[1]}"
+        if tag in ("msqrt", "mroot"):
+            return "√" + (text[0] if tag == "mroot" else "".join(text))
+    out, pad = "", False
+    for kid in kids:
+        piece = _markup_text(kid, math)
+        if not piece:
+            continue
+        # Registries often leave no space around inline math ("the<math>…
+        # </math>Optical"); one that starts with a script glues to the word
+        # before it (Bi₂Se₃).
+        if not math and not isinstance(kid, str) and kid[0] == "math":
+            head = _math_head(kid)
+            glued = head[0] in _MATH_SCRIPTS and not _markup_text(
+                next((k for k in head[1] if not isinstance(k, str)), ""), True)
+            if out and out[-1].isalnum() and not glued:
+                out += " "
+            out, pad = out + piece, not glued
+            continue
+        if pad and piece[0].isalnum():
+            out += " "
+        out, pad = out + piece, False
+    return out
+
+
+def _plain_title(value) -> str:
+    """A registry title as plain text: MathML, JATS and HTML markup (Crossref
+    deposits carry it) read as the words and symbols it shows."""
+    value = str(value or "")
+    if "<" in value or "&" in value:
+        parser = _MarkupTree()
+        parser.feed(value[:5000])
+        parser.close()
+        value = _markup_text(parser.root)
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def _http_get(url: str, accept: str = "", timeout: int = 20) -> bytes:
     if not METADATA_LOOKUP:
         raise OSError("registry lookups are switched off (GAMMA_METADATA_LOOKUP)")
@@ -485,7 +604,7 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
         return None, ""
     date_parts = ((data.get("issued") or {}).get("date-parts") or [[None]])[0]
     meta = {
-        "title": re.sub(r"\s+", " ", str(title)).strip(),
+        "title": _plain_title(title),
         "abstract": _plain_abstract(data.get("abstract")),
         "authors": [
             " ".join(filter(None, [a.get("given"), a.get("family")])).strip()
@@ -535,7 +654,7 @@ def _crossref_search(query: str, rows: int = 5) -> list[dict]:
             continue
         date_parts = ((it.get("issued") or {}).get("date-parts") or [[None]])[0]
         out.append({
-            "title": re.sub(r"\s+", " ", str(title)).strip(),
+            "title": _plain_title(title),
             "abstract": _plain_abstract(it.get("abstract")),
             "authors": [
                 " ".join(filter(None, [a.get("given"), a.get("family")])).strip()

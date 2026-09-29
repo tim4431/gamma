@@ -122,6 +122,43 @@ def test_abstract_bound_counts_readable_characters():
     assert len(metadata._plain_abstract("x" * metadata.ABSTRACT_CHARS)) == metadata.ABSTRACT_CHARS
 
 
+# Crossref's own record for 10.1103/PhysRevLett.95.083003, spaces and all.
+APS_TITLE = (
+    'Observation and Absolute Frequency Measurements of the<mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML" '
+    'display="inline"><mml:mmultiscripts><mml:mi>S</mml:mi><mml:mn>0</mml:mn><mml:none/><mml:mprescripts/>'
+    '<mml:none/><mml:mn>1</mml:mn></mml:mmultiscripts><mml:mtext mathvariant="normal">-</mml:mtext>'
+    '<mml:mmultiscripts><mml:mi>P</mml:mi><mml:mn>0</mml:mn><mml:none/><mml:mprescripts/><mml:none/>'
+    '<mml:mn>3</mml:mn></mml:mmultiscripts></mml:math>Optical Clock Transition in Neutral Ytterbium'
+)
+
+
+@pytest.mark.parametrize("raw, plain", [
+    (APS_TITLE, "Observation and Absolute Frequency Measurements of the ¹S₀-³P₀ Optical Clock "
+                "Transition in Neutral Ytterbium"),
+    ('Surface states of Bi<mml:math><mml:msub><mml:mrow/><mml:mn>2</mml:mn></mml:msub></mml:math>Se'
+     '<mml:math><mml:msub><mml:mrow/><mml:mn>3</mml:mn></mml:msub></mml:math> crystals',
+     "Surface states of Bi₂Se₃ crystals"),
+    ('Cooling <i>Rb</i> to 10<sup>−3</sup> K &amp; above T<sub>c</sub>', "Cooling Rb to 10⁻³ K & above Tc"),
+    ('A <jats:italic>p</jats:italic>-wave <mml:math><mml:mfrac><mml:mn>1</mml:mn><mml:mn>2</mml:mn>'
+     '</mml:mfrac></mml:math> spin', "A p-wave 1/2 spin"),
+    ("  Raman   cooling ", "Raman cooling"),
+])
+def test_registry_titles_read_as_plain_text(raw, plain):
+    assert metadata._plain_title(raw) == plain
+
+
+def test_doi_and_crossref_records_carry_plain_titles(monkeypatch):
+    monkeypatch.setattr(metadata, "_http_get", lambda *a, **kw: json.dumps({"title": APS_TITLE}).encode())
+    record, _ = metadata._fetch_doi("10.1103/physrevlett.95.083003", with_bibtex=False)
+    assert "¹S₀-³P₀ Optical" in record["title"] and "<" not in record["title"]
+    items = {"message": {"items": [{"title": [APS_TITLE], "DOI": "10.1103/physrevlett.95.083003"}]}}
+    monkeypatch.setattr(metadata, "_http_get", lambda *a, **kw: json.dumps(items).encode())
+    assert metadata._crossref_search("ytterbium clock")[0]["title"] == record["title"]
+    # Title matching folds the scripts back (NFKC), so the PDF's own text still matches.
+    assert metadata._title_in_text(record["title"], "PRL 95, 083003 (2005)\nObservation and Absolute Frequency "
+                                   "Measurements of the 1S0-3P0 Optical Clock Transition in Neutral Ytterbium\nC. Hoyt")
+
+
 def test_abstract_is_not_evidence_for_title_matching():
     record = {"title": "Another completely different experiment", "abstract": "Raman cooling in a standing wave"}
     assert metadata._pick_crossref_match([record], "Raman cooling in a standing wave") is None

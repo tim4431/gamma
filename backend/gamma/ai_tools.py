@@ -1127,7 +1127,7 @@ def _fetch_failure(e, source: str, user, options: dict | None = None) -> tuple[s
                         if (options or {}).get("version_policy") == "published_only"
                         else f'{_fetch_call(source, options)} returns it.')
         return (f"error: {e}. No document text was retrieved: {WALLS[e.wall]} at {handoff['host']} "
-                "stopped this server. Gamma now shows the user a card under your reply to open "
+                "stopped this server. Gamma now shows the user a card at this step to open "
                 "that page in their own browser, sign in or pass the check, and send the PDF back "
                 "(Gamma Connector does it from the tab; they can also drop the file on the card). "
                 "Tell the user in a sentence or two what is blocked and end your reply — do not "
@@ -1222,7 +1222,7 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
                             else f'{_fetch_call(source, options)} then returns it.')
             head += ("\n[Only the article page was readable"
                      + (f" — the PDF met {WALLS[doc['wall']]}" if doc["wall"] != "abstract" else "")
-                     + ". The user has a card under your reply to get "
+                     + ". The user has a card at this step to get "
                      "the full text in their own browser. If the question needs more than this page, "
                      "say so briefly and end your reply; the chat continues when the PDF arrives, and "
                      f'{continuation}]')

@@ -668,9 +668,12 @@ export async function chatNavigationScenarios(env) {
     ctx.on("request", (r) => { if (r.method() === "POST" && /\/api\/uploads\b/.test(r.url())) libraryUploads.push(r.url()); });
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
-      const card = page.locator(".chatHandoff");
+      // The steps are folded, but the card waiting for the user shows under their pill.
+      const card = page.locator(".chatStepsWrap .chatHandoffs .chatHandoff");
       await card.getByText("www.science.org asked for a CAPTCHA or bot check").waitFor();
       assert((await card.innerText()).includes(handoff.source), "the card names the paper");
+      assertEq(await page.locator(".chatToolActions").count(), 0, "the steps stay folded");
+      assert(!(await page.locator(".chatSteps").innerText()).includes("failed"), "a fetch handed to the browser is no failure");
       await card.getByText("Gamma Connector isn't answering in this browser").waitFor({ timeout: 8000 });
       assert((await card.innerText()).includes(`set it to ${server.base}`), "it says what address to set");
       // The Connector installed (or reloaded) meanwhile: coming back asks again.
@@ -710,11 +713,18 @@ export async function chatNavigationScenarios(env) {
       await until(() => prompts.length === 1, { what: "the chat continues by itself" });
       assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("Reading the delivered PDF now."));
+      // "The PDF arrived" is a moment's note: then the card leaves the pill,
+      // and the paper is a file card at its step.
+      await until(async () => (await page.locator(".chatHandoff").count()) === 0, { what: "the arrived note gives way" });
+      await page.locator(".chatSteps").first().click();
+      await page.locator(".chatFetchStep .chatPaper", { hasText: handoff.source }).waitFor();
 
-      // A reload shows the settled card and sends nothing again.
+      // A reload shows the paper's file card and sends nothing again.
       await page.reload();
-      await page.locator(".chatHandoff.done").waitFor();
+      await page.locator(".chatSteps").first().click();
+      await page.locator(".chatFetchStep .chatPaper", { hasText: handoff.source }).waitFor();
       await page.waitForTimeout(500);
+      assertEq(await page.locator(".chatHandoff").count(), 0, "no card for a request already done");
       assertEq(prompts.length, 1, "no second continuation");
       assertEq(await page.locator(".chatHandoffContinue").count(), 0, "the conversation moved on: no Continue");
       assertNoProblems(page);
@@ -788,7 +798,7 @@ export async function chatNavigationScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
       const card = page.locator(".chatHandoff");
-      await card.getByText("www.worldscientific.com asked for a CAPTCHA or bot check").waitFor();
+      await page.locator(".chatStepsWrap .chatHandoffs .chatHandoff").getByText("www.worldscientific.com asked for a CAPTCHA or bot check").waitFor();
       await until(async () => (await page.evaluate(() => window.connectorAsked)).length > 0,
         { what: "the card hands the request to the Connector without a click" });
       assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
@@ -801,18 +811,33 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
         { what: "the card asks to show the tab" });
 
-      // The paper it fetched by itself is a row of its own, named by the
-      // registry, with its + button.
-      const row = page.locator(".chatPaper", { hasText: "Proximity effect in superconductors" });
-      await row.getByText("arXiv:2301.01234 · PDF, 12 pages").waitFor();
+      // Opening the steps moves the card to its step, as it was: the
+      // Connector is not asked to open the page again.
+      await page.locator(".chatSteps").click();
+      const steps = page.locator(".chatToolActions > .chatFetchStep");
+      await steps.nth(1).locator(".chatHandoff").getByText("The site is showing a bot check or CAPTCHA").waitFor();
+      assertEq(await page.locator(".chatHandoffs .chatHandoff").count(), 0, "not under the pill as well");
+      assertEq((await page.evaluate(() => window.connectorAsked)).filter((a) => a.do === "open").length, 1);
+
+      // The paper it fetched by itself is a file card at its step: just the
+      // title the registry gave, what was read in its tooltip, and its + button.
+      const row = steps.nth(0).locator(".chatPaper");
+      await row.getByText("Proximity effect in superconductors").waitFor();
+      assertEq(await row.locator(".chatPaperTitle").getAttribute("title"),
+        "Proximity effect in superconductors\narXiv:2301.01234 · PDF, 12 pages");
       await row.getByRole("button", { name: "Add “Proximity effect in superconductors” to your library" }).click();
       await row.getByRole("button", { name: "In library" }).waitFor();
-      // The blocked one's card gets the + once its PDF arrived: the copy the
-      // server holds is stored first, then saved.
+      // Its chevron shows the step's tool output.
+      await row.getByRole("button", { name: "Show tool output" }).click();
+      await steps.nth(0).locator(".chatToolDetail").getByText("Fetched PDF").waitFor();
+      // The blocked one says its PDF arrived, then is a file card with the +
+      // too: the copy the server holds is stored first, then saved.
       request = { ...request, status: "done", pages: 3 };
-      await card.getByText("The PDF arrived").waitFor({ timeout: 8000 });
-      await card.getByRole("button", { name: "Add “A junction review” to your library" }).click();
-      await card.getByRole("button", { name: "In library" }).waitFor();
+      await steps.nth(1).getByText("The PDF arrived").waitFor({ timeout: 8000 });
+      const delivered = steps.nth(1).locator(".chatPaper");
+      await delivered.getByRole("button", { name: "Add “A junction review” to your library" }).click({ timeout: 8000 });
+      await delivered.getByRole("button", { name: "In library" }).waitFor();
+      assertEq(await card.count(), 0, "no card is left once the PDF came");
       assertEq(stores, 1, "the delivered PDF was stored");
       assertEq(JSON.stringify(clips.map((c) => [c.arxiv_id, c.doi, c.pdf_url, c.source_url, c.title, c.doc_id || ""])), JSON.stringify([
         ["2301.01234", "", "https://arxiv.org/pdf/2301.01234", "https://arxiv.org/abs/2301.01234", "Proximity effect in superconductors", ""],

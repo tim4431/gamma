@@ -403,8 +403,13 @@ reply, without retrying, switching versions or answering from memory. An
 article-page-only read returns the page with the same instruction for
 questions that need more. The armed prompt says the same.
 
-The chat renders a card per request under the reply
-(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
+The chat renders a card per request at its step, among the reply's steps
+(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`).
+While the request goes on the card also shows with the steps folded, under
+their pill (`PinnedFetches`), so it moves between two places: what it learnt
+(the server's view, the Connector's answer, whether it was opened) is kept
+per request for the page's life, not in the card. A fetch handed to the
+browser does not count as a failed step.
 
 - **Open {host}** has Gamma Connector open the publisher's page in a new
   tab when it answered the card (`openRoute`: `connector-tab` `open`
@@ -449,8 +454,8 @@ The chat renders a card per request under the reply
   the card is back to Open, saying so.
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
-- **Dismiss** settles the request; the Connector closes a tab it kept out of
-  sight for it.
+- **Dismiss** settles the request; the Connector closes a background tab it
+  opened for it.
 
 The card asks the server every 2.5 s while the user is at the page, every
 10 s while the request waits in the conversation's last reply, and otherwise
@@ -469,20 +474,26 @@ does not guarantee a strict fetch can return their text. When every
 request of the reply is settled with a PDF delivered, the reply is the
 conversation's last, the chat is idle, the composer is empty, and this tab saw
 a request waiting, the chat sends "I got it in my browser — {source} is
-available now. Please continue." by itself. Otherwise the card offers
-**Continue with the PDF**; a reload never resends.
+available now. Please continue." by itself. Otherwise **Continue with the
+PDF** shows under the steps pill; a reload never resends. A card whose PDF
+arrived while it was watched reads "The PDF arrived" for `ARRIVED_MS` (4 s),
+then becomes the paper's file card at its step (`cardLook`); one already
+done when the chat opened is its file card at once.
 
-Every paper a reply fetched shows under it, among the cards, in call order
-(`chat/FetchHandoffCards.jsx`, rules tested in `chat/chatPapers.js`): a row
-for each document a `fetch_paper` call read, once however many windows of it
-the model read (`chat/FetchedPaper.jsx`; the action carries the document's
-`title`, `pdf`, `pages`, and `request` when the user's browser delivered it),
-and the card for each one a wall stopped. A row names the paper — the
-fetch's title, else the registry's (`GET /api/library/preview`), else its
-source — and what was read ("PDF, 21 pages", a web page, from your browser).
-Rows and cards whose PDF arrived carry a **+** (Add to library), after asking
-the library whether it holds the paper already (`GET /api/library/lookup`;
-then it reads "In library" and opens the page). **+** saves through `POST
+Every paper a reply fetched shows at its step as a card
+(`chat/FetchHandoffCards.jsx` and `ChatDock`, rules tested in
+`chat/chatPapers.js`): the step that first read a document is its file card
+(`chat/FetchedPaper.jsx`; the action carries the document's `title`, `pdf`,
+`pages`, and `request` when the user's browser delivered it), and later
+windows of it stay plain steps; the step a wall stopped is the request's
+card. A file card shows only the paper's title — the fetch's, else the
+registry's (`GET /api/library/preview`), else its source — with what was
+read ("PDF, 21 pages", a web page, from your browser) in its tooltip, and a
+chevron for the step's tool output. While a fetch runs, its step shows the
+paper it names, by the registry's title, with a spinner until the card
+lands. File cards carry a **+** (Add to library), after asking the library
+whether it holds the paper already (`GET /api/library/lookup`; then it reads
+"In library" and opens the page). **+** saves through `POST
 /api/clip`, the Connector's ingest (dedup, resolve and store the PDF, file
 the page, look its metadata up), into the folder the chat is about (the
 viewed folder, else the open paper's first) with Settings → Reading's
@@ -490,7 +501,7 @@ open-access, stored-copy and metadata choices. A PDF that came from the
 user's browser is stored from the held copy first (`POST
 /api/ai/handoffs/<id>/store`); the rest the server fetches again, and one it
 cannot reach is saved as a page with its web source. Viewers and share
-links see the rows without **+**.
+links see the file cards without **+**.
 
 Guest and share-link chats get no card. Their access failures still explain
 the Connector's **Publisher sessions**, **Connect this publisher** /

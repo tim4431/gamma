@@ -238,13 +238,15 @@ The Connector now takes a PDF from a frame too. Three requests followed:
   has access to, and checks that pass a real browser on their own. When the
   page needs the user, the card says why (sign-in, bot check, another paper
   shown) and **Show the tab** brings it forward.
-- **Saving.** Every paper a reply fetched shows under it as a row (or its
-  card, when it needed the browser) with a **+** that adds it to the library
-  through the Connector's ingest (`POST /api/clip`); a PDF the browser
-  delivered is held for this, so a paper the server cannot download still
-  arrives with its PDF. A first version listed a reply's papers, linked ones
-  included, behind one "Save to library" pill with checkboxes; per-paper
-  buttons proved simpler.
+- **Saving.** Every paper a reply fetched is a file card at its step (the
+  request's card while it needed the browser, which says "The PDF arrived"
+  for a moment and then turns into the file card), showing just the title,
+  with a **+** that adds it to the library through the Connector's ingest
+  (`POST /api/clip`); a PDF the browser delivered is held for this, so a
+  paper the server cannot download still arrives with its PDF. A first
+  version listed a reply's papers, linked ones included, behind one "Save to
+  library" pill with checkboxes; per-paper buttons proved simpler, and rows
+  under the reply's text repeated its steps, so they moved into them.
 
 Checked in real Chromium with the real Connector against local fakes (see
 [extension.md](../dev/extension.md#testing)). That run also caught
