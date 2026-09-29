@@ -1,0 +1,76 @@
+name: iPad
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev, ipad-feature, 'codex/ipad-*']
+    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json']
+  pull_request:
+    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json']
+permissions:
+  contents: read
+concurrency:
+  group: ipad-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build shared ink resources and Xcode project
+        run: |
+          npm ci --prefix frontend
+          node ipad/scripts/prepare-assets.mjs
+          brew install xcodegen
+          cd ipad
+          xcodegen generate
+      - name: Test local store and mirror reconciliation
+        working-directory: ipad
+        run: swift test
+      - name: Select iPad simulator
+        run: |
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/simulators.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/simulators.json') as f:
+              devices = json.load(f)['devices']
+          device = next(d for runtime, group in devices.items() if 'iOS' in runtime for d in group if 'iPad' in d['name'] and d['isAvailable'])
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('IPAD_SIMULATOR=' + device['udid'] + '\n')
+          PY
+      - name: Run native and UI tests
+        working-directory: ipad
+        run: |
+          set -o pipefail
+          xcodebuild -project GammaIPad.xcodeproj -scheme GammaIPad -configuration Debug \
+            -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR" -derivedDataPath build/simulator \
+            -resultBundlePath build/Tests.xcresult CODE_SIGNING_ALLOWED=NO test | tee build-test.log
+      - name: Build unsigned device application
+        working-directory: ipad
+        run: |
+          set -o pipefail
+          xcodebuild -project GammaIPad.xcodeproj -scheme GammaIPad -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO build | tee build-device.log
+          ditto -c -k --sequesterRsrc --keepParent build/device/Build/Products/Release-iphoneos/GammaIPad.app build/GammaIPad-unsigned-device.zip
+      - name: Export screenshots
+        if: always()
+        working-directory: ipad
+        run: |
+          if [ -d build/Tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/Tests.xcresult --output-path build/attachments
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GammaIPad-build-and-tests
+          path: |
+            ipad/build/GammaIPad-unsigned-device.zip
+            ipad/build/Tests.xcresult
+            ipad/build/attachments
+            ipad/build-*.log
+          retention-days: 14

@@ -22,6 +22,11 @@ export function newInk(page, width, height) {
     space: { kind: "pdf-page", page, width, height }, strokes: [] };
 }
 
+export function newNotebookInk(sheetId, width, height) {
+  return { format: FORMAT, version: 2,
+    space: { kind: "notebook-page", sheet_id: sheetId, width, height }, strokes: [] };
+}
+
 const ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function strokeId() {
   let s = "";
@@ -114,7 +119,7 @@ export function toolStyle(preset) {
 // --- codec -----------------------------------------------------------------
 
 // samples: [{x, y, p?, t?}] with x/y in points and t in ms since t0.
-export function encodeStroke({ id, tool = "pen", brush, color = PEN_COLORS[0], size = 2, opacity = 1,
+export function encodeStroke({ id, source_id, tool = "pen", brush, color = PEN_COLORS[0], size = 2, opacity = 1,
   pen = true, t0 = null, samples, ch = "xyp" }) {
   const pts = [];
   let px = 0, py = 0, pt = 0;
@@ -131,6 +136,7 @@ export function encodeStroke({ id, tool = "pen", brush, color = PEN_COLORS[0], s
   const out = { id: id || strokeId(), tool, color, size, opacity, pen, ch, pts };
   if (tool === "pen" && brush === "monoline") out.brush = "monoline";
   if (t0 != null) out.t0 = t0;
+  if (source_id) out.source_id = source_id;
   return out;
 }
 
@@ -270,7 +276,8 @@ export function duplicateStrokes(ink, ids, dx, dy) {
     let id;
     do { id = strokeId(); } while (used.has(id));
     used.add(id);
-    return { ...s, id, pts: [...s.pts] };
+    const { source_id: _source, ...copy } = s;
+    return { ...copy, id, pts: [...s.pts] };
   });
   const copyIds = copies.map((s) => s.id);
   return { ink: translateStrokes({ ...ink, strokes: [...ink.strokes, ...copies] }, copyIds, dx, dy), ids: copyIds };
@@ -331,7 +338,7 @@ export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
 
 // A stroke's samples → a stroke of the same look (fresh id).
 function restroke(stroke, samples) {
-  return encodeStroke({ tool: stroke.tool, brush: stroke.brush, color: stroke.color, size: stroke.size, opacity: stroke.opacity,
+  return encodeStroke({ source_id: stroke.source_id || stroke.id, tool: stroke.tool, brush: stroke.brush, color: stroke.color, size: stroke.size, opacity: stroke.opacity,
     pen: stroke.pen !== false, t0: stroke.t0 ?? null, samples, ch: stroke.ch });
 }
 
@@ -356,7 +363,7 @@ export function eraseAt(ink, x, y, radius) {
     pts.forEach((q, i) => { if (keep[i]) run.push(q); else flush(); });
     flush();
   }
-  return { ink: changed ? { ...ink, strokes } : ink, changed };
+  return { ink: changed ? { ...ink, version: 2, strokes } : ink, changed };
 }
 
 function pointInPolygon(x, y, poly) {
