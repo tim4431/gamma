@@ -3416,24 +3416,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
-/* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
-   saved into the library together. */
-.chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
-.chatPapers {
+/* A document the reply's fetch_paper read (chat/FetchedPaper.jsx), among
+   the handoff cards: one quiet row with its "Add to library" button. */
+.chatPaper {
   display: flex;
-  flex-direction: column;
-  align-self: stretch;
-  gap: 2px;
-  padding: 6px 8px;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px 7px 12px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   font-size: calc(var(--fs-sm) * var(--text-scale, 1));
   line-height: 1.45;
 }
-.chatPaper { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 4px 0; }
-.chatPaper + .chatPaper { border-top: 1px solid var(--border-subtle); }
-.chatPaperCheck { flex: none; margin: 0.25em 0 0; accent-color: var(--accent); }
+.chatPaper > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
 .chatPaperText { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .chatPaperTitle { overflow-wrap: anywhere; color: var(--text-primary); }
 .chatPaperMeta {
@@ -3443,12 +3440,24 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chatPaperNote { color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
-.chatPaperError { color: var(--danger); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
-.chatPaperState { display: flex; flex: none; align-items: center; gap: 4px; margin-top: 0.1em; }
-.chatPaperState .chatChangeLink { display: inline-flex; align-items: center; gap: 3px; font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
-.chatPaper.saved .chatPaperState .chatChangeLink { color: var(--ok); }
-.chatPapersFoot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+.chatAddPaperWrap { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+.chatHandoffHead .chatAddPaperWrap, .chatHandoffHead .chatAddPaper.done { margin-left: auto; }
+.chatAddPaper.done {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--ok);
+  font-family: inherit;
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+.chatAddPaper.done:hover { text-decoration: underline; }
+.chatAddPaperError { color: var(--danger); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); font-weight: 400; }
 /* Markdown inside answers: explicit text sizes must follow the same
    transcript scale as body text, including nested headings and code. */
 .chatBubble.ai p { margin: 0 0 10px; }

@@ -20,6 +20,7 @@
     "tools/branding/build-connections.py": "a86fef54e560430ce91df2bd18e25d96ef45b5e0e567c5cdfcca2c5f0c958bc4",
     "tools/branding/build-demos.py": "11ee38fd99d2c30bafbde6991f1d29d20deddce15b7583e825dc4e9ef8c24c91",
     "tools/branding/build-library.py": "a3a65d14cbb9763674632f3e05a6506017c3267857b3f96323d634c5a3818673",
+    "tools/branding/build-release-badges.py": "8645f9e33146135af6ddb0e2e30a5ec6ede2c0fbeb7ad1a524fbc68ecae6ec99",
     "tools/branding/build-workspaces.py": "36f319915fac8ebd446c6a8a6c37013320e1754beb5a472befa4d2750e85af9e",
     "tools/branding/build.mjs": "f3000414aa2a7481dde698f9be036fed1bc31d7784b563459629c8850e9ea3c2",
     "tools/branding/check.test.mjs": "ceeaf77e8f668d8bb5f9ef9efcd3b3adb68b6974e35c433443cd1ec23e175d9c",
@@ -130,6 +131,33 @@
         1080
       ],
       "sha256": "b7fe67ab2aff4603196f1e4b37ac70f2f67a2e36fbdb60e4150e4ad073f1c6c4"
+    },
+    "docs/assets/branding/gamma-release-codex.svg": {
+      "source": "tools/branding/build-release-badges.py",
+      "variant": "light",
+      "size": [
+        204,
+        36
+      ],
+      "sha256": "7fa092aabee2756f2e4e3ba45895531ea0011b9903fac5d96b6e2e25eed1bf2d"
+    },
+    "docs/assets/branding/gamma-release-claude-code.svg": {
+      "source": "tools/branding/build-release-badges.py",
+      "variant": "light",
+      "size": [
+        248,
+        36
+      ],
+      "sha256": "3d8cd8051c0ff4743a633685e7a5dd1714b327e76d9b3d4ede1663cc192acb7e"
+    },
+    "docs/assets/branding/gamma-release-deepseek-harness.svg": {
+      "source": "tools/branding/build-release-badges.py",
+      "variant": "light",
+      "size": [
+        308,
+        36
+      ],
+      "sha256": "ea5548c24b4e7cc7e55259edc2c7edefd2210d93281e1d230361ba3fec24751f"
     },
     "docs/assets/branding/gamma-workspaces-light.svg": {
       "source": "tools/branding/build-workspaces.py",

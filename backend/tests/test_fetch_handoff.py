@@ -198,7 +198,7 @@ def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts
     assert r.json()["held"] is True
     # The chat's next read names the request, so the reply can offer the paper.
     _, action = fetch(source)
-    assert (action["request"], action["pdf"]) == (rid, True)
+    assert (action["request"], action["pdf"], action["pages"]) == (rid, True, 1)
     assert "title" in action and action["url"] == "https://journals.example.org/keep.pdf"
 
     assert bob.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "another account's PDF stays theirs"

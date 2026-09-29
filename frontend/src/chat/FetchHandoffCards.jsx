@@ -1,5 +1,7 @@
-// The card under a reply whose fetch_paper was stopped by a CAPTCHA, a
-// sign-in page or a paywall (chat/fetchHandoff.js has the rules). The card
+// The papers a reply fetched, in call order: a row for each document its
+// fetch_paper read (FetchedPaper.jsx), and a card for each one a CAPTCHA, a
+// sign-in page or a paywall stopped (chat/fetchHandoff.js has the rules).
+// Both carry an "Add to library" button, the card once its PDF arrived. The card
 // asks Gamma Connector (its bridge.js) whether it can fetch for the request
 // and says why not when it cannot; "Open" then has the Connector open the
 // publisher's page itself, which sends the PDF back from that tab once the
@@ -20,6 +22,8 @@ import {
   NEEDS_YOU, SETTLED, autoOpens, connectorNote, continuePrompt, handoffHint, handoffState, openRoute, pollDelay,
   replyHandoffs, shouldContinue, wallHeadline, watchNote,
 } from "./fetchHandoff.js";
+import { paperOf, replyFetches } from "./chatPapers.js";
+import FetchedPaper, { AddToLibrary, useRecordTitle } from "./FetchedPaper.jsx";
 
 const requestUrl = (id) => `${API}/ai/handoffs/${encodeURIComponent(id)}`;
 // The desktop app opens links in the system browser, where a Connector may be.
@@ -70,7 +74,10 @@ function askConnector(id, act, { background = false } = {}) {
   });
 }
 
-function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState }) {
+function HandoffCard({ handoff, isLast, readOnly, autoOpen, save, onState }) {
+  // The paper, for "Add to library" once its PDF arrived (stored from the
+  // copy the server holds for the request).
+  const paper = useMemo(() => paperOf(handoff.source, { request: handoff.id }), [handoff.source, handoff.id]);
   const [view, setView] = useState(null);
   const [opened, setOpened] = useState(false);
   const [queued, setQueued] = useState(false);
@@ -82,6 +89,8 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState }) {
   const [round, setRound] = useState(0);
   const state = handoffState(view, { opened });
   const connector = useConnector(handoff.id, !SETTLED.has(state) && state !== "loading", round);
+  // Its registry title names the page "Add to library" makes.
+  const paperTitle = useRecordTitle(paper, state === "done" && !!save);
 
   const refresh = useCallback(async () => {
     try {
@@ -201,6 +210,7 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState }) {
         {state === "done" ? <CheckIcon size={16} /> : <ShieldIcon size={16} />}
         <span>{state === "done" ? t("The PDF arrived") : wallHeadline(view?.wall || handoff.wall, host)}</span>
         {state === "watching" && !yours ? <span className="transferSpin inline" aria-hidden="true" /> : null}
+        {state === "done" && save ? <AddToLibrary paper={paper} title={paperTitle} save={save} /> : null}
       </div>
       <div className="chatHandoffText" aria-live="polite">
         {working === "upload" ? t("Reading the PDF…") : handoffHint(state, { pages: view?.pages || 0, background, queued })}
@@ -235,11 +245,14 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState }) {
   );
 }
 
-// Every request a reply opened, and the continuation once they are settled.
-// `busy`: the chat is answering; `draft`: the composer holds something of
-// the user's — either keeps the chat from sending in their name. `autoOpen`:
-// the "Fetch blocked papers in the background" setting.
-export default function FetchHandoffCards({ actions, isLast, busy, draft, readOnly, autoOpen = false, onContinue }) {
+// Every paper a reply fetched and every request it opened, and the
+// continuation once the requests are settled. `busy`: the chat is answering;
+// `draft`: the composer holds something of the user's — either keeps the
+// chat from sending in their name. `autoOpen`: the "Fetch blocked papers in
+// the background" setting. `save`: how "Add to library" saves ({folder,
+// options, onOpenPage, onLibraryChange}); null hides it.
+export default function FetchHandoffCards({ actions, isLast, busy, draft, readOnly, autoOpen = false, save = null, onContinue }) {
+  const items = useMemo(() => replyFetches(actions), [actions]);
   const handoffs = useMemo(() => replyHandoffs(actions), [actions]);
   const [states, setStates] = useState({});
   const sawWaiting = useRef(false);
@@ -263,13 +276,14 @@ export default function FetchHandoffCards({ actions, isLast, busy, draft, readOn
 
   useEffect(() => { if (prompt) send(prompt); }, [prompt, send]);
 
-  if (!handoffs.length) return null;
+  if (!items.length) return null;
   const ready = !sent.current && !readOnly && isLast && arrived.length > 0 && list.every((s) => SETTLED.has(s));
   return (
     <div className="chatHandoffs">
-      {handoffs.map((h) => (
-        <HandoffCard key={h.id} handoff={h} isLast={isLast} readOnly={readOnly} autoOpen={autoOpen} onState={onState} />
-      ))}
+      {items.map((item) => (item.card ? (
+        <HandoffCard key={`card:${item.card.id}`} handoff={item.card} isLast={isLast} readOnly={readOnly}
+          autoOpen={autoOpen} save={save} onState={onState} />
+      ) : <FetchedPaper key={`paper:${item.paper.key}`} paper={item.paper} save={save} />))}
       {ready && !auto ? (
         <button type="button" className="uiBtn sm primary chatHandoffContinue" disabled={busy}
           onClick={() => send(continuePrompt(arrived))}>

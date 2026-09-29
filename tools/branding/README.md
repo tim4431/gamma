@@ -56,6 +56,11 @@ Consumer copies stay committed at existing paths. The generator does not alter
 recordings, screenshots, third-party logos, or frontend theme CSS. The Gamma
 Light/Dark app themes live in `frontend/src/shared/styles/tokens.css`.
 
+`build-release-badges.py` also runs through this pipeline. It embeds the existing
+OpenAI, Claude and DeepSeek marks from `frontend/src/shared/illustrations/brands/`
+in compact download badges for the GitHub release notes. Each badge has an
+explicit background and text color so it remains readable in either GitHub theme.
+
 README feature illustrations share the logo placement, warm paper background, amber
 curves and card shadow defined in `branding.py`, with 72 px headings and 28 px
 introductory copy on a 1920 × 1080 canvas. The real recordings use the matching
