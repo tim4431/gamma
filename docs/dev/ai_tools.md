@@ -321,13 +321,29 @@ questions that need more. The armed prompt says the same.
 The chat renders a card per request under the reply
 (`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
 
-- **Open {host}** opens `/api/ai/handoffs/<id>/go` in a new tab. For the
-  request's owner that short Gamma page goes on to the publisher after a
-  second; anyone else holding the link gets a "Continue to host?" button, so
-  it is no open redirect. Gamma Connector knows the tab by that address,
-  takes the request (the card then reads "Gamma Connector is watching the
-  tab") and sends the PDF from it once the user has signed in or passed the
-  check ([extension.md](extension.md#fetches-handed-from-the-chat)).
+- **Open {host}** has Gamma Connector open the publisher's page in a new
+  tab when it answered the card (`openRoute`: `connector-tab` `open`
+  through the extension's `bridge.js`); it takes the request (the card then
+  reads "Gamma Connector is watching the tab") and sends the PDF from the tab
+  once the user has signed in or passed the check
+  ([extension.md](extension.md#fetches-handed-from-the-chat)). With no
+  Connector to take the tab the page opens directly. The desktop app, and a
+  Connector that has not answered yet, go through `/api/ai/handoffs/<id>/go`:
+  for the request's owner that Gamma page goes straight on to the publisher,
+  anyone else holding the link gets a "Continue to host?" button, so it is no
+  open redirect; the Connector knows the tab by that address.
+- **Fetch blocked papers in the background** (Settings → AI → Tools,
+  `fetchInBackground`, account-wide, off by default): a card in the
+  conversation's last reply hands its request to the Connector without a
+  click (`autoOpens`), once, and not again after its tab was closed. The
+  Connector tries in a minimized window of its own, three requests at a
+  time, and closes the tab after delivery; the card reads "getting it in a
+  minimized window", or that the request waits for the papers before it.
+  Nothing solves a CAPTCHA: what completes by itself is what the browser gets
+  unasked — the user already signed in (or on the institution's network), or
+  a check that passes a real browser on its own. When the page needs the user
+  (a `NEEDS_YOU` note), **Show the tab** becomes the card's main button and
+  moves the tab next to Gamma.
 - Before that, the card asks the Connector whether it can
   (`window.postMessage` → the extension's `bridge.js`, answered after the
   Connector checked the request with its own server) and says so under the
@@ -340,18 +356,24 @@ The chat renders a card per request under the reply
   again or the window regains focus.
 - While the Connector watches the tab, the card also shows what it reports
   doing there (the request's `note`, `watchNote`): no PDF link on the page
-  yet, the PDF link leads to a sign-in, opening the PDF in the tab, or the
-  site did not hand it over (save it from the tab and drop it here).
+  yet, a bot check or CAPTCHA to pass there, the PDF link leads to a
+  sign-in, opening the PDF in the tab, the site did not hand it over (save it
+  from the tab and drop it here), or the tab shows another paper; **Show the
+  tab** brings that tab forward. When its tab was closed before the PDF came,
+  the card is back to Open, saying so.
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
-- **Dismiss** settles the request.
+- **Dismiss** settles the request; the Connector closes a tab it kept out of
+  sight for it.
 
 The card asks the server every 2.5 s while the user is at the page, every
 10 s while the request waits in the conversation's last reply, and otherwise
 when the window regains focus. A delivered PDF (`POST …/pdf`: at most
 `FETCH_MAX_BYTES`, a `%PDF` with a text layer; 409 once the request is
 settled) is extracted and kept with the request for its account only
-(30 M characters across requests, the oldest dropped). `fetch_paper` reads it
+(30 M characters across requests, the oldest dropped), and the PDF itself is
+held for saving (200 MB across requests, the oldest let go first; its text
+stays). `fetch_paper` reads it
 before any fetch, for the same work in any spelling or the request's URLs,
 with a source note saying the user fetched it in their browser. When every
 request of the reply is settled with a PDF delivered, the reply is the
@@ -359,6 +381,23 @@ conversation's last, the chat is idle, the composer is empty, and this tab saw
 a request waiting, the chat sends "I got it in my browser — {source} is
 available now. Please continue." by itself. Otherwise the card offers
 **Continue with the PDF**; a reload never resends.
+
+Every reply that read or named papers ends with a **Save to library** pill
+(`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
+`fetch_paper` calls read (the action carries the document's `title`, `pdf`,
+and `request` when the user's browser delivered it), what a wall stopped
+(the handoff's request), and the DOI / arXiv links in its text, once each
+by identifier. Opening it asks the library which it holds already (`GET
+/api/library/lookup`) and the registry for titles the reply left out (`GET
+/api/library/preview`). The checked papers are saved one by one through
+`POST /api/clip`, the Connector's ingest (dedup, resolve and store the PDF,
+file the page, look its metadata up), into the folder the chat is about
+(the viewed folder, else the open paper's first) with Settings → Reading's
+open-access, stored-copy and metadata choices. A paper whose PDF came from the
+user's browser is stored from the held copy first (`POST
+/api/ai/handoffs/<id>/store`); the rest the server fetches again, and one it
+cannot reach is saved as a page with its web source. Viewers and share
+links get no pill.
 
 Guest and share-link chats get no card. Their access failures still explain
 the Connector's **Publisher sessions**, **Connect this publisher** /

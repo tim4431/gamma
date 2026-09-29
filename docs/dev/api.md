@@ -368,11 +368,12 @@ the request's workspace — the extension names none, so its personal one.
 | POST | `/translate/engines/{id}/test` | translate one sentence into `{lang}` with the stored credentials; in-body `{ok, text}` / `{ok: false, error}` |
 | GET | `/pdf-text-status` | whether a doc has extractable text |
 | GET | `/ai/selection-crop/{doc_id}?page=&box=x0,y0,x1,y1` | the picture of a selected region a chat reply sent the model, drawn again from its saved page + crop box (page fractions); any workspace member |
-| GET | `/ai/handoffs/{id}` | a fetch handed to the browser (`routers/ai_handoffs.py`, [ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)): `{id, source, url, pdf_url, host, wall, detail, status: waiting \| done \| dismissed \| expired, watched, pages, from_url}` — never the text; 404 for another account's or a forgotten request |
-| POST | `/ai/handoffs/{id}/watch` | Gamma Connector took the request's tab (`watched: true`) |
+| GET | `/ai/handoffs/{id}` | a fetch handed to the browser (`routers/ai_handoffs.py`, [ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)): `{id, source, url, pdf_url, host, wall, detail, status: waiting \| done \| dismissed \| expired, watched, note, background, pages, held, from_url}` — never the text or the PDF; 404 for another account's or a forgotten request |
+| POST | `/ai/handoffs/{id}/watch` | Gamma Connector took the request's tab (`watched: true`); optional body `{note, background}`: what it is doing there (`looking`, `check`, `signin`, `opening`, `refused`, `other`, `closed`; anything else clears it) and whether the tab is out of sight |
 | POST | `/ai/handoffs/{id}/pdf` | multipart `file` (+ optional `url` it came from): the PDF for the request, read at once and kept in memory for the account; 400 not a PDF / no text layer, 413 over 40 MB, 409 once the request is settled |
+| POST | `/ai/handoffs/{id}/store` | writable workspace: the delivered PDF (while held, `held: true`) into the workspace's uploads, content-hash deduped like `POST /uploads` → `{doc_id, source_url, already_existed, url}` (`url`: where the browser got it), for `POST /clip {doc_id}`; 404 when nothing is held |
 | DELETE | `/ai/handoffs/{id}` | dismiss the request |
-| GET | `/ai/handoffs/{id}/go` | no auth: the HTML page the card's Open leads to — for the request's owner it goes on to `url` after a second, anyone else gets a "Continue to host?" link; 404 page when expired |
+| GET | `/ai/handoffs/{id}/go` | no auth: the HTML page the card's Open leads to when it cannot hand the tab to Gamma Connector (desktop app, no answer yet) — for the request's owner it goes straight on to `url`, anyone else gets a "Continue to host?" link; 404 page when expired |
 
 ### Chats (`chats.py`, prefix `/api/chats`)
 

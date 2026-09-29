@@ -209,7 +209,16 @@ half the CPUs, at most 6; one with `--only`) forks N workers, each with its
 own backend, data dir and browser; a worker takes the next group off the
 queue, longest first, and the group's lines print as one block when it
 ends. A group must not rely on another group's data: put scenarios that do
-in the same group. Without `--continue` a failure stops handing out groups
+in the same group. Workers reuse their accounts between groups: restore an
+account preference changed for one scenario in `finally`, after closing its
+browser context. Otherwise a later group can inherit a different Enter-key
+binding or other setting. To check this isolation, run the affected groups
+together with `--jobs 1` as well as on their own. Tour scenarios must also
+set up prior tour progress explicitly when an earlier automatic offer would
+take the one-offer-per-load slot (for example, the windows offer on a PDF
+before testing citations).
+
+Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
 (settings and the first-run guide, about a minute each), so split one of
 those before adding workers.

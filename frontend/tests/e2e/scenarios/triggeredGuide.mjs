@@ -7,14 +7,20 @@
 import { Account, wanted } from "../harness.mjs";
 import { closeEditor, editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import windowsTour from "../../../src/guide/tours/windows.js";
 
 export async function triggeredGuideScenarios(env) {
   const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf } = env;
   if (!wanted("triggered guide")) return;
   server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();
-  const open = async (query, { setup, ...opts } = {}) => {
+  const open = async (query, { setup, seenWindows = false, ...opts } = {}) => {
     const ctx = await user.context(browser, { suggestTours: true, ...opts });
+    // A PDF's window-layout offer otherwise takes this load's only offer slot
+    // and can cover the menu used to start a different tour.
+    if (seenWindows) await ctx.addInitScript((version) => {
+      localStorage.setItem("gamma-guide:tourist:windows", JSON.stringify({ version, state: "dismissed" }));
+    }, windowsTour.version);
     await setup?.(ctx);
     const page = await openPage(ctx, `${server.base}/?ws=${user.ws}${query}`);
     return { ctx, page };
@@ -212,7 +218,7 @@ export async function triggeredGuideScenarios(env) {
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Cited paper", source_url: upload.source_url } });
     const models = { enabled: true, models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }], default: "demo:model" };
     const reply = `As the paper puts it [p. 1](/?page=${paper.id}&pdf_page=1&quote=${encodeURIComponent(quote)}).`;
-    const { ctx, page } = await open(`&page=${paper.id}`, { setup: async (ctx) => {
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, setup: async (ctx) => {
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
       await ctx.route("**/api/ai/models*", (route) => route.fulfill({ json: models }));
       await ctx.route("**/api/ai/chat", (route) => route.fulfill({ contentType: "application/x-ndjson", body: JSON.stringify({ delta: reply }) + "\n" }));
@@ -362,7 +368,7 @@ export async function triggeredGuideScenarios(env) {
   await step("triggered guide: the handwriting tour has the user draw first, leads with the note, and ends with the pen armed", async () => {
     const upload = await user.upload("/api/uploads", makePdf([["A page to write on"]]), "ink-tour.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Ink tour paper", source_url: upload.source_url } });
-    const { ctx, page } = await open(`&page=${paper.id}`);
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true });
     const line = async (from, to) => {
       await page.mouse.move(...from);
       await page.mouse.down();

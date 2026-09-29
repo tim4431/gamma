@@ -5,7 +5,9 @@
 // worker being put to sleep.
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
-import { handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, siteOf } from "./handoff.js";
+import {
+  NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, siteOf,
+} from "./handoff.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
 import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
 
@@ -84,8 +86,8 @@ function mergeCandidates(fromPage, fromUrl) {
 let authCache = { at: 0, value: null };
 
 async function checkAuth(force = false) {
-  if (!force && Date.now() - authCache.at < 60_000 && authCache.value) return authCache.value;
   const origin = await serverOrigin();
+  if (!force && Date.now() - authCache.at < 60_000 && authCache.value?.origin === origin) return authCache.value;
   let value;
   if (!origin) value = { configured: false, auth: null, user: null, origin: "" };
   else {
@@ -100,10 +102,11 @@ async function checkAuth(force = false) {
   return value;
 }
 
-async function lookup(candidate) {
+async function lookup(candidate, origin) {
   if (!candidate || candidate.kind === "none") return { hit: null };
   try {
     const hit = await api("/library/lookup", {
+      expectedOrigin: origin,
       params: { doi: candidate.doi, arxiv_id: candidate.arxiv_id, url: candidate.pdf_url || candidate.source_url },
     });
     return { hit };
@@ -128,9 +131,10 @@ async function setDetection(tabId, candidate) {
   const auth = await checkAuth();
   if (!auth.configured) return st;
   if (auth.auth === false) return setTabState(tabId, { auth: false });
-  const res = await lookup(candidate);
+  const res = await lookup(candidate, auth.origin);
+  if (await serverOrigin() !== auth.origin) return getTabState(tabId);
   if (res.auth === false) { authCache.at = 0; return setTabState(tabId, { auth: false, looked: true }); }
-  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true });
+  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true, origin: auth.origin });
   // Off the badge's critical path: doi.org can take a second or two. The
   // popup re-renders its head when the record lands (storage.onChanged).
   preview(candidate).then(async (pv) => {
@@ -203,19 +207,25 @@ async function autoRefreshPublisher(tabId, url, { force = false } = {}) {
 
 // ---------- fetches a chat handed to this browser ----------
 
-// A chat card's "Open" goes through <server>/api/ai/handoffs/<id>/go on its
-// way to a publisher that stopped the server (a CAPTCHA, a sign-in, a
-// paywall). The tab that loads it — and any tab it opens, like a "PDF" link
-// with target=_blank — is bound to that request (POST …/watch, so the card
-// says the Connector is on it). Each page such a tab finishes loading is a
-// chance to download the PDF with the browser's session (bytesFromTab, the
-// save pipeline's two attempts). When those fail on the page's PDF links,
-// the tab itself opens the first, as a click would (handoff.js nextToOpen),
-// and the PDF it ends on is taken on its next load. The first real PDF goes
-// to the request (POST …/pdf), the Gamma tab that asked comes forward, and a
-// connected publisher's cookies are refreshed from the session that just
+// A chat card whose fetch a publisher stopped (a CAPTCHA, a sign-in, a
+// paywall) asks the worker to open that page (bridge.js "connector-tab":
+// openHandoff) — next to the Gamma tab, or out of sight in a minimized
+// window when the user chose "in the background" — or its "Open" goes
+// through <server>/api/ai/handoffs/<id>/go on its way there (no Connector
+// answered yet, or the desktop app's system browser). Either tab — and any
+// tab it opens, like a "PDF" link with target=_blank — is bound to that
+// request (POST …/watch, so the card says the Connector is on it). Each page
+// such a tab finishes loading is a chance to download the PDF with the
+// browser's session (bytesFromTab, the save pipeline's two attempts). When
+// those fail on the page's PDF links, the tab itself opens the first, as a
+// click would (handoff.js nextToOpen), and the PDF it ends on is taken on its
+// next load. The first real PDF goes to the request (POST …/pdf); a tab the
+// user saw brings the Gamma tab that asked forward, one out of sight closes;
+// a connected publisher's cookies are refreshed from the session that just
 // worked. What the Connector is doing shows on the card (noteHandoff).
-const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener, app, opened, from, away}
+const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener, app, opened, from, away, background, note}
+const QUEUE_KEY = "handoff:queue";   // out-of-sight opens waiting for a turn (handoff.js backgroundBusy)
+const WINDOW_KEY = "handoff:window"; // the minimized window they load in
 const harvesting = new Set();     // request ids with a download in flight
 const again = new Set();          // tabs that loaded while their request's download was in flight
 
@@ -223,17 +233,159 @@ async function handoffTabs() {
   return (await chrome.storage.session.get(HANDOFFS_KEY))[HANDOFFS_KEY] || {};
 }
 
-async function setHandoffTab(tabId, binding) {
-  const all = await handoffTabs();
-  if (binding) all[tabId] = binding;
-  else delete all[tabId];
-  await chrome.storage.session.set({ [HANDOFFS_KEY]: all });
+// Every change to the bindings and the queue goes through here, one at a
+// time: several requests open, note and deliver at once, and a
+// read-modify-write of either would drop another's change. `fn` changes the
+// bindings (tabId → binding) and the queue in place, and must not call back
+// in here; what it returns is returned.
+let handoffLock = Promise.resolve();
+function changeHandoffs(fn) {
+  const run = handoffLock.then(async () => {
+    const got = await chrome.storage.session.get([HANDOFFS_KEY, QUEUE_KEY]);
+    const all = got[HANDOFFS_KEY] || {};
+    const queue = got[QUEUE_KEY] || [];
+    const out = await fn(all, queue);
+    await chrome.storage.session.set({ [HANDOFFS_KEY]: all, [QUEUE_KEY]: queue });
+    return out;
+  });
+  handoffLock = run.catch(() => {});
+  return run;
 }
 
+// A tab's binding, set whole.
+function bindTab(tabId, binding) {
+  return changeHandoffs((all) => { all[tabId] = binding; });
+}
+
+// Fields of a tab's binding changed (never bringing a released one back);
+// null lets the tab go.
+function patchHandoffTab(tabId, patch) {
+  return changeHandoffs((all) => {
+    if (patch === null) delete all[tabId];
+    else if (all[tabId]) all[tabId] = { ...all[tabId], ...patch };
+  });
+}
+
+// The request is settled (or the card let it go): its tabs are no longer
+// bound, and the ones the Connector opened out of sight close.
 async function releaseHandoff(id) {
-  const all = await handoffTabs();
-  for (const [tabId, b] of Object.entries(all)) if (b.id === id) delete all[tabId];
-  await chrome.storage.session.set({ [HANDOFFS_KEY]: all });
+  const closing = await changeHandoffs((all, queue) => {
+    const out = [];
+    for (const [tabId, b] of Object.entries(all)) {
+      if (b.id !== id) continue;
+      delete all[tabId];
+      if (b.background) out.push(Number(tabId));
+    }
+    const i = queue.findIndex((b) => b.id === id);
+    if (i >= 0) queue.splice(i, 1);
+    return out;
+  });
+  for (const tabId of closing) { try { await chrome.tabs.remove(tabId); } catch {} }
+  pumpQueue();
+}
+
+// A blank tab in the minimized window out-of-sight fetches load in, made
+// when there is none (inside changeHandoffs, so two never make two).
+async function fetchWindowTab() {
+  const winId = (await chrome.storage.session.get(WINDOW_KEY))[WINDOW_KEY];
+  if (winId != null) {
+    try {
+      await chrome.windows.get(winId);
+      return await chrome.tabs.create({ windowId: winId, url: "about:blank", active: false });
+    } catch {}
+  }
+  const win = await chrome.windows.create({ url: "about:blank", focused: false, state: "minimized" });
+  await chrome.storage.session.set({ [WINDOW_KEY]: win.id });
+  return win.tabs[0];
+}
+
+// A freshly bound tab: tell the card the Connector took the request, then
+// load the page (the binding is stored before it can finish loading).
+async function loadBound(tabId, binding) {
+  await noteHandoff(binding, "");
+  try { await chrome.tabs.update(tabId, { url: binding.url }); } catch {}
+}
+
+// The next queued out-of-sight fetches, while turns are free.
+let pumping = Promise.resolve();
+function pumpQueue() {
+  pumping = pumping.then(async () => {
+    for (;;) {
+      const started = await changeHandoffs(async (all, queue) => {
+        if (!queue.length || backgroundBusy(all)) return null;
+        const next = queue.shift();
+        const tab = await fetchWindowTab();
+        all[tab.id] = { ...next, background: true, note: "" };
+        return { tabId: tab.id, binding: all[tab.id] };
+      });
+      if (!started) return;
+      let req = null;
+      try { req = await api(`/ai/handoffs/${encodeURIComponent(started.binding.id)}`); } catch {}
+      if (req && req.status === "waiting") await loadBound(started.tabId, started.binding);
+      else await releaseHandoff(started.binding.id); // settled while it waited
+    }
+  }).catch((err) => console.warn(`[gamma] queued fetches: ${err.message}`));
+  return pumping;
+}
+
+// The card asked to open its request's page ("connector-tab" open): next to
+// the Gamma tab that asked, or out of sight (`background`). A page already
+// open for the request is shown instead (or left where it is). "opened",
+// or "queued" when every out-of-sight turn is taken.
+async function openHandoff(req, sender, background) {
+  const gamma = sender.tab || {};
+  const binding = { id: req.id, source: req.source, url: req.url, pdf_url: req.pdf_url, host: req.host,
+                    opener: gamma.id ?? null, app: sender.origin || "", background, note: "" };
+  const got = await changeHandoffs(async (all, queue) => {
+    if (Object.values(all).some((b) => b.id === req.id)) return { status: "open" };
+    const waiting = queue.findIndex((b) => b.id === req.id);
+    if (background) {
+      if (waiting >= 0) return { status: "queued" };
+      if (backgroundBusy(all)) { queue.push(binding); return { status: "queued" }; }
+      const tab = await fetchWindowTab();
+      all[tab.id] = binding;
+      return { status: "opened", tabId: tab.id };
+    }
+    if (waiting >= 0) queue.splice(waiting, 1);
+    const tab = await chrome.tabs.create({ url: "about:blank", active: true, windowId: gamma.windowId,
+                                          index: gamma.index != null ? gamma.index + 1 : undefined,
+                                          openerTabId: gamma.id });
+    all[tab.id] = binding;
+    return { status: "opened", tabId: tab.id };
+  });
+  if (got.status === "open") {
+    if (!background) await showHandoff(req.id, sender);
+    return "opened";
+  }
+  if (got.tabId != null) await loadBound(got.tabId, binding);
+  return got.status;
+}
+
+// The card asked to see its request's tab ("connector-tab" show): one out
+// of sight moves next to the Gamma tab that asked, and it comes forward.
+async function showHandoff(id, sender) {
+  const entry = Object.entries(await handoffTabs()).find(([, b]) => b.id === id);
+  if (!entry) return false;
+  const tabId = Number(entry[0]);
+  let tab;
+  try { tab = await chrome.tabs.get(tabId); } catch { await patchHandoffTab(tabId, null); return false; }
+  if (entry[1].background) {
+    const gamma = sender && sender.tab;
+    if (gamma && gamma.windowId !== tab.windowId) {
+      try { await chrome.tabs.move(tabId, { windowId: gamma.windowId, index: gamma.index + 1 }); } catch {}
+    }
+    await patchHandoffTab(tabId, { background: false });
+    const seen = (await handoffTabs())[tabId];
+    if (seen) await noteHandoff(seen, seen.note || "");
+    pumpQueue();
+  }
+  try {
+    tab = await chrome.tabs.get(tabId);
+    await chrome.tabs.update(tabId, { active: true });
+    const win = await chrome.windows.get(tab.windowId);
+    await chrome.windows.update(tab.windowId, win.state === "minimized" ? { state: "normal", focused: true } : { focused: true });
+  } catch {}
+  return true;
 }
 
 async function bindHandoff(tabId, url, openerTabId) {
@@ -241,13 +393,14 @@ async function bindHandoff(tabId, url, openerTabId) {
   if (!id || (await handoffTabs())[tabId]?.id === id) return;
   let req;
   // Another account's request, an expired one, or signed out: not ours to help.
-  try { req = await api(`/ai/handoffs/${encodeURIComponent(id)}/watch`, { method: "POST" }); }
+  try { req = await api(`/ai/handoffs/${encodeURIComponent(id)}/watch`, { json: { note: "" } }); }
   catch (err) { console.warn(`[gamma] fetch request ${id} not taken: ${err.message}`); return; }
   if (req.status !== "waiting") return;
   // `app`: the address the Gamma page that asked is open at (the /go
   // address's), which need not be the one the Connector is set to.
-  await setHandoffTab(tabId, { id, source: req.source, url: req.url, pdf_url: req.pdf_url,
-                               host: req.host, opener: openerTabId ?? null, app: new URL(url).origin });
+  await bindTab(tabId, { id, source: req.source, url: req.url, pdf_url: req.pdf_url,
+                         host: req.host, opener: openerTabId ?? null, app: new URL(url).origin,
+                         background: false, note: "" });
 }
 
 // The Gamma tab to bring back: the one that opened the request, else the
@@ -269,10 +422,23 @@ async function focusGamma({ opener, app }) {
   } catch {}
 }
 
-// Tell the card what the Connector is doing: "looking" (no PDF link on the
-// page yet), "opening" (the tab opens one), "refused" (no link gave a PDF).
+// Tell the card what the Connector is doing — "looking" (no PDF link on the
+// page yet), "check" (the page is a bot check or CAPTCHA), "signin" (the PDF
+// link leads to a sign-in), "opening" (the tab opens one), "refused" (no link
+// gave a PDF), "other" (the tab shows another paper), "closed" (the user
+// closed the tab) — and whether the tab is out of sight. The request's
+// bindings remember it: a tab that waits for the user (NEEDS_YOU) frees its
+// turn.
 async function noteHandoff(bound, note) {
-  try { await api(`/ai/handoffs/${encodeURIComponent(bound.id)}/watch`, { json: { note } }); } catch {}
+  const changed = await changeHandoffs((all) => {
+    let any = false;
+    for (const b of Object.values(all)) if (b.id === bound.id && b.note !== note) { b.note = note; any = true; }
+    return any;
+  });
+  try {
+    await api(`/ai/handoffs/${encodeURIComponent(bound.id)}/watch`, { json: { note, background: !!bound.background } });
+  } catch {}
+  if (changed && NEEDS_YOU.has(note)) pumpQueue();
 }
 
 async function harvestHandoff(tabId, attempt = 0) {
@@ -286,7 +452,7 @@ async function harvestHandoff(tabId, attempt = 0) {
   // Since a link was opened, has the tab been on another site (a sign-in)?
   if (bound.from && !bound.away && siteOf(tab.url) !== siteOf(bound.from)) {
     bound.away = true;
-    await setHandoffTab(tabId, bound);
+    await patchHandoffTab(tabId, { away: true });
   }
   harvesting.add(bound.id);
   try {
@@ -298,12 +464,17 @@ async function harvestHandoff(tabId, attempt = 0) {
     try { fromPage = await chrome.tabs.sendMessage(tabId, { type: "get-detection", fresh: true }); } catch {}
     const viewer = !fromPage; // Chrome's PDF viewer runs no content script
     const candidate = mergeCandidates(fromPage, candidateFromUrl(tab.url, tab.title));
-    if (!sameWork(candidate, bound)) return;
+    // Another paper's page (the user moved on, or the site shows another
+    // version): its PDF must not answer this request — the card says why.
+    if (!sameWork(candidate, bound)) { await noteHandoff(bound, "other"); return; }
     const urls = harvestUrls(candidate, bound, { tabUrl: tab.url, viewer });
     if (!urls.length) {
-      // Publisher pages render their PDF link after they loaded: look again.
-      if (attempt < 2) setTimeout(() => harvestHandoff(tabId, attempt + 1).catch(() => {}), 3000 * (attempt + 1));
-      else await noteHandoff(bound, "looking");
+      // Publisher pages render their PDF link after they loaded, and a check
+      // may pass by itself (a real browser often passes one unasked, more
+      // slowly in a tab out of sight): look again.
+      const check = checkPage({ url: tab.url, title: tab.title, check: candidate.check });
+      if (attempt < (check ? 4 : 2)) setTimeout(() => harvestHandoff(tabId, attempt + 1).catch(() => {}), 3000 * (attempt + 1));
+      else await noteHandoff(bound, check ? "check" : "looking");
       return;
     }
     const tried = [];
@@ -321,10 +492,18 @@ async function harvestHandoff(tabId, attempt = 0) {
         if ([404, 409].includes(err.status)) await releaseHandoff(bound.id);
         return;
       }
+      // The session that just worked refreshes a connected publisher's
+      // cookies — before a tab out of sight closes with the release.
+      const refresh = !tab.incognito && /^https:/i.test(url)
+        ? autoRefreshPublisher(tabId, tab.url, { force: true }).catch(() => {}) : null;
+      if (((await handoffTabs())[tabId] || bound).background) {
+        await refresh;
+        await releaseHandoff(bound.id);
+        return;
+      }
       await releaseHandoff(bound.id);
       await notify(`Sent to your Gamma chat: ${out.pages} page${out.pages === 1 ? "" : "s"} from ${new URL(url).hostname}.`);
       await focusGamma(bound);
-      if (!tab.incognito && /^https:/i.test(url)) autoRefreshPublisher(tabId, tab.url, { force: true }).catch(() => {});
       return;
     }
     // No download gave a PDF: open the link in the tab, as a click would —
@@ -332,8 +511,7 @@ async function harvestHandoff(tabId, attempt = 0) {
     const opened = bound.opened || {};
     const next = nextToOpen(tried, { tabUrl: tab.url, viewer, opened, away: bound.away });
     if (!next) { await noteHandoff(bound, needsSignIn(tried) ? "signin" : "refused"); return; }
-    await setHandoffTab(tabId, { ...bound, opened: { ...opened, [next]: (opened[next] || 0) + 1 },
-                                 from: tab.url, away: false });
+    await patchHandoffTab(tabId, { opened: { ...opened, [next]: (opened[next] || 0) + 1 }, from: tab.url, away: false });
     await noteHandoff(bound, "opening");
     await chrome.tabs.update(tabId, { url: next });
   } finally {
@@ -415,12 +593,12 @@ async function bytesFromTab(url, tabId) {
   throw lastErr;
 }
 
-async function uploadBlob(tabId, blob, url) {
+async function uploadBlob(tabId, blob, url, expectedOrigin) {
   const form = new FormData();
   const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
   form.append("file", blob, name);
   if (tabId != null) await progress(tabId, "uploading…");
-  const up = await api("/uploads", { form });
+  const up = await api("/uploads", { form, expectedOrigin });
   return up.doc_id;
 }
 
@@ -451,13 +629,13 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       // Best-effort: on failure the server-side resolve below still runs.
       try {
         if (tabId != null) await progress(tabId, "downloading in your browser…");
-        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl);
+        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl, settings.server);
       } catch (err) { console.warn(`[gamma] browser-first upload failed, server will try: ${err.message}`); }
     }
     if (tabId != null) await progress(tabId, "saving to your library…");
     let out;
     try {
-      out = await api("/clip", { json: payload });
+      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     } catch (err) {
       // The server couldn't fetch the PDF (paywall, bot check) — this
       // browser's session often can. Download here, upload, save again.
@@ -466,11 +644,11 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       let blob;
       try { blob = await bytesFromTab(fetchUrl, tabId); }
       catch (bErr) { throw new Error(`${err.message} The browser-side download failed too: ${bErr.message}.`); }
-      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl);
+      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl, settings.server);
       if (tabId != null) await progress(tabId, "saving to your library…");
-      out = await api("/clip", { json: payload });
+      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     }
-    if (tabId != null) await setTabState(tabId, { saving: "", hit: out, last: out, error: "" });
+    if (tabId != null && await serverOrigin() === settings.server) await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server });
     return out;
   } catch (err) {
     const message = err.message || "save failed";
@@ -481,9 +659,10 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
 }
 
 async function clipSelection({ tabId, text, source_url, title }) {
+  const origin = await serverOrigin();
   const st = tabId != null ? await getTabState(tabId) : {};
-  const page_id = st.hit && st.hit.block_id || "";
-  return api("/clip/note", { json: { text, source_url, title, page_id } });
+  const page_id = st.origin === origin && st.hit && st.hit.block_id || "";
+  return api("/clip/note", { json: { text, source_url, title, page_id }, expectedOrigin: origin });
 }
 
 // ---------- notifications (context menu + shortcut results) ----------
@@ -515,7 +694,7 @@ async function openInGamma(out) {
 
 async function ensureDetection(tabId) {
   const st = await getTabState(tabId);
-  if (st.candidate && st.looked) return st;
+  if (st.candidate && st.looked && st.origin === await serverOrigin()) return st;
   let tab = null;
   try { tab = await chrome.tabs.get(tabId); } catch { return st; }
   let fromPage = null;
@@ -548,12 +727,20 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.pendingUrl || tab.url) bindHandoff(tab.id, tab.pendingUrl || tab.url, tab.openerTabId).catch(() => {});
   if (tab.openerTabId == null) return;
   const parent = (await handoffTabs())[tab.openerTabId];
-  if (parent) await setHandoffTab(tab.id, { ...parent });
+  if (parent) await bindTab(tab.id, { ...parent });
 });
 
+// A request's last tab closed before its PDF came: the card says so.
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(key(tabId));
-  setHandoffTab(tabId, null).catch(() => {});
+  (async () => {
+    const bound = (await handoffTabs())[tabId];
+    await patchHandoffTab(tabId, null);
+    if (bound && !Object.values(await handoffTabs()).some((b) => b.id === bound.id)) {
+      await noteHandoff({ ...bound, background: false }, "closed");
+    }
+    await pumpQueue();
+  })().catch(() => {});
 });
 
 // ---------- messages ----------
@@ -621,6 +808,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return { status: err.status === 401 ? "signed-out" : [403, 404].includes(err.status) ? "other-account" : "unreachable" };
         }
       }
+      // A chat card asking (bridge.js) to open its request's page — next to
+      // it, or out of sight — to show that tab, or to let it go (Dismiss).
+      // Only a request of this Connector's account, so a page learns nothing
+      // and opens nothing without one of its ids.
+      case "connector-tab": {
+        const id = String(msg.id || "");
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(id) || !sender.tab) return null;
+        let req;
+        try { req = await api(`/ai/handoffs/${encodeURIComponent(id)}`); } catch { return null; }
+        if (msg.do === "open") {
+          if (req.status !== "waiting") return { status: req.status };
+          return { status: await openHandoff(req, sender, !!msg.background) };
+        }
+        if (msg.do === "show") return { status: (await showHandoff(id, sender)) ? "shown" : "none" };
+        if (msg.do === "close") { await releaseHandoff(id); return { status: "closed" }; }
+        return null;
+      }
       default:
         return null;
     }
@@ -675,5 +879,16 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && changes.server) { authCache.at = 0; publisherCache = null; }
+  if (area === "sync" && changes.server) {
+    authCache.at = 0;
+    publisherCache = null;
+    // Library hits and badges belong to the server that resolved them.
+    chrome.storage.session.get(null).then(async (stored) => {
+      for (const [k, st] of Object.entries(stored)) {
+        if (k.startsWith("tab:") && st.origin !== changes.server.newValue) {
+          await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
+        }
+      }
+    }).catch(() => {});
+  }
 });

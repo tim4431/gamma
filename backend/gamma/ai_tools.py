@@ -1143,9 +1143,14 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
             publisher_sessions.current_user.reset(token)
     text, next_offset, total = window(doc, budget, offset, page)
     label = doc.get("title") or doc["url"]
-    action = {"kind": "fetch", "url": doc["url"],
+    # `title`, `pdf` and `request` (the handoff whose PDF the user's browser
+    # sent) let the chat offer the paper for the library (chat/chatPapers.js).
+    action = {"kind": "fetch", "url": doc["url"], "title": (doc.get("title") or "")[:300],
+              "pdf": doc["kind"] == "pdf",
               "summary": (f"Read “{label[:60]}” from your browser" if doc.get("delivered")
                           else f"Fetched “{label[:60]}”")}
+    if doc.get("delivered") and doc.get("request"):
+        action["request"] = doc["request"]
     if doc["kind"] == "pdf":
         head = f'Fetched PDF {doc["url"]} ({len(doc["pages"])} pages, {doc["chars"]} chars of text)'
         if doc.get("note"):

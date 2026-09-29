@@ -18,15 +18,40 @@ export function replyHandoffs(actions) {
 }
 
 // The card's state from the server's view of the request (null while the
-// first answer is out) and whether the user opened the page from it.
+// first answer is out) and whether the user opened the page from it. A tab
+// the user closed before the PDF came (note "closed") is watched no more.
 export function handoffState(view, { opened = false } = {}) {
   if (!view) return "loading";
   if (view.status === "done") return "done";
   if (view.status === "dismissed") return "dismissed";
   if (view.status !== "waiting") return "gone"; // expired, or unknown to the server
-  if (view.watched) return "watching";
+  if (view.watched && view.note !== "closed") return "watching";
   return opened ? "opened" : "waiting";
 }
+
+// How "Open" reaches the publisher: Gamma Connector opens the tab itself
+// when it answered the card ("connector" — no Gamma page on the way); with
+// no Connector to take the tab the page opens directly ("direct"); the
+// desktop app (the system browser's Connector knows the tab by its address)
+// and a Connector that has not answered yet go through the request's /go
+// page ("go").
+export function openRoute(connector) {
+  if (connector === "ok") return "connector";
+  if (connector === "desktop" || connector === "unknown") return "go";
+  return "direct";
+}
+
+// Whether the card hands its request to the Connector by itself, to fetch
+// out of sight (the "Fetch blocked papers in the background" setting): the
+// Connector can serve it, the request waits untouched in the conversation's
+// last reply, and no tab of it was closed before.
+export function autoOpens({ auto, connector, state, isLast, readOnly, note = "" }) {
+  return !!auto && connector === "ok" && state === "waiting" && !!isLast && !readOnly && !note;
+}
+
+// What the Connector reports that waits for the user in the tab: the card
+// then offers to show it.
+export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "other"]);
 
 export const SETTLED = new Set(["done", "dismissed", "gone"]);
 const ACTIVE = new Set(["opened", "watching"]);
@@ -63,13 +88,18 @@ export function wallHeadline(wall, host) {
   }
 }
 
-// What the user does next, per state.
-export function handoffHint(state, { pages = 0 } = {}) {
+// What the user does next, per state. `background`: the Connector keeps the
+// tab out of sight; `queued`: it waits for a turn to open one.
+export function handoffHint(state, { pages = 0, background = false, queued = false } = {}) {
   switch (state) {
     case "watching":
-      return t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
+      return background
+        ? t("Gamma Connector is getting it in a minimized window — the PDF comes back here by itself.")
+        : t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
     case "opened":
-      return t("Finish in the tab that opened.");
+      return queued
+        ? t("Gamma Connector gets it in the background once the papers before it are done.")
+        : t("Finish in the tab that opened.");
     case "done":
       return tn("Got the PDF from your browser ({n} page).", "Got the PDF from your browser ({n} pages).", pages);
     case "dismissed":
@@ -112,6 +142,12 @@ export function watchNote(note) {
   switch (note) {
     case "looking":
       return t("It doesn't see the paper's PDF link on that page yet — sign in if needed, or open the PDF there.");
+    case "check":
+      return t("The site is showing a bot check or CAPTCHA: pass it in that tab, and it takes the PDF after.");
+    case "closed":
+      return t("The tab closed before the PDF came. Open the page again, or drop the PDF here.");
+    case "other":
+      return t("That tab shows a paper with another DOI, so it waits. Open this paper there, or drop its PDF here.");
     case "signin":
       return t("The PDF link there leads to a sign-in: sign in on that page (or through your institution), and it takes the PDF once you are in.");
     case "opening":

@@ -49,7 +49,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   assistant: sections({
     Chat: ["chatEffort", "chatImgAutoClear"],
-    Tools: ["agentEnabled", "agentPerms"],
+    Tools: ["agentEnabled", "agentPerms", "fetchInBackground"],
   }),
   advanced: sections({
     "Tool limits": ["toolRounds", "agentReadChars"],

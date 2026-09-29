@@ -49,11 +49,17 @@
   }
 
   // Links that open this page's PDF — "View PDF", a /pdf, /pdfft or
-  // /article-pdf route — for a chat's fetch (worker.js harvestHandoff).
+  // /article-pdf route — for a chat's fetch (worker.js harvestHandoff), and
+  // a PDF the page shows in a frame (IEEE's stamp page frames getPDF.jsp).
   // Publisher pages render them after load, so a fetch asks afresh.
   // Supplementary files and citation exports are left out.
   function pdfLinks() {
     const out = [];
+    for (const el of document.querySelectorAll("iframe[src], embed[src], object[data]")) {
+      const url = absolute(el.getAttribute("src") || el.getAttribute("data") || "");
+      if (/^https?:/i.test(url) && !out.includes(url)
+          && (/pdf/i.test(url) || /application\/pdf/i.test(el.getAttribute("type") || ""))) out.push(url);
+    }
     for (const a of document.querySelectorAll("a[href]")) {
       const url = a.href;
       if (!/^https?:/i.test(url) || out.includes(url)) continue;
@@ -65,6 +71,21 @@
       if (out.length >= 6) break;
     }
     return out;
+  }
+
+  // A bot check or CAPTCHA page: a challenge widget on a page with little
+  // else (an article's comment form may carry a reCAPTCHA too).
+  const CHALLENGE = [
+    "#challenge-form", "#challenge-running", "#turnstile-wrapper", ".cf-turnstile",
+    'script[src*="/cdn-cgi/challenge-platform/"]', 'iframe[src*="challenges.cloudflare.com"]',
+    ".g-recaptcha", 'iframe[src*="/recaptcha/"]', ".h-captcha", 'iframe[src*="hcaptcha.com"]',
+    "#px-captcha", 'iframe[src*="captcha-delivery.com"]',
+  ].join(", ");
+  function checkShown() {
+    try {
+      return !!document.querySelector(CHALLENGE)
+        && (document.body && document.body.innerText || "").length < 3000;
+    } catch { return false; }
   }
 
   function detect() {
@@ -99,7 +120,7 @@
       if (found) { doi = found; kind = "maybe"; }
     }
     return { kind, source_url: href, pdf_url: pdfUrl, arxiv_id: arxivId, doi, title, is_pdf_tab: isPdf,
-             pdf_links: pdfLinks() };
+             pdf_links: pdfLinks(), check: checkShown() };
   }
 
   let last = null;

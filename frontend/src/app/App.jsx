@@ -2662,6 +2662,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
+    fetchInBackground, setFetchInBackground,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -9020,6 +9021,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
+          fetchInBackground={fetchInBackground}
+          paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -10461,6 +10464,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setAgentPerms,
           agentEnabled,
           setAgentEnabled,
+          fetchInBackground,
+          setFetchInBackground,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

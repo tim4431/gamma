@@ -698,6 +698,10 @@ available here), and `run_agent_tool` refuses a changing tool called anyway.
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat. The chat header's Tools button and settings
 popover edit the same account preference; New chat does not reset it.
+Under the permission table, **Fetch blocked papers in the background**
+(`gamma-ai-fetch-background`, default off) lets a blocked fetch's card hand
+the page to Gamma Connector without a click
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 Which tools a chat may use is configured per chat KIND — there are three
 (`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
@@ -795,7 +799,9 @@ A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
 `handoff`; after the reply's text the chat shows a card for it
 (`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
 continues the conversation once it arrives
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
+or named papers ends with a **Save to library** list of them
+(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`.
 
 ### Watching the agent work (live footprint)
 

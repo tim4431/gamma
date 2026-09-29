@@ -172,6 +172,61 @@ def test_card_endpoints_deliver_watch_dismiss_and_privacy(accounts, web, fetch):
         fetch_handoff.open_request(USER, "x", wall="denied", url="javascript:alert(1)")
 
 
+def test_the_connector_says_where_the_tab_is_and_what_waits_for_the_user(accounts, web):
+    alice, _ = accounts
+    rid = fetch_handoff.open_request(USER, "doi:10.5555/bg", wall="captcha", url="https://a.example/bg")["id"]
+    view = alice.get(f"/api/ai/handoffs/{rid}").json()
+    assert view["background"] is False and view["held"] is False
+    # Opened out of sight (the card's background setting): the card says so.
+    view = alice.post(f"/api/ai/handoffs/{rid}/watch", json={"note": "", "background": True}).json()
+    assert view["watched"] and view["background"] is True
+    assert alice.post(f"/api/ai/handoffs/{rid}/watch", json={"note": "check", "background": True}).json()["note"] == "check"
+    # Shown to the user (moved next to Gamma), then closed before the PDF came.
+    view = alice.post(f"/api/ai/handoffs/{rid}/watch", json={"note": "closed"}).json()
+    assert (view["note"], view["background"]) == ("closed", False)
+
+
+def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts, web, fetch):
+    alice, bob = accounts
+    source = "doi:10.5555/keep"
+    rid = fetch_handoff.open_request(USER, source, wall="login", url="https://journals.example.org/keep")["id"]
+    assert alice.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "nothing delivered yet"
+    pdf = _text_pdf([PDF_TEXT])
+    r = alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", pdf)},
+                   data={"url": "https://journals.example.org/keep.pdf"})
+    assert r.json()["held"] is True
+    # The chat's next read names the request, so the reply can offer the paper.
+    _, action = fetch(source)
+    assert (action["request"], action["pdf"]) == (rid, True)
+    assert "title" in action and action["url"] == "https://journals.example.org/keep.pdf"
+
+    assert bob.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "another account's PDF stays theirs"
+    stored = alice.post(f"/api/ai/handoffs/{rid}/store").json()
+    assert stored["url"] == "https://journals.example.org/keep.pdf"
+    assert stored["source_url"] == f"/api/uploads/{stored['doc_id']}.pdf"
+    out = alice.post("/api/clip", json={"doc_id": stored["doc_id"], "doi": "10.5555/keep",
+                                        "source_url": "https://doi.org/10.5555/keep", "title": "Kept paper",
+                                        "folder": "Chat finds", "fetch_metadata": False}).json()
+    assert (out["doc_id"], out["title"], out["existed"], out["folder"]) == (stored["doc_id"], "Kept paper", False, "Chat finds")
+    assert alice.get("/api/library/lookup", params={"doi": "10.5555/keep"}).json()["block_id"] == out["block_id"]
+    # Storing twice adds nothing: the upload is content-hashed.
+    assert alice.post(f"/api/ai/handoffs/{rid}/store").json()["already_existed"] is True
+
+
+def test_held_pdfs_are_capped_but_their_text_stays(accounts, web, monkeypatch):
+    alice, _ = accounts
+    pdf = _text_pdf([PDF_TEXT])
+    monkeypatch.setattr(fetch_handoff, "MAX_HELD_BYTES", len(pdf) + 10)
+    first, second = (fetch_handoff.open_request(USER, f"doi:10.5555/held{i}", wall="denied",
+                                                url="https://a.example/x")["id"] for i in range(2))
+    for rid in (first, second):
+        assert alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", pdf)}).status_code == 200
+    assert fetch_handoff.held_pdf(USER, first) is None and fetch_handoff.held_pdf(USER, second)
+    assert alice.get(f"/api/ai/handoffs/{first}").json()["held"] is False
+    assert fetch_handoff.delivered(USER, "doi:10.5555/held0"), "the chat still reads it"
+    assert alice.post(f"/api/ai/handoffs/{first}/store").status_code == 404
+
+
 def test_card_endpoints_need_a_personal_account(accounts, guest, anon):
     rid = fetch_handoff.open_request(USER, "doi:10.5555/g", wall="denied", url="https://a.example/g")["id"]
     assert anon.get(f"/api/ai/handoffs/{rid}").status_code == 401
@@ -184,7 +239,7 @@ def test_go_page_redirects_its_owner_and_asks_everyone_else(accounts, anon):
                                      url="https://journals.example.org/a?x=1&y=\"2\"")["id"]
     page = alice.get(f"/api/ai/handoffs/{rid}/go")
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
-    assert '<meta http-equiv="refresh" content="1;url=https://journals.example.org/a?x=1&amp;y=&quot;2&quot;">' in page.text
+    assert '<meta http-equiv="refresh" content="0;url=https://journals.example.org/a?x=1&amp;y=&quot;2&quot;">' in page.text
     assert "Opening journals.example.org" in page.text
     for stranger in (bob, anon):
         page = stranger.get(f"/api/ai/handoffs/{rid}/go")

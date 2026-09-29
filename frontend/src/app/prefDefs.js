@@ -264,6 +264,10 @@ export const PREFS = {
   agentEnabled: flag("gamma-ai-agent-enabled", ACCOUNT, true),
   agentPerms: pref("gamma-ai-agent-perms", ACCOUNT,
     Object.fromEntries(CHAT_KINDS.map((k) => [k, { ...TOOL_PERMS_DEFAULT }])), AGENT_PERMS),
+  // Off by default: a chat fetch a publisher stopped waits for the user to
+  // open the page. On, the card hands it to Gamma Connector by itself, which
+  // tries in a minimized window (chat/FetchHandoffCards.jsx).
+  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, false),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
   // Per-read_page-call cap on document text the folder/paper agent may pull.

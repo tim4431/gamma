@@ -847,14 +847,16 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await search(page, "token", "Token usage");
-      const section = page.locator(".settingsPane");
-      await row(page, "All time").waitFor();
-      assert((await row(page, "All time").innerText()).includes("No AI calls recorded yet"));
-      assertEq(await row(page, "All time").getByRole("button", { name: "Reset" }).isDisabled(), true);
+      const chart = page.locator(".settingsPane .usageChart");
+      await chart.waitFor();
+      assertEq(await chart.locator(".usageChartHeadline strong").innerText(), "0");
+      assert((await chart.locator(".usageChartTotals").innerText()).includes("0 calls"));
+      assertEq(await chart.getByRole("button", { name: "Reset", exact: true }).isDisabled(), true);
       const usage = await user.api("/api/ai/usage");
       assertEq(usage.windows.all.calls, 0);
       assertEq((await user.api("/api/ai/usage", { method: "DELETE" })).deleted, 0);
-      assert((await section.innerText()).includes("no calls"), "the window tiles say no calls");
+      assertEq(await chart.locator('.usageChartBar[data-value="0"]').count(), 30, "every daily bar is empty");
+      assertEq(await chart.locator(".usageChartDetail span").innerText(), "No AI calls in this period");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

@@ -32,6 +32,13 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
 
 ## Use
 
+- In options, enter an address and **Connect** to remember it. Each saved
+  server has its own row: click the address to switch or **×** to forget it.
+  Click the server name in the popup's footer for the same switcher, including
+  when signed out or offline. The current server has a checkmark; removing it
+  disconnects the Connector until you choose another address. Switching or
+  removing an address does not sign out of its browser session. Saving
+  defaults remain shared across servers.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when
