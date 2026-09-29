@@ -9,6 +9,14 @@ test("permission presets preserve explicit restrictions and the applicable tools
     assert.equal(permissionPreset(kind, read), "read");
     assert.equal(read.block_edit, false);
     assert.equal(read.read, true);
+    assert.equal(read.publisher_cookies, true);
+    assert.equal(permissionPreset(kind, { ...read, publisher_cookies: false }), "custom");
+    const library = presetPermissions(kind, "library");
+    assert.equal(permissionPreset(kind, library), "library");
+    assert.equal(library.read, true);
+    for (const key of ["web_search", "web_read", "publisher_cookies", "block_edit"]) {
+      assert.equal(library[key], false, `read-library disables ${key}`);
+    }
     assert.deepEqual(Object.keys(read), toolsForKind(kind));
     assert.equal(permissionPreset(kind, { ...read, read: false }), "custom");
     assert.equal(permissionPreset(kind, presetPermissions(kind, "edit")), "edit");
@@ -70,7 +78,7 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   const read = readProfile({
     theme: "sepia", pdfDarkPage: "yes", translateLang: "xx", translateParallel: 99, toolRounds: 12,
     chatSystem: "Be brief.", uiScale: 1.4, inkTools: [], unknownPref: 1,
-    agentPerms: { pdf: { block_edit: false } },
+    agentPerms: { pdf: { block_edit: false, publisher_cookies: false } },
   });
   assert.equal(read.theme, "sepia");
   assert.equal(read.toolRounds, 12);
@@ -80,6 +88,8 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
     assert.ok(!(dropped in read), `${dropped} dropped`);
   }
   assert.equal(read.agentPerms.pdf.block_edit, false);
+  assert.equal(read.agentPerms.pdf.publisher_cookies, false);
+  assert.equal(read.agentPerms.folder.publisher_cookies, true, "existing accounts keep connected fetching enabled");
   assert.equal(read.agentPerms.pdf.read, true, "missing tools stay allowed");
   assert.equal(read.agentPerms.folder.rename, true);
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});

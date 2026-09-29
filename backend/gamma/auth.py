@@ -266,7 +266,8 @@ async def session_middleware(request: Request, call_next):
         if expired_guest:
             resp.delete_cookie(SESSION_COOKIE)
         return _finish_request_log(request, resp, started, expected, "session-mismatch")
-    # Only interactive PDF operations may use the caller's publisher sessions.
+    # Bind publisher sessions for interactive PDF operations. AI fetch_paper
+    # binds its authenticated caller separately inside the tool worker.
     # Public/share reads and guest accounts must never borrow credentials.
     publisher_user = (request.state.user
                       if request.url.path in publisher_sessions.PDF_PATHS

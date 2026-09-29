@@ -2,6 +2,7 @@
 // the hints. Add a file per tour and a line here.
 import firstRun from "./firstRun.js";
 import aiChat from "./aiChat.js";
+import windows from "./windows.js";
 import citations from "./citations.js";
 import sharing from "./sharing.js";
 import tables from "./tables.js";
@@ -11,4 +12,4 @@ import workspaces from "./workspaces.js";
 import hints from "./hints.js";
 
 export const TOURS = Object.fromEntries(
-  [firstRun, aiChat, citations, sharing, tables, handwriting, presence, workspaces, ...hints].map((t) => [t.id, t]));
+  [firstRun, aiChat, windows, citations, sharing, tables, handwriting, presence, workspaces, ...hints].map((t) => [t.id, t]));

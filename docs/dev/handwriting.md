@@ -85,11 +85,13 @@ e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`.
   the PDF to the group and outlines it briefly; a click on ink selects it
   (Show note scrolls the notes to its block), and in read-only views jumps
   to the block directly.
-- A group erased empty deletes its block (and comes back on undo).
+- A group erased empty retains its block, caption and child notes. It saves
+  an empty stroke file; deleting the note itself is a separate action.
 - Read-only views (workspace viewers, view shares) show ink without tools;
   edit shares draw.
-- On an iPad the same layer runs full screen once Gamma is added to the
-  home screen ([ipad.md](ipad.md)); there is no native drawing surface.
+- On an iPad the browser layer still works when added to the home screen
+  ([ipad.md](ipad.md)). The native app uses a native Pencil surface with
+  the same portable ink files and block operations.
 
 ## Model
 
@@ -120,6 +122,22 @@ the export bundlers and backups already understand `/api/uploads/`
 references in properties.
 
 ## The stroke file (`gamma-ink` v1)
+
+Version 1 remains the format for existing PDF ink. Version 2 additionally
+supports notebook space (`kind: "notebook-page"`, stable `sheet_id`,
+`width`, `height`, no numeric `page`) and optional stroke `source_id`
+lineage for partial-erase fragments. Version 2 PDF ink keeps the same
+coordinates as v1. Clients must preserve unknown supported-version fields
+through edits; they must not flatten native ink into a second opaque format.
+See [notebooks.md](notebooks.md) and [audio.md](audio.md).
+
+Canonical means common data and save semantics. `POST /api/upload-ink`
+validates and emits the backend's sorted-key bytes. Offline native clients
+can save their own valid sorted-key JSON and transfer its exact immutable
+bytes through ordinary file upload, as Mirror already does. Equivalent
+numbers such as `612` and `612.0` may produce different hashes; clients never
+rename or reserialize an existing asset behind its hash. Shared semantic
+fixtures live in `tests/shared/ink-v2.json`.
 
 Plain JSON (`application/json`), one per group:
 
@@ -181,6 +199,27 @@ sample bytes.
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
   on a block with nothing unsaved drops the draft.
+  Completed drafts persist in IndexedDB (`gamma-ink-drafts`), scoped by
+  account, workspace and share token. They retain the URL originally edited
+  from, page/sheet recovery context, and the stable batch identity. A reload
+  restores unsaved drawings and unresolved conflicts; failed persistence is
+  reported rather than silently advertised as durable recovery.
+- `ink/inkSave.js` uploads the immutable drawing and commits its reference
+  through the common page `set` operation with `base_props.ink_url`.
+  A first-stroke save can idempotently recover its missing placeholder group
+  (and notebook sheet) before setting the reference. A stale save remains a
+  durable draft. The conflict UI's **Keep both** action persists one stable
+  recovery block ID and batch ID, so retrying after a lost response cannot
+  multiply the recovered groups. An empty saved drawing retains the group's
+  caption and children.
+- Stroke undo rebases by stable stroke ID against the current drawing. It
+  keeps remotely added strokes, and skips an affected stroke changed by
+  someone else since the history step. It does not replace the whole group
+  with an old snapshot.
+- `ink/inkReplay.js` is the pure timing projection used by browser and native
+  replay: match recording events to stroke identity/fragment lineage,
+  expose the retained samples up to the recorder time, and leave unrecorded
+  handwriting visible. See [audio.md](audio.md).
 - `ink/InkLayer.jsx`: `InkLayer` (per `PdfPage`, a sibling of the highlight
   layer) is the retained SVG plus a `desynchronized` canvas for the stroke
   in progress. `InkSelectionMenu` is a portalled `ContextMenu` (its controls
@@ -236,21 +275,21 @@ sample bytes.
   edit funnels through `applyInk`, which updates the drafts, records the
   entry and schedules `flushInk` (700 ms after the
   last one, and on `pagehide` / `visibilitychange` / leaving the page).
-  The flush uploads the draft (`POST /api/upload-ink`) and PATCHes the
-  block through `PUT /api/blocks/{id}` — a server-side writer, so the
+  The flush uploads the draft (`POST /api/upload-ink`) and sets the block's
+  reference through `POST /api/pages/{id}/ops`, so the
   change fans out over the page socket and reaches this tree like a remote
   op; only the group's block itself (first stroke) is inserted through the
-  tree. An empty group is deleted the same way; its empty draft keeps
-  masking the saved strokes until the tree sees the deletion (the HTTP
-  response can land before the socket op), and `inkStore.markDeleted` marks
-  it clean only after a successful delete, so a failure retries. A failed
+  tree. An empty group saves an empty file and keeps its caption and child
+  notes. The reference and geometry are guarded by the previous `ink_url`
+  using `base_props`; competing ink is retained in a separate ordinary
+  group rather than overwriting a newer drawing. A failed
   flush (the block's insert may still be queued) retries after two seconds.
 - With the strip open, Ctrl+Z is the stroke history (a capture-phase key
   handler, so the page's block undo never sees it); with it closed, Ctrl+Z
   is the page's block history, which knows the group's block but not its
-  strokes. Two clients drawing into one group resolve by
-  server order on `ink_url` (property-level last writer wins, as every
-  property); each keeps a fresh group after *New group*.
+  strokes. Two clients replacing one group's ink use the guarded reference
+  contract described in [collab.md](collab.md). Each keeps a fresh group
+  after *New group*; conflicts preserve both assets as ordinary groups.
   A focused note editor keeps the block history even with the strip open,
   and other text inputs keep their own undo; an empty ink history never
   falls through to block undo. Undo and redo report the action and PDF page
@@ -270,7 +309,7 @@ sample bytes.
   same strokes dedup to one upload).
 - `POST /api/upload-ink` (`routers/ink.py`): the file as the JSON body,
   validated, stored as `<hash>.ink` with the usual quota check →
-  `{url, size, strokes, bbox, pdf_position, already_existed}`. Editors and
+  `{url, size, strokes, bbox, pdf_position, sheet_id, already_existed}`. Editors and
   edit shares (`require_ws_writer`). `.ink` is in `storage.FILE_MEDIA_TYPES`
   (`application/json`), so `GET /api/uploads/<hash>.ink` is the ordinary
   upload route with its share scoping and cache headers.
@@ -292,8 +331,8 @@ Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, a `canvas` space for ink blocks
 on pages without a PDF, Xournal++ `.xopp` import, *Transcribe with AI*,
-live co-drawing over presence, audio replay (the per-sample `t` and stroke
-ids are stored for it). Obsidian vault export writes an ink block's
+live co-drawing over presence. The shared recording format and replay
+mapping are described in [audio.md](audio.md). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
 that returns to the last tool, the highlighter behind the ink, clipboard

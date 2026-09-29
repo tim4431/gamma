@@ -62,6 +62,10 @@ FILE_MEDIA_TYPES = {
     ".mp4": "video/mp4",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".webm": "audio/webm",
 }
 # Files an OS runs as code when opened — the one kind Gamma refuses to host,
 # on upload and (belt and braces) on serving. Archives and package formats
@@ -81,6 +85,7 @@ EXTENSION_RE = re.compile(r"^\.[a-z0-9]{1,12}$")
 # unaffected. SANDBOXED_EXTENSIONS additionally get a sandboxing CSP in case
 # a browser renders them anyway.
 INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg")}
+INLINE_EXTENSIONS.update((".m4a", ".aac", ".mp3", ".wav", ".ogg", ".webm"))
 SANDBOXED_EXTENSIONS = {".svg", ".html"}
 
 

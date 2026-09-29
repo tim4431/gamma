@@ -47,6 +47,10 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
    for that host to the signed-in Gamma account (`POST
    /api/publisher-sessions`), so the *server* can download that journal's
    PDFs later. Details below.
+9. **Fetches for the AI chat.** When the chat's `fetch_paper` meets a
+   sign-in, a bot check or a paywall, its card opens the page in a tab the
+   Connector watches; once the user is through, the Connector sends the PDF
+   back to the chat on its own. Details below.
 
 Non-goals: reading or annotating inside the extension, a local library,
 syncing highlights back to the source page.
@@ -72,11 +76,13 @@ helpers — never re-implement it in the extension.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`) |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`) |
+| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`) — pure, tested in `tests/` |
+| `bridge.js` | content script answering a chat card's `connector-probe` window message with the worker's `connector-probe` verdict (`ok` / `signed-out` / `other-account` / `unreachable`), or nothing; a question a second per request |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
-| `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
+| `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
 | `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). Saving remembers the folder but not the labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
@@ -249,6 +255,80 @@ on every page view. The outcome lands in `chrome.storage.session`
 card for that host, a success just as a newer "refreshed … ago". Server
 side and the security model: [paper_metadata.md](paper_metadata.md#connected-publisher-sessions).
 
+## Fetches handed from the chat
+
+The AI chat's `fetch_paper` hands a paper to the browser when a CAPTCHA, a
+sign-in page or a paywall stopped the server
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). The reply's card
+opens `<server>/api/ai/handoffs/<id>/go`, a short Gamma page that goes on to
+the publisher; that address is how the Connector knows the tab:
+
+1. **Bind.** `tabs.onUpdated` (and `onCreated`, by the pending URL) sees the
+   tab load a `/go` address (`handoffIdFrom`) — on any host, since one server
+   is often reached as `localhost` and `127.0.0.1` or through a proxy. The
+   worker takes the request with `POST /api/ai/handoffs/<id>/watch` on its
+   own server, which refuses another account's, an expired or a made-up
+   request, and records the tab under `handoffs` in session storage, with
+   the address the Gamma page asked from (`app`). A tab the bound tab opens
+   (a "PDF" link with `target=_blank`) is bound to the same request.
+2. **Harvest.** Each page a bound tab finishes loading off the Gamma server
+   is a chance: the worker checks the request still waits (`GET …/<id>`;
+   settled or gone releases the tab), reads the page's detection afresh
+   (`get-detection` with `fresh`), skips a page that names another DOI or
+   arXiv id in its metadata (`sameWork`; a DOI only guessed from the page's
+   text, often a reference's, does not count), and tries, in order, the tab
+   itself when it shows a PDF (Chrome's viewer runs no content script), the
+   page's advertised PDF link, its "View PDF"-style links on the same site
+   (`detect.js` `pdfLinks`: a `/pdf`, `/epdf`, `/pdfft` or `/article-pdf`
+   route, or "PDF" in the link text; supplementary files left out), and the
+   server's PDF link when the page is a paper page of that site
+   (`harvestUrls`: a sign-in page costs no request). A page that shows no
+   link yet is looked at again after 3 and 6 s (publisher pages render the
+   link after load). Each URL goes through the save pipeline's
+   `bytesFromTab` — the worker's credentialed fetch, then the tab's own
+   same-origin fetch — and only a real `%PDF` counts; a failed attempt
+   remembers where it ended (`landed`).
+3. **Open.** When every download failed, the tab opens a link itself, as a
+   click would (`nextToOpen`), and the PDF it ends on is taken from Chrome's
+   viewer on the next load. A navigation gets what a script's download does
+   not: ScienceDirect's `pdfft` is an HTML page whose script redirects to a
+   signed `pdf.sciencedirectassets.com` URL; Silverchair (AIP) redirects to
+   its watermark host, which the page's own fetch cannot follow across
+   origins; bot rules refuse requests that are not navigations. A link whose
+   download ended on a sign-in page, or back on the article itself, is not
+   opened — the user has no access yet, and opening it would lead away from
+   the page's sign-in buttons. Each link is opened once, again (at most
+   three times) only after the tab has been on another site since, such as
+   a university sign-in that sends the user back to the article.
+4. **Deliver.** The first PDF goes to `POST /api/ai/handoffs/<id>/pdf` with
+   the URL it came from. The worker releases every tab of the request, shows a
+   "Sent to your Gamma chat" notification, brings the Gamma tab forward (the
+   tab that opened the request, else the most recently used Gamma page at the
+   address it asked from, else at the Connector's own),
+   and — on HTTPS — refreshes that publisher's connected cookies right away
+   (`autoRefreshPublisher(…, {force: true})`: the session just worked, so the
+   server's copy should match it; still only for a host connected by hand,
+   with the cookies permission).
+
+What the worker is doing reaches the card through `POST …/watch {note}`
+(`noteHandoff`): `looking` (no PDF link on the page yet), `signin` (the PDF
+link leads to a sign-in), `opening` (the tab opens a link), `refused` (no
+link gave a PDF — the user saves it from the tab and drops it on the card).
+
+The chat's card follows the request on the server and continues the
+conversation once the PDF has arrived. Before the user opens the page it asks
+whether the Connector can do this (`bridge.js` → the worker's
+`connector-probe`, which asks its own server about the request): `ok` when it
+can, from any page, since only the request's account knows its id; to the
+Connector's own server's page also why not (`signed-out`, `other-account`,
+`unreachable`); to any other page nothing, so a site learns neither that the
+Connector is installed nor anything about the account. No answer reads as
+"not in this browser, outdated, or set to another server" on the card.
+Without the Connector (or signed in as another account) the user downloads
+the PDF and drops it on the card.
+The desktop app opens the link in the system browser, where a Connector
+signed in to the same server works the same way.
+
 ## Auth and permissions
 
 - **Sessions, not tokens.** The extension fetches with `credentials:
@@ -281,7 +361,7 @@ side and the security model: [paper_metadata.md](paper_metadata.md#connected-pub
   `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
-  the pure modules: `ids.js` and `publisherSessions.js`.
+  the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`.
 - `frontend/tests/themes.test.mjs` — `tokens.css` and `fonts/` equal their
   sources, and both pages load `theme.js`, then `tokens.css`, then
   `popup.css`.
@@ -293,7 +373,22 @@ side and the security model: [paper_metadata.md](paper_metadata.md#connected-pub
   `chrome.storage.sync`, read `chrome.storage.session`, `chrome.action.getBadgeText`),
   the popup opened as `chrome-extension://<id>/popup.html?tab=<tabId>`. Covers
   the real arXiv abs page → save → ✓ badge → clip selection → PDF tab upload
-  → background metadata.
+  → background metadata. Loading an extension needs Playwright's full
+  Chromium (`npx playwright install chromium`, `channel: "chromium"`); the
+  headless shell the browser suite uses cannot. The chat handoff was checked
+  the same way (2026-09-28) against a local fake publisher whose PDF needs a
+  sign-in cookie: the card's Open → `/go` → the Connector took the tab → no
+  delivery before sign-in → sign in → the PDF arrived (2 pages), the chat
+  continued by itself, the Gamma tab came forward and the tab was released.
+  Again with the Connector set to `127.0.0.1` and the app open on `localhost`:
+  the probe answered `ok`, the loop completed and the `localhost` tab came
+  forward; a probe from another site with a made-up id got no answer. And
+  against a ScienceDirect-like fake (no citation metadata but a reference's
+  DOI in the text, "View PDF" rendered 1.5 s after load, the PDF route
+  refusing everything but a navigation and answering it with a script
+  redirect to a signed PDF on another host): the tab opened the link and the
+  PDF from the other host arrived. The plain publisher's PDF link, which
+  leads to its sign-in, was not opened; the card asked the user to sign in.
 
 ## Not done yet
 

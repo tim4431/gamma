@@ -101,7 +101,7 @@ export function translateModelFor(pick, engines, models) {
 export const CHAT_KINDS = ["folder", "pdf", "notes"];
 const TOOL_PERMS_DEFAULT = {
   list: true, read: true, block_read: true, view: true, search: true,
-  web_search: true, web_read: true,
+  web_search: true, web_read: true, publisher_cookies: true,
   rename: true, move: true, block_edit: true,
 };
 const AGENT_PERMS = json((value) => {

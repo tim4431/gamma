@@ -87,8 +87,10 @@ def sync_whoami(request: Request):
     (``read`` / ``write``), ``session`` for a signed-in browser. A mirror
     checks this before it is created and at the start of every round."""
     ws = require_ws(request)
+    from ..ops import CAPABILITIES
     info = workspaces.get(ws) or {}
     return {"user": request.state.user, "workspace": {"id": ws, "name": info.get("name", "")},
+            "capabilities": CAPABILITIES,
             "role": ws_role(request),
             "scope": request.state.token_scope if getattr(request.state, "auth", "") == "token" else "session"}
 

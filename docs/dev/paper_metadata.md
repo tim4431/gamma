@@ -156,8 +156,12 @@ Connector tries a browser upload first when saving from a PDF tab; on article
 pages it falls back to the browser if the server's save fails.
 
 `/api/resolve-pdf`: arXiv abs/html→pdf rewrite (new- and old-style ids,
-`pdf.ARXIV_ID`) → direct fetch → HTML pages inspected
-for the `citation_pdf_url` meta tag → Unpaywall open-access fallback for DOIs
+`pdf.ARXIV_ID`) → direct fetch (an arXiv PDF that `arxiv.org` refuses, as it
+does some to programs with a 406, is fetched from `export.arxiv.org`, arXiv's
+host for automated clients) → HTML pages inspected for the `citation_pdf_url`
+meta tag, a page that only redirects by `<meta http-equiv="refresh">` followed
+first (up to two hops; Elsevier's DOI landing, linkinghub, is one) → Unpaywall
+open-access fallback for DOIs
 (prefers published > accepted > submitted version; disabled when the request
 sends `allow_oa: false`; identifies itself with a fixed project email in
 `pdf.py` — no config). Non-published substitutions return a `note` the frontend
@@ -191,11 +195,37 @@ and credentials. Workspace exports and backups do not include this account table
 Full server backups contain the encrypted rows but do not copy the key: retain
 the key separately or reconnect after moving/restoring to another machine.
 
+A snapshot also keeps the connecting browser's User-Agent (`user_agent` in the
+`POST`, the Connector's `navigator.userAgent`; optional, dropped when it is not
+a plain header value). Every request to that host then presents it
+(`net_guard._BrowserAgent`, redirects included), so a cookie the site bound to
+that browser — a bot check's clearance, which Cloudflare ties to the
+User-Agent and the IP address — is sent the way it was issued. That helps
+where the server shares the browser's network (the desktop app, a server on
+the same machine); it cannot help a server behind another IP address.
+
 Authenticated `/api/resolve-pdf`, `/api/pdf`, and `/api/clip` requests seed their
 outbound cookie jar from the caller's snapshots via a request-local ContextVar.
+Each guarded fetch gets its own jar, except inside `net_guard.browsing_session`:
+`/api/clip` and the AI's `fetch_paper` run the resolver's walk and the download
+in one, so a cookie the landing page sets reaches the PDF request, as in a
+browser tab. The resolver fetches an advertised `citation_pdf_url` with the
+article page as `Referer` and returns it (`referer`) for the download.
+AI chat's `fetch_paper` tool also uses the caller's snapshots: `_chat_scope`
+captures the authenticated account, and the tool binds and resets the ContextVar
+inside its worker (streamed tools run in a separate thread). The model cannot
+choose an account and never receives the cookie values. **Fetch documents**
+controls the tool; the per-chat-kind **Use journal sign-ins** permission
+(`publisher_cookies`, default on) controls cookie use. When off, `_chat_scope`
+excludes the account from the fetch context, so it also bypasses authenticated
+cached text. Stored connections and interactive PDF downloads are unchanged.
 Host, path, HTTPS and expiry checks apply on every redirect. Parent-domain cookies
 are narrowed to the exact connected host. Guest, anonymous and share requests,
-AI tools and background jobs do not use these credentials. Proxy responses are
+other AI tools and background jobs do not use these credentials. Fetched text
+and URL aliases are cached by account and a fingerprint of its usable cookies,
+so one account cannot reuse another's authenticated document. Connecting,
+refreshing, disconnecting or expiring cookies changes that cache partition,
+allowing a previously cached abstract to be retried with new access. Proxy responses are
 private and not cached by shared HTTP caches. Saved PDFs retain the workspace's
 normal access rules; connecting a session does not alter workspace permissions.
 
@@ -208,4 +238,7 @@ its drawer does so by hand. Disconnect removes the live record; existing full se
 backups may retain encrypted older snapshots. Deleting an account deletes its
 connections. Supported roots are explicit in `publisher_sessions.py`; a different
 publisher host (even a sibling) needs its own connection. CAPTCHA clearance tied
-to a browser/IP may still fail, so the browser upload fallback remains available.
+to a browser/IP may still fail, so the browser upload fallback remains available;
+in the AI chat that fallback is the browser handoff
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)), after which the
+Connector refreshes the connected host's snapshot from the session that worked.

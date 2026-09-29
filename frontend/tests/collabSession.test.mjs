@@ -64,6 +64,26 @@ test("HTTP ack catches up missing remote edits before advancing the sequence", a
   assert.equal(h.session.hasPending(), false);
 });
 
+test("a guarded ink conflict keeps the intended caption and file in a recoverable sibling", async (t) => {
+  let posts = 0;
+  const h = setup(t, async (path, init) => {
+    if (path.includes("?since=")) return { seq: 0, batches: [] };
+    const body = JSON.parse(init.body);
+    if (++posts === 1) throw Object.assign(new Error("the ink group changed"), { status: 409,
+      data: { conflict: "property_changed", index: 0, current: block("ink", "remote caption", { ink_url: "remote" }) } });
+    return batch(1, body.ops, ME);
+  });
+  h.load("page-a", [block("ink", "caption", { ink_url: "base" })]);
+  h.edit([block("ink", "my caption", { ink_url: "mine" })]);
+  await h.session.flush(); await settle();
+  const recovered = h.calls.filter((c) => c.body?.ops).at(-1).body.ops[0];
+  assert.equal(recovered.op, "insert");
+  assert.equal(recovered.content, "my caption");
+  assert.equal(recovered.props.ink_url, "mine");
+  assert.deepEqual(recovered.props.ink_conflict, { source_block_id: "ink", base_url: "base", remote_url: "remote" });
+  assert.equal(h.session.hasPending(), false);
+});
+
 test("out-of-order socket batches wait for missing operations", async (t) => {
   const log = deferred();
   const h = setup(t, () => log.promise);

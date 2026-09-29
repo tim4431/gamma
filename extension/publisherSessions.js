@@ -79,7 +79,9 @@ export async function connectPublisher({ tabId, host, root, user, origin }) {
   if (!store) throw new Error("Cannot find this tab's cookie store.");
   const cookies = cookiesForHost(await chrome.cookies.getAll({ domain: root, storeId: store.id }), host);
   if (!cookies.length) throw new Error("No transferable cookies found. Open the publisher PDF and try again.");
+  // The browser's User-Agent goes along: a site that bound a cookie (a bot
+  // check's clearance) to this browser sees the same one from the server.
   return api("/publisher-sessions", {
-    json: { host, cookies }, expectedUser: user, expectedOrigin: origin,
+    json: { host, cookies, user_agent: navigator.userAgent }, expectedUser: user, expectedOrigin: origin,
   });
 }

@@ -17,8 +17,8 @@ KINDS = ("chat", "translate", "metadata", "cite", "test")
 SHARED_PREFIX = "server:"
 ALLOWANCE_HOURS = 24  # the allowance's rolling window
 _FIELDS = ("input", "output", "cache_read", "cache_write")
-# Rows older than this are dropped on the next write (the summary's longest
-# window is 30 days; a year keeps the all-time total honest for a while).
+# Rows older than this are dropped on the next write. Keep enough history
+# for the 365-day activity calendar as well as the rolling summaries.
 KEEP_DAYS = 400
 
 
@@ -101,7 +101,7 @@ def _totals(rows) -> dict:
 
 def summary(username: str) -> dict:
     """The Settings pane's numbers: totals over today / 7 days / 30 days /
-    everything kept, the 30-day split by kind, and the 30-day split by
+    everything kept, a 365-day UTC calendar, the 30-day split by kind, and the 30-day split by
     model (provider name + model id, biggest first)."""
     with connect_users_db() as conn:
         conn.row_factory = sqlite3.Row
@@ -115,6 +115,14 @@ def summary(username: str) -> dict:
              "month": (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")}
     windows = {name: _totals(r for r in rows if r["at"] >= start) for name, start in since.items()}
     windows["all"] = _totals(rows)
+    calendar_start = now.date() - timedelta(days=364)
+    daily = {(calendar_start + timedelta(days=i)).isoformat(): _empty() for i in range(365)}
+    for row in rows:
+        bucket = daily.get(row["at"][:10])
+        if bucket is not None:
+            bucket["calls"] += 1
+            for field in _FIELDS:
+                bucket[field] += row[field]
     month_rows = [r for r in rows if r["at"] >= since["month"]]
     kinds: dict = {}
     models: dict = {}
@@ -129,6 +137,7 @@ def summary(username: str) -> dict:
                 bucket[f] += r[f]
     return {
         "windows": windows,
+        "daily": [{"date": date, **counts} for date, counts in daily.items()],
         "kinds": kinds,
         "models": sorted(models.values(), key=lambda m: -(m["input"] + m["output"])),
         "first_at": rows[-1]["at"] if rows else "",

@@ -1388,6 +1388,15 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             # What edit_block mode "selection" rewrites (labels S1, S2…).
             "note_selections": request_note_selections(payload),
             "actor": user, "can_write": can_write(request),
+            # Bound inside fetch_paper: streamed tools run in a separate
+            # thread, which does not inherit the request's ContextVars.
+            "publisher_user": (user if not request.state.is_guest
+                               and not request.query_params.get("share")
+                               and payload.permissions.get("publisher_cookies", True) is not False else None),
+            # The account a blocked fetch_paper hands to the user's browser
+            # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
+            "handoff_user": (user if not request.state.is_guest
+                             and not request.query_params.get("share") else None),
             # This turn's reads, {block_id: full text}: what an edit_block
             # replace merges from (ai_tools.notes_seen).
             "read_texts": {}}

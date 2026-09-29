@@ -292,7 +292,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       else if (op.op === "set" && op.props) {
         const later = (newer.get(op.id) || []).filter((q) => q.op === "set" && q.props);
         const keys = Object.keys(op.props).filter((k) => !later.some((q) => k in q.props));
-        if (keys.length) again.push({ op: "set", id: op.id, props: Object.fromEntries(keys.map((k) => [k, op.props[k]])) });
+        if (keys.length) again.push({ op: "set", id: op.id, ...(op.base_props ? { base_props: op.base_props } : {}), props: Object.fromEntries(keys.map((k) => [k, op.props[k]])) });
       }
     }
     for (const id of revived) for (const op of newer.get(id) || []) again.push(op); // its text typed since
@@ -492,6 +492,19 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       return null;
     }
     const failed = batch.ops[data.index];
+    const here = failed ? indexTree(s.base, page).get(failed.id) : null;
+    if (data.conflict === "property_changed" && (failed?.props?.ink_url || here?.node.properties?.ink_url)) {
+      const current = data.current;
+      const recovered = { op: "insert", id: nextBatchId(), parent: here?.parent || page,
+        content: failed.content ?? here?.node.content ?? t("Recovered handwriting"), props: { ...here?.node.properties, ...failed.props,
+          ink_conflict: { source_block_id: failed.id, base_url: failed.base_props?.ink_url ?? null, remote_url: current?.properties?.ink_url ?? null } } };
+      const rest = batch.ops.map((op, i) => i === data.index ? recovered : op);
+      forget(s, [failed]);
+      s.out = { ...batch, id: nextBatchId(), ops: rest };
+      o().onStatus?.(t("Both handwriting versions were kept."));
+      if (s === st.session) o().onReload?.(page);
+      return null;
+    }
     if (data.conflict && failed) {
       // The page changed under the batch (the block is gone, lives in
       // another page, the move would make a cycle): that op no longer
@@ -628,7 +641,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       if (typeof op.content !== "string" || op.content.length <= MAX_CONTENT) { ops.push(op); continue; }
       held.set(op.id, { text: op.content, base: op.op === "insert" ? "" : op.base ?? "" });
       if (op.op === "insert") ops.push({ ...op, content: "" });
-      else if (op.props) ops.push({ op: "set", id: op.id, props: op.props });
+      else if (op.props) ops.push({ op: "set", id: op.id, props: op.props, ...(op.base_props ? { base_props: op.base_props } : {}) });
     }
     const wasLong = s.tooLong.size;
     s.tooLong = held;
@@ -768,7 +781,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           // Defer only competing content. Every property patch still applies.
           s.deferred.set(op.id, { op: { op: "set", id: op.id, content: op.content },
             seq: m.seq, client: m.client, cursor: m.cursor || null });
-          if (op.props) now.push({ op: "set", id: op.id, props: op.props });
+          if (op.props) now.push({ op: "set", id: op.id, props: op.props, ...(op.base_props ? { base_props: op.base_props } : {}) });
           held = true;
           continue;
         }

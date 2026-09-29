@@ -24,6 +24,7 @@ export const GROUPS = [
   { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
   { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
   { id: "ink", files: ["ink.mjs"] }, // ~19
+  { id: "notebooks", files: ["notebooks.mjs"] },
   { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
   { id: "publish", files: ["publish.mjs"] }, // ~15
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
@@ -71,6 +72,7 @@ export const RULES = [
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide"]],
+  ["frontend/src/notebooks/**", ["notebooks"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide"]],
   ["frontend/src/chat/**", CHAT],

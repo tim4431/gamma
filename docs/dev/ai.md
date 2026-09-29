@@ -693,30 +693,32 @@ integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-### Permissions and knobs (Settings → Assistant)
+### Permissions and knobs (Settings → Chat)
 
-The single **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
-governs tool use in every chat; every chat starts with tools on. The Tools
-button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
-chat only. New chat resets the switch back to on.
+The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
+governs tool use in every chat. The chat header's Tools button and settings
+popover edit the same account preference; New chat does not reset it.
 
 Which tools a chat may use is configured per chat KIND — there are three
-(`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/SettingsDialog.jsx`):
+(`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
 
 - **Folder chat** — the home/folder view (`agent_scope: "folder"`).
 - **PDF chat** — a page with a PDF attached (`agent_scope: "page"`).
 - **Notes chat** — a page without one (`agent_scope: "page"`).
 
-Settings → Assistant → Tool configuration shows one row per kind whose
-control is a `ToggleGroup` of icon + short-name chips (List, Read, Blocks,
-Search, Rename, Move, Edit — folder scope offers all, page scope the reading
-tools and the note-block editors); clicking a chip allows or forbids that
-tool for every chat of the kind. The stored map is localStorage JSON
+Settings → Chat → Tools compares permissions in a table: named, explained
+rows grouped into **Read your library**, **Web research**, and **Make changes**,
+with a column for each chat kind. Unavailable tools show a dash. On narrow
+panes, each tool's labeled switches sit below its description. Each column
+offers **Read library** (library reading only), **Read & search** (reading,
+web search and fetching), and **All tools** (also editing) presets; individual
+changes show **Custom**. The stored map is account-synced, with localStorage JSON
 `gamma-ai-agent-perms` = `{folder, pdf, notes}` → `{list, read, block_read,
-view, search, web_search, web_read, rename, move, block_edit}` (a pre-kind flat map is applied to every
+view, search, web_search, web_read, publisher_cookies, rename, move, block_edit}` (a pre-kind flat map is applied to every
 kind on read). The chat header's ⚙ popover carries the same picker for the
-kind of the chat it is opened in (`AgentToolPicker` in `settings/SettingsDialog.jsx`,
-bound to the same map), so a change in either place is the same change.
+kind of the chat it is opened in (`AgentToolPicker` in `settings/AssistantTools.jsx`,
+grouped checkbox rows and the same presets, bound to the same map), so a change
+in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
@@ -728,9 +730,16 @@ scan or a figure), Search library (`search_library` — notes and PDF text; the 
 still `search`), Search papers online (`web_search` → `search_papers`), Fetch
 documents (`web_read` → `fetch_paper`; both web tools are read-only and
 described in [ai_tools.md](ai_tools.md)), Rename pages, Move pages, and Edit
-note blocks (one chip arming `edit_block`/`create_block`/`move_block`
+note blocks (one switch arming `edit_block`/`create_block`/`move_block`
 together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
-includes the two web tools and the page viewer. Plus:
+includes the two web tools and the page viewer. **Use journal sign-ins**
+(`publisher_cookies`, default on) controls whether `fetch_paper` may use the
+caller's connected publisher cookies; the browser handoff for a blocked fetch
+needs no switch of its own. The backend excludes that identity when
+the permission is false, including from the authenticated text cache. This
+switch requires **Fetch documents**; disabling fetching preserves its stored
+choice. Turning cookie use off does not disconnect publishers or affect
+interactive PDF saves. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -782,6 +791,11 @@ the reload is skipped — [collab.md](collab.md)). A `view_pdf_page` result
 also carries the rendered page: the loop lifts it off the action into the
 tool message's `images` before yielding the chip, so the model sees the
 picture and the saved chat never holds it ([ai_tools.md](ai_tools.md)).
+A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
+`handoff`; after the reply's text the chat shows a card for it
+(`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
+continues the conversation once it arrives
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 ### Watching the agent work (live footprint)
 
@@ -1059,12 +1073,21 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 - **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30
-  days, first_at, keep_days, allowance}`. `allowance` is the shared
+  days, daily: [{date, calls, input, output, cache_read, cache_write}],
+  first_at, keep_days, allowance}`. `daily` contains 365 consecutive UTC
+  dates ending today, including zero-usage days. `allowance` is the shared
   entries' 24-hour allowance (above), null when no shared entry applies.
   `DELETE /api/ai/usage` forgets the account's rows except those the
   allowance still counts. Settings → AI › Connections → **Token usage**
-  renders three tiles (today / 7 days / 30 days), the allowance row, the
-  all-time line with Reset, and a by-model table (plus a by-kind block when
+  renders one usage card (`UsageChart.jsx`): the overall retained totals
+  from `windows.all` (tokens, input/output, calls, cache percentage, start
+  date), an accent-colored bar chart, and Reset. There are no separate
+  today/week/month total tiles. The chart switches between the latest 30
+  UTC days and the latest 12 calendar months, and between tokens and calls;
+  monthly bars sum the daily data (the current month is partial). Left/right
+  arrows select bars; Home/End select the first/last. The chart fits narrow
+  screens without scrolling. The allowance row and a by-model table follow
+  (plus a by-kind block when
   more than one kind ran). A guest sees it without Reset while a shared
   entry applies. No prices anywhere: they differ per provider and change;
   the tokens are what every provider agrees on.

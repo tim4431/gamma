@@ -99,6 +99,47 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
   }
   const A = await bigDoc("Timing probe", (n) => [`Timing probe page ${n}`, "Lorem ipsum dolor sit amet"]);
 
+  await step("pdf load: worker MIME failure stays visible after a late manifest, and reload recovers", async () => {
+    const c = await account.context(browser);
+    let releaseManifest;
+    const gate = new Promise((resolve) => { releaseManifest = resolve; });
+    await c.route("**/assets/pdf.worker*.mjs*", (route) => route.fulfill({
+      status: 200, contentType: "text/plain", body: "export {};",
+    }));
+    await c.route("**/api/pdf-info/**", async (route) => {
+      const response = await route.fetch();
+      await gate;
+      await route.fulfill({ response });
+    });
+    try {
+      const p = await openPage(c, A.url);
+      const error = p.locator(".statusPill.error");
+      await until(async () => (await error.textContent().catch(() => "")).includes("PDF load failed"),
+        { timeout: 15000, what: "worker failure shown" });
+      const manifest = p.waitForResponse((r) => r.url().includes("/api/pdf-info/"));
+      releaseManifest();
+      await (await manifest).finished();
+      // Let fetch's continuation and React's layout effects finish before
+      // checking that the late skeleton did not replace the error pill.
+      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const phases = await p.evaluate(() => performance.getEntriesByType("mark")
+        .filter((m) => m.name.startsWith("pdf-")).map((m) => m.name));
+      assert(!phases.slice(phases.indexOf("pdf-error") + 1).includes("pdf-layout"),
+        `no skeleton after failure: ${phases.join(", ")}`);
+      assert((await error.textContent()).includes("PDF load failed"), "failure remains visible");
+      assert(await error.locator(".pillSpin").count() === 0, "failed load stops spinning");
+      assertNoProblems(p, [/^console: Failed to load module script:.*MIME type of "text\/plain"/]);
+
+      await c.unroute("**/assets/pdf.worker*.mjs*");
+      await p.reload();
+      await waitPainted(p, 0);
+      assertNoProblems(p);
+    } finally {
+      releaseManifest();
+      await c.close();
+    }
+  });
+
   let ctx, page;
   await step("pdf load: cold open of a 300-page, 20 MB document at 20 Mbps", async () => {
     ctx = await account.context(browser);

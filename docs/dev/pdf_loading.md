@@ -115,6 +115,16 @@ compares one (at 20 Mbps, 0.6 to 0.85 s of every open — the research note has
 the measurement). The static route in `gamma/app.py` compares the ETag
 itself, so the unhashed files (`index.html`, favicons) get a real 304.
 
+The backend pins `.mjs` and `.js` to `text/javascript`, independently of OS
+MIME mappings (Windows registry entries can otherwise make the worker plain
+text). A stable `?mime=js` on the worker URL bypasses old immutable responses
+cached with the wrong type. Eager worker startup observes its promise's
+rejection; opening a document reports the same failure through the status
+pill. A manifest arriving after a worker or download failure cannot lay out
+a skeleton and overwrite that error with "Preparing document". The browser
+`pdf-load` group exercises a wrong worker MIME followed by a late manifest,
+then restores the response and verifies a reload paints the document.
+
 ## High zoom and touch scrolling
 
 `shared/lib/canvasSize.js` bounds every PDF and live-ink backing store to 8 Mi pixels

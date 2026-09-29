@@ -1,5 +1,16 @@
 # Clickable PDF citations
 
+## Manual reference links
+
+A highlight block can make a PDF region clickable through
+`properties.link_url` or `link_page_id`; `link_highlight_id` additionally
+targets a particular highlight on the destination page. App derives the
+viewer's `linkTarget` from those properties. `handleDocLink` resolves a DOI
+or arXiv URL against the current library first, opening the existing page
+when found; otherwise it offers fetching the paper or opening the browser.
+
+## AI citation links
+
 AI responses can link a passage using ordinary Markdown:
 
 `[p. 3](/?page=GAMMA_PAGE_ID&pdf_page=3&quote=percent-encoded%20verbatim%20passage)`

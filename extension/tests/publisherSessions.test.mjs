@@ -86,7 +86,9 @@ test("connect transfers to the displayed account and server using the tab's cook
   assert.equal(calls[0].url, "https://gamma.example/api/publisher-sessions");
   assert.equal(calls[0].init.headers["X-Gamma-User"], "alice");
   assert.equal(calls[0].init.redirect, "error");
-  assert.deepEqual(JSON.parse(calls[0].init.body), { host: "journals.aps.org", cookies: [cookie] });
+  // The browser's User-Agent rides along, for cookies a site bound to it.
+  assert.deepEqual(JSON.parse(calls[0].init.body),
+    { host: "journals.aps.org", cookies: [cookie], user_agent: navigator.userAgent });
 
   chrome.storage.sync.get = async () => ({ server: "https://changed.example" });
   await assert.rejects(connectPublisher(args), /server changed/);

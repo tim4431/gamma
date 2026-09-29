@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+build/
+*.xcodeproj/
+*.xcworkspace/
+GammaIPad/Resources/gamma-ink.js
+GammaIPad/Resources/Assets.xcassets/
+project.local.yml

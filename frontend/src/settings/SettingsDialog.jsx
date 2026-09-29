@@ -4,12 +4,13 @@ import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurre
 import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
-  PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
+  PaneHead, Section, Row, Toggle, Segmented, IconChoices, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { EFFORT_ORDER } from "../chat/effort.js";
 import { AppearanceSettings } from "./SettingsAppearance";
+import { AgentToolMatrix } from "./AssistantTools";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
 import { IntegrationSettings } from "./SettingsIntegrations";
@@ -26,7 +27,6 @@ import {
   BookIcon,
   BugIcon,
   CloudDownloadIcon,
-  EyeIcon,
   ContrastIcon,
   DatabaseIcon,
   FileTextIcon,
@@ -43,7 +43,6 @@ import {
   OutlineIcon,
   PaperIcon,
   PenIcon,
-  PencilIcon,
   RectSelectIcon,
   RefreshIcon,
   SearchIcon,
@@ -67,7 +66,7 @@ const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
-  ["translation", T("Translation"), LanguagesIcon],
+  ["translation", T("Language and Translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
@@ -634,60 +633,7 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The agent's capabilities, one chip per permission (see docs/dev/ai_tools.md).
-// [key, icon, label, hint, scopes, short] — scopes says which agent scopes
-// offer it ("folder" = library/folder chat, "page" = page chat), short is
-// the chip name in the ToggleGroup.
-const AGENT_PERM_ROWS = [
-  ["list", ListIcon, t("List pages"),
-   t("See the folder's page titles, labels and metadata"), ["folder"], t("List")],
-  ["read", BookIcon, t("Read pages"),
-   t("Read a page's PDF text plus your highlights and notes"), ["folder", "page"], t("Read")],
-  ["block_read", OutlineIcon, t("Read note blocks"),
-   t("Read a page's note outline with block ids"), ["folder", "page"], t("Blocks")],
-  ["view", EyeIcon, t("View PDF pages"),
-   t("Show the model a picture of a PDF page (scans without a text layer, figures)"), ["folder", "page"], t("View")],
-  ["search", SearchIcon, t("Search"),
-   t("Full-text search across the folder's notes and PDFs"), ["folder", "page"], t("Search")],
-  ["web_search", GlobeIcon, t("Search papers online"),
-   t("Look papers up on Crossref and arXiv (e.g. a reference a paper cites)"), ["folder", "page"], t("Papers")],
-  ["web_read", CloudDownloadIcon, t("Fetch documents"),
-   t("Read a paper or web page by DOI, arXiv id or URL without adding it to the library"), ["folder", "page"], t("Fetch")],
-  ["rename", PenIcon, t("Rename pages"), t("Change page titles on request"), ["folder"], t("Rename")],
-  ["move", FolderIcon, t("Move pages"),
-   t("File pages into folders (a new path creates the folder)"), ["folder"], t("Move")],
-  ["block_edit", PencilIcon, t("Edit note blocks"),
-   t("Edit, create and move note blocks on request (never deletes)"), ["folder", "page"], t("Edit")],
-];
-
-// The three chat kinds, each with its own permission map (app/prefDefs.js
-// CHAT_KINDS): [kind, icon, label, hint, agent scope].
-export const CHAT_KIND_ROWS = [
-  ["folder", FolderIcon, t("Folder chat"), t("Home and folder views"), "folder"],
-  ["pdf", FileTextIcon, t("PDF chat"), t("Pages with a PDF"), "page"],
-  ["notes", OutlineIcon, t("Notes chat"), t("Note pages"), "page"],
-];
-
-// One chat kind's tool chips (a ToggleGroup) bound to the stored permission
-// map — the Settings pane and the chat header's ⚙ popover render this same
-// control over the same map, so a change in one is the change in the other.
-export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
-  const scope = CHAT_KIND_ROWS.find((r) => r[0] === kind)?.[4] || "page";
-  const map = perms?.[kind] || {};
-  const rows = AGENT_PERM_ROWS.filter((r) => r[4].includes(scope));
-  return (
-    <ToggleGroup
-      disabled={disabled}
-      options={rows.map(([key, Icon, label, hint, , short]) => [key, short, Icon, `${label} — ${hint}`])}
-      selected={rows.filter(([key]) => map[key] !== false).map(([key]) => key)}
-      onToggle={(key, on) => setPerms((p) => ({ ...p, [kind]: { ...(p?.[kind] || {}), [key]: on } }))}
-    />
-  );
-}
-
-// Chat: how chats behave (reasoning effort, snapshot clearing), then the
-// tools each chat kind may use, one chip row per kind — the same chips the
-// chat header's settings popover shows for the open chat.
+// Chat behavior, followed by a comparison of each chat kind's permissions.
 function AssistantSettings({ value, ai }) {
   return (
     <>
@@ -710,11 +656,7 @@ function AssistantSettings({ value, ai }) {
           hint={t("Let chats read, search and edit your library")}
           title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
           checked={value.agentEnabled} onChange={value.setAgentEnabled} />
-        {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
-          <Row key={kind} icon={icon} label={label} hint={hint}>
-            <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
-          </Row>
-        ))}
+        <AgentToolMatrix perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
       </Section>
     </>
   );
@@ -1052,7 +994,7 @@ export default function SettingsDialog({
                   <SearchSettings value={search} />
                 </> : null}
                 {pane === "translation" ? <>
-                  <PaneHead icon={LanguagesIcon} title={t("Translation")} />
+                  <PaneHead icon={LanguagesIcon} title={t("Language and Translation")} />
                   <TranslationSettings value={paperValue} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}

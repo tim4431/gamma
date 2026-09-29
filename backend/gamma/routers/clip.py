@@ -38,6 +38,7 @@ from ..blocks_store import (
 from ..db import connect_pages_db, get_pref, page_now, safe_doc_id, ws_uploads_dir
 from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
 from ..logbuf import log
+from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, props_patch
 from ..server_settings import can_store
 from .. import pdf_meta
@@ -296,21 +297,24 @@ def clip(payload: ClipRequest, request: Request):
         #     instead, so nothing the user asked to keep is lost.
         candidate = pdf_url or arxiv_id or doi or source_url
         try:
-            resolved = resolve_source(candidate, payload.allow_oa)
-            page_source = resolved["source_url"]
-            note = resolved.get("note", "")
-            doc_id = url_doc_id(page_source)
-            local = ws_uploads_dir(ws) / f"{doc_id}.pdf"
-            if not local.is_file():
-                _, data = download_pdf(page_source, want_bytes=payload.save_copy)
-                if payload.save_copy:
-                    if can_store(ws, len(data)):
-                        write_atomic(local, data)
-                        pdf_meta.schedule(ws, doc_id)
-                    else:
-                        log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")
-                        note = (note + " " if note else "") + \
-                            "Not stored: over your storage limit — the PDF is proxied on open."
+            # One cookie jar for the walk and the download, like a browser tab.
+            with browsing_session():
+                resolved = resolve_source(candidate, payload.allow_oa)
+                page_source = resolved["source_url"]
+                note = resolved.get("note", "")
+                doc_id = url_doc_id(page_source)
+                local = ws_uploads_dir(ws) / f"{doc_id}.pdf"
+                if not local.is_file():
+                    _, data = download_pdf(page_source, want_bytes=payload.save_copy,
+                                           referer=resolved.get("referer", ""))
+                    if payload.save_copy:
+                        if can_store(ws, len(data)):
+                            write_atomic(local, data)
+                            pdf_meta.schedule(ws, doc_id)
+                        else:
+                            log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")
+                            note = (note + " " if note else "") + \
+                                "Not stored: over your storage limit — the PDF is proxied on open."
         except HTTPException as e:
             if e.status_code != 400 or not (source_url or title):
                 raise

@@ -3,6 +3,8 @@ SSRF-guarded fetches serve a hand-built PDF / an HTML page, and nothing
 reaches the network. Also the prompt lines and the permission gate."""
 
 import io
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -143,6 +145,28 @@ def test_search_papers_identifier_query_looks_up_directly(org, registries):
     assert action["error"] and text.startswith("error")
 
 
+def test_arxiv_search_includes_title_phrase_for_citations_with_stopwords(monkeypatch):
+    title = "Neural Machine Translation by Jointly Learning to Align and Translate"
+    calls = []
+
+    def arxiv_api(url):
+        params = parse_qs(urlparse(url).query)
+        calls.append(params)
+        # This exact title has a live arXiv match, but the all-fields AND
+        # query alone missed it. Keep the phrase and broad keyword branches.
+        assert f'ti:"{title}"' in params["search_query"][0]
+        assert " OR (all:Neural AND all:Machine" in params["search_query"][0]
+        return (f'<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+                f'<id>http://arxiv.org/abs/1409.0473v7</id><title>{title}</title>'
+                '<published>2014-09-01</published><author><name>Dzmitry Bahdanau</name></author>'
+                '</entry></feed>').encode()
+
+    monkeypatch.setattr(metadata_mod, "_http_get", arxiv_api)
+    records = metadata_mod._arxiv_search(title, rows=3)
+    assert len(calls) == 1 and calls[0]["max_results"] == ["3"]
+    assert records[0]["title"] == title and records[0]["arxiv_id"] == "1409.0473"
+
+
 def test_fetch_paper_reads_pdf_in_windows(org, upstream):
     ws = org[1]["ws"]
     scope = {"type": "page", "page_id": "p1", "read_chars": 20000}
@@ -182,6 +206,22 @@ def test_fetch_paper_falls_back_to_page_text(org, upstream):
     assert "Landing & abstract\n" not in text.split("]\n", 1)[1]  # the <head> is not body text
 
 
+def test_fetch_paper_reports_open_access_version_on_every_window(org, upstream, monkeypatch):
+    note = "The publisher's PDF couldn't be fetched — loaded the open-access preprint (submitted version) instead."
+    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source, **kw: {
+        "source_url": "https://arxiv.org/pdf/1905.00450", "note": note,
+    })
+    ws = org[1]["ws"]
+    args = {"source": "doi:10.1126/sciadv.aay5901"}
+    text, action = run_agent_tool(ws, folder(""), "fetch_paper", args)
+    assert action["kind"] == "fetch"
+    assert f"Source note: {note}" in text
+    fetched = len(upstream)
+    text, _ = run_agent_tool(ws, folder(""), "fetch_paper", {**args, "pdf_page": 3})
+    assert f"Source note: {note}" in text
+    assert len(upstream) == fetched  # the provenance survives caching too
+
+
 def test_fetch_paper_refuses_bad_sources_and_big_files(org, upstream, monkeypatch):
     ws = org[1]["ws"]
     text, action = run_agent_tool(ws, folder(""), "fetch_paper", {"source": "not a source"})
@@ -189,6 +229,23 @@ def test_fetch_paper_refuses_bad_sources_and_big_files(org, upstream, monkeypatc
     monkeypatch.setattr(web, "FETCH_MAX_BYTES", 100)
     text, action = run_agent_tool(ws, folder(""), "fetch_paper", {"source": "https://example.org/big.pdf"})
     assert action["error"] and "too large" in text and "drop the PDF onto Gamma" in text
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_fetch_paper_access_failure_explains_connector_and_upload_recovery(org, upstream, monkeypatch, status):
+    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source, **kw: {"source_url": source})
+
+    def blocked(req, timeout=30):
+        raise HTTPError(req.full_url, status, "Blocked", {}, None)
+
+    monkeypatch.setattr(web, "guarded_urlopen", blocked)
+    text, action = run_agent_tool(org[1]["ws"], folder(""), "fetch_paper", {"source": "https://example.org/blocked.pdf"})
+    assert action["error"] and f"HTTP {status}" in text
+    assert "No document text was retrieved" in text
+    assert "Connect this publisher" in text and "Refresh now" in text
+    assert "Use journal sign-ins" in text and "Read pages" in text
+    assert "own browser" in text and "do not promise" in text
+    assert "Do not repeatedly retry" in text and "Retry-After" in text
 
 
 def test_web_tools_prompt_and_permission_gate():

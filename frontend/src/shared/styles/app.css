@@ -3202,10 +3202,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow: hidden;
 }
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */
-.chatSettingsPop { min-width: 250px; }
-.chatSettingsPop .setSlider { padding: 0 4px; }
+/* Anchor to the whole header so a narrow chat dock cannot clip the controls. */
+.dockWindowHeader:has(.chatPanelHeaderBtns) { position: relative; }
+.chatPanelHeaderBtns [data-popover="chatsettings"] { position: static; }
+.chatSettingsPop { right: 8px; width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+.chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
+.chatSettingsPop .setRange { flex: 1; min-width: 0; }
 .chatToolPicker { padding: 2px 4px; }
-.chatToolPicker .toggleGroup { justify-content: flex-start; }
 /* Chat history popover (header clock): search box over the bucket's earlier
    conversations; the active one leads, highlighted. Layout only — rows are
    plain hover rows, actions are ctlBtn icons, rename is an aiKeyInput. */
@@ -3375,6 +3378,44 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow-wrap: anywhere;
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
 }
+/* A fetch the server could not make, handed to the user's browser
+   (FetchHandoffCards.jsx): what stopped it, what to do next, Open / Upload /
+   Dismiss. A PDF dropped on the card is uploaded to it. */
+.chatHandoffs { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+.chatHandoff {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-bg-light);
+  color: var(--text-primary);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatHandoff.dragOver { border-style: dashed; border-color: var(--accent); background: var(--accent-bg); }
+.chatHandoff.done {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+.chatHandoff:is(.dismissed, .gone) { padding: 7px 10px; border-color: var(--border); background: transparent; color: var(--text-muted); }
+.chatHandoffHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; }
+.chatHandoffHead svg { flex: none; margin-top: 0.15em; color: var(--accent); }
+.chatHandoff.done .chatHandoffHead svg { color: var(--ok); }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffHead { font-weight: 500; }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffHead svg { color: inherit; }
+.chatHandoffHead .transferSpin { margin-top: 0.3em; }
+.chatHandoffText { margin-top: 2px; color: var(--text-secondary); }
+.chatHandoff:is(.dismissed, .gone) .chatHandoffText { color: inherit; }
+.chatHandoffSource {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatHandoffError { margin-top: 4px; color: var(--danger); }
+.chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatHandoffContinue { align-self: flex-start; }
 /* Markdown inside answers: explicit text sizes must follow the same
    transcript scale as body text, including nested headings and code. */
 .chatBubble.ai p { margin: 0 0 10px; }

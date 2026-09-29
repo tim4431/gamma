@@ -185,7 +185,7 @@ for this work.
   headers, inherited/per-page layouts, and notes-only pages.
 - For navigation, verify rapid A → B → C transitions leave C active, preserve
   A's edits, and never apply A/B's scroll or layout to C.
-- Update `frontend/src/README.md`, `frontend/README.md`, `CLAUDE.md`, and the
+- Update `frontend/src/README.md`, `frontend/README.md`, `docs/dev/README.md`, and the
   relevant `docs/dev/` topic files as each owner moves. Mark completed stages
   here so proposed paths are never mistaken for the implemented layout.
 

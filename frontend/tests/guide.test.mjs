@@ -54,6 +54,20 @@ test("tours reference registered anchors and catalogued events", () => {
 });
 
 const aiTour = TOURS["ai-chat"];
+test("window tours require desktop controls and only offer after opening a PDF", () => {
+  const tour = TOURS.windows;
+  const facts = { phone: false, view: "pdf", dockedNotes: true };
+  const event = { name: "page.opened", payload: {} };
+  assert.equal(canOffer(tour, { facts, event, seen: 1 }), true);
+  assert.equal(canOffer(tour, { facts: { ...facts, phone: true }, event, seen: 1 }), false);
+  assert.equal(canOffer(tour, { facts: { ...facts, view: "page" }, event, seen: 1 }), false);
+  assert.equal(canOffer(tour, { facts, seen: 1 }), false, "mere presence offers nothing");
+  assert.equal(factsMatch(tour.requires, { phone: false, view: "home" }), true, "manual start works in the library without AI");
+  assert.equal(factsMatch(tour.requires, { phone: true }), false);
+  const notes = tour.steps.find((s) => s.id === "window-notes");
+  assert.equal(factsMatch(notes.requires, { dockedNotes: false }), false, "center notes have no title grip");
+});
+
 test("the first tours are manual; AI chat has steps per place, each ending on the user's Send", () => {
   assert.deepEqual(TOURS["first-run"].requires || {}, {}, "the first-run tour starts from the Tours menu everywhere");
   assert.equal(TOURS["first-run"].trigger.event, undefined, "offered by state, on a demo server or an empty library");

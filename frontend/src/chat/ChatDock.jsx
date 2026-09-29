@@ -8,6 +8,7 @@ import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } 
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
+import FetchHandoffCards from "./FetchHandoffCards";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -20,7 +21,7 @@ import { changePlace, isChange, noteChangeText, runningLabel, splitActions, step
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
-import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
+import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
@@ -942,6 +943,11 @@ export default function ChatDock({
     }
   }
 
+  // Anything of the user's waiting in the composer: a fetch handoff's card
+  // does not send its continuation over it (chat/FetchHandoffCards.jsx).
+  const composerHasDraft = !!(chatInput.trim() || chatImages.length || chatFiles.length
+    || pdfSelections.length || chatNotes?.length);
+
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
@@ -1387,7 +1393,7 @@ export default function ChatDock({
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
-                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings. The model and reasoning effort are on the message box.")}</div>
+                  <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
@@ -1403,7 +1409,7 @@ export default function ChatDock({
                     <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
                   </div>
                   <div className="popoverHint">
-                    {t("Applies to all {kind} conversations in this browser.", { kind: chatKindLabel.toLowerCase() })}
+                    {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
                   </div>
                   <div className="popoverSection">{t("Tokens · this conversation")}</div>
                   {totalUsage ? (
@@ -1509,7 +1515,7 @@ export default function ChatDock({
   );
 
   return (
-    <DockWindow title={t("Chat")} onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
+    <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
       collapsed={collapsed} onClose={onClose} headerContent={readOnly ? <>
         <span className="uiTag">{t("Read only")}</span>
         {findBtn}
@@ -1684,6 +1690,11 @@ export default function ChatDock({
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                    {!isUser && m.actions?.some((a) => a.handoff) ? (
+                      <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
+                        busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
+                        onContinue={(text) => sendChat(text)} />
+                    ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}

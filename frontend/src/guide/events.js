@@ -3,6 +3,8 @@
 // The catalog is closed — a tour naming an unknown event fails the tests.
 
 export const EVENTS = [
+  "window.collapsed", // {id, collapsed}: a window's title was double-clicked
+  "window.moved",     // {id, side}: a window was dropped into a dock slot
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
   "page.opened",      // {id, title}
   "home.opened",      // returned to the library

@@ -32,4 +32,5 @@ run-local.bat
 /artifacts/*
 !/artifacts/README.md
 
-CLAUDE.md
+# Local assistant environment and working rules
+/CLAUDE.md

@@ -34,11 +34,75 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
+  await step("settings: usage chart combines overall totals with themed daily and monthly bars", async () => {
+    const daily = Array.from({ length: 365 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),
+      calls: index < 356 ? 0 : index % 7 + 1,
+      input: index < 356 ? 0 : (index % 13 + 1) * 1000,
+      output: index < 356 ? 0 : 200,
+      cache_read: index < 356 ? 0 : 300, cache_write: 0,
+    }));
+    let empty = false;
+    const { ctx, page } = await setup(undefined, async (context) => {
+      await context.route("**/api/ai/usage", async (route) => {
+        const response = await route.fetch();
+        const data = await response.json();
+        await route.fulfill({ json: { ...data, first_at: "2025-09-01T00:00:00", windows: { ...data.windows,
+          all: { input: 900000, output: 10000, calls: 100, cache_read: 180000, cache_write: 0 } },
+          daily: empty ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
+      });
+    });
+    try {
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const graph = page.locator(".usageChart");
+      await graph.scrollIntoViewIfNeeded();
+      assertEq(await graph.locator("button.usageChartBar").count(), 30);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k", "totals include retained usage outside the chart window");
+      assertEq(await page.locator(".settingsPane .setStats").count(), 0, "no separate period totals");
+      const today = graph.locator('[data-date="2026-09-28"]');
+      await today.click();
+      assert((await graph.locator(".usageChartDetail").innerText()).includes("1 call"));
+      await today.press("ArrowLeft");
+      assertEq(await graph.locator('button[aria-pressed="true"].usageChartBar').getAttribute("data-date"), "2026-09-27");
+      await graph.getByRole("button", { name: "Calls", exact: true }).click();
+      assertEq(await today.getAttribute("data-value"), "1");
+      await graph.getByRole("button", { name: "Tokens", exact: true }).click();
+      assertEq(await today.getAttribute("data-value"), "1200");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-light.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Monthly · last 12 months", exact: true }).click();
+      assertEq(await graph.locator("button.usageChartBar").count(), 12);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k");
+      const september = graph.locator('[data-date="2026-09-01"]');
+      assertEq(Number(await september.getAttribute("data-value")), daily.reduce((sum, day) => sum + day.input + day.output, 0));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-monthly.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Daily · last 30 days", exact: true }).click();
+      await today.click();
+      const color = await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "sepia"; document.documentElement.dataset.scheme = "light"; });
+      assert((await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor)) !== color, "bars follow the theme accent");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-sepia.png` });
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-dark.png` });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await graph.scrollIntoViewIfNeeded();
+      assert(await graph.evaluate((el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-mobile.png` });
+      empty = true;
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await until(() => graph.locator(".usageChartDetail").innerText().then((text) => text.includes("No AI calls in this period")));
+      assertEq(await graph.locator('button.usageChartBar:not([data-value="0"])').count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a translation service is set up in the Translation pane and picked as the translator", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Translation").click();
+      await nav(page, "Language and Translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));
@@ -824,15 +888,80 @@ export async function settingsScenarios(env) {
       assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
       await nav(page, "Chat").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
-      // the per-chat chips: turning Rename off for folder chats
-      await row(page, "Folder chat").getByRole("button", { name: /^Rename/ }).click();
+      // The matrix and chat popover edit the same per-kind permissions.
+      await page.getByRole("checkbox", { name: "Rename pages — Folder chat", exact: true }).uncheck();
+      await page.getByRole("checkbox", { name: "Use journal sign-ins — Folder chat", exact: true }).uncheck();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       assertEq(await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).isChecked(), true);
-      assertEq(await popover.getByRole("button", { name: "Rename", exact: true }).getAttribute("aria-pressed"), "false");
-      assertEq(await popover.getByRole("button", { name: "Read", exact: true }).getAttribute("aria-pressed"), "true");
+      assertEq(await popover.getByRole("checkbox", { name: "Rename pages", exact: true }).isChecked(), false);
+      assertEq(await popover.getByRole("checkbox", { name: "Read pages", exact: true }).isChecked(), true);
+      assertEq(await popover.getByRole("checkbox", { name: "Use journal sign-ins", exact: true }).isChecked(), false);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: tool permissions compare chat types, preserve choices, and fit narrow screens", async () => {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      const { ctx, page } = await setup(viewport);
+      try {
+        await openSettings(page);
+        if (viewport.width < 600) await page.getByRole("button", { name: "Back", exact: true }).click();
+        await nav(page, "Chat").click();
+        const master = page.getByRole("checkbox", { name: "Assistant tools", exact: true });
+        const matrix = page.getByRole("group", { name: "Tool permissions by chat type" });
+        const permission = (tool, kind = "Folder chat") => matrix.getByRole("checkbox", { name: `${tool} — ${kind}`, exact: true });
+        const preset = (kind) => matrix.getByRole("button", { name: `${kind} permissions`, exact: true });
+        const choosePreset = async (kind, label) => {
+          await preset(kind).click();
+          await page.locator(".uiSelectMenu").getByRole("button", { name: label, exact: true }).click();
+        };
+        await master.check();
+        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "All tools");
+        assertEq(await permission("Rename pages", "PDF chat").count(), 0);
+        assertEq(await permission("List pages", "Notes chat").count(), 0);
+
+        await choosePreset("Folder chat", "Read library");
+        for (const tool of ["Search papers online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
+          assertEq(await permission(tool).isChecked(), false, `${tool} is off in read-library mode`);
+        }
+        assertEq(await permission("Read pages").isChecked(), true);
+        assertEq(await permission("Fetch documents", "PDF chat").isChecked(), true);
+        await permission("Fetch documents").check();
+        assertEq(await permission("Use journal sign-ins").isDisabled(), false);
+        await permission("Use journal sign-ins").check();
+        await permission("Fetch documents").uncheck();
+        assertEq(await permission("Use journal sign-ins").isDisabled(), true);
+        assertEq(await permission("Use journal sign-ins").isChecked(), true, "dependent choices are remembered");
+        await permission("Fetch documents").check();
+        await permission("Use journal sign-ins").uncheck();
+        assertEq(await preset("Folder chat").innerText(), "Custom");
+        await choosePreset("PDF chat", "Read & search");
+        assertEq(await permission("Edit note blocks", "PDF chat").isChecked(), false);
+        assertEq(await permission("Search papers online", "PDF chat").isChecked(), true);
+
+        await master.uncheck();
+        assertEq(await preset("Folder chat").isDisabled(), true);
+        assertEq(await permission("Read pages").isDisabled(), true);
+        await master.check();
+        assertEq(await permission("Use journal sign-ins").isChecked(), false);
+        assertEq(await permission("Use journal sign-ins", "PDF chat").isChecked(), true);
+        const fits = await matrix.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+        assert(fits.scroll <= fits.width + 1, `tool permissions fit ${viewport.width}px: ${JSON.stringify(fits)}`);
+        // Every switch has a full accessible name and is reachable by keyboard.
+        await permission("Use journal sign-ins").focus();
+        await page.keyboard.press("Space");
+        assertEq(await permission("Use journal sign-ins").isChecked(), true);
+        await page.keyboard.press("Space");
+        if (flags.keep) {
+          await row(page, "Tools").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `${server.dir}/tool-permissions-${viewport.width}.png`, animations: "disabled" });
+          await permission("Use journal sign-ins").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `${server.dir}/tool-permissions-web-${viewport.width}.png`, animations: "disabled" });
+        }
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("settings: the composer's mic shows only when a connection can transcribe; Full PDF only with a PDF in context", async () => {

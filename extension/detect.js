@@ -48,6 +48,25 @@
     return out;
   }
 
+  // Links that open this page's PDF — "View PDF", a /pdf, /pdfft or
+  // /article-pdf route — for a chat's fetch (worker.js harvestHandoff).
+  // Publisher pages render them after load, so a fetch asks afresh.
+  // Supplementary files and citation exports are left out.
+  function pdfLinks() {
+    const out = [];
+    for (const a of document.querySelectorAll("a[href]")) {
+      const url = a.href;
+      if (!/^https?:/i.test(url) || out.includes(url)) continue;
+      const label = `${a.textContent || ""} ${a.getAttribute("aria-label") || ""} ${a.title || ""}`;
+      if (/suppl|supporting|appendix|citation|bibtex|\bris\b/i.test(`${label} ${url}`)) continue;
+      let path = "";
+      try { path = new URL(url).pathname.toLowerCase(); } catch {}
+      if (/\bpdf\b/i.test(label) || /\/(?:e?pdf|pdfft|pdfdirect|article-pdf)(?:\/|$)|\.pdf$/.test(path)) out.push(url);
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
+
   function detect() {
     const href = location.href;
     const isPdf = document.contentType === "application/pdf" || /\.pdf($|[?#])/i.test(location.pathname);
@@ -79,7 +98,8 @@
       const found = cleanDoi(text);
       if (found) { doi = found; kind = "maybe"; }
     }
-    return { kind, source_url: href, pdf_url: pdfUrl, arxiv_id: arxivId, doi, title, is_pdf_tab: isPdf };
+    return { kind, source_url: href, pdf_url: pdfUrl, arxiv_id: arxivId, doi, title, is_pdf_tab: isPdf,
+             pdf_links: pdfLinks() };
   }
 
   let last = null;
@@ -96,9 +116,11 @@
   async function fetchPdfForWorker(url) {
     const res = await fetch(url, { credentials: "include" });
     console.info(`[gamma] in-page PDF fetch ${url} → ${res.status} ${res.headers.get("content-type") || ""}`);
-    if (!res.ok) return { ok: false, status: res.status };
+    if (!res.ok) return { ok: false, status: res.status, landed: res.url };
     const blob = await res.blob();
     if (blob.size > 60 * 1024 * 1024) return { ok: false, error: "the PDF is too large to relay from this tab" };
+    const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+    if (String.fromCharCode(...head) !== "%PDF-") return { ok: false, notPdf: true, landed: res.url };
     const dataUrl = await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(String(r.result));
@@ -110,7 +132,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "get-detection") {
-      if (!last) { try { last = detect(); } catch { last = null; } }
+      if (!last || msg.fresh) { try { last = detect(); } catch { last = null; } }
       sendResponse(last);
     } else if (msg && msg.type === "get-selection") {
       sendResponse({ text: String(window.getSelection && window.getSelection() || "") });

@@ -13,6 +13,7 @@ import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
+import AudioCard from "../ink/AudioCard.jsx";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
@@ -1812,6 +1813,7 @@ function BlockRow({
             <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
           {isInk ? <InkCard block={block} onJump={onInkJump} /> : null}
+          {block.properties?.type === "audio" ? <AudioCard block={block} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
               type="button"

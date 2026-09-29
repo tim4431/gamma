@@ -152,3 +152,41 @@ def test_agent_rounds_each_report_usage(org, monkeypatch):
     # Reset forgets everything.
     assert c.delete("/api/ai/usage").json()["deleted"] == 2
     assert c.get("/api/ai/usage").json()["windows"]["all"]["calls"] == 0
+
+
+def test_daily_calendar_utc_boundaries_totals_and_reset(org, monkeypatch):
+    from datetime import datetime, timezone
+    from gamma import ai_usage
+    from gamma.db import connect_users_db
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2024, 3, 1, 12, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(ai_usage, "datetime", Clock)
+    c, ids = org
+    c.delete("/api/ai/usage")
+    with connect_users_db() as conn:
+        for user, at, tokens in [
+            (ids["user"], "2023-03-02T23:59:59", 999),  # outside the calendar
+            (ids["user"], "2023-03-03T00:00:00", 10),
+            (ids["user"], "2024-02-29T00:00:00", 20),
+            (ids["user"], "2024-02-29T23:59:59", 30),
+            (ids["user"], "2024-03-01T00:00:00", 40),
+            ("another-account", "2024-03-01T00:00:00", 9999),
+        ]:
+            conn.execute(
+                "INSERT INTO ai_usage (username, at, kind, provider_id, provider_name, model, "
+                "input, output, cache_read, cache_write) VALUES (?, ?, 'chat', 'own', 'Own', 'model', ?, 2, 3, 1)",
+                (user, at, tokens))
+    data = c.get("/api/ai/usage").json()
+    daily = data["daily"]
+    assert len(daily) == 365
+    assert daily[0]["date"] == "2023-03-03" and daily[0]["input"] == 10
+    assert daily[-2] == {"date": "2024-02-29", "calls": 2, "input": 50, "output": 4, "cache_read": 6, "cache_write": 2}
+    assert daily[-1] == {"date": "2024-03-01", **data["windows"]["today"]}
+    assert daily[1] == {"date": "2023-03-04", "calls": 0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    assert sum(day["calls"] for day in daily) == 4
+    c.delete("/api/ai/usage")
+    assert all(day["calls"] == 0 for day in c.get("/api/ai/usage").json()["daily"])

@@ -43,8 +43,9 @@ _COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(
 
 class Space(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    kind: Literal["pdf-page", "canvas"] = "pdf-page"
+    kind: Literal["pdf-page", "canvas", "notebook-page"] = "pdf-page"
     page: int | None = Field(default=None, ge=1)
+    sheet_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     width: float = Field(gt=0, le=100_000)
     height: float = Field(gt=0, le=100_000)
 
@@ -52,12 +53,17 @@ class Space(BaseModel):
     def _page_for_pdf(self):
         if self.kind == "pdf-page" and self.page is None:
             raise ValueError("a pdf-page space needs a page number")
+        if self.kind == "notebook-page" and (not self.sheet_id or self.page is not None):
+            raise ValueError("a notebook-page space needs a sheet_id and no page number")
+        if self.kind != "notebook-page" and self.sheet_id is not None:
+            raise ValueError("sheet_id is only valid for notebook-page ink")
         return self
 
 
 class Stroke(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    source_id: str | None = Field(default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     tool: Literal["pen", "highlighter"] = "pen"
     brush: Literal["monoline"] | None = None
     color: str = Field(default="#1f1f1f", max_length=40)
@@ -89,12 +95,14 @@ class Stroke(BaseModel):
 class InkFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["gamma-ink"]
-    version: Literal[1]
+    version: Literal[1, 2]
     space: Space
     strokes: list[Stroke] = Field(default_factory=list, max_length=MAX_STROKES)
 
     @model_validator(mode="after")
     def _budget(self):
+        if self.version == 1 and (self.space.kind == "notebook-page" or any(s.source_id for s in self.strokes)):
+            raise ValueError("notebook pages and stroke lineage require gamma-ink version 2")
         if sum(s.samples for s in self.strokes) > MAX_SAMPLES:
             raise ValueError(f"more than {MAX_SAMPLES} samples")
         if len({s.id for s in self.strokes}) != len(self.strokes):
@@ -339,7 +347,10 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
     if private_json:
         try:
             ink = parse_ink(private_json)
-            if ink.space.kind == "pdf-page":
+            if ink.space.kind == "notebook-page":
+                # The original notebook's sheet IDs do not exist in this PDF.
+                ink.space = Space(kind="pdf-page", page=page, width=page_w, height=page_h)
+            elif ink.space.kind == "pdf-page":
                 ink.space.page = page
             return ink.model_dump(exclude_none=True)
         except InkError:

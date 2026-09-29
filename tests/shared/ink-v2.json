@@ -1,0 +1,20 @@
+{
+  "description": "Semantic portable ink conformance. Existing immutable bytes retain their own hash; numeric 612 and 612.0 are equivalent.",
+  "valid": [
+    {
+      "name": "notebook fragment retains original time trajectory",
+      "ink": {"format":"gamma-ink","version":2,"space":{"kind":"notebook-page","sheet_id":"sheet_1","width":612,"height":792},"strokes":[{"id":"piece_1","source_id":"stroke_1","tool":"pen","color":"#123456","size":1.6,"opacity":1,"pen":true,"t0":123456,"ch":"xypt","pts":[1234,5678,650,24,100,-50,700,8]}]},
+      "decoded": [{"x":12.34,"y":56.78,"p":0.65,"t":24},{"x":13.34,"y":56.28,"p":0.7,"t":32}]
+    },
+    {
+      "name": "v2 PDF supports fragment lineage without changing coordinates",
+      "ink": {"format":"gamma-ink","version":2,"space":{"kind":"pdf-page","page":3,"width":600,"height":800},"strokes":[{"id":"s2","source_id":"s1","ch":"xy","pts":[100,200,300,400]}]},
+      "decoded": [{"x":1,"y":2},{"x":4,"y":6}]
+    }
+  ],
+  "invalid": [
+    {"format":"gamma-ink","version":1,"space":{"kind":"notebook-page","sheet_id":"s","width":612,"height":792},"strokes":[]},
+    {"format":"gamma-ink","version":1,"space":{"kind":"pdf-page","page":1,"width":612,"height":792},"strokes":[{"id":"s","source_id":"old","ch":"xy","pts":[1,2]}]},
+    {"format":"gamma-ink","version":2,"space":{"kind":"notebook-page","sheet_id":"s","page":1,"width":612,"height":792},"strokes":[]}
+  ]
+}

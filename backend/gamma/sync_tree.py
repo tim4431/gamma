@@ -17,7 +17,7 @@ person moved, telling them from blocks the server only re-keyed.
 import json
 
 from . import storage
-from .ops import props_patch
+from .ops import INK_PROPERTIES, props_patch
 
 
 def snapshot_from_rows(rows) -> dict:
@@ -100,6 +100,9 @@ def _set_op(bid: str, b: dict | None, t: dict, with_base: bool) -> dict | None:
         patch["auto_title"] = t["props"]["auto_title"]
     if patch:
         op["props"] = patch
+        before = b["props"] if b else {}
+        if ("ink_url" in before or "ink_url" in patch) and INK_PROPERTIES.intersection(patch):
+            op["base_props"] = {"ink_url": before.get("ink_url")}
     return op if len(op) > 2 else None
 
 

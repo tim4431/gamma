@@ -21,7 +21,7 @@ const e = (pane, label, section, hint, keywords, target) => ({ pane, label, sect
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
-  e("appearance", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
+  e("translation", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
   e("appearance", t("Interface size"), t("Interface"), t("Text, buttons, icons and switches."), "zoom text buttons controls scale touch"),
   e("appearance", t("Status bar"), t("Interface"), t("Show the latest activity below your tabs."), "notifications messages"),
@@ -58,6 +58,9 @@ const entries = [
   e("assistant", t("Default reasoning effort"), t("Chat"), t("Each model gets the nearest level it takes"), "chat thinking effort reasoning level"),
   e("assistant", t("Clear snapshots on click"), t("Chat"), t("A plain click in the PDF also drops pending snapshots"), "chat images selections"),
   e("assistant", t("Assistant tools"), t("Tools"), t("Let chats read, search and edit your library"), "allow master switch permissions agent"),
+  e("assistant", t("Search papers online"), t("Tools"), t("Find papers on Crossref and arXiv"), "web internet research references", t("Tools")),
+  e("assistant", t("Fetch documents"), t("Tools"), t("Read a DOI or URL without saving it to your library"), "download web internet PDF", t("Tools")),
+  e("assistant", t("Use journal sign-ins"), t("Tools"), t("Use connected publisher cookies when fetching documents"), "cookies publisher journals session access", t("Tools")),
   e("assistant", t("Folder chat"), t("Tools"), t("Home and folder views"), "permissions tools read search edit rename move"),
   e("assistant", t("PDF chat"), t("Tools"), t("Pages with a PDF"), "permissions tools read search edit"),
   e("assistant", t("Notes chat"), t("Tools"), t("Note pages"), "permissions tools read search edit"),

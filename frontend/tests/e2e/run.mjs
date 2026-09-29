@@ -41,6 +41,7 @@ import { mentionScenarios } from "./scenarios/mentions.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
+import { notebookScenarios } from "./scenarios/notebooks.mjs";
 import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
 import { triggeredGuideScenarios } from "./scenarios/triggeredGuide.mjs";
@@ -57,6 +58,7 @@ import { authScenarios } from "./scenarios/auth.mjs";
 import { GROUPS, changedFromGit, selectGroups } from "./select.mjs";
 
 const RUNNERS = {
+  "notebooks": notebookScenarios,
   "guide": guideScenarios,
   "settings": settingsScenarios,
   "notes-pdf-share": async (env) => {
