@@ -126,7 +126,7 @@ def deliver(user: str, rid: str, data: bytes, from_url: str = "") -> dict | None
     """Keep the text of the PDF the user got for request ``rid``; raises
     ai_web.FetchError when it is not a readable PDF and Settled when the
     request no longer waits for one. None = no such request."""
-    from .ai_web import pdf_document
+    from .ai_web import identifier, pdf_document
 
     req = get(user, rid)
     if req is None:
@@ -136,7 +136,15 @@ def deliver(user: str, rid: str, data: bytes, from_url: str = "") -> dict | None
     url = from_url or req["pdf_url"] or req["url"]
     doc = pdf_document(url, data, "The user fetched this PDF in their own browser"
                        + (f" from {from_url}" if from_url else "") + " and sent it to the chat.")
-    doc.update(delivered=True, request=rid)
+    # What ai_web.verify_document weighs: the work asked for, the publisher
+    # page the request opened, and where the Connector took the PDF ("" for
+    # a file dropped by hand) — the publisher's own site, printing the DOI,
+    # makes it the published version.
+    kind, ident = identifier(req["source"])
+    doc.update(delivered=True, request=rid, provenance={
+        "source_kind": "browser", "requested_source": req["source"], "final_url": url,
+        "doi": ident.lower() if kind == "doi" else "", "publisher_url": req["url"],
+        "delivered_from": from_url, "version": "", "version_verified": False})
     with _lock:
         live = _requests.get(rid)
         if not live or live["user"] != user:

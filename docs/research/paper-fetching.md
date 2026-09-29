@@ -247,6 +247,17 @@ The Connector now takes a PDF from a frame too. Three requests followed:
   version listed a reply's papers, linked ones included, behind one "Save to
   library" pill with checkboxes; per-paper buttons proved simpler, and rows
   under the reply's text repeated its steps, so they moved into them.
+- **Delivered PDFs pass strict checks.** In a live run asking for non-arXiv
+  copies (`published_only`), all six delivered PDFs (AIP, APS, JPSJ, IOP,
+  Nature Physics) were then rejected: a delivery carried no version evidence,
+  and the model's `expected_title`, likely taken from the preprints'
+  records ("…2D-/3D-MOT Setup", "…Atomic Mixture"), missed the published
+  titles. The error also told
+  the model to have the user drop the file, so it asked for PDFs they had just
+  delivered. Now a PDF got for a DOI that prints it on page 1 is that paper
+  under a reworded title, one the Connector took from the publisher's own
+  site is the published version, and a delivery that still fails says so
+  without asking for it again.
 
 Checked in real Chromium with the real Connector against local fakes (see
 [extension.md](../dev/extension.md#testing)). That run also caught

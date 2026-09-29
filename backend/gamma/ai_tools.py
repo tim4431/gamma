@@ -1129,8 +1129,10 @@ def _fetch_failure(e, source: str, user, options: dict | None = None) -> tuple[s
                 "the PDF onto Gamma and read it with read_page.", None)
     handoff = _open_handoff(user, source, e.wall, e.open_url, e.pdf_url, str(e))
     if handoff:
-        continuation = (f'{_fetch_call(source, options)} checks identity and version before reading it. '
-                        "A browser-delivered file without published-version evidence remains unverified."
+        continuation = (f'{_fetch_call(source, options)} checks identity and version before reading it: '
+                        "a PDF their browser takes from the publisher's own site that prints the DOI on "
+                        "its first page counts as the published version; a browser-delivered file "
+                        "without published-version evidence remains unverified."
                         if (options or {}).get("version_policy") == "published_only"
                         else f'{_fetch_call(source, options)} returns it.')
         return (f"error: {e}. No document text was retrieved: {WALLS[e.wall]} at {handoff['host']} "
@@ -1190,7 +1192,12 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
         try:
             doc = verify_document(doc, **options)
         except FetchError as e:
-            return _fetch_failure(e, source, helper, options)
+            # The user's own delivery: asking them for the file again helps nobody.
+            return (f"error: {e} This is the PDF the user sent from their browser for {source}, so "
+                    "do not ask them to download or drop it again. Tell them which check it failed. "
+                    "Read it only if they say it is the paper they want — call fetch_paper again "
+                    "with version_policy allow_preprint (the version stays unconfirmed) or without "
+                    "expected_title (the title differs) — and say so when you use it.", None)
     text, next_offset, total = window(doc, budget, offset, page)
     label = doc.get("title") or doc["url"]
     # `title`, `pdf`, `pages` and `request` (the handoff whose PDF the user's
@@ -1207,8 +1214,12 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
         if doc.get("note"):
             head += f'\nSource note: {doc["note"]}'
         provenance = doc.get("provenance") or {}
-        head += (f'\nVersion: {provenance.get("version") or "unknown"}; '
-                 f'identity: {provenance.get("identity_evidence") or "unverified"}.')
+        head += (f'\nVersion: {provenance.get("version") or "unknown"}'
+                 + (f' ({provenance["version_evidence"]})' if provenance.get("version_evidence") else "")
+                 + f'; identity: {provenance.get("identity_evidence") or "unverified"}.')
+        if provenance.get("title_differs"):
+            head += ("\nIts title differs from expected_title (a preprint's title can differ from the "
+                     "published one): the PDF prints the requested DOI, so name it by its own title.")
         if provenance.get("final_url") and provenance["final_url"] != doc["url"]:
             head += f'\nRetrieved from: {provenance["final_url"]}'
     else:

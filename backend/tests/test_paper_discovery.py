@@ -88,6 +88,88 @@ def test_doi_alone_is_not_document_identity():
         ai_web.verify_document(document("A paper", doi="10.1234/b"), expected_doi="10.1234/a")
 
 
+RETITLED = ("Rev. Sci. Instrum. 84, 043109 (2013); doi: 10.1063/1.\n4802682\n"
+            "Creation of quantum-degenerate gases of ytterbium in a compact 2D-/3D-magneto-optical trap setup\n"
+            "S. Dörscher, A. Thobe\nAbstract\nWe present a compact source.")
+PREPRINT_TITLE = "Creation of Quantum-Degenerate Gases of Ytterbium in a Compact 2D-/3D-MOT Setup"
+
+
+def test_a_pdf_printing_the_requested_doi_is_that_paper_under_a_reworded_title():
+    # The model took its title from the preprint; the published PDF names itself otherwise.
+    fetched = dict(doi="10.1063/1.4802682", requested_source="doi:10.1063/1.4802682")
+    result = ai_web.verify_document(document(RETITLED, **fetched), expected_title=PREPRINT_TITLE,
+                                    expected_doi="10.1063/1.4802682")
+    provenance = result["provenance"]
+    assert provenance["identity_verified"] and provenance["identity_evidence"] == "doi_on_first_page"
+    assert provenance["title_differs"]
+    # Without a title to weigh, the printed DOI alone identifies it.
+    alone = ai_web.verify_document(document(RETITLED, requested_source="https://doi.org/10.1063/1.4802682"))
+    assert alone["provenance"]["identity_evidence"] == "doi_on_first_page"
+
+
+@pytest.mark.parametrize("text", [
+    # The DOI only in the references: another paper citing it, however alike its title.
+    PREPRINT_TITLE + ": a comment\nAbstract\nText\nReferences\n[1] doi: 10.1063/1.4802682",
+    # Another paper printing the DOI up front shares no title.
+    "doi: 10.1063/1.4802682\nA Comment on lattice clocks\nAbstract",
+    # A longer DOI is not the requested one.
+    "doi: 10.1063/1.48026821\nCreation of quantum-degenerate gases of ytterbium in a compact setup",
+])
+def test_a_printed_doi_does_not_identify_another_paper(text):
+    with pytest.raises(ai_web.FetchError, match="identity mismatch"):
+        ai_web.verify_document(document(text, doi="10.1063/1.4802682"), expected_title=PREPRINT_TITLE)
+
+
+def test_a_printed_doi_counts_only_for_the_doi_the_pdf_was_got_for():
+    result = ai_web.verify_document(document(RETITLED, requested_source="https://lab.example.org/paper.pdf"))
+    assert result["provenance"]["identity_evidence"] == "unverified"
+
+
+def _delivered(source, publisher, from_url, text):
+    rid = fetch_handoff.open_request("reader", source, wall="captcha", url=publisher)["id"]
+    fetch_handoff.deliver("reader", rid, _text_pdf([text]), from_url)
+    return fetch_handoff.delivered("reader", source)
+
+
+def test_a_pdf_the_browser_took_from_the_publisher_site_is_the_published_version():
+    doc = _delivered("doi:10.1038/nphys3061", "https://www.nature.com/articles/nphys3061",
+                     "https://www.nature.com/articles/nphys3061.pdf",
+                     "NATURE PHYSICS DOI: 10.1038/NPHYS3061 A one-dimensional liquid of fermions")
+    result = ai_web.verify_document(doc, version_policy="published_only", expected_doi="10.1038/nphys3061")
+    provenance = result["provenance"]
+    assert (provenance["version"], provenance["version_verified"], provenance["version_evidence"]) == (
+        "publishedVersion", True, "publisher_site_in_browser")
+    assert provenance["identity_evidence"] == "doi_on_first_page"
+
+
+@pytest.mark.parametrize("from_url, text", [
+    ("", "doi:10.1088/0034-4885/77/12/124401 Ultracold Fermi gases"),  # dropped by hand
+    ("https://www.researchgate.net/x.pdf", "doi:10.1088/0034-4885/77/12/124401 Ultracold Fermi gases"),
+    ("https://arxiv.org/pdf/1403.2964", "doi:10.1088/0034-4885/77/12/124401 Ultracold Fermi gases"),
+    ("https://iopscience.iop.org/article/10.1088/0034-4885/77/12/124401/pdf", "Ultracold Fermi gases, no DOI"),
+])
+def test_other_deliveries_stay_unverified_versions(from_url, text):
+    source = "doi:10.1088/0034-4885/77/12/124401"
+    doc = _delivered(source, "https://iopscience.iop.org/article/10.1088/0034-4885/77/12/124401", from_url, text)
+    with pytest.raises(ai_web.FetchError, match="not verified as the published version"):
+        ai_web.verify_document(doc, version_policy="published_only")
+
+
+def test_a_delivered_pdf_that_fails_a_check_is_not_asked_for_again(org, monkeypatch):
+    doc = _delivered("doi:10.1103/physreva.91.063414", "https://journals.aps.org/pra/abstract/10.1103/PhysRevA.91.063414",
+                     "", "DOI: 10.1103/PhysRevA.91.063414 Site-resolved imaging of ytterbium atoms")
+    monkeypatch.setattr(fetch_handoff, "delivered", lambda *a: doc)
+    text, action = ai_tools.run_agent_tool(org[1]["ws"], folder(""), "fetch_paper", {
+        "source": "doi:10.1103/PhysRevA.91.063414", "version_policy": "published_only"})
+    assert "not verified as the published version" in text
+    assert "do not ask them to download or drop it again" in text and "drop the PDF onto Gamma" not in text
+    # Taken from the publisher's site, the same PDF reads under published_only.
+    doc["provenance"]["delivered_from"] = "https://journals.aps.org/pra/pdf/10.1103/PhysRevA.91.063414"
+    text, action = ai_tools.run_agent_tool(org[1]["ws"], folder(""), "fetch_paper", {
+        "source": "doi:10.1103/PhysRevA.91.063414", "version_policy": "published_only"})
+    assert not action.get("error") and "Version: publishedVersion (publisher_site_in_browser)" in text
+
+
 def test_policy_and_identity_do_not_reuse_permissive_cache(upstream):
     source = "https://example.org/paper.pdf"
     ai_web.fetch_document(source)

@@ -24,6 +24,7 @@ import html
 import re
 import threading
 import time
+import unicodedata
 from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest
@@ -566,15 +567,57 @@ def _opening_title_matches(page: str, expected_title: str) -> bool:
                for j in range(i + 1, min(i + 8, len(lines)) + 1))
 
 
+_REFERENCES_RE = re.compile(r"^\s*(?:references|bibliography|literature cited)\s*$", re.I | re.M)
+_TITLE_STOPWORDS = {"a", "an", "the", "of", "in", "on", "and", "for", "with", "to", "by", "at", "from", "via", "as"}
+_SECOND_LEVEL = {"ac", "co", "com", "edu", "gov", "net", "org", "or", "ne", "go"}
+
+
+def _doi_printed(text: str, doi: str) -> bool:
+    """Whether ``text`` prints ``doi`` whole (not the start of a longer DOI);
+    a line break inside it is allowed, as PDF text wraps long DOIs."""
+    if not doi:
+        return False
+    body = r"\s?".join(map(re.escape, doi))
+    return bool(re.search(r"(?<![0-9a-z])" + body + r"(?![0-9a-z]|[./_-][0-9a-z])", text, re.I))
+
+
+def _title_words(text: str) -> set[str]:
+    folded = "".join(c for c in unicodedata.normalize("NFKD", text or "").casefold()
+                     if not unicodedata.combining(c))
+    return {w for w in re.findall(r"[^\W_]+", folded) if w not in _TITLE_STOPWORDS}
+
+
+def _shares_title(head: str, expected_title: str) -> bool:
+    """Most (two thirds) of the expected title's words in the page's opening
+    text: the same paper under a reworded title — a preprint's, often —
+    rather than another one."""
+    want = _title_words(expected_title)
+    return bool(want) and len(want & _title_words(head[:3000])) >= max(2, -(-len(want) * 2 // 3))
+
+
+def _site(url: str) -> str:
+    """The site a URL belongs to: its host's last two labels (three under a
+    country's second level, as in ``ac.uk``)."""
+    labels = (urlsplit(url or "").hostname or "").lower().split(".")
+    if len(labels) < 2:
+        return ""
+    n = 3 if len(labels) > 2 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL else 2
+    return ".".join(labels[-n:])
+
+
 def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
                     expected_title: str = "", expected_doi: str = "") -> dict:
     """Attach bounded identity evidence; never treat a search hit as proof.
 
     HTML publication lists are discovery results, not the requested paper.
-    Require a supplied title in the PDF's opening text; an isolated DOI may
-    be a reference, so DOI-only evidence is reported without confirming identity.
-    This also checks browser-delivered PDFs and therefore cannot be bypassed
-    by the handoff cache.
+    A PDF is the requested one when a supplied title is its opening title
+    lines, or when it was got for a DOI and prints that DOI on its first
+    page, outside its references (a DOI there may cite another paper) — a
+    supplied title then needs only most of its words in the opening text,
+    as a preprint's title can differ from the published one. A PDF the
+    user's browser took from the DOI's publisher site, printing the DOI, is
+    the published version. This also checks browser-delivered PDFs and
+    therefore cannot be bypassed by the handoff cache.
     """
     validate_fetch_options(version_policy, expected_title, expected_doi)
     provenance = dict(doc.get("provenance") or {})
@@ -582,19 +625,32 @@ def verify_document(doc: dict, *, version_policy: str = "allow_preprint",
                       version_policy=version_policy, identity_verified=False)
     if doc["kind"] == "pdf":
         head = doc["pages"][0][:20000] if doc["pages"] else ""
-        title_matches = bool(expected_title and _opening_title_matches(head, expected_title))
-        if expected_title and not title_matches:
-            raise FetchError("PDF identity mismatch: the requested title was not found in its opening title lines. "
-                             "Do not use this document as the requested paper; inspect another candidate.")
         expected = identifier(expected_doi)[1].lower() if expected_doi else ""
         actual = str(provenance.get("doi") or "").lower()
         actual = identifier(actual)[1].lower() or actual
         if expected and actual and actual != expected:
             raise FetchError("PDF identity mismatch: the resolved DOI differs from expected_doi")
-        provenance["identity_verified"] = title_matches
-        provenance["identity_evidence"] = "title_in_opening_lines" if title_matches else "unverified"
+        kind, asked = identifier(str(provenance.get("requested_source") or ""))
+        asked = asked.lower() if kind == "doi" else ""
+        doi = expected or actual or asked
+        match = _REFERENCES_RE.search(head)
+        doi_shown = bool(doi) and doi in (actual, asked) and _doi_printed(head[:match.start()] if match else head, doi)
+        title_matches = bool(expected_title and _opening_title_matches(head, expected_title))
+        if expected_title and not title_matches and not (doi_shown and _shares_title(head, expected_title)):
+            raise FetchError("PDF identity mismatch: the requested title was not found in its opening title lines. "
+                             "Do not use this document as the requested paper; inspect another candidate.")
+        provenance["identity_verified"] = title_matches or doi_shown
+        provenance["identity_evidence"] = ("title_in_opening_lines" if title_matches
+                                           else "doi_on_first_page" if doi_shown else "unverified")
+        if expected_title and not title_matches:
+            provenance["title_differs"] = True
         if expected and expected in head.lower():
             provenance["doi_in_text"] = True
+        delivered_from = str(provenance.get("delivered_from") or "")
+        if (provenance.get("source_kind") == "browser" and doi_shown and _site(delivered_from)
+                and _site(delivered_from) == _site(provenance.get("publisher_url") or "")):
+            provenance.update(version="publishedVersion", version_verified=True,
+                              version_evidence="publisher_site_in_browser")
         actual_host = urlsplit(provenance.get("final_url") or doc["url"]).hostname
         if actual_host in ("arxiv.org", "www.arxiv.org", "export.arxiv.org"):
             provenance.update(version="submittedVersion", version_verified=True, version_evidence="arxiv_source")

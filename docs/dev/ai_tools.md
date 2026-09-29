@@ -339,8 +339,16 @@ or body boundaries. A title mentioned in an introduction or reference is
 insufficient. Unusual layouts, scanned pages or poor extraction can reject the
 right paper and require manual inspection. A resolved DOI conflicting with
 `expected_doi` rejects the candidate.
-A DOI occurring in the text is reported as supporting evidence and alone does
-not mark identity verified. HTML pages remain discovery material.
+A PDF got for a DOI (the source, the resolver's or the handoff's) that prints
+that DOI on its first page, before any References heading and not as the start
+of a longer DOI (a line break inside it allowed), is identified by it
+(`identity_evidence` `doi_on_first_page`). A supplied title then needs only two
+thirds of its words in the page's opening text, since a preprint's title,
+which models often take from search results, can differ from the published one
+("…2D-/3D-MOT Setup" for "…2D-/3D-magneto-optical trap setup"); the provenance
+marks `title_differs` and the reading window tells the model to use the PDF's
+own title. A DOI anywhere else in the text (in the references, say) is only
+reported (`doi_in_text`). HTML pages remain discovery material.
 
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
@@ -512,9 +520,18 @@ stays). `fetch_paper` checks it
 before any network fetch, for the same work in any spelling or the request's
 URLs, and applies the current identity and version policy again. A passing
 document carries a source note saying the user fetched it in their browser.
-Browser-delivered PDFs currently lack publication-version evidence, so
-`published_only` rejects them with an unverified-version error; delivery alone
-does not guarantee a strict fetch can return their text. When every
+A delivery records where it came from (`source_kind` `browser`, the request's
+DOI and publisher page as `publisher_url`, and `delivered_from`, the address
+Gamma Connector took the PDF from; empty for a file dropped by hand). One the
+Connector took from the publisher page's own site (`_site`: the host's last
+two labels, three under `ac.uk`-style second levels) that prints the request's
+DOI on its first page is the published version (`version_evidence`
+`publisher_site_in_browser`), so `published_only` reads it. A dropped file, one
+from another site (a repository, arXiv) or one without the DOI keeps an
+unknown version, and `published_only` rejects it; then the tool tells the model
+it is the user's own delivery, not to ask for it again, and to read it only if
+the user accepts it (again with `allow_preprint`, or without `expected_title`),
+saying so. When every
 request of the reply is settled with a PDF delivered, the reply is the
 conversation's last, the chat is idle, the composer is empty, and this tab saw
 a request waiting, the chat sends "I got it in my browser — {source} is
