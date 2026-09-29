@@ -3,7 +3,7 @@ import { getStroke } from '../../frontend/node_modules/perfect-freehand/dist/esm
 
 // JavaScriptCore runs the same pure codec and editing functions as the browser.
 // Only platform drawing is different: UIKit consumes the outline as CGPath.
-const round = value => Math.round(value * 100) / 100;
+const round = value => Number(value.toFixed(2));
 export function geometry(stroke) {
   const samples = ink.decodeStroke(stroke);
   const line = stroke.tool === 'highlighter';

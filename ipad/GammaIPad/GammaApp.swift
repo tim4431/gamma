@@ -37,6 +37,7 @@ final class LibraryModel: ObservableObject {
     @Published var error: String?
     @Published var busy = false
     @Published var mirror: GammaMirror?
+    @Published var conflicts: [GammaConflict] = []
     @Published var profiles: [String] = UserDefaults.standard.stringArray(forKey: "gamma.profiles") ?? ["On this iPad"]
     @Published var profile = UserDefaults.standard.string(forKey: "gamma.profile") ?? "On this iPad"
     private(set) var repository: GammaRepository?
@@ -58,7 +59,7 @@ final class LibraryModel: ObservableObject {
     }
     func refresh() async {
         guard let repository else { return }
-        do { documents = try await repository.documents(); mirror = try await repository.mirror() }
+        do { documents = try await repository.documents(); mirror = try await repository.mirror(); conflicts = try await repository.conflicts() }
         catch { self.error = error.localizedDescription }
     }
     func notebook() async {
@@ -76,6 +77,23 @@ final class LibraryModel: ObservableObject {
         guard let repository else { return }; busy = true; defer { busy = false }
         do { mirror = try await repository.sync(); await refresh() }
         catch { self.error = error.localizedDescription; await refresh() }
+    }
+    func mirrorAction(_ action: String) async {
+        guard let repository else { return }
+        do {
+            switch action {
+            case "off": try await repository.detachMirror()
+            case "on": try await repository.reattachMirror()
+            case "remove": try await repository.removeMirror()
+            default: try await repository.setMirrorMode(action)
+            }
+            await refresh()
+        } catch { self.error = error.localizedDescription }
+    }
+    func resolve(_ conflict: GammaConflict, choice: String) async {
+        guard let repository else { return }
+        do { try await repository.resolveConflict(id: conflict.id, choice: choice); await refresh() }
+        catch { self.error = error.localizedDescription }
     }
     func connect(origin: String, account: String, workspace: String, token: String) async throws {
         guard let url = URL(string: origin), url.scheme == "https", url.host != nil,
@@ -107,13 +125,38 @@ struct LibraryView: View {
         NavigationStack {
             List {
                 Section {
-                    Picker("Library", selection: $model.profile) { ForEach(model.profiles, id: \.self) { Text($0) } }
-                        .onChange(of: model.profile) { _, value in Task { await model.open(value) } }
+                    Picker("Library", selection: Binding(get: { model.profile }, set: { value in Task { await model.open(value) } })) {
+                        ForEach(model.profiles, id: \.self) { Text($0) }
+                    }
                     if let mirror = model.mirror {
                         Label(mirror.lastError ?? (mirror.pending ? "Changes waiting to sync" : "Library is available offline"),
                               systemImage: mirror.lastError == nil ? "arrow.triangle.2.circlepath" : "exclamationmark.circle")
                         Button(model.busy ? "Syncing…" : "Sync now") { Task { await model.sync() } }.disabled(model.busy)
+                        Menu("Connection: \(mirror.mode == "two-way" ? "Both ways" : mirror.mode == "pull" ? "Download only" : "Detached")") {
+                            if mirror.mode == "off" { Button("Reattach") { Task { await model.mirrorAction("on") } } }
+                            else {
+                                Button("Both ways") { Task { await model.mirrorAction("two-way") } }
+                                Button("Download only") { Task { await model.mirrorAction("pull") } }
+                                Button("Detach") { Task { await model.mirrorAction("off") } }
+                            }
+                            Button("Remove connection; keep local files") { Task { await model.mirrorAction("remove") } }
+                        }.disabled(model.busy)
                     } else { Label("Stored on this iPad", systemImage: "ipad") }
+                }
+                if !model.conflicts.isEmpty {
+                    Section("Review sync conflicts") {
+                        ForEach(model.conflicts) { conflict in
+                            DisclosureGroup(conflict.kind.capitalized) {
+                                if !conflict.mine.isEmpty { Text("On this iPad\n\(conflict.mine)") }
+                                if !conflict.theirs.isEmpty { Text("On the server\n\(conflict.theirs)") }
+                                if ["merged", "diverged"].contains(conflict.kind) {
+                                    Button("Keep my text") { Task { await model.resolve(conflict, choice: "mine") } }
+                                    Button("Keep server text") { Task { await model.resolve(conflict, choice: "theirs") } }
+                                }
+                                Button("Keep current result") { Task { await model.resolve(conflict, choice: "keep") } }
+                            }
+                        }
+                    }
                 }
                 Section("Documents") {
                     if model.documents.isEmpty { ContentUnavailableView("Your library is empty", systemImage: "books.vertical", description: Text("Create a notebook or import a PDF.")) }

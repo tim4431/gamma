@@ -64,6 +64,7 @@ public enum GammaTextMerge {
 }
 
 public enum GammaTree {
+    static let inkKeys: Set<String> = ["ink_url", "ink_strokes", "pdf_position", "pdf_page", "sheet_id"]
     public static func children(_ snapshot: GammaSnapshot, of parent: String) -> [GammaBlock] {
         snapshot.values.filter { $0.parent == parent }.sorted { ($0.position, $0.id) < ($1.position, $1.id) }
     }
@@ -128,7 +129,8 @@ public enum GammaTree {
             }
             let content = block.content != was.content ? block.content : nil
             if content != nil || !patch.isEmpty {
-                let guardProps: [String: JSONValue]? = patch["ink_url"] != nil ? ["ink_url": was.properties["ink_url"] ?? .null] : nil
+                let inkChange = (was.properties["ink_url"] != nil || patch["ink_url"] != nil) && !Set(patch.keys).isDisjoint(with: inkKeys)
+                let guardProps: [String: JSONValue]? = inkChange ? ["ink_url": was.properties["ink_url"] ?? .null] : nil
                 result.append(.init(op: "set", id: block.id, content: content, base: content != nil ? was.content : nil, props: patch.isEmpty ? nil : patch, baseProps: guardProps))
             }
         }
@@ -150,12 +152,15 @@ public enum GammaTree {
                 result[op.id] = GammaBlock(id: op.id, parent: parent, position: position, content: op.content ?? "", properties: op.props ?? [:])
             case "set":
                 guard var block = result[op.id] else { if strict { throw GammaError.missing("The edited block is missing.") }; continue }
-                if strict, let proposed = op.props?["ink_url"], proposed != (block.properties["ink_url"] ?? .null), op.baseProps?["ink_url"] == nil {
+                let inkChange = (block.properties["ink_url"] != nil || op.props?["ink_url"] != nil) && inkKeys.contains { key in
+                    guard let value = op.props?[key] else { return false }; return value != (block.properties[key] ?? .null)
+                }
+                if strict, inkChange, op.baseProps?["ink_url"] == nil {
                     throw GammaError.invalid("An ink replacement must identify the version it was edited from.")
                 }
                 for (key, expected) in op.baseProps ?? [:] {
                     let current = block.properties[key] ?? .null, desired = op.props?[key] ?? current
-                    if current != expected && current != desired { throw GammaError.propertyChanged(op.id) }
+                    if current != expected && (key == "ink_url" ? inkChange : current != desired) { throw GammaError.propertyChanged(op.id) }
                 }
                 if let content = op.content {
                     block.content = op.base.map { GammaTextMerge.merge(base: $0, ours: content, theirs: block.content).text } ?? content

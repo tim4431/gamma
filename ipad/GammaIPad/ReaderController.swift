@@ -31,7 +31,6 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
     private var audioBlockID: String?
     private var segmentValues: [[String: Any]] = []
     private var eventValues: [[String: Any]] = []
-    private var audioWriteTask: Task<Void, Error>?
     private var followingKey: String?
 
     init(repository: GammaRepository, documentID: String, directory: URL, close: @escaping () -> Void) {
@@ -62,6 +61,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
         }
         pdf.autoScales = true; pdf.displayMode = .singlePageContinuous; pdf.displayDirection = .vertical; pdf.pageOverlayViewProvider = self
         notebookScroll.backgroundColor = .secondarySystemBackground; notebookScroll.delegate = self; notebookScroll.isHidden = true
+        notebookScroll.minimumZoomScale = 1; notebookScroll.maximumZoomScale = 4
         sheets.axis = .vertical; sheets.spacing = 20; sheets.translatesAutoresizingMaskIntoConstraints = false
         notebookScroll.addSubview(sheets)
         NSLayoutConstraint.activate([sheets.topAnchor.constraint(equalTo: notebookScroll.contentLayoutGuide.topAnchor, constant: 16),
@@ -211,7 +211,12 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
     }
     @objc private func close() {
         audio?.pause(); audio?.stopPlayback()
-        Task { await saveTask?.value; closeReader() }
+        navigationItem.leftBarButtonItem?.isEnabled = false
+        Task {
+            await saveTask?.value
+            while audio?.isFinalizing == true { try? await Task.sleep(nanoseconds: 25_000_000) }
+            closeReader()
+        }
     }
     @objc private func toolChanged() { for canvas in canvases.values { configureCanvas(canvas) } }
     private func configureCanvas(_ canvas: InkCanvasView) { canvas.tool = InkCanvasView.Tool.allCases[max(0, tools.selectedSegmentIndex)] }
@@ -232,6 +237,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
             UIAction(title: "Paper settings", image: UIImage(systemName: "doc")) { [weak self] _ in self?.paperSettings() },
             UIAction(title: "Add notebook page", image: UIImage(systemName: "doc.badge.plus")) { [weak self] _ in self?.appendPage() },
             UIAction(title: "Notes", image: UIImage(systemName: "note.text")) { [weak self] _ in self?.notes() },
+            UIAction(title: "Highlight selected PDF text", image: UIImage(systemName: "highlighter")) { [weak self] _ in self?.highlightSelection() },
             UIAction(title: "Sync library", image: UIImage(systemName: "arrow.triangle.2.circlepath")) { [weak self] _ in self?.sync() }
         ])
     }
@@ -247,6 +253,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
             if key != activeKey { activeKey = key; audio?.recordPage(anchor(key)) }
         }
     }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { scrollView === notebookScroll ? sheets : nil }
     private func appendPage() {
         guard let document, let notebook = propertyObject(document.properties)["notebook"] as? [String: Any] else { return }
         Task {
@@ -287,14 +294,29 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
         present(UIHostingController(rootView: settings), animated: true)
     }
     private func notes() {
-        let alert = UIAlertController(title: "Add a note", message: "Saved in this document’s ordinary notes.", preferredStyle: .alert)
-        alert.addTextField { $0.placeholder = "Note" }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
-            guard let self, let text = alert?.textFields?.first?.text, !text.isEmpty else { return }
-            Task { do { try await self.repository.apply(pageID: self.documentID, ops: [GammaOperation(op: "insert", id: gammaID(), parent: self.documentID, content: text)]) }
-                catch { self.showError(error) } }
-        }); present(alert, animated: true)
+        present(UINavigationController(rootViewController: NotesController(repository: repository, documentID: documentID)), animated: true)
+    }
+    private func highlightSelection() {
+        guard let selection = pdf.currentSelection, let text = selection.string, !text.isEmpty, let document = pdf.document else { return }
+        Task {
+            do {
+                for page in selection.pages {
+                    let number = document.index(for: page) + 1
+                    guard let canvas = canvases["pdf:\(number)"] else { continue }
+                    let rect = canvas.convert(pdf.convert(selection.bounds(for: page), from: page), from: pdf)
+                    let width = max(1, canvas.bounds.width), height = max(1, canvas.bounds.height)
+                    let size = canvas.pageSize
+                    let region: [String: Any] = ["x1": rect.minX / width * size.width, "y1": rect.minY / height * size.height,
+                        "x2": rect.maxX / width * size.width, "y2": rect.maxY / height * size.height,
+                        "width": size.width, "height": size.height, "pageNumber": number]
+                    let id = gammaID()
+                    let props = try jsonProperties(["highlight_id": id, "pdf_page": number, "quote": text, "color": "yellow",
+                        "pdf_position": ["pageNumber": number, "boundingRect": region, "rects": [region]]])
+                    try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "insert", id: id, parent: documentID, content: "", props: props)])
+                }
+                status.text = "Highlight saved in notes"; pdf.clearSelection()
+            } catch { showError(error) }
+        }
     }
     private func sync() {
         Task { await saveTask?.value; do { _ = try await repository.sync(); status.text = "Library synced. Reopen to see remote changes." } catch { showError(error) } }
@@ -307,14 +329,16 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
     private func saveSegment(id: String, url: URL, duration: Int, events: [[String: Any]]) async throws {
         if segmentValues.contains(where: { $0["id"] as? String == id }) { return }
         let reference = try await repository.storeAsset(data: Data(contentsOf: url), extension: "m4a")
-        segmentValues.append(["id": id, "url": reference, "duration_ms": duration]); eventValues.append(contentsOf: events)
-        let props = try jsonProperties(["type": "audio", "audio_segments": segmentValues, "audio_events": eventValues])
+        let nextSegments = segmentValues + [["id": id, "url": reference, "duration_ms": duration]]
+        let nextEvents = eventValues + events
+        let props = try jsonProperties(["type": "audio", "audio_segments": nextSegments, "audio_events": nextEvents])
         if let audioBlockID { try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "set", id: audioBlockID, props: props)]) }
         else {
             let block = gammaID()
             try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "insert", id: block, parent: documentID, content: "Recording", props: props)])
             audioBlockID = block
         }
+        segmentValues = nextSegments; eventValues = nextEvents
         status.text = "Recording saved on this iPad"
     }
     @objc private func play() {

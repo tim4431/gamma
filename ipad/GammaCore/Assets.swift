@@ -53,10 +53,11 @@ enum InkMetadata {
               let space = ink["space"]?.object, let width = space["width"]?.number, let height = space["height"]?.number,
               width > 0, height > 0, width <= 100_000, height <= 100_000 else { throw GammaError.invalid("Invalid Gamma ink file.") }
         let kind = space["kind"]?.string, version = ink["version"]?.number
-        guard (version == 1 && (kind == "pdf-page" || kind == "canvas")) || (version == 2 && kind == "notebook-page") else { throw GammaError.invalid("Unsupported ink coordinate space.") }
+        guard (version == 1 && (kind == "pdf-page" || kind == "canvas")) || (version == 2 && ["pdf-page", "canvas", "notebook-page"].contains(kind ?? "")) else { throw GammaError.invalid("Unsupported ink coordinate space.") }
         var ids = Set<String>(), samples = 0
         var x0 = Double.infinity, y0 = Double.infinity, x1 = -Double.infinity, y1 = -Double.infinity
         for stroke in strokes {
+            if version == 1 && stroke["source_id"] != nil { throw GammaError.invalid("Stroke provenance requires ink version 2.") }
             guard let id = stroke["id"]?.string, !id.isEmpty, ids.insert(id).inserted,
                   let channels = stroke["ch"]?.string, channels.hasPrefix("xy"), Set(channels).count == channels.count,
                   Set(channels).isSubset(of: Set("xyptaz")), let pts = stroke["pts"]?.array, !pts.isEmpty,
@@ -86,6 +87,8 @@ enum InkMetadata {
                 props["pdf_position"] = .object(["pageNumber": .number(page), "boundingRect": .object(rect), "rects": .array([.object(rect)])])
             } else { props["pdf_position"] = .null }
         }
-        return (try GammaJSON.data(ink), props)
+        // Validate without rewriting previously saved opaque bytes. Numeric spelling
+        // is not a cross-language hash contract; uploaded bytes determine the digest.
+        return (data, props)
     }
 }

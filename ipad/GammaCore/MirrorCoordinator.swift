@@ -9,13 +9,15 @@ extension GammaRepository {
         if mirror.mode == "off" { return mirror }
         guard !token.isEmpty else { throw GammaError.authentication("Unlock the saved integration token before syncing.") }
         syncing = true; mirror.running = true; mirror.lastError = nil
+        roundLeft = [:]
         try db.set("mirror", mirror)
-        defer { syncing = false }
-        let remote = GammaRemote(mirror: mirror, token: token, transport: transport)
+        defer { syncing = false; roundLeft = [:] }
+        var remote = GammaRemote(mirror: mirror, token: token, transport: transport)
         let startHead = try journalHead()
         do {
             let who = try await remote.json("GET", "/api/sync/whoami")
             try validateIdentity(who, mirror: mirror)
+            remote.capabilities = who["capabilities"]?.object ?? [:]
             let canPush = mirror.mode == "two-way" && who["scope"]?.string == "write" && who["role"]?.string != "viewer"
             var cursor = mirror.remoteCursor, pages: [String: Int] = [:], deleted = Set<String>()
             while true {
@@ -113,6 +115,7 @@ extension GammaRepository {
             var creation = state ?? PageCheckpoint()
             creation.creating = true; try saveCheckpoint(pageID, creation)
             guard let root = local[pageID] else { return }
+            try remote.requireCapabilities(for: [.init(op: "insert", id: root.id, props: root.properties)] + GammaTree.diff(base: [root.id: root], target: local, pageID: pageID))
             _ = try await remote.json("POST", "/api/pages", body: .object(["id": .string(pageID), "title": .string(root.content), "properties": .object(root.properties)]), allowed: [200, 201, 409])
             let created = try await remote.tree(pageID)
             guard let bare = created.0 else { throw GammaError.missing("The origin did not retain the created page.") }
@@ -144,6 +147,7 @@ extension GammaRepository {
             let current = try snapshot(pageID)
             let prepared = try carryCrossPage(pageID: pageID, base: base, local: current, remote: there)
             let merged = GammaReconciler.reconcile(pageID: pageID, base: prepared.base, local: prepared.local, remote: there)
+            for (id, old) in prepared.base where there[id] == nil && merged.snapshot[id] != nil { roundLeft[id] = old }
             try replace(merged.snapshot, pageID: pageID, source: "sync", ops: GammaTree.diff(base: current, target: merged.snapshot, pageID: pageID))
             try saveCheckpoint(pageID, PageCheckpoint(remoteSeq: fetched.1, base: there))
             try record(merged.conflicts)
@@ -152,6 +156,7 @@ extension GammaRepository {
         let outgoing = try snapshot(pageID)
         let ops = GammaTree.diff(base: there, target: outgoing, pageID: pageID)
         if ops.isEmpty { return }
+        try remote.requireCapabilities(for: ops)
         try await pushFiles(GammaAssets.references(outgoing), remote: remote)
         var delivery = PageCheckpoint(remoteSeq: fetched.1, base: there)
         for offset in stride(from: 0, to: ops.count, by: 500) { delivery.pending.append(PendingBatch(id: GammaID.make(), ops: Array(ops[offset..<min(offset + 500, ops.count)]))) }
@@ -184,6 +189,7 @@ extension GammaRepository {
             }
             if !unsent.isEmpty && canPush {
                 do {
+                    try remote.requireCapabilities(for: unsent)
                     // This flag is durable before the request; a process death can make
                     // its delivery uncertain, never silently turn it into a fresh edit.
                     state.pending[0].attempted = true
@@ -265,15 +271,19 @@ extension GammaRepository {
             let oldBase = sourceState.base
             var extra = Set<String>()
             for id in moving {
-                for child in GammaTree.descendants(source, of: id) where oldBase[child] == nil && remote[child] == nil { extra.insert(child) }
+                for child in GammaTree.descendants(source, of: id) where oldBase[child] == nil && roundLeft[child] == nil && remote[child] == nil { extra.insert(child) }
             }
             for id in moving.union(extra) {
                 guard var block = source.removeValue(forKey: id) else { continue }
                 if let target = remote[id] {
                     block.parent = target.parent; block.position = target.position
-                    if var was = oldBase[id] { was.parent = target.parent; was.position = target.position; augmentedBase[id] = was }
+                    if var was = oldBase[id] ?? roundLeft[id] { was.parent = target.parent; was.position = target.position; augmentedBase[id] = was }
                 }
                 augmentedLocal[id] = block; sourceState.base.removeValue(forKey: id)
+            }
+            sourceState.pending = sourceState.pending.compactMap { batch in
+                let kept = batch.ops.filter { !moving.union(extra).contains($0.id) }
+                return kept.isEmpty ? nil : PendingBatch(id: batch.id, ops: kept, attempted: batch.attempted)
             }
             for id in source.keys where id != home {
                 guard var block = source[id], source[block.parent] == nil else { continue }

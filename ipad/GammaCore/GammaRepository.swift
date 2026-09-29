@@ -17,6 +17,7 @@ public actor GammaRepository {
     let transport: any GammaTransport
     var token = ""
     var syncing = false
+    var roundLeft: [String: GammaBlock] = [:]
     public let directory: URL
 
     public init(directory: URL, transport: any GammaTransport = GammaURLSessionTransport()) throws {
@@ -105,7 +106,7 @@ public actor GammaRepository {
         var props = parsed.props; props["ink_url"] = .string(reference)
         let tree = try snapshot(pageID)
         if let existing = tree[blockID] {
-            let expected: JSONValue = baseURL.map { $0.isEmpty ? .null : .string($0) } ?? existing.properties["ink_url"] ?? .null
+            let expected: JSONValue = baseURL.map(JSONValue.string) ?? existing.properties["ink_url"] ?? .null
             if (existing.properties["ink_url"] ?? .null) != expected && existing.properties["ink_url"] != .string(reference) {
                 var variant = existing
                 variant.id = GammaID.make(); variant.position = GammaTree.nextPosition(after: GammaTree.children(tree, of: existing.parent).last?.position)

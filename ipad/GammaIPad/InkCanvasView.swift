@@ -40,6 +40,7 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
     private var redoStack: [[InkGroup]] = []
     private var selectionRect: CGRect?
     private weak var activeTouch: UITouch?
+    private var predictionGeneration = 0
 
     init(engine: InkEngine) {
         self.engine = engine
@@ -65,7 +66,7 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
         let pressure = touch.type == .pencil && touch.maximumPossibleForce > 0 ? touch.force / touch.maximumPossibleForce : 0.5
         return ["x": point.x, "y": point.y, "p": min(1, max(0, pressure)),
                 "t": max(0, (touch.timestamp - strokeStart) * 1000),
-                "a": touch.altitudeAngle * 180 / .pi, "z": touch.azimuthAngle(in: self) * 180 / .pi]
+                "a": Double(touch.altitudeAngle) * 180 / Double.pi, "z": Double(touch.azimuthAngle(in: self)) * 180 / Double.pi]
     }
     private func take(_ touch: UITouch, event: UIEvent?) {
         for point in event?.coalescedTouches(for: touch) ?? [touch] {
@@ -76,6 +77,12 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
             samples.append(next)
         }
         predicted = (event?.predictedTouches(for: touch) ?? []).filter { $0.timestamp - touch.timestamp <= 0.016 }.map(sample)
+        predictionGeneration += 1
+        let generation = predictionGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.032) { [weak self] in
+            guard let self, self.predictionGeneration == generation else { return }
+            self.predicted = []; self.setNeedsDisplay()
+        }
     }
     private func encoded(_ points: [[String: Double]]) throws -> [String: Any] {
         var parameters: [String: Any] = ["id": activeStrokeID, "tool": tool == .highlighter ? "highlighter" : "pen",

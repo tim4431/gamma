@@ -47,6 +47,21 @@ struct GammaRemote: Sendable {
     let mirror: GammaMirror
     let token: String
     let transport: any GammaTransport
+    var capabilities: [String: JSONValue] = [:]
+    func requireCapabilities(for ops: [GammaOperation]) throws {
+        for op in ops {
+            let props = op.props ?? [:]
+            if (!Set(props.keys).isDisjoint(with: GammaTree.inkKeys) || op.baseProps?["ink_url"] != nil), capabilities["ink_base_props"] != .bool(true) {
+                throw GammaError.invalid("Upgrade the origin server before syncing handwriting. Your edits remain saved on this iPad.")
+            }
+            if props["notebook"] != nil || props["type"]?.string == "notebook-sheet" || props["sheet_id"] != nil {
+                guard (capabilities["notebooks"]?.number ?? 0) >= 1 else { throw GammaError.invalid("Upgrade the origin server before syncing notebooks. Your notebook remains on this iPad.") }
+            }
+            if props["type"]?.string == "audio" || props["audio_segments"] != nil || props["audio_events"] != nil {
+                guard (capabilities["audio"]?.number ?? 0) >= 1 else { throw GammaError.invalid("Upgrade the origin server before syncing audio notes. Your recording remains on this iPad.") }
+            }
+        }
+    }
     func call(_ method: String, _ path: String, body: Data? = nil, contentType: String? = nil, allowed: Set<Int> = [200, 201]) async throws -> GammaHTTPResponse {
         guard let url = URL(string: mirror.origin + path) else { throw GammaError.invalid("Invalid server address.") }
         var request = URLRequest(url: url)
