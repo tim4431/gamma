@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  NEEDS_YOU, autoOpens, connectorNote, continuePrompt, handoffHint, handoffState, openRoute, pollDelay, replyHandoffs,
-  shouldContinue, wallHeadline, watchNote,
+  ARRIVED_MS, NEEDS_YOU, autoOpens, cardLook, connectorNote, continuePrompt, handoffHint, handoffState, openRoute,
+  pollDelay, replyHandoffs, shouldContinue, wallHeadline, watchNote,
 } from "../src/chat/fetchHandoff.js";
 
 const card = (id, source = `doi:${id}`) => ({ id, host: "journals.example.org", wall: "captcha", source });
@@ -30,6 +30,23 @@ test("the card's state follows the server and what the user did here", () => {
   // The user closed the Connector's tab before the PDF came: back to Open.
   assert.equal(handoffState({ status: "waiting", watched: true, note: "closed" }), "waiting");
   assert.equal(handoffState({ status: "waiting", watched: true, note: "closed" }, { opened: true }), "opened");
+});
+
+test("the card goes on at its step and under the folded steps, and a PDF that came becomes the file card", () => {
+  const now = 1_000_000;
+  for (const state of ["waiting", "opened", "watching"]) {
+    assert.equal(cardLook(state, { now }), "card");
+    assert.equal(cardLook(state, { now, pinned: true }), "card", "what waits for the user stays in view");
+  }
+  // "The PDF arrived", for a moment, in both places; then the file card at its step, nothing under the pill.
+  assert.equal(cardLook("done", { arrivedAt: now - 1000, now }), "arrived");
+  assert.equal(cardLook("done", { arrivedAt: now - 1000, now, pinned: true }), "arrived");
+  assert.equal(cardLook("done", { arrivedAt: now - ARRIVED_MS, now }), "file");
+  assert.equal(cardLook("done", { arrivedAt: now - ARRIVED_MS, now, pinned: true }), "");
+  // Done before the chat opened: the file card at once.
+  assert.equal(cardLook("done", { now }), "file");
+  assert.deepEqual(["dismissed", "gone", "loading"].map((s) => cardLook(s, { now })), ["settled", "settled", "loading"]);
+  assert.deepEqual(["dismissed", "gone", "loading"].map((s) => cardLook(s, { now, pinned: true })), ["", "", ""]);
 });
 
 test("Open goes through the Connector when it answered, else straight to the page", () => {

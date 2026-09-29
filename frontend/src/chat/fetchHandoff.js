@@ -1,9 +1,10 @@
 // Fetches handed to the user's browser (gamma/fetch_handoff.py): when the
 // agent's fetch_paper meets a CAPTCHA, a sign-in page or a paywall, its
 // action carries a `handoff` ({id, host, wall, source}) and the reply shows a
-// card for it (FetchHandoffCards.jsx). The rules here are the card's pure part:
-// which requests a reply opened, what each one's state reads as, how often
-// to ask the server, and when the chat continues on its own.
+// card for it at that step (FetchHandoffCards.jsx). The rules here are the
+// card's pure part: which requests a reply opened, what each one's state
+// reads as and shows, how often to ask the server, and when the chat
+// continues on its own.
 import { t, tn } from "../shared/i18n/i18n.js";
 
 // The requests a reply's tool calls opened, once each, in call order (a
@@ -55,6 +56,21 @@ export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "othe
 
 export const SETTLED = new Set(["done", "dismissed", "gone"]);
 const ACTIVE = new Set(["opened", "watching"]);
+
+// How long "The PDF arrived" shows before the card becomes the paper's file card.
+export const ARRIVED_MS = 4000;
+
+// What the card shows: "card" (the request, with its buttons), "arrived" (the
+// PDF came while it was watched, `arrivedAt`, less than ARRIVED_MS ago),
+// "file" (the paper's file card), "settled" (a dismissed or expired
+// request's line), "loading", or "" for nothing. `pinned`: under the folded
+// steps, where only what is still going on shows.
+export function cardLook(state, { arrivedAt = 0, now = Date.now(), pinned = false } = {}) {
+  if (state === "done" && arrivedAt && now - arrivedAt < ARRIVED_MS) return "arrived";
+  if (!SETTLED.has(state) && state !== "loading") return "card";
+  if (pinned) return "";
+  return state === "done" ? "file" : state === "loading" ? "loading" : "settled";
+}
 
 // Milliseconds until the card asks the server again (null: it stops). Often
 // while the user is at the page; now and then while the request waits in

@@ -37,6 +37,8 @@ test("a reply's fetches: a card per request, a row per document read — once ea
   const got = replyFetches(actions);
   assert.deepEqual(got.map((it) => (it.card ? `card:${it.card.id}` : it.paper.key)),
     ["arxiv:2301.01234", "card:req1", "doi:10.1109/tmag.1983.1062440", "https://lab.example/report"]);
+  // Each shows at the step that first got it; the later windows and retries stay plain steps.
+  assert.deepEqual(got.map((it) => it.index), [0, 1, 4, 6]);
   const [arxiv, , ieee, web] = got.map((it) => it.paper);
   assert.deepEqual([arxiv.pdf, arxiv.pages, arxiv.pdfUrl, arxiv.title], [true, 12, "https://arxiv.org/pdf/2301.01234", ""]);
   assert.equal(ieee.request, "req2", "the browser's PDF, held by the server, is what gets saved");

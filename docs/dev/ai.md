@@ -847,13 +847,13 @@ also carries the rendered page: the loop lifts it off the action into the
 tool message's `images` before yielding the chip, so the model sees the
 picture and the saved chat never holds it ([ai_tools.md](ai_tools.md)).
 A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
-`handoff`; after the reply's text the chat shows a card for it
-(`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
-continues the conversation once it arrives
+`handoff`; its step shows a card for it (`chat/FetchHandoffCards.jsx`, under
+the steps pill while the steps are folded) that gets the PDF through the
+user's browser and continues the conversation once it arrives
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A document a
-`fetch_paper` call read shows there as a row of its own
-(`chat/FetchedPaper.jsx`); rows and cards whose PDF arrived carry a **+** that
-adds the paper to the library through `POST /api/clip`.
+`fetch_paper` call read shows at its step as a file card with the paper's
+title (`chat/FetchedPaper.jsx`), as does a request once its PDF arrived; its
+**+** adds the paper to the library through `POST /api/clip`.
 
 ### Watching the agent work (live footprint)
 

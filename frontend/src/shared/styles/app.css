@@ -3403,9 +3403,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
 }
 /* A fetch the server could not make, handed to the user's browser
-   (FetchHandoffCards.jsx): what stopped it, what to do next, Open / Upload /
+   (FetchHandoffCards.jsx), at its step or under the folded steps pill
+   (.chatHandoffs): what stopped it, what to do next, Open / Upload /
    Dismiss. A PDF dropped on the card is uploaded to it. */
-.chatHandoffs { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+.chatHandoffs { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.chatHandoffs:empty { display: none; }
 .chatHandoff {
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
@@ -3440,32 +3442,43 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
-/* A document the reply's fetch_paper read (chat/FetchedPaper.jsx), among
-   the handoff cards: one quiet row with its "Add to library" button. */
+/* A document a reply's fetch_paper read, as a file card at its step
+   (chat/FetchedPaper.jsx): its title, the "Add to library" button and the
+   tool output chevron. */
+.chatFetchStep { margin: 2px 0; }
 .chatPaper {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  padding: 7px 8px 7px 12px;
+  padding: 4px 4px 4px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
-  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
   line-height: 1.45;
 }
-.chatPaper > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
-.chatPaperText { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.chatPaperTitle { overflow-wrap: anywhere; color: var(--text-primary); }
-.chatPaperMeta {
-  overflow: hidden;
+.chatPaper > svg { flex: none; color: var(--text-muted); }
+.chatPaper.fetching, .chatPaper[aria-busy="true"] { padding-block: 6px; color: var(--text-muted); }
+.chatPaper .transferSpin.inline { flex: none; }
+.chatPaperTitle { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
+.chatPaper.fetching .chatPaperTitle, .chatPaper[aria-busy="true"] .chatPaperTitle { color: inherit; }
+.chatPaperMore {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
   color: var(--text-muted);
-  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  cursor: pointer;
 }
+.chatPaperMore:hover { background: var(--bg-hover); color: var(--text-primary); }
 .chatAddPaperWrap { display: inline-flex; flex: none; align-items: center; gap: 6px; }
-.chatHandoffHead .chatAddPaperWrap, .chatHandoffHead .chatAddPaper.done { margin-left: auto; }
 .chatAddPaper.done {
   display: inline-flex;
   flex: none;
