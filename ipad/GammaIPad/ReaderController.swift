@@ -111,7 +111,10 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
             }
             audio.onError = { [weak self] in self?.showError($0) }
             audio.canRollSegment = { [weak self] in self?.canvases.values.allSatisfy { !$0.isEditing } ?? true }
-            audio.onSegment = { [weak self] id, url, duration, events in try await self?.saveSegment(id: id, url: url, duration: duration, events: events) }
+            audio.onSegment = { [weak self] id, url, duration, events in
+                guard let self else { throw InkEngineError.failure("Reopen this document to recover its recording.") }
+                try await self.saveSegment(id: id, url: url, duration: duration, events: events)
+            }
             audio.onPlayback = { [weak self] segment, time in self?.replay(segment: segment, time: time) }
             try await audio.recover()
             status.text = "Saved on this iPad · Pencil writes; fingers scroll"

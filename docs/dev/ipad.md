@@ -1,7 +1,11 @@
-# Gamma on the iPad (and other tablets)
+# Gamma in the iPad browser (and other tablets)
 
-The iPad app is the web app installed to the home screen. There is no
-Swift client: the browser ink layer already gives Apple Pencil pressure,
+For the native Swift app, local offline library, and Xcode build instructions,
+see [Gamma for iPad](../../ipad/README.md). Its build and simulator tests run
+in [the iPad workflow](../../.github/workflows/ipad.yml).
+
+This page covers the web app installed to the home screen. The browser ink
+layer gives Apple Pencil pressure,
 tilt, hover, palm rejection and Safari's touch-gesture handling
 ([handwriting.md](handwriting.md)), and every other feature — the block
 editor, search, AI, sharing, workspaces — is the same React code the
@@ -87,9 +91,8 @@ rules the ink layer and the viewer already have.
   shows the tool footprint.
 - **A native wrapper** (a `WKWebView` shell like the desktop's Electron
   one) would only add App Store distribution and system share-sheet
-  integration. It stays out until distribution is a goal; the web app is
-  the product either way, as the desktop shell's black-box rule already
-  says ([desktop.md](desktop.md)).
+  integration. The separate [native iPad app](../../ipad/README.md) uses
+  PDFKit and a local SQLite library instead of wrapping this web UI.
 
 ## Tests
 

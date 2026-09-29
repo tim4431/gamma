@@ -33,9 +33,7 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
     deinit { rollTimer?.invalidate(); playbackTimer?.invalidate(); NotificationCenter.default.removeObserver(self) }
     func record() async throws {
         guard recorder == nil, !isFinalizing else { return }
-        let allowed = await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
-        }
+        let allowed = await AVAudioApplication.requestRecordPermission()
         guard allowed else { throw InkEngineError.failure("Allow microphone access in iPad Settings to record notes.") }
         stopPlayback()
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
@@ -97,7 +95,7 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
                 // Read duration from the finalized asset; recorder.currentTime resets after stop.
                 let duration = try AVAudioPlayer(contentsOf: url).duration
                 guard flag || duration > 0 else { throw InkEngineError.failure("The interrupted recording is kept for recovery.") }
-                try await onSegment?(id, url, Int(duration * 1000), savedEvents)
+                try await commitSegment(id, url, Int(duration * 1000), savedEvents)
                 try FileManager.default.removeItem(at: url)
                 try? FileManager.default.removeItem(at: directory.appendingPathComponent(id + ".json"))
             } catch { onError?(error) }
@@ -115,11 +113,17 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
                 let metadata = directory.appendingPathComponent(id + ".json")
                 let data = try? Data(contentsOf: metadata)
                 let recovered = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
-                try await onSegment?(id, url, Int(duration * 1000), recovered)
+                try await commitSegment(id, url, Int(duration * 1000), recovered)
                 try FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: metadata)
             } catch { failure = error }
         }
         if let failure { throw failure }
+    }
+    private func commitSegment(_ id: String, _ url: URL, _ duration: Int, _ events: [[String: Any]]) async throws {
+        guard let onSegment else {
+            throw InkEngineError.failure("The recording is kept for recovery until its document can save it.")
+        }
+        try await onSegment(id, url, duration, events)
     }
     @objc private func backgrounded() {
         roll = false

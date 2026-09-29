@@ -94,6 +94,7 @@ On a Mac with Xcode and XcodeGen:
 npm ci --prefix frontend
 node ipad/scripts/prepare-assets.mjs
 node --test ipad/scripts/ink-entry.test.mjs
+node --test frontend/tests/ink*.test.mjs
 cd ipad
 swift test
 xcodegen generate
@@ -107,7 +108,11 @@ UIKit or launch the iPad simulator.
 
 [The iPad workflow](../.github/workflows/ipad.yml) builds resources, tests
 GammaCore, runs native codec/rendering and UI tests on a simulator, and builds
-an unsigned device app. Build logs, XCTest results and screenshots are
+an unsigned device app. Shared ink tests exercise both the source modules and
+the generated JavaScriptCore bundle. Native audio recovery tests check that
+recordings survive missing or failed saves and are removed only after a
+successful commit. Changes to the frontend dependency manifests and source
+app icon also trigger the workflow. Build logs, XCTest results and screenshots are
 retained as artifacts. An unsigned `.app` still requires Apple signing before
 installation; the workflow does not publish to TestFlight or the App Store.
 
