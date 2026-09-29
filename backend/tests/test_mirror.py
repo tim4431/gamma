@@ -96,6 +96,76 @@ def _sync(local):
     return status
 
 
+@pytest.mark.parametrize("checkpoint", ["tracked", "uncertain", "missing"])
+def test_concurrent_ink_keeps_local_asset_as_an_ordinary_sibling(checkpoint):
+    from gamma import upload_gc
+    remote, local, _ = _pair()
+    page = remote.page("Shared handwriting")["id"]
+
+    def uploaded(side, stroke_id):
+        data = {"format": "gamma-ink", "version": 1,
+                "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+                "strokes": [{"id": stroke_id, "ch": "xy", "pts": [100, 200]}]}
+        response = side.client.post("/api/upload-ink", json=data)
+        assert response.status_code == 200, response.text
+        return response.json()["url"]
+
+    original = uploaded(remote, "original")
+    remote.ops(page, [{"op": "insert", "id": "mirrorInk", "parent": page, "content": "caption",
+                       "props": {"ink_url": original, "ink_strokes": 1, "pdf_page": 1}}])
+    remote.insert(page, "inkCaptionChild", "nested note", parent="mirrorInk")
+    _sync(local)
+    mine, theirs = uploaded(local, "mine"), uploaded(remote, "theirs")
+    for side, url in ((local, mine), (remote, theirs)):
+        side.ops(page, [{"op": "set", "id": "mirrorInk", "base_props": {"ink_url": original},
+                         "props": {"ink_url": url}}])
+    with connect_pages_db(local.ws) as conn:
+        if checkpoint == "uncertain":
+            state = sync_engine._state(conn, page)
+            pending = {"batches": [{"id": "uncertainInkPush", "ops": [
+                {"op": "set", "id": "mirrorInk", "base_props": {"ink_url": original},
+                 "props": {"ink_url": mine, "ink_strokes": 1}}]}]}
+            sync_engine._store_state(conn, page, state["remote_seq"], state["base"], pending)
+        elif checkpoint == "missing":
+            sync_engine._drop_state(conn, page)
+    _sync(local)
+    for side in (local, remote):
+        groups = [block for block in side.tree(page)["children"] if "ink_url" in block["properties"]]
+        assert {block["properties"]["ink_url"] for block in groups} == {mine, theirs}
+        variant = next(block for block in groups if block["id"] != "mirrorInk")
+        assert variant["properties"]["ink_conflict"]["source_block_id"] == "mirrorInk"
+        assert side.client.get(mine).status_code == 200
+        assert side.client.get(theirs).status_code == 200
+        assert mine.rsplit("/", 1)[1] not in upload_gc.reconcile(side.ws)["recorded"]
+        primary = next(block for block in groups if block["id"] == "mirrorInk")
+        assert primary["children"][0]["content"] == "nested note"
+    _sync(local)
+    assert len(local.tree(page)["children"]) == 2  # retry never multiplies variants
+
+
+def test_old_origin_keeps_notebook_local_until_it_supports_the_contract(monkeypatch):
+    import json
+    remote, local, _ = _pair()
+    notebook = local.page("New notebook", notebook={"version": 1})["id"]
+    original = sync_engine.default_fetch
+
+    def old_server(method, path, body, headers):
+        status, raw = original(method, path, body, headers)
+        if "/api/sync/whoami" in path and status == 200:
+            answer = json.loads(raw)
+            answer.pop("capabilities", None)
+            raw = json.dumps(answer).encode()
+        return status, raw
+
+    monkeypatch.setattr(sync_engine, "default_fetch", old_server)
+    sync_engine._whoami_seen.pop(local.ws, None)
+    response = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1")
+    assert response.status_code == 200, response.text
+    assert "Update the origin server" in response.json()["status"]["last_error"]
+    assert local.tree(notebook) is not None
+    assert remote.tree(notebook) is None  # no half-created unsupported page
+
+
 def test_create_validates_the_remote_and_fills_the_copy():
     remote, local, mirror = _pair()
     assert mirror["remote_ws"] == remote.ws and mirror["mode"] == "two-way"

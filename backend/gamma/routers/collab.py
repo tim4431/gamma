@@ -15,9 +15,15 @@ from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, l
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
                     share_lookup, share_scope, workspace_access)
 from ..db import connect_pages_db
-from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
+from ..ops import CAPABILITIES, OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
+
+
+@router.get("/capabilities")
+def capabilities():
+    """Versioned content and write contracts, also returned by /session."""
+    return CAPABILITIES
 
 # Link visitors (an anyone-with-the-link edit share) are rate limited per IP:
 # typing flushes a batch every few hundred ms at most, so this stops floods
@@ -61,9 +67,7 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
                             client=payload.client[:32], share_scoped=scope is not None,
                             cursor=cursor, batch_id=payload.batch[:64])
     except OpError as e:
-        body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
-                **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
-        return JSONResponse(status_code=e.status, content=body)
+        return JSONResponse(status_code=e.status, content=e.body())
     return {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
 
 

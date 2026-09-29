@@ -39,11 +39,17 @@ final class ReaderControllerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         let page = try XCTUnwrap(view.document?.page(at: 0))
-        let canvas = try XCTUnwrap(controller.pdfView(view, overlayViewFor: page) as? InkCanvasView)
+        let overlay = try XCTUnwrap(controller.pdfView(view, overlayViewFor: page) as? PDFInkOverlay)
+        let canvas = overlay.canvas
         XCTAssertEqual(canvas.pageSize, CGSize(width: 300, height: 200))
         XCTAssertEqual(canvas.groups.count, 1)
         XCTAssertEqual((canvas.groups[0].ink["space"] as? [String: Any])?["page"] as? Int, 1)
         window.layoutIfNeeded()
+        XCTAssertNotNil(canvas.window)
+        let left = canvas.convert(CGPoint.zero, to: window)
+        let right = canvas.convert(CGPoint(x: canvas.bounds.width, y: 0), to: window)
+        XCTAssertGreaterThan(right.x, left.x)
+        XCTAssertEqual(right.y, left.y, accuracy: 0.01, "A horizontal Gamma stroke must remain horizontal on a rotated PDF")
         let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
         let attachment = XCTAttachment(image: screenshot); attachment.name = "Rotated PDF and canonical ink"; attachment.lifetime = .keepAlways; add(attachment)
     }

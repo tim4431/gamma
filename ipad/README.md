@@ -34,7 +34,7 @@ segment; continuing starts another segment. Long recordings roll into
 five-minute segments. Handwriting and page changes are mapped to the audio
 recorder clock. Play follows pages and progressively reveals surviving ink;
 tap a stroke during replay to seek to its audio with a two-second lead-in.
-untimed handwriting stays visible. Partial erasure preserves the original
+Untimed handwriting stays visible. Partial erasure preserves the original
 stroke reference and timing in its remaining fragments. Playback does not
 reconstruct erased writing or a full edit history.
 
@@ -57,6 +57,13 @@ connection keep the same meanings as the desktop Mirror UI. Removing a
 connection retains local files. Conflict review appears in the library.
 The app does not depend on background execution for durability or syncing.
 
+After successful sync, local asset maintenance removes up to 200 unreferenced
+files older than seven days. Full passes continue on subsequent successful
+syncs until the backlog clears, then maintenance returns to a daily cadence.
+Current documents, pending operations, retry checkpoints, conflicts, and
+unacknowledged edits retain their assets. Offline-only libraries can run
+the same pass through `GammaRepository.maintainAssets()`.
+
 ## Data and implementation
 
 - `GammaCore/`: the local SQLite repository, immutable upload assets, operation
@@ -70,6 +77,8 @@ The app does not depend on background execution for durability or syncing.
 - `GammaIPad/ReaderController.swift`: PDFKit overlays, notebook sheets, common
   local saves, conflict-preserving refresh, paper and audio integration.
 - `GammaIPad/AudioSession.swift`: segmented capture, recovery and playback.
+- `GammaIPad/NotesController.swift`: ordinary block notes and their text editor.
+- `GammaIPad/GammaApp.swift`: local libraries, Keychain connections and sync UI.
 
 Gamma JSON remains the authoritative data: v1 PDF ink stays readable; v2
 adds stable notebook anchors and source-stroke provenance for erased pieces.

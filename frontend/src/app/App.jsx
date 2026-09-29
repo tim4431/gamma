@@ -93,7 +93,11 @@ import { useNotices } from "./useNotices";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
-import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { saveInk, inkConflict, inkProperties } from "../ink/inkSave.js";
+import InkConflicts from "../ink/InkConflicts.jsx";
+import NotebookViewer, { DEFAULT_PAPER } from "../notebooks/NotebookViewer.jsx";
+import { replayStore } from "../ink/inkReplay.js";
+import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, newNotebookInk, rebaseInkEdit, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
@@ -4813,6 +4817,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  async function createNotebook() {
+    if (shareMode) return;
+    setOpenPopover(null);
+    try {
+      const created = await apiJson(`${API}/pages`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t("Notebook"), properties: { notebook: { version: 1, default_paper: DEFAULT_PAPER },
+          ...(folderFilter ? { folder: folderFilter } : {}) } }) });
+      await apiJson(`${API}/pages/${created.id}/ops`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch: makeId(), ops: [{ op: "insert", id: makeId(), parent: created.id, position: "a0",
+          content: "", props: { type: "notebook-sheet", paper: DEFAULT_PAPER } }] }) });
+      await fetchHomeBlocks();
+      await openBlock(created.id, { pushNav: true });
+      setPdfHidden(false);
+    } catch (err) { setStatus(t("Create failed: {err}", { err: err.message || err })); }
+  }
+
   // Attach a PDF to the open page (one that carries none): the same ingest
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
@@ -5170,7 +5190,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else {
         setInputUrl("");
         setPdfUrl("");
-        if (childBlocks.length === 0 && !readOnly) {
+        if (childBlocks.length === 0 && !readOnly && !props.notebook) {
           const seedId = makeId();
           seedBlockIdRef.current = seedId;
           // A page created from "New page" gets the title first (Notion-
@@ -6174,34 +6194,85 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return next;
   }, [blocks]);
 
+  const inkSavingRef = useRef(false);
   const flushInk = useCallback(async () => {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
-    const json = { "Content-Type": "application/json" };
-    for (const { id, ink } of inkStore.dirtyDrafts()) {
+    if (inkSavingRef.current) { inkTimerRef.current = setTimeout(flushInk, 700); return; }
+    inkSavingRef.current = true;
+    for (const d of inkStore.dirtyDrafts()) {
+      const { id, ink, key, pageId, baseUrl } = d;
       try {
-        if (!ink.strokes.length) {
-          await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
-          // Keep the empty draft until the tree observes the deletion; the
-          // HTTP response can arrive before the corresponding socket op.
-          const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
-          inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
-          continue;
-        }
-        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: JSON.stringify(ink) });
-        const properties = { ink_url: r.url, pdf_position: r.pdf_position, ink_strokes: r.strokes, pdf_page: ink.space.page };
-        await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: JSON.stringify({ properties }) });
-        inkStore.markSaved(id, ink, r.url);
+        const api = (url, options) => {
+          if (!inkStore.isCurrentScope(d.scope)) throw new Error(t("Return to this workspace to save its handwriting."));
+          return apiJson(url, options);
+        };
+        const properties = await saveInk({ api, id, pageId, ink, baseUrl, batch: d.batch, paper: d.paper });
+        inkStore.markSaved(id, ink, properties.ink_url, key);
       } catch (err) {
-        // The block's insert may still be queued (404): try again shortly.
+        if (inkConflict(err)) { inkStore.markConflict(key, err); continue; }
+        // Temporary failures keep the draft and its delivery ID for retry.
         setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
         if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
       }
     }
+    inkSavingRef.current = false;
   }, []);
   function scheduleInk() {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = setTimeout(flushInk, 700);
+  }
+  useEffect(() => { inkStore.ready.then(flushInk); }, [flushInk, workspace?.id, authUser]);
+  useEffect(() => {
+    let last = "";
+    return replayStore.subscribe(() => {
+      const replay = replayStore.get();
+      if (!replay) { last = ""; return; }
+      const event = [...replay.events].reverse().find((e) => e.segment_id === replay.segmentId && e.start_ms <= replay.ms && (e.sheet_id || e.pdf_page));
+      const target = event && `${event.sheet_id || event.pdf_page}`;
+      if (target && target !== last) {
+        last = target;
+        scrollToRef.current?.({ position: event.sheet_id ? { sheet_id: event.sheet_id } : { pageNumber: event.pdf_page }, offset: 100 });
+      }
+    });
+  }, []);
+  async function preserveInkConflict(draft) {
+    if (!inkStore.isCurrentScope(draft.scope)) throw new Error(t("Return to this workspace to save its handwriting."));
+    const recovery = inkStore.recoveryFor(draft);
+    const uploaded = await apiJson(`${API}/upload-ink`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft.ink) });
+    const id = recovery.id;
+    const props = Object.fromEntries(Object.entries(inkProperties(draft.ink, uploaded)).filter(([, value]) => value !== null));
+    props.ink_conflict = { source_block_id: draft.id, base_url: draft.baseUrl,
+      remote_url: findBlock(blocksRef.current, draft.id)?.properties?.ink_url || null };
+    const parent = draft.ink.space.sheet_id || draft.pageId;
+    if (!inkStore.isCurrentScope(draft.scope)) throw new Error(t("Return to this workspace to save its handwriting."));
+    await apiJson(`${API}/pages/${draft.pageId}/ops`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ batch: recovery.batch, ops: [{ op: "insert", id, parent, content: t("Recovered handwriting"), props }] }) });
+    // The remote version stays attached to the original block. Only discard
+    // the draft we actually preserved; a newer local edit remains recoverable.
+    if (inkStore.draft(draft.id)?.ink === draft.ink) inkStore.discardDraft(draft.key);
+  }
+  function appendNotebookSheet() {
+    const paper = focusedBlock?.properties?.notebook?.default_paper || DEFAULT_PAPER;
+    const id = makeId();
+    setBlocks((prev) => [...prev, { id, content: "", children: [], properties: { type: "notebook-sheet", paper } }]);
+    setTimeout(() => scrollToRef.current?.({ position: { sheet_id: id } }), 100);
+  }
+  async function changeDefaultPaper(paper) {
+    const pageId = focusedBlockId, scope = inkStore.currentScope();
+    try {
+      await apiJson(`${API}/pages/${pageId}/ops`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch: makeId(), ops: [{ op: "set", id: pageId, props: { notebook: { version: 1, default_paper: paper } } }] }) });
+      if (inkStore.isCurrentScope(scope)) setFocusedBlock((b) => b?.id === pageId ? ({ ...b, properties: { ...b.properties, notebook: { version: 1, default_paper: paper } } }) : b);
+    } catch (err) { setStatus(err.message); }
+  }
+  async function exportNotebook() {
+    if (!readOnly && await collab.flush() === false) return;
+    await flushInk();
+    if ([...inkStore.dirtyDrafts(), ...inkStore.conflicts()].some((d) => d.pageId === focusedBlockId)) {
+      setStatus(t("Save your handwriting before exporting.")); return;
+    }
+    await downloadExport(`/pages/${focusedBlockId}/export-pdf?highlights=1&notes=1`, "notebook.pdf");
   }
   useEffect(() => {
     const flush = () => { if (inkTimerRef.current) flushInk(); };
@@ -6210,9 +6281,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", flush); };
   }, [flushInk]);
   useEffect(() => () => {
-    // Leaving a page: pending strokes still save (through the block API,
-    // which needs no open tree); the tool disarms, the next stroke starts
-    // a fresh group.
+    // Drafts carry their page ID and editing base, so leaving the page
+    // does not interrupt their saves. A new visit starts a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
     inkHistRef.current = { undo: [], redo: [] };
@@ -6224,23 +6294,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The strokes a group has right now: its draft, else its loaded file.
   function inkOf(blockId) {
     const block = flattenBlocks(blocksRef.current).find((b) => b.id === blockId);
-    return inkStore.draft(blockId)?.ink || (block ? inkStore.inkFor(block) : null);
+    return block ? inkStore.inkFor(block) : inkStore.draft(blockId)?.ink || null;
   }
   // Every ink edit goes through here: the drafts change, the action lands
-  // on the stroke history, the upload is scheduled. A group whose block is
-  // not in the tree (undone away, or erased empty and deleted) gets its
-  // block back first.
+  // on the stroke history, and the upload is scheduled. A missing group
+  // gets a placeholder in the notes before its first upload.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
-      setBlocks((prev) => [...prev, ...missing.map((c) => ({
-        id: c.id, parentId: null, children: [], content: "",
-        properties: { ink_url: "", pdf_page: c.page, ink_strokes: 0 },
-      }))]);
+      setBlocks((prev) => missing.reduce((tree, c) => {
+        const sheet = c.after.space.kind === "notebook-page" ? c.after.space.sheet_id : null;
+        const block = { id: c.id, children: [], content: "", properties: {
+          ink_url: "", ink_strokes: 0, ...(sheet ? { sheet_id: sheet } : { pdf_page: c.page }),
+        } };
+        return sheet ? updateBlockTree(tree, sheet, (s) => ({ ...s, children: [...(s.children || []), block] })) : [...tree, block];
+      }, prev));
     }
-    for (const c of changes) inkStore.setDraft(c.id, c.after);
+    for (const c of changes) {
+      const block = findBlock(blocksRef.current, c.id);
+      inkStore.setDraft(c.id, c.after, { pageId: focusedBlockId, baseUrl: c.baseUrl ?? block?.properties?.ink_url ?? "",
+        paper: c.after.space.sheet_id ? findBlock(blocksRef.current, c.after.space.sheet_id)?.properties?.paper : undefined });
+    }
     if (record) {
       const h = inkHistRef.current;
       h.undo.push({ changes, label });
@@ -6256,27 +6332,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const entry = (redo ? h.redo : h.undo).pop();
     if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
     // Entries are stored forward (before → after); undo applies them backward.
-    applyInk(redo ? entry.changes : entry.changes.map((c) => ({ ...c, before: c.after, after: c.before })), { record: false });
-    (redo ? h.undo : h.redo).push(entry);
+    const changes = [];
+    for (const c of entry.changes) {
+      const before = inkOf(c.id);
+      const after = rebaseInkEdit(before, redo ? c.before : c.after, redo ? c.after : c.before);
+      if (after) changes.push({ id: c.id, page: c.page, before, after });
+    }
+    if (changes.length) {
+      applyInk(changes, { record: false });
+      (redo ? h.undo : h.redo).push({ ...entry, changes: redo ? changes : changes.map((c) => ({ ...c, before: c.after, after: c.before })) });
+    }
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${entry.changes[0].page}).`);
+    setStatus(changes.length < entry.changes.length ? t("Some handwriting changed on another device and was left unchanged.")
+      : `${redo ? t("Redone") : t("Undone")}: ${entry.label}${typeof entry.changes[0].page === "number" ? ` (page ${entry.changes[0].page})` : ""}.`);
     if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
 
   async function handleInkStroke(page, stroke, size) {
     if (readOnly || !focusedBlockId) return;
+    const scope = inkStore.currentScope();
     let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
     const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
+    if (existing) inkStore.inkFor(existing); // invalidate a clean draft superseded by a remote URL
+    const baseUrl = existing?.properties.ink_url ?? "";
     if (!existing) id = makeId();
     inkActiveRef.current = { page, id };
     // The group's strokes so far: the draft, else its file (loaded first —
     // a stroke must never replace strokes that just have not arrived yet).
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const before = inkStore.draft(id)?.ink || loaded || newInk(page, size.width, size.height);
-    applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
+      ? await inkStore.loadInk(existing.properties.ink_url, { retry: true }) : null;
+    if (focusedBlockIdRef.current !== focusedBlockId || !inkStore.isCurrentScope(scope)) return;
+    if (existing?.properties.ink_url && !loaded && !inkStore.draft(id)) {
+      setStatus(t("Handwriting could not be loaded. Retry before editing this group.")); return;
+    }
+    const before = inkStore.draft(id)?.ink || loaded || (typeof page === "string"
+      ? newNotebookInk(page, size.width, size.height) : newInk(page, size.width, size.height));
+    applyInk([{ id, page, baseUrl, before, after: appendStroke(before, stroke) }]);
     guideEvents.emit("ink.stroke");
   }
   function handleInkErase(page, blockId, ids) {
@@ -6361,7 +6454,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showInkOnPage(id) {
     const b = flattenBlocks(blocksRef.current).find((x) => x.id === id);
     if (!b) return;
-    const position = b.properties.pdf_position || { pageNumber: b.properties.pdf_page };
+    const position = b.properties.sheet_id ? { sheet_id: b.properties.sheet_id } : b.properties.pdf_position || { pageNumber: b.properties.pdf_page };
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
     setTimeout(() => scrollToRef.current?.({ position, offset: 120 }), wasHidden ? 300 : 0);
@@ -6864,7 +6957,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
   // A page with no attachment — the owner's pages and shared pages alike —
   // puts the notes in the center instead of an empty viewer.
-  const pageOnly = !!focusedBlockId && !pageAttach;
+  const notebook = focusedBlock?.properties?.notebook;
+  const pageOnly = !!focusedBlockId && !pageAttach && !notebook;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
@@ -9120,6 +9214,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
             <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={FilePlusIcon} onClick={createNotebook}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}
               type="file"
@@ -9688,6 +9783,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         ) : null}
         <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
+          <InkConflicts pageId={focusedBlockId} onKeepBoth={preserveInkConflict} />
           {pdfUrl && !pdfHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
@@ -9771,7 +9867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
             </div>
           ) : null}
-          {pdfUrl && !pdfHidden && inkUi.open && !readOnly ? (
+          {(pdfUrl || notebook) && !pdfHidden && inkUi.open && !readOnly ? (
             <InkToolbar
               tools={inkTools} active={inkUi.tool} options={inkUi.options}
               eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
@@ -9806,7 +9902,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </button>
             </div>
           ) : null}
-          {pdfUrl ? (
+          {notebook ? <NotebookViewer sheets={blocks.filter((b) => b.properties?.type === "notebook-sheet")}
+            canChangeDefaults={!shareMode && !readOnly}
+            inkBlocks={inkBlocks} readOnly={readOnly} onAppend={appendNotebookSheet} onOpenTools={openInkStrip} onExport={exportNotebook}
+            defaultPaper={notebook.default_paper || DEFAULT_PAPER} onDefaultPaper={changeDefaultPaper}
+            onPaper={(id, paper) => setBlocks((prev) => updateBlockTree(prev, id, (b) => ({ ...b, properties: { ...b.properties, paper } })))}
+            scrollRef={scrollToRef} inkProps={{ tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure,
+              flash: inkFlash, eraserMode: inkEraserMode, eraserSize: inkEraserSize, lassoMode: inkLassoMode, selection: inkSelection,
+              onStroke: readOnly ? undefined : handleInkStroke, onErase: readOnly ? undefined : handleInkErase,
+              onErasePartial: readOnly ? undefined : handleInkErasePartial, onSelect: readOnly ? undefined : handleInkSelect,
+              onAction: readOnly ? undefined : handleInkAction, onMoveSelection: readOnly ? undefined : handleInkMoveSelection, onJump: showInkInNotes }} /> : pdfUrl ? (
             <PdfViewer url={pdfUrl} highlights={highlights}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}

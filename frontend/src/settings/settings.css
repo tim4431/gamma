@@ -457,7 +457,7 @@
 .usageChartGrid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
 .usageChartGrid i { border-top: 1px solid var(--border-subtle); }
 .usageChartBar { position: relative; flex: 1; min-width: 0; display: flex; align-items: flex-end; justify-content: center; padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: var(--radius-xs); }
-.usageChartFill { display: block; width: 100%; max-width: 38px; background: color-mix(in oklab, var(--accent) 65%, var(--bg-surface)); border-radius: 3px 3px 0 0; pointer-events: none; }
+.usageChartFill { display: block; width: 100%; max-width: 38px; background: color-mix(in oklab, var(--accent) 65%, var(--bg-surface)); border-radius: var(--radius-xs) var(--radius-xs) 0 0; pointer-events: none; }
 .usageChartBar:not([data-value="0"]) .usageChartFill { min-height: 2px; }
 .usageChartBar[data-value="0"]::after { content: ""; position: absolute; bottom: 0; height: 2px; width: 100%; max-width: 38px; background: var(--border); }
 .usageChartBar:hover, .usageChartBar[aria-pressed="true"] { background: var(--bg-selected); }

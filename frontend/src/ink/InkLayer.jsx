@@ -7,7 +7,9 @@
 // the notes; InkToolbar the tool strip. Strokes come from inkStore (drafts
 // ahead of uploads, files behind block URLs); App owns the tool state,
 // the selection, the stroke history and the commits.
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { replayInk, replayStore } from "./inkReplay.js";
+import "./ink.css";
 import { createPortal } from "react-dom";
 import { ContextMenu } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
@@ -71,6 +73,8 @@ function Strokes({ ink, onClick, hide }) {
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, lassoMode = "free", selection, flash, onStroke, onErase, onErasePartial, onSelect, onAction, onMoveSelection, onJump }) {
   useInkVersion();
+  const replay = useSyncExternalStore(replayStore.subscribe, replayStore.get);
+  if (replay) { tool = null; penTool = null; selection = null; onSelect = undefined; onAction = undefined; onStroke = undefined; }
   const canvasRef = useRef(null);
   const cursorRef = useRef(null);
   const refreshCursorRef = useRef(null);
@@ -82,7 +86,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const groups = [];
   for (const b of blocks || []) {
     const ink = inkStore.inkFor(b);
-    if (ink?.strokes?.length) groups.push({ id: b.id, ink });
+    if (ink?.strokes?.length) groups.push({ id: b.id, ink: replayInk(ink, b.id, replay) });
   }
   // This page's selection: the ids per group and their box.
   const sel = selection && selection.page === pageNumber ? selection : null;

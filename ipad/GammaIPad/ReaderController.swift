@@ -31,7 +31,10 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
     private var audioBlockID: String?
     private var segmentValues: [[String: Any]] = []
     private var eventValues: [[String: Any]] = []
+    private var recordingSegments: [[String: Any]] = []
+    private var recordingEvents: [[String: Any]] = []
     private var followingKey: String?
+    private var visibleHighlights: [(PDFPage, PDFAnnotation)] = []
 
     init(repository: GammaRepository, documentID: String, directory: URL, close: @escaping () -> Void) {
         self.repository = repository; self.documentID = documentID; self.directory = directory; closeReader = close
@@ -96,15 +99,11 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
                 let url = try await repository.assetURL(reference: source)
                 guard let document = PDFDocument(url: url) else { throw InkEngineError.failure("Could not open this PDF.") }
                 pdf.document = document
+                if let source = self.document { refreshHighlights(source) }
             } else { throw InkEngineError.failure("This page has no PDF or notebook paper.") }
             let audio = try NoteAudioSession(directory: directory.appendingPathComponent("Recordings", isDirectory: true).appendingPathComponent(documentID, isDirectory: true))
             self.audio = audio
-            if let block = document.blocks.last(where: { propertyObject($0.properties)["type"] as? String == "audio" }) {
-                audioBlockID = block.id
-                let properties = propertyObject(block.properties)
-                segmentValues = properties["audio_segments"] as? [[String: Any]] ?? []
-                eventValues = properties["audio_events"] as? [[String: Any]] ?? []
-            }
+            loadAudioLibrary(document)
             audio.onChange = { [weak self] in
                 guard let self else { return }
                 self.recordButton.image = UIImage(systemName: self.audio?.recorder == nil ? "mic" : "pause.circle.fill")
@@ -152,7 +151,9 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
         let index = document.index(for: page)
         var size = page.bounds(for: .cropBox).size
         if abs(page.rotation) % 180 == 90 { size = CGSize(width: size.height, height: size.width) }
-        return canvas(key: "pdf:\(index + 1)", size: size)
+        guard let canvas = canvas(key: "pdf:\(index + 1)", size: size) else { return nil }
+        if let overlay = canvas.superview as? PDFInkOverlay { return overlay }
+        return PDFInkOverlay(canvas: canvas, rotation: page.rotation)
     }
     private func showNotebook(_ document: GammaDocument) throws {
         pdf.isHidden = true; notebookScroll.isHidden = false
@@ -218,11 +219,19 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
         } catch { showError(error) }
     }
     @objc private func close() {
+        guard canvases.values.allSatisfy({ !$0.isEditing }) else { status.text = "Lift Pencil before leaving this document."; return }
         audio?.pause(); audio?.stopPlayback()
         navigationItem.leftBarButtonItem?.isEnabled = false
+        for (key, canvas) in canvases { canvas.isReadOnly = true; save(groups: canvas.groups, key: key) }
         Task {
             await saveTask?.value
             while audio?.isFinalizing == true { try? await Task.sleep(nanoseconds: 25_000_000) }
+            if let engine, allGroups.values.contains(where: { (try? engine.data($0.ink)) != savedData[$0.id] }) {
+                navigationItem.leftBarButtonItem?.isEnabled = true
+                for canvas in canvases.values { canvas.isReadOnly = false }
+                showError(InkEngineError.failure("Some handwriting could not be saved on this iPad. Keep this document open and try again."))
+                return
+            }
             closeReader()
         }
     }
@@ -318,10 +327,11 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
                         "x2": rect.maxX / width * size.width, "y2": rect.maxY / height * size.height,
                         "width": size.width, "height": size.height, "pageNumber": number]
                     let id = gammaID()
-                    let props = try jsonProperties(["highlight_id": id, "pdf_page": number, "quote": text, "color": "yellow",
+                    let props = try jsonProperties(["highlight_id": id, "pdf_page": number, "quote": text, "color": "rgba(255, 226, 143, 0.65)",
                         "pdf_position": ["pageNumber": number, "boundingRect": region, "rects": [region]]])
                     try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "insert", id: id, parent: documentID, content: "", props: props)])
                 }
+                refreshHighlights(try await repository.document(id: documentID))
                 status.text = "Highlight saved in notes"; pdf.clearSelection()
             } catch { showError(error) }
         }
@@ -351,6 +361,8 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
                 let url = try await repository.assetURL(reference: reference)
                 let bytes = try Data(contentsOf: url)
                 guard let ink = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { continue }
+                if canvases[key(for: ink)]?.isEditing == true { continue }
+                if let local = allGroups[block.id], try engine.data(local.ink) != savedData[block.id] { continue }
                 allGroups[block.id] = InkGroup(id: block.id, parentID: block.parent, ink: ink)
                 baseURLs[block.id] = reference; savedData[block.id] = try engine.data(ink)
             }
@@ -366,14 +378,12 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
                 if before != after { canvas.replaceRemoteGroups(values) }
             }
             document = fresh; title = fresh.title
-            if propertyObject(fresh.properties)["notebook"] != nil { try showNotebook(fresh) }
-            if audio?.recorder == nil, audio?.isFinalizing != true,
-               let block = fresh.blocks.last(where: { propertyObject($0.properties)["type"] as? String == "audio" }) {
-                audioBlockID = block.id
-                let properties = propertyObject(block.properties)
-                segmentValues = properties["audio_segments"] as? [[String: Any]] ?? []
-                eventValues = properties["audio_events"] as? [[String: Any]] ?? []
+            if propertyObject(fresh.properties)["notebook"] == nil { refreshHighlights(fresh) }
+            if propertyObject(fresh.properties)["notebook"] != nil, canvases.values.allSatisfy({ !$0.isEditing }) {
+                let nextSheets = fresh.blocks.filter { propertyObject($0.properties)["type"] as? String == "notebook-sheet" }.sorted { $0.position < $1.position }
+                if sheetBlocks != nextSheets { try showNotebook(fresh) }
             }
+            if audio?.recorder == nil, audio?.isFinalizing != true { loadAudioLibrary(fresh) }
         } catch { status.text = error.localizedDescription }
     }
     @objc private func record() {
@@ -385,7 +395,7 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
         if segmentValues.contains(where: { $0["id"] as? String == id }) { return }
         await saveTask?.value
         let reference = try await repository.storeAsset(data: Data(contentsOf: url), extension: "m4a")
-        let nextSegments = segmentValues + [["id": id, "url": reference, "duration_ms": duration]]
+        let nextSegments = recordingSegments + [["id": id, "url": reference, "duration_ms": duration]]
         let resolvedEvents = events.map { original -> [String: Any] in
             var event = original
             if var id = original["block_id"] as? String {
@@ -393,7 +403,7 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
             }
             return event
         }
-        let nextEvents = eventValues + resolvedEvents
+        let nextEvents = recordingEvents + resolvedEvents
         let props = try jsonProperties(["type": "audio", "audio_segments": nextSegments, "audio_events": nextEvents])
         if let audioBlockID { try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "set", id: audioBlockID, props: props)]) }
         else {
@@ -401,8 +411,17 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
             try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "insert", id: block, parent: documentID, content: "Recording", props: props)])
             audioBlockID = block
         }
-        segmentValues = nextSegments; eventValues = nextEvents
+        recordingSegments = nextSegments; recordingEvents = nextEvents
+        segmentValues.append(["id": id, "url": reference, "duration_ms": duration]); eventValues.append(contentsOf: resolvedEvents)
         status.text = "Recording saved on this iPad"
+    }
+    private func loadAudioLibrary(_ document: GammaDocument) {
+        segmentValues = []; eventValues = []
+        for block in document.blocks where propertyObject(block.properties)["type"] as? String == "audio" {
+            let properties = propertyObject(block.properties)
+            segmentValues.append(contentsOf: properties["audio_segments"] as? [[String: Any]] ?? [])
+            eventValues.append(contentsOf: properties["audio_events"] as? [[String: Any]] ?? [])
+        }
     }
     @objc private func play() {
         guard let audio else { return }
@@ -465,6 +484,62 @@ final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayVi
         guard presentedViewController == nil else { return }
         let alert = UIAlertController(title: "Gamma", message: error.localizedDescription, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default)); present(alert, animated: true)
+    }
+    private func refreshHighlights(_ document: GammaDocument) {
+        for (page, annotation) in visibleHighlights { page.removeAnnotation(annotation) }; visibleHighlights = []
+        guard let pdfDocument = pdf.document else { return }
+        for block in document.blocks {
+            let props = propertyObject(block.properties)
+            guard props["highlight_id"] != nil, let pageNumber = props["pdf_page"] as? Int,
+                  let page = pdfDocument.page(at: pageNumber - 1), let position = props["pdf_position"] as? [String: Any],
+                  let bounding = position["boundingRect"] as? [String: Any] else { continue }
+            let rects = position["rects"] as? [[String: Any]] ?? [bounding]
+            for rect in rects {
+                guard let x1 = rect["x1"] as? Double, let y1 = rect["y1"] as? Double,
+                      let x2 = rect["x2"] as? Double, let y2 = rect["y2"] as? Double else { continue }
+                let crop = page.bounds(for: .cropBox)
+                let rotation = ((page.rotation % 360) + 360) % 360
+                let width = rotation % 180 == 0 ? crop.width : crop.height, height = rotation % 180 == 0 ? crop.height : crop.width
+                let sx = width / max(1, rect["width"] as? Double ?? width), sy = height / max(1, rect["height"] as? Double ?? height)
+                func point(_ x: Double, _ y: Double) -> CGPoint {
+                    switch rotation {
+                    case 90: return CGPoint(x: crop.minX + y * sy, y: crop.minY + x * sx)
+                    case 180: return CGPoint(x: crop.maxX - x * sx, y: crop.minY + y * sy)
+                    case 270: return CGPoint(x: crop.maxX - y * sy, y: crop.maxY - x * sx)
+                    default: return CGPoint(x: crop.minX + x * sx, y: crop.maxY - y * sy)
+                    }
+                }
+                let a = point(x1, y1), b = point(x2, y2)
+                let annotation = PDFAnnotation(bounds: CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)), forType: .highlight, withProperties: nil)
+                annotation.color = UIColor.gamma(props["color"] as? String ?? "rgba(255, 226, 143, 0.65)")
+                page.addAnnotation(annotation); visibleHighlights.append((page, annotation))
+            }
+        }
+    }
+}
+
+@MainActor
+final class PDFInkOverlay: UIView {
+    let canvas: InkCanvasView
+    let rotation: Int
+    init(canvas: InkCanvasView, rotation: Int) {
+        self.canvas = canvas; self.rotation = ((rotation % 360) + 360) % 360
+        super.init(frame: .zero)
+        isOpaque = false; backgroundColor = .clear; addSubview(canvas)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // PDFKit rotates overlays with the source page. Gamma points already
+        // describe the displayed page, so cancel that rotation for the canvas.
+        let size = rotation % 180 == 90 ? CGSize(width: bounds.height, height: bounds.width) : bounds.size
+        canvas.bounds = CGRect(origin: .zero, size: size)
+        canvas.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        canvas.transform = CGAffineTransform(rotationAngle: -CGFloat(rotation) * .pi / 180)
+    }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let target = super.hitTest(point, with: event)
+        return target === self ? nil : target
     }
 }
 

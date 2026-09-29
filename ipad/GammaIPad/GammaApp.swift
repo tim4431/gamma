@@ -16,7 +16,9 @@ extension Notification.Name { static let gammaLibraryDidSync = Notification.Name
 enum MirrorCredential {
     static func set(_ value: String, key: String) throws {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "GammaMirror", kSecAttrAccount as String: key]
-        SecItemDelete(query as CFDictionary)
+        let updated = SecItemUpdate(query as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw InkEngineError.failure("Could not update the connection in Keychain (\(updated)).") }
         var item = query
         item[kSecValueData as String] = Data(value.utf8)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -29,6 +31,9 @@ enum MirrorCredential {
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+    static func remove(_ key: String) {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "GammaMirror", kSecAttrAccount as String: key] as CFDictionary)
     }
 }
 
@@ -96,7 +101,9 @@ final class LibraryModel: ObservableObject {
             switch action {
             case "off": try await repository.detachMirror()
             case "on": try await repository.reattachMirror()
-            case "remove": try await repository.removeMirror()
+            case "remove":
+                try await repository.removeMirror()
+                if let key = UserDefaults.standard.string(forKey: "gamma.profile.\(profile)") { MirrorCredential.remove(key) }
             default: try await repository.setMirrorMode(action)
             }
             await refresh()
@@ -112,13 +119,18 @@ final class LibraryModel: ObservableObject {
               url.user == nil, url.password == nil, !account.isEmpty, !workspace.isEmpty, !token.isEmpty else {
             throw InkEngineError.failure("Enter an HTTPS server, account, workspace and access token.")
         }
-        let label = "\(url.host!) / \(account) / \(workspace)"
-        await open(label)
-        guard let repository else { throw InkEngineError.failure("Could not open the local library.") }
+        let originName = url.host! + (url.port.map { ":\($0)" } ?? "")
+        let label = "\(originName) / \(account) / \(workspace)"
+        let identifier = UserDefaults.standard.string(forKey: "gamma.profile.\(label)") ?? gammaID()
+        let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let directory = root.appendingPathComponent("Gamma", isDirectory: true).appendingPathComponent(identifier, isDirectory: true)
+        let repository = try GammaRepository(directory: directory)
         try await repository.configureMirror(origin: url, account: account, workspaceID: workspace, token: token)
-        let identifier = UserDefaults.standard.string(forKey: "gamma.profile.\(label)")!
         try MirrorCredential.set(token, key: identifier)
+        UserDefaults.standard.set(identifier, forKey: "gamma.profile.\(label)")
         if !profiles.contains(label) { profiles.append(label); UserDefaults.standard.set(profiles, forKey: "gamma.profiles") }
+        self.repository = repository; self.directory = directory; profile = label
+        UserDefaults.standard.set(label, forKey: "gamma.profile")
         await sync()
     }
 }

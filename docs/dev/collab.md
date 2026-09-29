@@ -36,9 +36,41 @@ operation batches are broadcast but never written to the operation log.
 
 ## Ops (`gamma/ops.py`)
 
+Ink references use a compare-and-set precondition on the same `set` op:
+`base_props: {ink_url: previousUrl}`. Include the previous value (`null`
+when absent, `""` for a new group's pending reference) whenever changing
+`ink_url` or its associated `ink_strokes`, `pdf_position`, `pdf_page` or
+`sheet_id`. These properties form one guarded update, so a stale drawing
+cannot publish geometry belonging to another revision. Unrelated caption
+and property changes keep the ordinary merge rules.
+
+Missing ink preconditions return 428 `precondition_required`; a changed
+reference returns 409 `property_changed`, with `id`, `current` (the current
+block) and the failing op `index`. The whole batch rolls back. Exact retries
+that already match the stored URL and geometry remain harmless. Both
+`POST /pages/{id}/ops` and `PUT /blocks/{id}` expose this contract; the latter
+accepts `base_props` (or `base_properties`) beside `properties`.
+
+Clients retain their drawing and publish a separate ordinary ink group on
+conflict, marked `ink_conflict: {source_block_id, base_url, remote_url}`.
+The competing file is then a normal live upload reference, not a URL hidden
+only in a text conflict record that orphan cleanup could discard. Mirror
+does this when both sides changed a group's ink since the shared snapshot.
+Clearing all strokes saves an empty group; it must not erase its caption or
+child notes. Deliberately deleting a note remains the normal delete action.
+
+`/api/capabilities`, `/api/session.capabilities` and
+`/api/sync/whoami.capabilities` advertise `ink_versions: [1,2]`,
+`ink_base_props: true`, `notebooks: 1`, and `audio: 1`. Older clients must
+update before replacing ink; the server refuses their blind writes.
+Mirror also checks the origin's advertised capabilities before pushing
+portable ink, notebook or audio data. An older origin leaves those local
+edits intact with an upgrade message; ordinary text synchronization keeps
+the existing behavior.
+
 | op | fields | notes |
 |---|---|---|
-| `set` | `id`, `content?`, `base?`, `props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict |
+| `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; ink replacements require the prior `ink_url` |
 | `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |

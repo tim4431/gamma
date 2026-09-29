@@ -68,6 +68,9 @@ These describe the implementation unless explicitly marked as plans.
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, and PDF ink import/export | [Handwriting](handwriting.md) |
+| Stable notebook sheets, paper properties, and generated PDFs | [Notebooks](notebooks.md) |
+| Recording segments and vector replay | [Audio](audio.md) |
+| Native Pencil input, local iPad library, and Mirror client | [iPad app](../../ipad/README.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
 | Folder labels, page cards, recents, and trash | [Home library](home_library.md) |

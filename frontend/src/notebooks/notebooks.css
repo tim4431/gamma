@@ -1,0 +1,11 @@
+.notebookViewer { height: 100%; overflow: auto; padding: 12px 20px 48px; }
+.notebookControls, .notebookSheetBar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.notebookControls { position: sticky; top: 0; z-index: 5; background: var(--bg-surface); padding: 8px; }
+.notebookSheet { margin: 0 auto 24px; width: fit-content; max-width: 100%; }
+.notebookSheetBar { padding: 8px 0; font-size: var(--fs-xs); }
+.notebookSheetBar label { display: inline-flex; align-items: center; gap: 4px; }
+.notebookSheetBar input[type="color"] { width: 24px; height: 24px; padding: 0; border: 0; }
+.notebookSheetBar input[type="number"] { width: 54px; }
+.notebookPaper { position: relative; width: min(612px, 100%); box-shadow: var(--shadow-1); }
+.notebookRuling { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.notebookAppend { display: block; margin: 0 auto; }

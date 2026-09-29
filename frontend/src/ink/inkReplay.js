@@ -22,7 +22,7 @@ export function replayInk(ink, blockId, replay) {
   const activeIndex = replay.segmentIds.indexOf(replay.segmentId);
   const strokes = [];
   for (const stroke of ink.strokes) {
-    const event = events.get(stroke.source_id || stroke.id);
+    const event = events.get(stroke.id) || events.get(stroke.source_id);
     if (!event) { strokes.push(stroke); continue; }
     const eventIndex = replay.segmentIds.indexOf(event.segment_id);
     if (eventIndex < 0 || activeIndex < 0) { strokes.push(stroke); continue; }

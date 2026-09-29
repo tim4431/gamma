@@ -68,7 +68,7 @@ from fractional_indexing import FIError, generate_key_between, validate_order_ke
 from .blocks_store import create_page, fetch_subtree, last_child_position, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
+from .ops import INK_PROPERTIES, MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
 from .publisher_sessions import cipher
 from .routers.sync import changes as local_changes
 from .storage import matches_name, write_atomic
@@ -115,6 +115,7 @@ class Remote:
         self.ws = ws
         self.token = token
         self.fetch = fetch or default_fetch or self._urllib_fetch
+        self.capabilities = None
 
     def _urllib_fetch(self, method, path, body, headers):
         req = urllib.request.Request(self.url + path, data=body, method=method, headers=headers)
@@ -328,7 +329,9 @@ def _stored_mode(ws: str) -> str:
 def whoami(remote: Remote) -> dict:
     """The remote's view of the token: ``{user, workspace: {id, name}, role,
     scope}`` (``GET /api/sync/whoami``)."""
-    return remote.get("/api/sync/whoami")
+    answer = remote.get("/api/sync/whoami")
+    remote.capabilities = answer.get("capabilities") or {}
+    return answer
 
 
 _whoami_seen: dict[str, tuple[tuple, float, dict]] = {}  # ws -> ((url, remote ws, token), when, answer)
@@ -342,6 +345,7 @@ def _round_whoami(ws: str, mirror: dict, remote: Remote) -> dict:
     key = (mirror["remote_url"], mirror["remote_ws"], mirror["token"])
     seen = _whoami_seen.get(ws)
     if seen and seen[0] == key and time.monotonic() - seen[1] < WHOAMI_TTL_S:
+        remote.capabilities = seen[2].get("capabilities") or {}
         return seen[2]
     me = whoami(remote)
     _whoami_seen[ws] = (key, time.monotonic(), me)
@@ -1095,7 +1099,24 @@ def _apply_local(ws: str, page_id: str, ops: list[dict], remote_tree: dict | Non
 
 def _push(remote: Remote, page_id: str, batches: list[dict]) -> None:
     for batch in batches:
+        _check_content_capabilities(remote, batch["ops"])
         remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": batch["ops"]})
+
+
+def _check_content_capabilities(remote: Remote, ops_: list[dict]) -> None:
+    """Do not let an older origin silently ignore guarded native content."""
+    props = [op.get("props") or {} for op in ops_]
+    ink = any("ink_url" in p for p in props) or any(op.get("base_props") for op in ops_)
+    notebook = any("notebook" in p or p.get("type") == "notebook-sheet" or "paper" in p for p in props)
+    audio = any(p.get("type") == "audio" or "audio_segments" in p or "audio_events" in p for p in props)
+    if not (ink or notebook or audio):
+        return
+    if remote.capabilities is None:
+        whoami(remote)
+    capabilities = remote.capabilities or {}
+    if (ink and not capabilities.get("ink_base_props") or notebook and not capabilities.get("notebooks")
+            or audio and not capabilities.get("audio")):
+        raise RemoteError(409, "Update the origin server before syncing handwriting, notebooks or recordings; local changes are retained")
 
 
 def _send(ws: str, remote: Remote, page_id: str, seq: int, base: dict, ops: list[dict]) -> dict:
@@ -1149,6 +1170,19 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
     for k, v in (op.get("props") or {}).items():
         unchanged = now["props"].get(k) == (was.get("props") or {}).get(k) and now["props"].get(k) != v
         (rest if unchanged else landed).setdefault("props", {})[k] = v
+    ink_patch = {key: value for key, value in (op.get("props") or {}).items() if key in INK_PROPERTIES}
+    if "ink_url" in ink_patch and now["props"].get("ink_url") != ink_patch["ink_url"]:
+        # A different reference is not proof that this ink ever landed. A
+        # guarded retry either succeeds or leaves the old base intact, so
+        # reconciliation retains the competing local drawing as a sibling.
+        rest.setdefault("props", {}).update(ink_patch)
+        for key in ink_patch:
+            (landed.get("props") or {}).pop(key, None)
+        if "props" in landed and not landed["props"]:
+            landed.pop("props")
+    for part in (landed, rest):
+        if "props" in part and op.get("base_props"):
+            part["base_props"] = op["base_props"]
     return (landed if len(landed) > 2 else None), (rest if len(rest) > 2 else None)
 
 
@@ -1173,6 +1207,7 @@ def _confirm_push(ws: str, remote: Remote, page_id: str, state: dict, *, resend:
         sent = False
         if rest and resend:
             try:
+                _check_content_capabilities(remote, rest)
                 remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": rest})
                 sent = True
             except RemoteError as e:
@@ -1205,6 +1240,11 @@ def _known(conn, page_id: str, base: dict, local: dict, remote: dict) -> dict:
     for bid in extra:
         mine, theirs = local[bid], remote[bid]
         out[bid] = {**theirs, "props": {k: v for k, v in theirs["props"].items() if k in mine["props"]}}
+        if (mine["props"].get("ink_url") is not None and theirs["props"].get("ink_url") is not None
+                and mine["props"].get("ink_url") != theirs["props"].get("ink_url")):
+            # With no common snapshot neither drawing is an agreed base.
+            # Let normal reconciliation retain the local one as a variant.
+            out[bid]["props"] = {key: value for key, value in out[bid]["props"].items() if key not in INK_PROPERTIES}
         if theirs["content"] not in mine["content"]:
             _conflict(conn, page_id, bid, "diverged", mine=mine["content"], theirs=theirs["content"],
                       result=mine["content"], once=True)
@@ -1285,6 +1325,21 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
         if op["op"] in ("set", "move", "delete") and bid not in local:
             continue  # gone here, not restored: the other side's change to it is dropped (a delete of
             # a block already gone — deleted on both sides, or moved to another page here — is done)
+        if op["op"] == "set" and "ink_url" in (op.get("props") or {}):
+            mine, theirs = local[bid], remote[bid]
+            mine_url, their_url = mine["props"].get("ink_url"), theirs["props"].get("ink_url")
+            base_url = (base.get(bid) or {}).get("props", {}).get("ink_url")
+            if mine_url not in (base_url, their_url):
+                # Keep an ordinary referenced sibling before replacing ink,
+                # so both drawings survive GC, backup and further sync.
+                import hashlib
+                variant = "ink_" + hashlib.sha256(f"{page_id}:{bid}:{mine_url}:{their_url}".encode()).hexdigest()[:28]
+                out.append({"op": "insert", "id": variant, "parent": mine["parent"],
+                            "position": mine["position"], "content": mine["content"],
+                            "props": {**mine["props"], "ink_conflict": {
+                                "source_block_id": bid, "base_url": base_url, "remote_url": their_url}}})
+            op = {**op, "base_props": {"ink_url": mine_url}, "props": {
+                **op["props"], **{key: theirs["props"].get(key) for key in INK_PROPERTIES}}}
         if op["op"] == "set" and "base" in op and local[bid]["content"] not in (op["base"], op["content"]) \
                 and textmerge.contains(op["base"], op["content"], local[bid]["content"]):
             # the text here holds the change already (typed on since): merging it in again would double it
@@ -1367,7 +1422,7 @@ def _split(ops: list[dict], edits: dict, touched: set | None) -> list[dict]:
                 out.append(op)
         else:
             part = {k: v for k, v in op.items() if k in ("op", "id") or (k in ("content", "base") and "content" in mine)
-                    or (k == "props" and "props" in mine)}
+                    or (k in ("props", "base_props") and "props" in mine)}
             if len(part) > 2:
                 out.append(part)
     return out
@@ -1396,7 +1451,7 @@ def _strays(back: list[dict], local: dict, edits: dict, touched: set, elsewhere:
                 here.add(bid)
         elif kind == "set" and bid in local:
             part = {k: v for k, v in op.items() if k in ("op", "id") or (k in ("content", "base") and "content" not in mine)
-                    or (k == "props" and "props" not in mine)}
+                    or (k in ("props", "base_props") and "props" not in mine)}
             if len(part) > 2:
                 out.append(part)
     moving = {op["id"] for op in out if op["op"] == "move"}
@@ -1740,6 +1795,7 @@ def _create_remote_page(remote: Remote, page_id: str, local: dict) -> dict:
     meanwhile) leaves the page for the next round, which finds it on both
     sides and keeps both."""
     root = local[page_id]
+    _check_content_capabilities(remote, [{"props": b["props"]} for b in local.values()])
     try:
         out = remote.post("/api/pages", {"id": page_id, "title": root["content"], "properties": root["props"]}) or {}
     except RemoteError as e:

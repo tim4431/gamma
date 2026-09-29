@@ -2,10 +2,10 @@ name: iPad
 on:
   workflow_dispatch:
   push:
-    branches: [main, dev, ipad-feature, 'codex/ipad-*']
-    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json']
+    branches: [main, dev, test, ipad-feature, 'codex/ipad-*']
+    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json', 'tests/shared/**']
   pull_request:
-    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json']
+    paths: ['ipad/**', '.github/workflows/ipad.yml', 'frontend/src/ink/**', 'frontend/package-lock.json', 'tests/shared/**']
 permissions:
   contents: read
 concurrency:
@@ -26,6 +26,7 @@ jobs:
         run: |
           npm ci --prefix frontend
           node ipad/scripts/prepare-assets.mjs
+          node --test ipad/scripts/ink-entry.test.mjs
           brew install xcodegen
           cd ipad
           xcodegen generate

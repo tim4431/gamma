@@ -130,7 +130,13 @@ export function diffTrees(base, next, pageId, pos) {
           changed = true;
         }
         const patch = propsPatch(r.b.node.properties, r.n.properties);
-        if (Object.keys(patch).length) { set.props = patch; changed = true; }
+        if (Object.keys(patch).length) {
+          set.props = patch; changed = true;
+          if ("ink_url" in patch || (r.b.node.properties?.ink_url !== undefined
+            && ["ink_strokes", "pdf_position", "pdf_page", "sheet_id"].some((key) => key in patch))) {
+            set.base_props = { ink_url: r.b.node.properties?.ink_url ?? null };
+          }
+        }
         if (changed) ops.push(set);
       }
       walk(r.n.children, r.n.id);
@@ -270,6 +276,7 @@ export function pushOp(queue, op) {
         if (q.content === undefined) merged.base = op.base;
       }
       if (op.props) merged.props = { ...(q.props || {}), ...op.props };
+      if (op.base_props) merged.base_props = { ...op.base_props, ...q.base_props };
       queue[i] = merged;
       return q;
     }

@@ -33,7 +33,7 @@ from ..blocks_store import (
 from .. import block_index, cloud_auth, upload_gc
 from ..db import connect_pages_db, page_now
 from ..markdown_export import build_tree
-from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, note_reload,
+from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, note_reload, validate_block_properties,
                    record_ops, trash_page)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
@@ -57,6 +57,8 @@ class UBUpdateRequest(StorableBody):
     content: str | None = None
     base: str | None = None     # the text `content` was edited from: merged, not replaced (ops.py)
     properties: dict | None = None
+    base_props: dict | None = None
+    base_properties: dict | None = None
 
 
 class UBReorderRequest(BaseModel):
@@ -390,7 +392,8 @@ def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dic
         return commit_ops(ws, page_id, ops, actor=actor_of(request),
                           share_scoped=scope is not None)
     except OpError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        # Preserve the op conflict payload for single-block clients too.
+        raise HTTPException(status_code=e.status, detail=e.body() if e.conflict else e.detail)
 
 
 @router.post("/blocks")
@@ -402,6 +405,10 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
             raise HTTPException(status_code=403, detail="not accessible via this share link")
+        try:
+            validate_block_properties(payload.properties)
+        except OpError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail)
         new_pos = ""  # neither neighbour named: last in the library
         if payload.before is not None or payload.after is not None:
             try:
@@ -447,7 +454,14 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
             op["base"] = payload.base
     if payload.properties is not None:
         op["props"] = payload.properties
-    result = _ops(ws, page_id, [op], request, scope)
+    if payload.base_props is not None or payload.base_properties is not None:
+        op["base_props"] = payload.base_props if payload.base_props is not None else payload.base_properties
+    try:
+        result = _ops(ws, page_id, [op], request, scope)
+    except HTTPException as e:
+        if isinstance(e.detail, dict) and e.detail.get("conflict"):
+            return JSONResponse(status_code=e.status_code, content=e.detail)
+        raise
     out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
     if payload.content is not None:
         out["content"] = result["ops"][0].get("content", payload.content)

@@ -62,6 +62,12 @@ extension GammaRepository {
                 mirror.pending = try journalHead() > localCursor() || !failures.isEmpty
                 try db.set("mirror", mirror)
             }
+            // Collection failure must not turn a completed reconciliation into a
+            // failed delivery. Explicit idle maintenance can report filesystem errors.
+            let lastMaintenance = (try? db.get("asset_maintenance_at", as: Double.self)) ?? 0
+            if mirror.lastError == nil, Date().timeIntervalSince1970 - lastMaintenance >= 24 * 60 * 60 {
+                _ = try? collectUnusedAssets()
+            }
             return mirror
         } catch {
             mirror.running = false; mirror.lastError = error.localizedDescription
@@ -104,10 +110,9 @@ extension GammaRepository {
             if local.isEmpty {
                 try db.run("DELETE FROM sync_pages WHERE page_id=?", [pageID]); return
             }
-            if state != nil && !state!.creating && local == base {
+            if let state, !state.creating, local == base {
                 try db.transaction {
                     try db.run("DELETE FROM blocks WHERE page_id=?", [pageID])
-                    try db.run("INSERT OR REPLACE INTO deleted_pages(page_id,at) VALUES (?,?)", [pageID, GammaJSON.now()])
                     try db.run("DELETE FROM sync_pages WHERE page_id=?", [pageID])
                 }
                 return
@@ -257,7 +262,7 @@ extension GammaRepository {
             rest.baseProps = op.baseProps
         }
         if rest.props?["ink_url"] != nil {
-            for key in ["pdf_position", "pdf_page", "sheet_id", "ink_strokes"] {
+            for key in GammaTree.inkKeys where key != "ink_url" {
                 if let value = op.props?[key] { rest.props?[key] = value; landed.props?.removeValue(forKey: key) }
             }
         }
@@ -279,7 +284,8 @@ extension GammaRepository {
             for id in moving {
                 for child in GammaTree.descendants(source, of: id) where oldBase[child] == nil && roundLeft[child] == nil && remote[child] == nil { extra.insert(child) }
             }
-            for id in moving.union(extra) {
+            let carried = moving.union(extra)
+            for id in carried {
                 guard var block = source.removeValue(forKey: id) else { continue }
                 if let target = remote[id] {
                     block.parent = target.parent; block.position = target.position
@@ -288,7 +294,7 @@ extension GammaRepository {
                 augmentedLocal[id] = block; sourceState.base.removeValue(forKey: id)
             }
             sourceState.pending = sourceState.pending.compactMap { batch in
-                let kept = batch.ops.filter { !moving.union(extra).contains($0.id) }
+                let kept = batch.ops.filter { !carried.contains($0.id) }
                 return kept.isEmpty ? nil : PendingBatch(id: batch.id, ops: kept, attempted: batch.attempted)
             }
             for id in source.keys where id != home {

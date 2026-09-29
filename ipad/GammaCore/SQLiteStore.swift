@@ -17,7 +17,6 @@ final class SQLiteStore {
         try run("CREATE INDEX IF NOT EXISTS blocks_page ON blocks(page_id)")
         try run("CREATE TABLE IF NOT EXISTS sync_pages (page_id TEXT PRIMARY KEY, value TEXT NOT NULL)")
         try run("CREATE TABLE IF NOT EXISTS journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, page_id TEXT NOT NULL, source TEXT NOT NULL, value TEXT NOT NULL)")
-        try run("CREATE TABLE IF NOT EXISTS deleted_pages (page_id TEXT PRIMARY KEY, at TEXT NOT NULL)")
         try run("CREATE TABLE IF NOT EXISTS conflicts (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
     }
     deinit { sqlite3_close(db) }

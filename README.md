@@ -103,6 +103,10 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 ### Downloads
 
+The [native iPad app](./ipad/README.md) can be built from source with Xcode.
+It stores a local library, uses Apple Pencil input, and syncs through Mirror.
+Device installation requires Apple signing; it is not an App Store download.
+
 Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), or download standalone installers from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
 
 - **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.

@@ -27,6 +27,30 @@ export function newNotebookInk(sheetId, width, height) {
     space: { kind: "notebook-page", sheet_id: sheetId, width, height }, strokes: [] };
 }
 
+function sameStroke(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = ["id", "source_id", "tool", "brush", "color", "size", "opacity", "pen", "ch", "t0"];
+  return keys.every((key) => a[key] === b[key]) && a.pts.length === b.pts.length && a.pts.every((n, i) => n === b.pts[i]);
+}
+
+// Apply a history step by stroke identity, keeping unrelated strokes that
+// arrived meanwhile. A remotely edited/deleted affected stroke makes the
+// whole group step stale; never restore an old whole-file snapshot over it.
+export function rebaseInkEdit(current, from, to) {
+  if (!current) return null;
+  const old = new Map(from.strokes.map((s) => [s.id, s]));
+  const next = new Map(to.strokes.map((s) => [s.id, s]));
+  const now = new Map(current.strokes.map((s) => [s.id, s]));
+  const changed = new Set([...old.keys(), ...next.keys()].filter((id) => !sameStroke(old.get(id), next.get(id))));
+  for (const id of changed) {
+    if (!sameStroke(old.get(id), now.get(id))) return null;
+  }
+  const strokes = current.strokes.flatMap((stroke) => changed.has(stroke.id) ? (next.has(stroke.id) ? [next.get(stroke.id)] : []) : [stroke]);
+  for (const stroke of to.strokes) if (changed.has(stroke.id) && !now.has(stroke.id)) strokes.push(stroke);
+  return { ...current, version: Math.max(current.version, to.version), strokes };
+}
+
 const ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function strokeId() {
   let s = "";

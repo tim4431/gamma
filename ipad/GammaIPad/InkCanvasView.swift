@@ -123,7 +123,7 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
         else if touch.type == .pencil {
             selected = [:]; selectionRect = nil; strokeStart = touch.timestamp
             wallStart = Date().timeIntervalSince1970 * 1000
-            activeStrokeID = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            activeStrokeID = gammaID()
             samples = []; estimated = [:]; take(touch, event: event)
         }
         setNeedsDisplay()

@@ -195,7 +195,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: erasing the last stroke stays erased while block deletion is pending", async () => {
+  await step("ink: erasing the last stroke saves empty ink and preserves the note", async () => {
     // Reopening the page starts a fresh handwriting group.
     await page.reload();
     await waitForPdf(page, 1);
@@ -214,9 +214,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await until(async () => await page.locator(paths).count() === count + 1);
     let release, deleting = false;
     const held = new Promise((resolve) => { release = resolve; });
-    const url = `**/api/blocks/${group.id}`;
+    const url = `**/api/pages/${pageId}/ops`;
     await page.route(url, async (route) => {
-      if (route.request().method() === "DELETE") { deleting = true; await held; }
+      if (route.request().method() === "POST" && route.request().postDataJSON().ops?.some((op) => op.id === group.id && op.props?.ink_strokes === 0)) { deleting = true; await held; }
       await route.continue();
     });
     try {
@@ -226,7 +226,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       box = await page.locator('[data-page="1"]').boundingBox();
       await drawLine(page, [box.x + 175, box.y + 310], [box.x + 175, box.y + 330]);
       await until(async () => await page.locator(paths).count() === count);
-      await until(() => deleting, { what: "delete request held in flight" });
+      await until(() => deleting, { what: "empty ink save held in flight" });
       const stayedErased = await page.evaluate(async ({ paths, count }) => {
         const end = performance.now() + 300;
         do {
@@ -235,12 +235,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
         } while (performance.now() < end);
         return true;
       }, { paths, count });
-      assert(stayedErased, "saved strokes must not reappear while deletion is pending");
+      assert(stayedErased, "saved strokes must not reappear while saving the erasure");
     } finally { release(); }
     await until(async () => {
       const d = await account.api(`/api/blocks/${pageId}/subtree`);
-      return !d.block.children.some((b) => b.id === group.id);
-    }, { what: "empty group deleted" });
+      return d.block.children.some((b) => b.id === group.id && b.properties?.ink_strokes === 0 && b.properties?.ink_url);
+    }, { what: "empty group retained" });
     await page.unroute(url);
     assertEq(await page.locator(paths).count(), count);
     assertNoProblems(page);

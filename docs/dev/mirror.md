@@ -833,6 +833,45 @@ desktop's flow — the *keep offline* chip, the registry map, the
 *offline copy* / *original* cross-links, one copy per workspace — is a step
 of `desktop/test/e2e.js`.
 
+## Native iPad replica
+
+`ipad/GammaCore/GammaRepository.swift` stores one local workspace in SQLite.
+Editors and sync write through the same actor. `MirrorCoordinator.swift`
+uses the existing `whoami`, change feed, subtree, page, op and upload APIs.
+It does not call the server's local `/api/mirrors` management API or run a
+Python server. Connections are scoped to origin, account and workspace;
+the app stores tokens in Keychain.
+
+Current blocks, remote bases, pending batches and conflicts are durable.
+The local journal identifies changed pages; it is not an outbox that replays
+every edit. A missing current page plus its base and journal entry records a
+local deletion. Pending batches keep their IDs and whether delivery was
+attempted. Recovery checks what the origin already holds before resending.
+Each reconciliation rereads local blocks after network awaits so edits made
+during a round remain pending. Competing ink replacements retain the local
+file in an ordinary sibling block with `ink_conflict` metadata.
+
+`Assets.swift` preserves uploaded bytes and verifies downloaded filenames.
+An entirely successful round can collect unused assets once per day, with
+at most 200 removals per pass. A full pass continues on later successful
+rounds until the backlog is drained. A file must be older than seven days and absent from
+current blocks, bases, pending ops, conflict records and unacknowledged local
+journal entries. Reusing a stored file refreshes its age. Partial files,
+unknown filenames and symlinks are skipped; unreadable retention records
+stop collection. `maintainAssets()` provides the same bounded pass while
+the repository is idle.
+
+This is a Swift implementation of the shared protocol and reconciliation
+rules. It does not provide publication filters, force/adopt controls or
+WebSocket presence. Swift's text diff can choose different spans for repeated
+text; the origin's returned tree remains authoritative. Shared fixtures in
+`tests/shared/mirror-native-v1.json` cover text and asset contracts.
+`ipad/GammaCoreTests` additionally tests interrupted delivery, server replay
+cache loss, edits during a push, cross-page moves and asset retention.
+Those tests are a compatibility floor, not proof of complete Python-engine
+equivalence. See [the native app guide](../../ipad/README.md) for build and
+device validation.
+
 ## Limits and next steps
 
 - The op log is not replayed: a round works from trees, so a page that

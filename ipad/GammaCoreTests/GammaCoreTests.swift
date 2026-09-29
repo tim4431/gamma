@@ -21,6 +21,17 @@ final class GammaCoreTests: XCTestCase {
         XCTAssertEqual(GammaTree.nextPosition(after: "az"), "b00")
         XCTAssertEqual(GammaTree.nextPosition(after: "Zz"), "a0")
     }
+    func testCapabilityGateDistinguishesHighlightsFromInkAndNotebookEdits() throws {
+        var remote = GammaRemote(mirror: GammaMirror(origin: "https://gamma.invalid", account: "alice", workspaceID: "lab"), token: "test", transport: GammaURLSessionTransport())
+        let highlight = GammaOperation(op: "set", id: "highlight", props: ["pdf_page": .number(1), "pdf_position": .object([:])])
+        let ink = GammaOperation(op: "set", id: "ink", props: ["pdf_position": .object([:])], baseProps: ["ink_url": .string("/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink")])
+        let paper = GammaOperation(op: "set", id: "sheet", props: ["paper": .object(GammaRepository.defaultPaper)])
+        XCTAssertNoThrow(try remote.requireCapabilities(for: [highlight]))
+        XCTAssertThrowsError(try remote.requireCapabilities(for: [ink]))
+        XCTAssertThrowsError(try remote.requireCapabilities(for: [paper]))
+        remote.capabilities = ["ink_base_props": .bool(true), "notebooks": .number(1)]
+        XCTAssertNoThrow(try remote.requireCapabilities(for: [ink, paper]))
+    }
     func testIndependentEditsAndInkCollisionPreserveBothFiles() {
         let root = GammaBlock(id: "page", parent: "root")
         let note = GammaBlock(id: "ink", parent: "page", content: "caption", properties: ["ink_url": .string("/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink")])

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "text": [
+    {"name":"independent ends","base":"alpha beta","ours":"ALPHA beta","theirs":"alpha BETA","result":"ALPHA BETA","clean":true},
+    {"name":"same insertion","base":"ab","ours":"axb","theirs":"axb","result":"axb","clean":true},
+    {"name":"simultaneous insertion stored first","base":"ab","ours":"aXb","theirs":"aYb","result":"aYXb","clean":true},
+    {"name":"overlapping replacement","base":"abc","ours":"aXc","theirs":"aYc","result":"aYc","clean":false},
+    {"name":"unicode offsets","base":"😀 abc","ours":"😀 Abc","theirs":"😀 abC","result":"😀 AbC","clean":true}
+  ],
+  "assets": [{"text":"gamma-native-asset\n","sha24":"d62bc1e2fc835d36e7398a46"}]
+}

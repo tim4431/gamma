@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 
 public enum GammaAssets {
+    private static let referencePattern = try! NSRegularExpression(pattern: "/api/uploads/([0-9a-f]{8,64}\\.[a-z0-9]{1,8})")
     public static func digest(_ data: Data) -> String { SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined() }
     static func filename(_ reference: String) throws -> String {
         let name = reference.hasPrefix("/api/uploads/") ? String(reference.dropFirst(13)) : reference
@@ -20,20 +21,39 @@ public enum GammaAssets {
     }
     static func references(_ snapshot: GammaSnapshot) -> Set<String> {
         var result = Set<String>()
-        let regex = try! NSRegularExpression(pattern: "/api/uploads/([0-9a-f]{8,64}\\.[a-z0-9]{1,8})")
         for block in snapshot.values {
-            let text = block.content + ((try? GammaJSON.string(block.properties)) ?? "")
-            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                if let range = Range(match.range(at: 1), in: text) { result.insert(String(text[range])) }
-            }
+            result.formUnion(references(in: block.content + ((try? GammaJSON.string(block.properties)) ?? "")))
             if let doc = block.properties["doc_id"]?.string, (try? filename(doc + ".pdf")) != nil { result.insert(doc + ".pdf") }
         }
         return result
     }
+    static func references(in text: String) -> Set<String> {
+        Set(referencePattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+            Range(match.range(at: 1), in: text).map { String(text[$0]) }
+        })
+    }
+    /// Scan complete persisted records, including old property values and pending ops.
+    /// Decode first so escaped JSON strings and PDF IDs retain their assets too.
+    static func references(in value: JSONValue) -> Set<String> {
+        switch value {
+        case .string(let text): return references(in: text)
+        case .array(let values): return values.reduce(into: Set<String>()) { $0.formUnion(references(in: $1)) }
+        case .object(let values):
+            var result = values.values.reduce(into: Set<String>()) { $0.formUnion(references(in: $1)) }
+            if let doc = values["doc_id"]?.string, (try? filename(doc + ".pdf")) != nil { result.insert(doc + ".pdf") }
+            return result
+        default: return []
+        }
+    }
     static func write(_ data: Data, name: String, directory: URL) throws {
         try verify(data, name: name)
         let destination = directory.appendingPathComponent(name)
-        if FileManager.default.fileExists(atPath: destination.path), let existing = try? Data(contentsOf: destination), existing == data { return }
+        if FileManager.default.fileExists(atPath: destination.path), let existing = try? Data(contentsOf: destination), existing == data {
+            // A caller can attach this reused file after its next await. Give it the
+            // same collection grace period as a newly written asset.
+            try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+            return
+        }
         let temporary = directory.appendingPathComponent(".partial-" + GammaID.make())
         do {
             try data.write(to: temporary, options: .withoutOverwriting)

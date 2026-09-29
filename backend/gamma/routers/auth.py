@@ -220,14 +220,15 @@ def get_session(request: Request):
     round trip. ``build`` (version, commit, label, frozen) is what a
     problem report names this server by; the login page gets it too."""
     user = request.state.user
+    from ..ops import CAPABILITIES
     build = version.build_info()
     if not user:
-        return {"user": None, "build": build}
+        return {"user": None, "build": build, "capabilities": CAPABILITIES}
     if is_token(request):  # a token is no session: GET /api/sync/whoami says who it is
         raise HTTPException(status_code=403, detail=TOKEN_REFUSAL)
     out = {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
            "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
-           "workspaces": workspaces.list_for_user(user), "build": build}
+           "workspaces": workspaces.list_for_user(user), "build": build, "capabilities": CAPABILITIES}
     if request.state.is_guest:
         out["guest_expires_at"] = guests.account_expires_at(user)  # when the account and its workspace go
     return out

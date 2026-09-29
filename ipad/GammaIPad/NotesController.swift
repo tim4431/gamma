@@ -36,7 +36,7 @@ final class NotesController: UITableViewController {
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil), (block, depth) = rows[indexPath.row]
         cell.indentationLevel = depth; cell.indentationWidth = 16
         let props = propertyObject(block.properties)
-        cell.textLabel?.text = block.content.isEmpty ? (props["ink_url"] == nil ? "Untitled note" : "Handwriting") : block.content
+        cell.textLabel?.text = block.content.isEmpty ? (props["quote"] as? String ?? (props["ink_url"] == nil ? "Untitled note" : "Handwriting")) : block.content
         cell.textLabel?.numberOfLines = 3
         if props["ink_url"] != nil { cell.imageView?.image = UIImage(systemName: "pencil.tip") }
         else if props["type"] as? String == "audio" { cell.imageView?.image = UIImage(systemName: "waveform") }

@@ -5,13 +5,50 @@
 // remote change of `ink_url` on a block with no unsaved strokes drops the
 // draft. Plain module state with a version counter — React subscribes
 // through useInkVersion (ink/InkLayer.jsx).
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, makeId, getCurrentWorkspace, getExpectedUser, getShareToken } from "../shared/lib/utils";
 
-const files = new Map();     // url → ink | null (null: fetch failed)
-const loading = new Map();   // url → Promise
-const drafts = new Map();    // block id → {ink, dirty, url}
+const files = new Map();     // scoped URL → ink | null (null: fetch failed)
+const loading = new Map();   // scoped URL → Promise
+const drafts = new Map();    // scoped block ID → drawing and save/recovery state
 const listeners = new Set();
 let version = 0;
+let persistenceProblem = false;
+
+// Completed strokes remain recoverable after a tab reload while offline or
+// while a conflicting save awaits a decision. Asset caches stay disposable.
+const database = new Promise((resolve) => {
+  if (typeof indexedDB === "undefined") { resolve(null); return; }
+  try {
+    const request = indexedDB.open("gamma-ink-drafts", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("drafts", { keyPath: "key" });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => { persistenceProblem = true; resolve(null); };
+    request.onblocked = () => { persistenceProblem = true; resolve(null); };
+  } catch { persistenceProblem = true; resolve(null); }
+});
+function persist(d) {
+  database.then((db) => {
+    if (!db) return;
+    const tx = db.transaction("drafts", "readwrite");
+    tx.onerror = () => { persistenceProblem = true; bump(); };
+    const table = tx.objectStore("drafts");
+    if (d.dirty) table.put({ ...d, conflict: !!d.conflict });
+    else table.delete(d.key);
+  }).catch(() => { persistenceProblem = true; bump(); });
+}
+export const ready = database.then((db) => new Promise((resolve) => {
+  if (!db) { resolve(); return; }
+  const req = db.transaction("drafts").objectStore("drafts").getAll();
+  req.onsuccess = () => {
+    for (const d of req.result) if (!drafts.has(d.key)) drafts.set(d.key, d);
+    bump(); resolve();
+  };
+  req.onerror = () => resolve();
+})).catch(() => { persistenceProblem = true; bump(); });
+
+const scope = () => JSON.stringify([getExpectedUser(), getCurrentWorkspace(), getShareToken()]);
+export const currentScope = scope;
+const scoped = (id) => `${scope()}|${id}`;
 
 function bump() {
   version += 1;
@@ -20,15 +57,17 @@ function bump() {
 export function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function currentVersion() { return version; }
 
-export function loadInk(url) {
+export function loadInk(url, { retry = false } = {}) {
   if (!url) return Promise.resolve(null);
-  if (files.has(url)) return Promise.resolve(files.get(url));
-  if (loading.has(url)) return loading.get(url);
+  const key = scoped(url);
+  if (retry && files.get(key) === null) files.delete(key);
+  if (files.has(key)) return Promise.resolve(files.get(key));
+  if (loading.has(key)) return loading.get(key);
   const p = apiJson(`${API}${url.replace(/^\/api/, "")}`)
-    .then((ink) => { files.set(url, ink && ink.format === "gamma-ink" ? ink : null); return files.get(url); })
-    .catch(() => { files.set(url, null); return null; })
-    .finally(() => { loading.delete(url); bump(); });
-  loading.set(url, p);
+    .then((ink) => { files.set(key, ink && ink.format === "gamma-ink" ? ink : null); return files.get(key); })
+    .catch(() => { files.set(key, null); return null; })
+    .finally(() => { loading.delete(key); bump(); });
+  loading.set(key, p);
   return p;
 }
 
@@ -36,39 +75,68 @@ export function loadInk(url) {
 // off when unseen — the caller re-renders on the store's next bump).
 export function inkFor(block) {
   const url = block?.properties?.ink_url || "";
-  const d = drafts.get(block?.id);
+  const key = scoped(block?.id), d = drafts.get(key);
   if (d) {
-    if (!d.dirty && d.url !== url) { drafts.delete(block.id); }
-    else return d.ink;
+    if (!d.dirty && d.url !== url && !d.awaitingUrls?.includes(url)) drafts.delete(key);
+    else {
+      if (d.url === url) d.awaitingUrls = [];
+      return d.ink;
+    }
   }
   if (!url) return null;
-  if (!files.has(url)) { loadInk(url); return null; }
-  return files.get(url);
+  if (!files.has(scoped(url))) { loadInk(url); return null; }
+  return files.get(scoped(url));
 }
 
-export function draft(id) { return drafts.get(id) || null; }
-export function setDraft(id, ink) {
-  const prev = drafts.get(id);
-  drafts.set(id, { ink, dirty: true, url: prev?.url ?? "" });
+if (typeof window !== "undefined") {
+  const retryFailed = () => {
+    let changed = false;
+    for (const [key, ink] of files) if (ink === null) { files.delete(key); changed = true; }
+    if (changed) bump();
+  };
+  window.addEventListener("online", retryFailed);
+  window.addEventListener("focus", retryFailed);
+}
+
+export function draft(id) { return drafts.get(scoped(id)) || null; }
+export function setDraft(id, ink, { baseUrl = null, pageId = "", paper } = {}) {
+  const key = scoped(id), prev = drafts.get(key);
+  drafts.set(key, { ...prev, id, key, scope: scope(), ink, dirty: true,
+    batch: makeId(), recovery: null,
+    paper: paper || prev?.paper,
+    pageId: pageId || prev?.pageId || "", url: prev?.url ?? baseUrl,
+    baseUrl: prev?.dirty ? prev.baseUrl : prev?.awaitingUrls?.length ? prev.url : baseUrl, conflict: prev?.conflict || false });
+  persist(drafts.get(key));
   bump();
 }
 // The upload of `ink` landed at `url`. Strokes added meanwhile keep the
 // draft dirty (the next flush uploads them).
-export function markSaved(id, ink, url) {
-  const d = drafts.get(id);
+export function markSaved(id, ink, url, key = scoped(id)) {
+  const d = drafts.get(key);
   if (!d) return;
-  files.set(url, ink);
-  drafts.set(id, { ...d, url, dirty: d.ink !== ink });
+  files.set(`${d.scope}|${url}`, ink);
+  // An HTTP acknowledgement can precede its websocket echo. Keep showing
+  // the acknowledged drawing while the tree still names a predecessor.
+  const awaitingUrls = [...new Set([...(d.awaitingUrls || []), d.baseUrl])].filter((previous) => previous !== url);
+  drafts.set(key, { ...d, url, baseUrl: url, awaitingUrls, dirty: d.ink !== ink, conflict: false });
+  persist(drafts.get(key));
   bump();
 }
-// An acknowledged deletion still masks the old file while its block is in
-// the tree. Do not cache the empty ink under the old file URL, or discard
-// an edit made while the delete request was pending.
-export function markDeleted(id, ink, url) {
-  const d = drafts.get(id);
-  if (d?.ink === ink) drafts.set(id, { ...d, dirty: false, url });
-}
+export function recoveryUnavailable() { return persistenceProblem; }
 export function dirtyDrafts() {
-  return [...drafts.entries()].filter(([, d]) => d.dirty)
-    .map(([id, d]) => ({ id, ink: d.ink }));
+  return [...drafts.values()].filter((d) => d.scope === scope() && d.dirty && !d.conflict);
 }
+export function conflicts() { return [...drafts.values()].filter((d) => d.scope === scope() && d.conflict); }
+export function markConflict(key, error) {
+  const d = drafts.get(key);
+  if (d) { drafts.set(key, { ...d, conflict: error }); persist(drafts.get(key)); bump(); }
+}
+export function recoveryFor(draft) {
+  const current = drafts.get(draft.key);
+  if (current?.batch === draft.batch && current.recovery) return current.recovery;
+  const recovery = { id: makeId(), batch: makeId() };
+  if (current?.batch === draft.batch) { current.recovery = recovery; persist(current); }
+  return recovery;
+}
+export function discardDraft(key) { drafts.delete(key); persist({ key, dirty: false }); bump(); }
+export function isCurrentScope(value) { return value === scope(); }

@@ -34,7 +34,7 @@ from ..db import connect_pages_db, safe_doc_id
 from ..foldertags import clean_path
 from ..markdown_zip_import import markdown_page
 from ..storage import find_upload_file
-from ..ops import after_commit, apply_ops, props_patch
+from ..ops import OpError, after_commit, apply_ops, props_patch, validate_block_properties
 
 router = APIRouter(prefix="/api", tags=["pages"])
 
@@ -74,6 +74,10 @@ def create_page_endpoint(payload: PageCreate, request: Request):
     gamma/publish.py page_cap)."""
     ws = require_ws(request, write=True)
     props = dict(payload.properties or {})
+    try:
+        validate_block_properties(props)
+    except OpError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
     folder = clean_path(payload.folder or "")
     if folder:
         props["folder"] = folder

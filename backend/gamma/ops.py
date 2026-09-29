@@ -83,6 +83,9 @@ _SURROGATE = re.compile(r"[\ud800-\udfff]")
 MISSING = "missing"  # the block or the parent is gone
 MOVED = "moved"      # it lives in another page now
 CYCLE = "cycle"      # the move would put a block inside itself
+PROPERTY_CHANGED = "property_changed"
+INK_PROPERTIES = frozenset(("ink_url", "ink_strokes", "pdf_position", "pdf_page", "sheet_id"))
+CAPABILITIES = {"ink_versions": [1, 2], "ink_base_props": True, "notebooks": 1, "audio": 1}
 
 
 class OpError(Exception):
@@ -92,13 +95,19 @@ class OpError(Exception):
     changed the page meanwhile, not because the batch is malformed;
     ``index`` is the refused op's place in the batch."""
 
-    def __init__(self, status: int, detail: str, missing: str = "", conflict: str = ""):
+    def __init__(self, status: int, detail: str, missing: str = "", conflict: str = "", current: dict | None = None):
         super().__init__(detail)
         self.status = status
         self.detail = detail
         self.missing = missing
         self.conflict = conflict
         self.index: int | None = None
+        self.current = current
+
+    def body(self) -> dict:
+        return {"detail": self.detail, **({"missing": self.missing} if self.missing else {}),
+                **({"conflict": self.conflict, "index": self.index} if self.conflict else {}),
+                **({"id": self.current["id"], "current": self.current} if self.current else {})}
 
 
 def storable(value):
@@ -135,6 +144,7 @@ class SetOp(BaseModel):
     content: str | None = None
     base: str | None = None  # the text `content` was edited from (three-way merge)
     props: dict | None = None
+    base_props: dict | None = None
 
 
 class InsertOp(BaseModel):
@@ -184,6 +194,17 @@ def props_patch(old: dict, new: dict) -> dict:
         if k not in new:
             patch[k] = None
     return patch
+
+
+def validate_block_properties(props: dict) -> None:
+    """Portable content contracts, shared by native and browser writers."""
+    from .audio import validate_properties as audio_properties
+    from .notebooks import validate_properties as notebook_properties
+    try:
+        notebook_properties(props)
+        audio_properties(props)
+    except (ValueError, TypeError) as e:
+        raise OpError(400, f"invalid block properties: {e}") from e
 
 
 class _Batch:
@@ -254,6 +275,22 @@ class _Batch:
                          or parent in {r[0] for r in fetch_subtree(self.conn, block_id)}):
             raise OpError(400, "cannot move a block into its own subtree", conflict=CYCLE)
 
+    def check_content_structure(self, block_id: str, parent: str, props: dict) -> None:
+        if props.get("notebook") is not None and block_id != self.page_id:
+            raise OpError(400, "notebook settings belong to the page root")
+        if props.get("type") == "notebook-sheet":
+            root = self.conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (self.page_id,)).fetchone()
+            if parent != self.page_id or not json.loads(root[0] or "{}").get("notebook"):
+                raise OpError(400, "notebook sheets must be direct children of a notebook page")
+        sheet_id = props.get("sheet_id")
+        if sheet_id is not None and "ink_url" in props:
+            if not valid_block_id(sheet_id):
+                raise OpError(400, "ink sheet_id must be a valid block ID")
+            self.require_in_page(sheet_id, "sheet")
+            sheet = self.conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (sheet_id,)).fetchone()
+            if json.loads(sheet[0] or "{}").get("type") != "notebook-sheet":
+                raise OpError(400, "ink sheet_id must name a notebook sheet")
+
     # --- the four ops --------------------------------------------------------
 
     def set(self, op: dict) -> None:
@@ -285,6 +322,25 @@ class _Batch:
                 cur["head"] = textmerge.map_offset(content, merged, cur.get("head", -1)) if cur.get("head", -1) >= 0 else -1
             content = merged
         props = json.loads(row[1] or "{}")
+        if patch:
+            ink_change = ("ink_url" in props or "ink_url" in patch) and any(
+                key in patch and props.get(key) != patch[key] for key in INK_PROPERTIES)
+            expected = op.get("base_props") or {}
+            if ink_change and "ink_url" not in expected:
+                current = block_to_dict(self.conn.execute(
+                    f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (block_id,)).fetchone())
+                raise OpError(428, "ink updates require base_props.ink_url; update the client before editing ink",
+                              conflict="precondition_required", current=current)
+            changed = any(props.get(key) != value and (
+                ink_change if key == "ink_url" else props.get(key) != patch.get(key))
+                          for key, value in expected.items())
+            # A retry that already reached the exact URL and geometry is a
+            # no-op; a stale URL must never replace even an empty drawing.
+            if changed:
+                current = block_to_dict(self.conn.execute(
+                    f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (block_id,)).fetchone())
+                raise OpError(409, "the ink group changed; preserve this drawing as a separate group",
+                              conflict=PROPERTY_CHANGED, current=current)
         echo = {"op": "set", "id": block_id}
         sets, values = ["updated_at = ?"], [self.now]
         if content is not None:
@@ -302,6 +358,9 @@ class _Batch:
                 else:
                     props[k] = v
             echo["props"] = patch
+            validate_block_properties(props)
+            parent = self.conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]
+            self.check_content_structure(block_id, parent, props)
         sets.append("properties = ?")
         values.append(json.dumps(props))
         values.append(block_id)
@@ -345,6 +404,8 @@ class _Batch:
                                  "props": json.loads(existing[3] or "{}")})
             return
         self.check_parent(parent, None)
+        validate_block_properties(props)
+        self.check_content_structure(block_id, parent, props)
         position = self.free_position(parent, op.get("position"), block_id)
         self.conn.execute(
             "INSERT INTO unified_blocks (id, parent_id, position, content, properties, "
@@ -361,6 +422,8 @@ class _Batch:
         if block_id == self.page_id:
             raise OpError(403, "the page itself cannot be moved")
         self.check_parent(parent, block_id)
+        props = json.loads(self.conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0] or "{}")
+        self.check_content_structure(block_id, parent, props)
         position = self.free_position(parent, op.get("position"), block_id)
         self.conn.execute(
             "UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",

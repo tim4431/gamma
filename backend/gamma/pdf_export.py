@@ -260,7 +260,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
                 NameObject("/S"): NameObject("/S"),
             }),
             NameObject("/GammaInk"): TextStringObject(inkmod.dumps({
-                "format": inkmod.FORMAT, "version": inkmod.VERSION,
+                "format": inkmod.FORMAT, "version": ink.version,
                 "space": ink.space.model_dump(exclude_none=True),
                 "strokes": [s.model_dump(exclude_none=True) for s in bucket],
             }).decode("utf-8")),

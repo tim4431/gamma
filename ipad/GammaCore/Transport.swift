@@ -51,10 +51,10 @@ struct GammaRemote: Sendable {
     func requireCapabilities(for ops: [GammaOperation]) throws {
         for op in ops {
             let props = op.props ?? [:]
-            if (!Set(props.keys).isDisjoint(with: GammaTree.inkKeys) || op.baseProps?["ink_url"] != nil), capabilities["ink_base_props"] != .bool(true) {
+            if (props["ink_url"] != nil || op.baseProps?["ink_url"] != nil), capabilities["ink_base_props"] != .bool(true) {
                 throw GammaError.invalid("Upgrade the origin server before syncing handwriting. Your edits remain saved on this iPad.")
             }
-            if props["notebook"] != nil || props["type"]?.string == "notebook-sheet" || props["sheet_id"] != nil {
+            if props["notebook"] != nil || props["type"]?.string == "notebook-sheet" || props["sheet_id"] != nil || props["paper"] != nil {
                 guard (capabilities["notebooks"]?.number ?? 0) >= 1 else { throw GammaError.invalid("Upgrade the origin server before syncing notebooks. Your notebook remains on this iPad.") }
             }
             if props["type"]?.string == "audio" || props["audio_segments"] != nil || props["audio_events"] != nil {

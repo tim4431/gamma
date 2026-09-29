@@ -11,7 +11,7 @@ export function geometry(stroke) {
   const points = line ? samples.map(p => [p.x, p.y]) : getStroke(
     samples.map(p => [p.x, p.y, p.p ?? 0.5]), ink.outlineOptions(stroke));
   return { line, points: points.map(p => p.map(round)),
-    midpoints: points.map((p, i) => p.map((v, axis) => round((v + points[(i + 1) % points.length][axis]) / 2))), size: stroke.size };
+    midpoints: points.map((p, i) => p.map((v, axis) => round((v + points[(i + 1) % points.length][axis]) / 2))) };
 }
 let replay = null;
 globalThis.GammaInk = { ...ink, geometry, replayInk,

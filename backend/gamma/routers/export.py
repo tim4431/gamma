@@ -736,23 +736,34 @@ def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, autho
     blocks = [block_to_dict(r) for r in rows]
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
-    if not doc_id:
+    notebook = root["properties"].get("notebook")
+    ink_groups = _collect_ink(blocks, ws_uploads_dir(ws)) if highlights else []
+    if notebook:
+        from ..notebooks import paper_pdf, project_ink, sheets_for
+        try:
+            sheets = sheets_for(blocks, block_id)
+            pdf_bytes = paper_pdf(sheets)
+            ink_groups = project_ink(ink_groups, sheets)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid notebook: {e}")
+    elif not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
-    try:
-        pdf_path = pdf_upload_path(ws, doc_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid document id")
-    if not pdf_path.is_file():
-        raise HTTPException(status_code=404, detail="PDF not stored on the server")
+    else:
+        try:
+            pdf_path = pdf_upload_path(ws, doc_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid document id")
+        if not pdf_path.is_file():
+            raise HTTPException(status_code=404, detail="PDF not stored on the server")
+        pdf_bytes = pdf_path.read_bytes()
 
     marks = _collect_marks(blocks)
 
     written = 0
-    pdf_bytes = pdf_path.read_bytes()
     if highlights:
         try:
             pdf_bytes, written = annotate_pdf(pdf_bytes, marks, author=author,
-                                              ink=_collect_ink(blocks, ws_uploads_dir(ws)))
+                                              ink=ink_groups)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 

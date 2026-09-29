@@ -37,5 +37,6 @@ def _store_ink(request: Request, body: bytes) -> dict:
         "strokes": len(ink.strokes),
         "bbox": bounding_box(ink),
         "pdf_position": pdf_position(ink),
+        "sheet_id": ink.space.sheet_id,
         "already_existed": already_existed,
     }

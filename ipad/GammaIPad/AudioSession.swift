@@ -40,7 +40,7 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
         stopPlayback()
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try AVAudioSession.sharedInstance().setActive(true)
-        segmentID = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        segmentID = gammaID()
         let url = directory.appendingPathComponent(segmentID + ".m4a")
         let next = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
@@ -51,7 +51,7 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
         rollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, (self.recorder?.currentTime ?? 0) >= 300, self.canRollSegment?() != false else { return }
-                self.roll = true; self.pause()
+                self.pause(rolling: true)
             }
         }
         onChange?()
@@ -82,7 +82,8 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
         try JSONSerialization.data(withJSONObject: events, options: [.sortedKeys]).write(
             to: directory.appendingPathComponent(segmentID + ".json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
-    func pause() {
+    func pause(rolling: Bool = false) {
+        roll = rolling
         rollTimer?.invalidate(); rollTimer = nil
         guard let recorder else { return }
         isFinalizing = true
@@ -109,13 +110,13 @@ final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate,
         var failure: Error?
         for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where url.pathExtension == "m4a" {
             do {
-            let id = url.deletingPathExtension().lastPathComponent
-            let duration = try AVAudioPlayer(contentsOf: url).duration
-            let metadata = directory.appendingPathComponent(id + ".json")
-            let data = try? Data(contentsOf: metadata)
-            let recovered = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
-            try await onSegment?(id, url, Int(duration * 1000), recovered)
-            try FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: metadata)
+                let id = url.deletingPathExtension().lastPathComponent
+                let duration = try AVAudioPlayer(contentsOf: url).duration
+                let metadata = directory.appendingPathComponent(id + ".json")
+                let data = try? Data(contentsOf: metadata)
+                let recovered = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+                try await onSegment?(id, url, Int(duration * 1000), recovered)
+                try FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: metadata)
             } catch { failure = error }
         }
         if let failure { throw failure }

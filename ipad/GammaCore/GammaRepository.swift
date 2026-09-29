@@ -60,7 +60,6 @@ public actor GammaRepository {
     public func deletePage(id: String) throws {
         try db.transaction {
             try db.run("DELETE FROM blocks WHERE page_id=?", [id])
-            try db.run("INSERT OR REPLACE INTO deleted_pages(page_id,at) VALUES (?,?)", [id, GammaJSON.now()])
             try journal(id, source: "local", ops: [.init(op: "delete", id: id)])
         }
     }
@@ -75,6 +74,36 @@ public actor GammaRepository {
         let url = assets.appendingPathComponent(try GammaAssets.filename(reference))
         guard FileManager.default.fileExists(atPath: url.path) else { throw GammaError.missing("This attachment has not finished downloading.") }
         return url
+    }
+    /// Remove at most 200 unreferenced assets older than seven days while idle.
+    /// The grace period protects freshly stored files awaiting their block write.
+    @discardableResult public func maintainAssets() throws -> Int {
+        guard !syncing else { throw GammaError.busy }
+        return try collectUnusedAssets()
+    }
+    func collectUnusedAssets() throws -> Int {
+        var retained = GammaAssets.references(roundLeft)
+        let rows = try db.rows("SELECT value FROM blocks UNION ALL SELECT value FROM sync_pages UNION ALL SELECT value FROM conflicts UNION ALL SELECT value FROM journal WHERE source='local' AND seq>?", [String(try localCursor())])
+        // An unreadable retention record aborts collection before any file is removed.
+        for row in rows { retained.formUnion(GammaAssets.references(in: try GammaJSON.decode(JSONValue.self, row[0]))) }
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        let files = try FileManager.default.contentsOfDirectory(at: assets, includingPropertiesForKeys: Array(keys))
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        var removed = 0
+        for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard removed < 200 else { break }
+            let name = file.lastPathComponent
+            guard (try? GammaAssets.filename(name)) != nil, !retained.contains(name) else { continue }
+            let values = try file.resourceValues(forKeys: keys)
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                  let modified = values.contentModificationDate, modified < cutoff else { continue }
+            try FileManager.default.removeItem(at: file)
+            removed += 1
+        }
+        // A busy writer can create more than 200 revisions a day. Continue a full
+        // pass next successful round, then resume the daily cadence once drained.
+        try db.set("asset_maintenance_at", removed < 200 ? Date().timeIntervalSince1970 : 0)
+        return removed
     }
     public func importPDF(data: Data, title: String) throws -> GammaDocument {
         let reference = try storeAsset(data: data, extension: "pdf")
@@ -202,7 +231,6 @@ public actor GammaRepository {
         }
         try db.run("DELETE FROM blocks WHERE page_id=?", [pageID])
         for block in tree.values { try db.run("INSERT INTO blocks(id,page_id,value) VALUES (?,?,?)", [block.id, pageID, try GammaJSON.string(block)]) }
-        if tree[pageID] != nil { try db.run("DELETE FROM deleted_pages WHERE page_id=?", [pageID]) }
         try journal(pageID, source: source, ops: ops)
     }
     func checkpoint(_ pageID: String) throws -> PageCheckpoint? {

@@ -242,7 +242,6 @@ public enum GammaReconciler {
             }
             let oldProps = was?.properties ?? [:]
             let inkClash = here.properties["ink_url"] != oldProps["ink_url"] && there.properties["ink_url"] != oldProps["ink_url"] && here.properties["ink_url"] != there.properties["ink_url"]
-            let inkKeys: Set<String> = ["ink_url", "ink_strokes", "pdf_position", "pdf_page", "sheet_id"]
             if inkClash, here.properties["ink_url"]?.string != nil {
                 var variant = here
                 // Stable derived id makes replay of a pull interrupted before bookkeeping idempotent.
@@ -253,7 +252,7 @@ public enum GammaReconciler {
                 conflicts.append(.init(pageID: pageID, blockID: variant.id, kind: "ink", base: oldProps["ink_url"]?.string ?? "", mine: here.properties["ink_url"]?.string ?? "", theirs: there.properties["ink_url"]?.string ?? ""))
             }
             for key in Set(oldProps.keys).union(here.properties.keys) where here.properties[key] != oldProps[key] {
-                if inkClash && inkKeys.contains(key) { continue }
+                if inkClash && GammaTree.inkKeys.contains(key) { continue }
                 if was == nil || there.properties[key] == oldProps[key] || there.properties[key] == here.properties[key] {
                     merged.properties[key] = here.properties[key]
                 }
