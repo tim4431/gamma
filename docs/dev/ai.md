@@ -677,7 +677,7 @@ What it can reach depends on where the chat is opened — every chat declares an
   editors; the page-level organizers (list/rename/move) don't exist there.
 
 The request also carries `permissions` (the tool map of the chat's KIND —
-see below; missing key = allowed, so new tools default on) and
+see below; reads default to `allow`, changes and publisher sign-ins to `ask`) and
 optional `agent_system` (custom base
 prompt; the Prompts pane's "Library agent" entry, default
 `ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
@@ -713,15 +713,20 @@ Which tools a chat may use is configured per chat KIND — there are three
 Settings → Chat → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
 with a column for each chat kind. Unavailable tools show a dash. On narrow
-panes, each tool's labeled switches sit below its description. Each column
-offers **Read library** (library reading only), **Read & search** (reading,
-web search and fetching), and **All tools** (also editing) presets; individual
+panes, each tool's labeled permission pickers sit below its description. Each
+permission has **Always allow**, **Ask**, and **Deny**. Each column offers
+**Ask before changes** (the default: reads allowed, changes and journal sign-ins
+ask), **Read only** (changes denied), **Always allow**, and **Read library**
+(library reads allowed, web access and changes denied) presets; individual
 changes show **Custom**. The stored map is account-synced, with localStorage JSON
 `gamma-ai-agent-perms` = `{folder, pdf, notes}` → `{list, read, block_read,
 view, search, web_search, web_read, publisher_cookies, rename, move, block_edit}` (a pre-kind flat map is applied to every
-kind on read). The chat header's ⚙ popover carries the same picker for the
+kind on read). Values are `"allow"`, `"ask"`, or `"deny"`; legacy `true` maps
+to allow and `false` to deny, preserving explicit choices. A missing permission
+uses its default; malformed values and unknown keys deny. The chat header's
+⚙ popover carries the same picker for the
 kind of the chat it is opened in (`AgentToolPicker` in `settings/AssistantTools.jsx`,
-grouped checkbox rows and the same presets, bound to the same map), so a change
+grouped permission rows and the same presets, bound to the same map), so a change
 in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
@@ -734,15 +739,17 @@ scan or a figure), Search library (`search_library` — notes and PDF text; the 
 still `search`), Search papers online (`web_search` → `search_papers`), Fetch
 documents (`web_read` → `fetch_paper`; both web tools are read-only and
 described in [ai_tools.md](ai_tools.md)), Rename pages, Move pages, and Edit
-note blocks (one switch arming `edit_block`/`create_block`/`move_block`
-together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
-includes the two web tools and the page viewer. **Use journal sign-ins**
-(`publisher_cookies`, default on) controls whether `fetch_paper` may use the
+note blocks (one permission covering `edit_block`/`create_block`/`move_block`
+together). Reading capabilities include the web tools and page viewer
+(`chat/chatSettings.js` `READ_TOOLS`). **Use journal sign-ins**
+(`publisher_cookies`, default ask) controls whether `fetch_paper` may use the
 caller's connected publisher cookies; the browser handoff for a blocked fetch
-needs no switch of its own. The backend excludes that identity when
-the permission is false, including from the authenticated text cache. This
-switch requires **Fetch documents**; disabling fetching preserves its stored
-choice. Turning cookie use off does not disconnect publishers or affect
+needs no permission of its own. A connected sign-in prompts separately from
+permission to fetch. Denial, expiry, or a non-stream request without approval
+keeps the fetch anonymous, including its text-cache partition. No sign-in
+prompt appears without a connected publisher session. This permission
+requires **Fetch documents**; denying fetching preserves its stored
+choice. Denying cookie use does not disconnect publishers or affect
 interactive PDF saves. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
@@ -752,6 +759,50 @@ interactive PDF saves. Plus:
   cap on the notes it shows; long papers are read in windows of this size.
 
 Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
+
+### Approving a proposed action
+
+`gamma/ai_permissions.py` owns the shared policy and the live request's
+`AccessRun`. `agent_tools` offers both allow and ask tools; deny tools are
+absent. At dispatch, `run_agent_tool` checks the policy again independently
+of the offered names. An ask tool needs a grant bound to the authenticated
+account, workspace, canonical tool name and exact JSON arguments. Existing
+workspace roles, page/folder bounds and read-only attachments still apply
+after approval. This changes authorization of existing tools; it adds no
+new editing or highlight-creation capabilities.
+
+For a streamed chat, the model finishes its proposed arguments before the
+server emits `{"approval": {id, tool, permission, args, summary, target,
+expires_at}}`. `args` is an immutable snapshot; `target` names the scoped page
+and title, block/parent, folder or document source as appropriate. Selection
+edits resolve the actual selected block. `expires_at` is a Unix timestamp in
+seconds, five minutes after creation. No tool executes while the request
+waits, and no note-edit preview appears before authorization.
+
+The inline `chat/ChatApproval.jsx` card shows the proposed action, target,
+content and expandable arguments, with **Allow once**, **Always allow**, and
+**Deny**. It posts `{"decision": "allow_once" | "allow_always" | "deny"}` to
+`POST /api/ai/approvals/{id}`; that endpoint requires the originating account's
+session and workspace and answers `{permission, decision}`. Integration
+tokens cannot answer approvals. A decision is atomic and cannot be replayed.
+The stream acknowledges `{"approval_resolved": {id, decision}}`; timeout
+uses `decision: "expired"`. A one-time grant is consumed at dispatch for
+exactly the reviewed call. Always allows that capability for the rest of
+this run, and the client persists it to the original chat kind's preference
+when the resolution arrives. It does not authorize other capabilities.
+
+Cards remain in the reply's `approvals` history with the originating `kind`,
+arguments, target and decision. `chatSession` keeps its locally owned
+`replyId` only in the live snapshot: a later partial reply merged from another
+tab cannot take ownership of the buttons or remember an approval for a
+different kind. Reopening a saved conversation never revives pending buttons.
+
+Pending requests are in memory and belong to one server process and one
+live stream. Stop, client disconnect (including ASGI 2.4), stream failure and
+timeout release pending requests without a grant; keepalive pings continue
+while the user decides. There are at most 20 pending requests per account.
+Non-stream calls never wait and fail closed on an ask capability. A denied
+action returns a visible error to the model with an instruction not to retry.
 
 ### The tool loop
 
@@ -833,7 +884,8 @@ notes panel shows where the agent is, not just what it did.
   `prepend` edit keeps the stored text and types the addition at its end /
   start. For a create, a ghost row appears under the named parent after the
   named sibling. When the action lands, the reload swaps in the real block.
-  Only armed edit/create tools are previewed; other tools' arguments are
+  Only armed edit/create tools already allowed for this run are previewed;
+  calls awaiting approval never paint a proposed edit into the notes. Other tools' arguments are
   never streamed. Non-stream callers never see progress lines.
 
 Everything is display-only: marks and previews live in App state

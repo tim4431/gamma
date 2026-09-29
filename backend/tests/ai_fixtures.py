@@ -23,7 +23,9 @@ TURNS = [
 
 
 def folder(path):
-    return {"type": "folder", "folder": path}
+    # Executor tests opt in to changes; permission tests use raw scopes.
+    return {"type": "folder", "folder": path,
+            "permissions": {"rename": "allow", "move": "allow", "block_edit": "allow"}}
 
 
 @pytest.fixture(scope="module")

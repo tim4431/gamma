@@ -60,7 +60,7 @@ def ai_fetch(accounts, monkeypatch):
     def fetch(caller, *, stream=True, permissions=None, **kwargs):
         response = caller.post("/api/ai/chat", json={
             "prompt": "Read the cited paper", "agent_scope": "folder", "stream": stream,
-            "permissions": permissions or {}}, **kwargs)
+            "permissions": {"publisher_cookies": "allow", **(permissions or {})}}, **kwargs)
         assert response.status_code == 200, response.text
         assert SECRET not in response.text
         actions = ([line["action"] for line in map(json.loads, response.text.splitlines())

@@ -8,6 +8,7 @@ duplicate.
 
 | Note | Question it answers |
 |---|---|
+| [ai-permissions.md](ai-permissions.md) | How Claude Code and Codex approval scopes inform Gamma's tool permissions and inline action review. |
 | [paper-fetching.md](paper-fetching.md) | What real paper questions revealed about search, reference following, publisher downloads, open-access provenance and human help after blocked access; the browser handoff that followed, and the authenticated-fetch checks that remain. |
 | [demo-production.md](demo-production.md) | How scripted demos and screen-recording editors achieve smooth motion, readable framing and repeatable exports; animated WebP delivery measured on Gamma's refreshed demos. |
 | [handwriting-interactions.md](handwriting-interactions.md) | How Goodnotes and Notability select, edit, transform and reuse ink; finger taps versus holds; contextual menus; the broader writing/study feature inventory; Gamma gaps and acceptance criteria. |

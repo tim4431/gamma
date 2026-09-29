@@ -38,7 +38,11 @@ before dispatching a mutation, so attachments do not grant editing access.
 
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
-enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
+enforces both the caller's allowlist and its permission policy at dispatch.
+Reads default to allow; editing and journal sign-ins default to ask. Ask tools
+remain offered but require an exact-call grant before execution; denied tools
+are never offered. A direct dispatcher call without a grant also fails closed
+on ask. See [approvals](ai.md#approving-a-proposed-action). Gamma chat passes its armed tool
 set; MCP passes its fixed allowlist of the seven read tools below that stay
 inside the library (everything but the web and write tools) and a
 non-writable workspace scope.
@@ -315,7 +319,8 @@ the permitted alternatives when an access restriction remains.
 Resolution, downloading and the page fallback run in one
 `net_guard.browsing_session`: one cookie jar, so what a landing page sets (a
 session id, an institutional-access handshake) reaches the PDF request, as in
-a browser tab. When **Use journal sign-ins** is on, connected publisher
+a browser tab. When **Use journal sign-ins** is allowed (persistently or for
+this reviewed fetch), connected publisher
 sessions are used for the authenticated caller's account, restricted to each
 connected HTTPS host; guest and share
 requests use none. The tool binds that identity in its worker from the chat
@@ -606,8 +611,12 @@ Deliberately not offered under any permission:
 - Adding a fetched paper to the library — `fetch_paper` reads, it never
   creates a page; the user drops the PDF or uses the extension for that.
 
-Disarmed tools are not offered to the model, and the server additionally
-refuses to execute them if called. Output/argument sizes are capped
+Denied tools are not offered to the model, and the server additionally
+refuses to execute them if called. Approvals do not widen scope or workspace
+roles, and note previews require an already allowed editing capability.
+The permission system adds no new tool capabilities: note text on a highlight
+can be edited, but creating or changing its PDF anchor is still unavailable.
+Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —

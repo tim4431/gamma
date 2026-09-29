@@ -3235,20 +3235,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
-/* One tool-permission checkbox row (layout only — shared look via popover) */
+/* One tool-permission menu row (layout only — shared controls). */
 .chatToolPermRow {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 6px;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
   font-size: var(--fs-xs);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  user-select: none;
+  min-width: 0;
 }
-.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-fill) 8%, transparent); }
-.chatToolPermRow input { margin: 0; }
-.chatToolPermRow svg { flex: none; opacity: 0.75; }
+.chatToolPermRow > svg { flex: none; color: var(--text-muted); }
+.chatToolPermLabel { flex: 1; min-width: 0; }
 .chatMessages {
   flex: 1;
   overflow-y: auto;
@@ -3365,6 +3362,33 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatErrorCard:first-child { margin-top: 0; }
+/* Tool approvals sit in the reply so the proposed action and decision stay
+   together when the user returns to this conversation. */
+.chatApproval {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.chatApproval[data-approval-state="pending"] { border-color: var(--accent); }
+.chatApprovalHeading { display: flex; align-items: center; gap: var(--space-3); color: var(--text-muted); font-size: var(--fs-xs); }
+.chatApprovalHeading svg { flex: none; }
+.chatApproval[data-approval-state="pending"] .chatApprovalHeading { color: var(--accent); }
+.chatApprovalAction { margin-top: var(--space-3); font-weight: 600; }
+.chatApprovalTarget { margin-top: var(--space-2); color: var(--text-secondary); }
+.chatApprovalPreview { margin-top: var(--space-4); padding: var(--space-4); border-radius: var(--radius-sm); background: var(--bg-input); }
+.chatApprovalCaption { color: var(--text-muted); font-size: var(--fs-xs); }
+.chatApproval pre { margin: var(--space-2) 0 0; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.chatApprovalDetails { margin-top: var(--space-4); font-size: var(--fs-xs); }
+.chatApprovalDetails summary { cursor: pointer; color: var(--text-muted); }
+.chatApprovalDetails pre { font-family: var(--font-mono); }
+.chatApprovalHint { margin: var(--space-4) 0 0; color: var(--text-muted); font-size: var(--fs-xs); }
+.chatApprovalError { color: var(--danger); font-size: var(--fs-xs); }
+.chatApprovalActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-5); }
 .chatErrorCard.compact { padding: 7px 10px; }
 .chatErrorHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; color: var(--danger); }
 .chatErrorHead svg { flex: none; margin-top: 0.15em; }

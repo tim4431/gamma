@@ -47,6 +47,7 @@ from fractional_indexing import generate_key_between
 
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          page_report_section, pdf_path, render_area_crops)
+from .ai_permissions import AccessRun, permission_state
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import connect_data_db, connect_pages_db, page_now
 from .ops import after_commit, apply_ops, note_reload, record_ops
@@ -1667,7 +1668,8 @@ MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
 def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
                 *, allowed_tools=None, can_write: bool = True) -> list:
     """The armed tool specs for a chat scope and the user's per-tool permission
-    map (missing key = allowed, so new tools default on). [] = plain chat.
+    map (reads default allow, edits ask). Ask tools stay offered so the model
+    can propose a concrete call; deny tools are never offered. [] = plain chat.
     read_chars is the request's read-window preference — the specs that name
     the cap are formatted with the effective value so the model knows what it
     may ask for (the registry's stored specs are never mutated)."""
@@ -1675,7 +1677,7 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
     cap = _read_cap(read_chars)
     specs = []
     for t in TOOLS:
-        if scope_type not in t["scopes"] or not perms.get(t["perm"], True):
+        if scope_type not in t["scopes"] or permission_state(perms, t["perm"]) == "deny":
             continue
         if allowed_tools is not None and t["spec"]["name"] not in allowed_tools:
             continue
@@ -1687,6 +1689,65 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
                 read_cap=cap, read_default=min(READ_CHARS_DEFAULT, cap))}
         specs.append(spec)
     return specs
+
+
+def tool_permission(name: str) -> str:
+    tool = _BY_NAME.get(canonical_tool(name))
+    return tool["perm"] if tool else ""
+
+
+def tool_permission_state(scope: dict, name: str) -> str:
+    permission = tool_permission(name)
+    access = scope.get("access")
+    return (access.state(permission) if isinstance(access, AccessRun)
+            else permission_state(scope.get("permissions"), permission))
+
+
+def tool_approval_metadata(ws: str, scope: dict, name: str, args: dict) -> dict | None:
+    """Describe only targets this call can reach. None means do not ask;
+    dispatch will return the normal scope error without executing the call."""
+    tool = _BY_NAME.get(canonical_tool(name))
+    if not tool or scope.get("type") not in tool["scopes"]:
+        return None
+    if tool["mutating"] and not scope.get("can_write", True):
+        return None
+    if canonical_tool(name) == "edit_block" and str(args.get("mode") or "").strip().lower() == "selection":
+        selected = find_selection(scope, args.get("selection"))
+        if not selected or args.get("block_id") not in (None, "", selected["block_id"]):
+            return None
+        args = {**args, "block_id": selected["block_id"]}
+    checked_scope = {**scope, "context_pages": []} if tool["mutating"] else scope
+    target = {}
+    with connect_pages_db(ws) as conn:
+        if args.get("page_id"):
+            page, error = _load_scoped_page(conn, checked_scope, args)
+            if error:
+                return None
+            target.update(page_id=page[0], title=page[1])
+        for key in ("block_id", "parent_id", "after_id"):
+            if not args.get(key):
+                continue
+            block, error = _load_scoped_block(conn, checked_scope, args[key])
+            if error:
+                return None
+            target.setdefault("page_id", block[1])
+            target.setdefault("title", block[2])
+            target[key] = args[key]
+    if "folder" in args or scope.get("type") == "folder":
+        target["folder"] = _in_scope_folder(scope, args.get("folder"))
+    if args.get("source"):
+        target["source"] = str(args["source"])[:1000]
+    title = target.get("title")
+    verbs = {"rename_page": "Rename page", "move_page": "Move page",
+             "edit_block": "Edit note", "create_block": "Add note", "move_block": "Move note",
+             "read_page": "Read page", "read_block": "Read notes", "read_chats": "Read chat",
+             "view_pdf_page": "View PDF page", "list_pages": "List pages", "list_folders": "List folders",
+             "search_library": "Search library", "search_papers": "Search papers online",
+             "search_web": "Search the web", "fetch_paper": "Fetch document"}
+    summary = verbs.get(name, name.replace("_", " "))
+    if title:
+        summary += f' in “{title[:200]}”' if "note" in summary.lower() else f' “{title[:200]}”'
+    return {"summary": summary, "target": target}
 
 
 def coverage_lines(coverage: list, can_read: bool) -> str:
@@ -1754,6 +1815,13 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                  + ". A request to change/rewrite/expand them means those ids.\n")
     text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
+    asking = [name for name in names if permission_state(perms, tool_permission(name)) == "ask"]
+    if asking:
+        text += ("\nThese tools require the user's approval before running: " + ", ".join(asking)
+                 + ". Call the tool with the exact proposed arguments; Gamma will ask the user "
+                 "and wait before executing it. Do not claim a change succeeded before its tool "
+                 "result confirms it. If permission is denied, explain briefly and do not retry "
+                 "or use another tool to perform the same change.")
     if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
         # The chat renders /?page=<id> links as open-in-place; the ids come
         # from the tool results (list_pages, search hits, read_* headers).
@@ -1885,10 +1953,24 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     if tool["mutating"] and not scope.get("can_write", True):
         result = "error: you can only view this workspace — no changes are possible"
         return result, tool_action("error", result[:200], name, args, result, error=True)
-    permitted = {s["name"] for s in agent_tools(scope.get("type") or "", allowed_tools=allowed_tools)}
+    permitted = {s["name"] for s in agent_tools(scope.get("type") or "", scope.get("permissions"),
+                                               allowed_tools=allowed_tools)}
     if name not in permitted:
         result = "error: tool not enabled — the user's permission settings do not allow it"
         return result, tool_action("error", f"{name} — blocked by permissions", name, args, result, error=True)
+    access = scope.get("access")
+    authorized = (access.authorize(ws, scope.get("actor"), name, args, tool["perm"])
+                  if isinstance(access, AccessRun)
+                  else permission_state(scope.get("permissions"), tool["perm"]) == "allow")
+    if not authorized:
+        result = "error: permission required or denied — no action was taken; do not retry this action"
+        return result, tool_action("error", f"{name} — permission not granted", name, args, result, error=True)
+    if name == "fetch_paper" and scope.get("publisher_user"):
+        cookies_allowed = (access.authorize(ws, scope.get("actor"), name, args, "publisher_cookies")
+                           if isinstance(access, AccessRun)
+                           else permission_state(scope.get("permissions"), "publisher_cookies") == "allow")
+        if not cookies_allowed:
+            scope = {**scope, "publisher_user": None}
     # Attaching a reference expands read access, never the editing scope.
     if tool["mutating"]:
         scope = {**scope, "context_pages": []}

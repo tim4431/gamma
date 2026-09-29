@@ -9,15 +9,17 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import anyio
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
+from .. import ai_catalog, ai_permissions, ai_protocols, ai_usage, chatgpt_oauth, publisher_sessions, translate_engines
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -46,7 +48,10 @@ from ..ai_tools import (
     agent_tools,
     find_selection,
     run_agent_tool,
+    tool_approval_metadata,
     tool_action,
+    tool_permission,
+    tool_permission_state,
 )
 from ..ai_context import (
     build_messages as _build_messages,
@@ -163,7 +168,8 @@ class AIChatRequest(BaseModel):
     # still names the context page). Every tool call comes back as an
     # {"action": …} NDJSON line alongside the text deltas.
     # `permissions` is the Settings → Assistant per-tool map ({list, read,
-    # search, rename, move}; missing key = allowed) — everything off degrades
+    # search, rename, move}: allow/ask/deny, also accepting legacy booleans.
+    # Missing reads allow; edits ask. Everything denied degrades
     # to a plain chat. agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
@@ -767,7 +773,7 @@ def ai_health(payload: AIHealthRequest, request: Request):
 KEEPALIVE_INTERVAL = 15.0
 
 
-def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL):
+def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, *, on_close=None):
     """Relay the NDJSON line generator ``lines`` from a worker thread and put a
     ``{"ping": 1}`` line in every gap longer than ``interval`` seconds, so an
     idle proxy or browser keeps the response open while the provider is still
@@ -818,6 +824,8 @@ def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL):
             yield item
     finally:
         abandoned.set()
+        if on_close is not None:
+            on_close()
         if not finished:
             log.warning(f"[{what}] client closed the stream after "
                         f"{time.monotonic() - started:.0f}s (stop button, or the "
@@ -1388,11 +1396,13 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             # What edit_block mode "selection" rewrites (labels S1, S2…).
             "note_selections": request_note_selections(payload),
             "actor": user, "can_write": can_write(request),
+            "permissions": dict(payload.permissions),
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             "publisher_user": (user if not request.state.is_guest
                                and not request.query_params.get("share")
-                               and payload.permissions.get("publisher_cookies", True) is not False else None),
+                               and ai_permissions.permission_state(payload.permissions, "publisher_cookies") != "deny"
+                               and publisher_sessions.list_sessions(user) else None),
             # The account a blocked fetch_paper hands to the user's browser
             # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
             "handoff_user": (user if not request.state.is_guest
@@ -1445,6 +1455,48 @@ class AIChatContextRequest(AIChatRequest):
     title: str = ""  # the conversation's name, the export's heading
 
 
+class AIApprovalDecision(BaseModel):
+    decision: Literal["allow_once", "allow_always", "deny"]
+
+
+@router.post("/ai/approvals/{approval_id}")
+def ai_approval(approval_id: str, payload: AIApprovalDecision, request: Request):
+    user = require_user(request)
+    ws = require_ws(request)
+    return ai_permissions.resolve(approval_id, user, ws, payload.decision, can_write=can_write(request))
+
+
+class _ApprovalStream(StreamingResponse):
+    """Cancel pending decisions as soon as ASGI reports a disconnected client.
+
+    A sync stream may still be blocked in its worker. Closing just that
+    generator is too late: it must wake before any tool can execute.
+    """
+
+    def __init__(self, content, access):
+        super().__init__(content, media_type="application/x-ndjson")
+        self.access = access
+
+    async def __call__(self, scope, receive, send):
+        # Always listen for disconnects, including ASGI 2.4 servers where
+        # StreamingResponse normally detects them only on the next send.
+        # Waiting for a ping would leave an approval executable meanwhile.
+        async with anyio.create_task_group() as group:
+            async def disconnected():
+                await self.listen_for_disconnect(receive)
+                self.access.close()
+                group.cancel_scope.cancel()
+
+            group.start_soon(disconnected)
+            try:
+                await self.stream_response(send)
+            finally:
+                self.access.close()
+                group.cancel_scope.cancel()
+        if self.background is not None:
+            await self.background()
+
+
 @router.post("/ai/chat/context")
 def ai_chat_context(payload: AIChatContextRequest, request: Request):
     """What /ai/chat would send the model for this request, as a Markdown
@@ -1481,6 +1533,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
     effort = _resolve_effort(payload.effort)
     images = _parse_images(payload.images)
     scope = _chat_scope(request, user, payload)
+    access = ai_permissions.AccessRun(user, ws, payload.permissions)
+    scope["access"] = access
     tools = _chat_tools(payload, scope["can_write"])
     # Which model answers, at what effort, with tools or not — the reply's
     # footer names them, and the coverage chip's advice depends on the tools.
@@ -1570,6 +1624,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
         actions = 0
         max_rounds = payload.tool_rounds or MAX_TOOL_ROUNDS
         for round_no in range(max_rounds):
+            if access.cancelled.is_set():
+                resp.close()
+                return
             calls, text_parts = [], []
             last_preview = {}  # call id -> content previewed so far (dedup)
             stop = ""
@@ -1582,7 +1639,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         stop = data
                     elif kind == "tool_delta":
                         name = _canonical_tool(data.get("name") or "")
-                        if name not in _PREVIEW_TOOLS or name not in armed:
+                        if (name not in _PREVIEW_TOOLS or name not in armed
+                                or tool_permission_state(scope, name) != "allow"):
                             continue
                         args = _partial_json_object(data.get("json") or "")
                         target = args.get("block_id" if name == "edit_block" else "parent_id")
@@ -1637,9 +1695,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
             messages.append({"role": "assistant", "content": "".join(text_parts),
                              "tool_calls": calls})
             for call in calls:
+                if access.cancelled.is_set():
+                    return
                 # A model copying a renamed tool out of replayed history still
                 # names the current one here (ai_context.DEPRECATED_TOOLS).
                 name = _canonical_tool(call["name"])
+                # Snapshot once: the displayed proposal and executed call must
+                # have identical arguments, even across a long approval wait.
+                args = json.loads(json.dumps(call["arguments"]))
                 # The step about to run, so the chat can say what the agent
                 # is doing now ("Searching library for …") instead of
                 # "Thinking"; its action follows once it finished.
@@ -1650,7 +1713,29 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     action = tool_action("error", f'{name} — change limit reached',
                                          name, call["arguments"], result, error=True)
                 else:
-                    result, action = run_agent_tool(ws, scope, name, call["arguments"], allowed_tools=armed)
+                    permission = tool_permission(name)
+                    if payload.stream and name in armed and access.state(permission) != "deny":
+                        permissions = [permission]
+                        if name == "fetch_paper" and scope.get("publisher_user"):
+                            permissions.append("publisher_cookies")
+                        asking = [required for required in permissions if access.state(required) == "ask"]
+                        metadata = tool_approval_metadata(ws, scope, name, args) if asking else None
+                        if metadata is not None:
+                            for required in asking:
+                                proposal = metadata
+                                if required == "publisher_cookies":
+                                    proposal = {**metadata, "summary": "Use journal sign-ins to fetch this document"}
+                                approval = access.request(name, args, required, proposal)
+                                yield ("approval", approval.event())
+                                decision = access.wait(approval)
+                                if access.cancelled.is_set():
+                                    return
+                                yield ("approval_resolved", {"id": approval.id, "decision": decision})
+                                if decision not in ("allow_once", "allow_always") and required == permission:
+                                    break
+                    if access.cancelled.is_set():
+                        return
+                    result, action = run_agent_tool(ws, scope, name, args, allowed_tools=armed)
                 # Reads and failures render as chips too, but only applied
                 # mutations count against the change budget.
                 if name in MUTATING_TOOLS and not action.get("error"):
@@ -1705,9 +1790,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
                         yield json.dumps({"error": _failure(e), **_failure_info(e, rt, entry)}) + "\n"
+                    finally:
+                        access.close()
+                        resp.close()
 
-                return StreamingResponse(keepalive_lines(agent_ndjson(), "ai_chat"),
-                                         media_type="application/x-ndjson")
+                return _ApprovalStream(keepalive_lines(agent_ndjson(), "ai_chat", on_close=access.close), access)
 
             def ndjson():
                 usage = []
@@ -1747,6 +1834,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 elif kind == "truncated":
                     truncated = True
                 # "progress" previews only matter to a live UI
+            access.close()
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
                     **({"usage": usage} if usage else {}),

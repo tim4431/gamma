@@ -4,10 +4,16 @@ edit preview and the cursor / attached-block focus section."""
 
 import json
 import re
+import pytest
 
 from gamma.ai_tools import agent_system, run_agent_tool
 
 from ai_fixtures import FakeResp, children, folder, notes, org, props  # noqa: F401  (fixtures)
+
+
+@pytest.fixture(autouse=True)
+def _offline_model_facts(monkeypatch):
+    monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
 
 
 def test_read_block_outline_with_ids(notes):
@@ -150,6 +156,7 @@ def test_chat_agent_streams_edit_preview(notes, monkeypatch):
     r = c.post("/api/ai/chat", json={
         "prompt": "rewrite the first idea", "agent_scope": "page",
         "page_id": ids["page"], "stream": True,
+        "permissions": {"block_edit": "allow"},
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -171,7 +178,8 @@ def test_chat_agent_streams_edit_preview(notes, monkeypatch):
     # Non-stream callers get text + actions (and which model answered) only.
     opened.clear()
     r = c.post("/api/ai/chat", json={
-        "prompt": "again", "agent_scope": "page", "page_id": ids["page"]})
+        "prompt": "again", "agent_scope": "page", "page_id": ids["page"],
+        "permissions": {"block_edit": "allow"}})
     assert r.status_code == 200, r.text
     assert set(r.json()) == {"response", "actions", "context", "model"}
     assert [a["tool"] for a in r.json()["actions"]] == ["read_block", "edit_block"]

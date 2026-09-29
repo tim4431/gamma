@@ -1,29 +1,78 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
+import { normalizePermissions, permissionFor, permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
 import { resolveSettingsPane, searchSettings } from "../src/settings/settingsNavigation.js";
 
 test("permission presets preserve explicit restrictions and the applicable tools for each chat kind", () => {
   for (const kind of ["folder", "pdf", "notes"]) {
     const read = presetPermissions(kind, "read");
     assert.equal(permissionPreset(kind, read), "read");
-    assert.equal(read.block_edit, false);
-    assert.equal(read.read, true);
-    assert.equal(read.publisher_cookies, true);
+    assert.equal(read.block_edit, "deny");
+    assert.equal(read.read, "allow");
+    assert.equal(read.publisher_cookies, "ask");
     assert.equal(permissionPreset(kind, { ...read, publisher_cookies: false }), "custom");
     const library = presetPermissions(kind, "library");
     assert.equal(permissionPreset(kind, library), "library");
-    assert.equal(library.read, true);
+    assert.equal(library.read, "allow");
     for (const key of ["web_search", "web_read", "publisher_cookies", "block_edit"]) {
-      assert.equal(library[key], false, `read-library disables ${key}`);
+      assert.equal(library[key], "deny", `read-library disables ${key}`);
     }
     assert.deepEqual(Object.keys(read), toolsForKind(kind));
     assert.equal(permissionPreset(kind, { ...read, read: false }), "custom");
     assert.equal(permissionPreset(kind, presetPermissions(kind, "edit")), "edit");
-    assert.equal(permissionPreset(kind, {}), "edit", "legacy omitted permissions remain allowed");
+    assert.equal(permissionPreset(kind, presetPermissions(kind, "ask")), "ask");
+    assert.equal(permissionPreset(kind, {}), "ask", "missing preferences use the recommended defaults");
+    const ask = presetPermissions(kind, "ask");
+    assert.equal(ask.block_edit, "ask");
+    assert.equal(ask.publisher_cookies, "ask");
+    assert.equal(ask.read, "allow");
+    assert.equal(ask.web_read, "allow");
   }
-  assert.equal(presetPermissions("folder", "read").rename, false);
+  assert.equal(presetPermissions("folder", "read").rename, "deny");
   assert.equal(presetPermissions("pdf", "edit").rename, undefined);
+});
+
+test("permission decoding preserves explicit legacy choices and fails closed on malformed values", () => {
+  for (const tool of toolsForKind("folder")) {
+    assert.equal(permissionFor(tool, true), "allow");
+    assert.equal(permissionFor(tool, false), "deny");
+    for (const state of ["allow", "ask", "deny"]) assert.equal(permissionFor(tool, { [tool]: state }), state);
+    for (const bad of [null, 0, 1, "true", "false", "invalid", [], {}]) {
+      assert.equal(permissionFor(tool, { [tool]: bad }), "deny", `${tool} rejects ${JSON.stringify(bad)}`);
+      assert.equal(normalizePermissions({ [tool]: bad })[tool], "deny");
+    }
+  }
+  assert.equal(permissionFor("read"), "allow");
+  assert.equal(permissionFor("block_edit"), "ask");
+  assert.equal(permissionFor("publisher_cookies"), "ask");
+  assert.equal(permissionFor("unknown", true), "deny");
+  assert.equal(permissionFor("toString", true), "deny");
+  assert.ok(!Object.hasOwn(normalizePermissions({ unknown: "allow" }), "unknown"));
+  for (const bad of [null, "allow", true, []]) {
+    assert.ok(Object.values(normalizePermissions(bad)).every((value) => value === "deny"));
+  }
+});
+
+test("stored permissions migrate flat and per-kind booleans without granting new access", async () => {
+  const { PREFS } = await import("../src/app/prefDefs.js");
+  const decode = (value) => PREFS.agentPerms.parse(JSON.stringify(value));
+  const flat = decode({ read: false, rename: true, publisher_cookies: false });
+  for (const kind of ["folder", "pdf", "notes"]) {
+    assert.equal(flat[kind].read, "deny");
+    assert.equal(flat[kind].rename, "allow");
+    assert.equal(flat[kind].publisher_cookies, "deny");
+    assert.equal(flat[kind].block_edit, "ask");
+  }
+  const perKind = decode({ folder: { rename: true, read: "bad", move: null }, pdf: null });
+  assert.equal(perKind.folder.rename, "allow");
+  assert.equal(perKind.folder.read, "deny");
+  assert.equal(perKind.folder.move, "deny");
+  assert.equal(perKind.folder.block_edit, "ask");
+  assert.ok(Object.values(perKind.pdf).every((value) => value === "deny"));
+  assert.equal(perKind.notes.read, "allow");
+  assert.equal(perKind.notes.block_edit, "ask");
+  for (const bad of [null, "allow", true, []]) assert.equal(decode(bad), undefined);
+  assert.deepEqual(decode(decode({})), decode({}), "normalization is stable across profile syncs");
 });
 
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
@@ -87,11 +136,11 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   for (const dropped of ["pdfDarkPage", "translateLang", "uiScale", "inkTools", "unknownPref"]) {
     assert.ok(!(dropped in read), `${dropped} dropped`);
   }
-  assert.equal(read.agentPerms.pdf.block_edit, false);
-  assert.equal(read.agentPerms.pdf.publisher_cookies, false);
-  assert.equal(read.agentPerms.folder.publisher_cookies, true, "existing accounts keep connected fetching enabled");
-  assert.equal(read.agentPerms.pdf.read, true, "missing tools stay allowed");
-  assert.equal(read.agentPerms.folder.rename, true);
+  assert.equal(read.agentPerms.pdf.block_edit, "deny");
+  assert.equal(read.agentPerms.pdf.publisher_cookies, "deny");
+  assert.equal(read.agentPerms.folder.publisher_cookies, "ask", "missing credential permission asks first");
+  assert.equal(read.agentPerms.pdf.read, "allow", "missing read permissions remain allowed");
+  assert.equal(read.agentPerms.folder.rename, "ask");
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");
