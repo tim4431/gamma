@@ -66,7 +66,7 @@ const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
-  ["translation", T("Translation"), LanguagesIcon],
+  ["translation", T("Language and Translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
@@ -994,7 +994,7 @@ export default function SettingsDialog({
                   <SearchSettings value={search} />
                 </> : null}
                 {pane === "translation" ? <>
-                  <PaneHead icon={LanguagesIcon} title={t("Translation")} />
+                  <PaneHead icon={LanguagesIcon} title={t("Language and Translation")} />
                   <TranslationSettings value={paperValue} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}

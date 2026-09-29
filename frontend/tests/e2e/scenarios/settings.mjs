@@ -34,50 +34,66 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
-  await step("settings: usage calendar shows daily counts, keyboard navigation, and narrow layouts", async () => {
+  await step("settings: usage chart combines overall totals with themed daily and monthly bars", async () => {
     const daily = Array.from({ length: 365 }, (_, index) => ({
       date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),
-      calls: index % 5 === 0 ? 0 : index % 7 + 1,
-      input: index % 5 === 0 ? 0 : (index % 13 + 1) * 1000,
-      output: index % 5 === 0 ? 0 : 200,
-      cache_read: index % 5 === 0 ? 0 : 300, cache_write: 0,
+      calls: index < 356 ? 0 : index % 7 + 1,
+      input: index < 356 ? 0 : (index % 13 + 1) * 1000,
+      output: index < 356 ? 0 : 200,
+      cache_read: index < 356 ? 0 : 300, cache_write: 0,
     }));
     let empty = false;
     const { ctx, page } = await setup(undefined, async (context) => {
       await context.route("**/api/ai/usage", async (route) => {
         const response = await route.fetch();
         const data = await response.json();
-        await route.fulfill({ json: { ...data, daily: empty
-          ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
+        await route.fulfill({ json: { ...data, first_at: "2025-09-01T00:00:00", windows: { ...data.windows,
+          all: { input: 900000, output: 10000, calls: 100, cache_read: 180000, cache_write: 0 } },
+          daily: empty ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
       });
     });
     try {
       await openSettings(page);
       await nav(page, "Connections").click();
-      const graph = page.locator(".usageCalendar");
+      const graph = page.locator(".usageChart");
       await graph.scrollIntoViewIfNeeded();
-      assertEq(await graph.locator("button.usageCalendarCell").count(), 365);
+      assertEq(await graph.locator("button.usageChartBar").count(), 30);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k", "totals include retained usage outside the chart window");
+      assertEq(await page.locator(".settingsPane .setStats").count(), 0, "no separate period totals");
       const today = graph.locator('[data-date="2026-09-28"]');
       await today.click();
-      assert((await graph.locator(".usageCalendarDetail").innerText()).includes("1 call"));
+      assert((await graph.locator(".usageChartDetail").innerText()).includes("1 call"));
       await today.press("ArrowLeft");
-      assertEq(await graph.locator('button[aria-pressed="true"].usageCalendarCell').getAttribute("data-date"), "2026-09-21");
+      assertEq(await graph.locator('button[aria-pressed="true"].usageChartBar').getAttribute("data-date"), "2026-09-27");
       await graph.getByRole("button", { name: "Calls", exact: true }).click();
-      assertEq(await today.getAttribute("data-level"), "1");
+      assertEq(await today.getAttribute("data-value"), "1");
       await graph.getByRole("button", { name: "Tokens", exact: true }).click();
-      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-light.png` });
+      assertEq(await today.getAttribute("data-value"), "1200");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-light.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Monthly · last 12 months", exact: true }).click();
+      assertEq(await graph.locator("button.usageChartBar").count(), 12);
+      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k");
+      const september = graph.locator('[data-date="2026-09-01"]');
+      assertEq(Number(await september.getAttribute("data-value")), daily.reduce((sum, day) => sum + day.input + day.output, 0));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-monthly.png` });
+      await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
+      await page.getByRole("button", { name: "Daily · last 30 days", exact: true }).click();
+      await today.click();
+      const color = await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "sepia"; document.documentElement.dataset.scheme = "light"; });
+      assert((await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor)) !== color, "bars follow the theme accent");
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-sepia.png` });
       await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
-      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-dark.png` });
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-dark.png` });
       await page.setViewportSize({ width: 390, height: 844 });
       await graph.scrollIntoViewIfNeeded();
-      assert(await graph.locator(".usageCalendarScroll").evaluate((el) => el.scrollWidth > el.clientWidth));
-      assert(await graph.evaluate((el) => el.getBoundingClientRect().right <= innerWidth));
-      await today.click();
-      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-mobile.png` });
+      assert(await graph.evaluate((el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth));
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-mobile.png` });
       empty = true;
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
-      await until(() => graph.locator(".usageCalendarDetail").innerText().then((text) => text.includes("No AI calls on this day")));
-      assertEq(await graph.locator('button.usageCalendarCell:not([data-level="0"])').count(), 0);
+      await until(() => graph.locator(".usageChartDetail").innerText().then((text) => text.includes("No AI calls in this period")));
+      assertEq(await graph.locator('button.usageChartBar:not([data-value="0"])').count(), 0);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -86,7 +102,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Translation").click();
+      await nav(page, "Language and Translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));

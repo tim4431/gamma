@@ -2,19 +2,49 @@
 // sign-in page or a paywall (chat/fetchHandoff.js has the rules). "Open"
 // goes through /api/ai/handoffs/<id>/go, the address Gamma Connector knows
 // the tab by: it sends the PDF back from that tab once the user is through.
-// Without the Connector the user drops the downloaded PDF on the card. The
-// card follows the request on the server, and when the PDF has arrived the
-// chat continues by itself (or offers Continue when it can't).
+// The card asks the Connector (its bridge.js) whether it can, and says why
+// not when it cannot; then the user drops the downloaded PDF on the card.
+// The card follows the request on the server, and when the PDF has arrived
+// the chat continues by itself (or offers Continue when it can't).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, isPdfFile } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload.js";
 import { CheckIcon, ExternalLinkIcon, ShieldIcon, UploadIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 import {
-  SETTLED, continuePrompt, handoffHint, handoffState, pollDelay, replyHandoffs, shouldContinue, wallHeadline,
+  SETTLED, connectorNote, continuePrompt, handoffHint, handoffState, pollDelay, replyHandoffs, shouldContinue,
+  wallHeadline, watchNote,
 } from "./fetchHandoff.js";
 
 const requestUrl = (id) => `${API}/ai/handoffs/${encodeURIComponent(id)}`;
+// The desktop app opens links in the system browser, where a Connector may be.
+const DESKTOP = /\bElectron\//.test(navigator.userAgent);
+
+// Gamma Connector's word on request `id` (connectorNote), asked through
+// window messages its content script answers. The script loads after the
+// page, so the question is asked again before no answer counts as "missing";
+// `round` asks afresh (the page opened again, the window came back into
+// focus after signing the Connector in).
+function useConnector(id, active, round) {
+  const [status, setStatus] = useState(DESKTOP ? "desktop" : "unknown");
+  useEffect(() => {
+    if (DESKTOP || !active) return undefined;
+    let answered = false;
+    const onMessage = (e) => {
+      const d = e.data;
+      if (e.source !== window || e.origin !== window.location.origin || d?.source !== "gamma-connector"
+          || d.type !== "connector-status" || d.id !== id) return;
+      answered = true;
+      setStatus(d.status);
+    };
+    window.addEventListener("message", onMessage);
+    const ask = () => { if (!answered) window.postMessage({ source: "gamma-app", type: "connector-probe", id }, window.location.origin); };
+    const timers = [0, 1500, 3000].map((ms) => setTimeout(ask, ms));
+    timers.push(setTimeout(() => { if (!answered) setStatus("missing"); }, 4500));
+    return () => { window.removeEventListener("message", onMessage); timers.forEach(clearTimeout); };
+  }, [id, active, round]);
+  return status;
+}
 
 function HandoffCard({ handoff, isLast, readOnly, onState }) {
   const [view, setView] = useState(null);
@@ -23,7 +53,9 @@ function HandoffCard({ handoff, isLast, readOnly, onState }) {
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
+  const [round, setRound] = useState(0);
   const state = handoffState(view, { opened });
+  const connector = useConnector(handoff.id, state === "waiting" || state === "opened", round);
 
   const refresh = useCallback(async () => {
     try {
@@ -39,13 +71,15 @@ function HandoffCard({ handoff, isLast, readOnly, onState }) {
     if (SETTLED.has(state)) return undefined;
     const delay = pollDelay(state, { isLast });
     const timer = delay ? setInterval(() => { if (document.visibilityState === "visible") refresh(); }, delay) : null;
-    window.addEventListener("focus", refresh);
-    return () => { if (timer) clearInterval(timer); window.removeEventListener("focus", refresh); };
+    const onFocus = () => { refresh(); setRound((n) => n + 1); };
+    window.addEventListener("focus", onFocus);
+    return () => { if (timer) clearInterval(timer); window.removeEventListener("focus", onFocus); };
   }, [state, isLast, refresh]);
   useEffect(() => { onState(handoff.id, state); }, [handoff.id, state, onState]);
 
   function open() {
     setOpened(true);
+    setRound((n) => n + 1);
     window.open(`${requestUrl(handoff.id)}/go`, "_blank", "noopener");
   }
 
@@ -99,6 +133,9 @@ function HandoffCard({ handoff, isLast, readOnly, onState }) {
       </div>
       <div className="chatHandoffText" aria-live="polite">
         {working === "upload" ? t("Reading the PDF…") : handoffHint(state, { pages: view?.pages || 0 })}
+        {(state === "waiting" || state === "opened") && connectorNote(connector, { origin: window.location.origin })
+          ? <> {connectorNote(connector, { origin: window.location.origin })}</> : null}
+        {state === "watching" && watchNote(view?.note) ? <> {watchNote(view.note)}</> : null}
       </div>
       {handoff.source && !settled ? <div className="chatHandoffSource" title={handoff.source}>{handoff.source}</div> : null}
       {error ? <div className="chatHandoffError" role="alert">{error}</div> : null}

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  continuePrompt, handoffHint, handoffState, pollDelay, replyHandoffs, shouldContinue, wallHeadline,
+  connectorNote, continuePrompt, handoffHint, handoffState, pollDelay, replyHandoffs, shouldContinue, wallHeadline,
+  watchNote,
 } from "../src/chat/fetchHandoff.js";
 
 const card = (id, source = `doi:${id}`) => ({ id, host: "journals.example.org", wall: "captcha", source });
@@ -49,16 +50,41 @@ test("the chat continues by itself only when it is safe to speak for the user", 
   assert.equal(shouldContinue({ ...ok, states: [] }), false);
 });
 
+test("the card says whether the PDF can come back by itself, and what to fix when not", () => {
+  const origin = "http://localhost:9001";
+  assert.match(connectorNote("ok", { origin }), /sends the PDF back from that tab by itself/);
+  assert.match(connectorNote("signed-out", { origin }), /signed out of this server/);
+  assert.match(connectorNote("other-account", { origin }), /another account/);
+  // No answer: say where to point it — the page's own address.
+  assert.match(connectorNote("missing", { origin }), /reload it after an update, and set it to http:\/\/localhost:9001/);
+  assert.match(connectorNote("desktop", { origin }), /default browser/);
+  for (const s of ["missing", "signed-out", "other-account", "unreachable", "desktop"]) {
+    assert.match(connectorNote(s, { origin }), /drop it here/, `${s} leaves the manual way`);
+  }
+  assert.equal(connectorNote("unknown", { origin }), "", "nothing while it asks");
+});
+
+test("a watched tab's card says what the Connector is doing there", () => {
+  assert.match(watchNote("looking"), /doesn't see the paper's PDF link/);
+  assert.match(watchNote("opening"), /opening the PDF in that tab/);
+  assert.match(watchNote("signin"), /sign in on that page/);
+  assert.match(watchNote("refused"), /drop it here/);
+  assert.equal(watchNote(""), "");
+  assert.equal(watchNote("anything else"), "");
+});
+
 test("the texts name the host, the wall and what arrived", () => {
   assert.equal(wallHeadline("captcha", "www.science.org"), "www.science.org asked for a CAPTCHA or bot check");
   assert.equal(wallHeadline("login", "h"), "h asked to sign in");
   assert.equal(wallHeadline("abstract", "h"), "h showed only the article page");
   assert.equal(wallHeadline("rate", "h"), "h is limiting Gamma's requests");
   assert.equal(wallHeadline("denied", "h"), "h refused Gamma's download");
+  assert.equal(wallHeadline("script", "h"), "h only shows the paper in a browser");
   assert.match(handoffHint("done", { pages: 19 }), /19 pages/);
   assert.match(handoffHint("done", { pages: 1 }), /\(1 page\)/);
   assert.match(handoffHint("watching"), /Gamma Connector is watching/);
-  assert.match(handoffHint("waiting"), /drop it here/);
+  assert.equal(handoffHint("waiting"), "Open the page and sign in or pass the check there.");
+  assert.equal(handoffHint("opened"), "Finish in the tab that opened.");
   assert.equal(continuePrompt([card("10.1/x"), { id: "u", host: "lab.example" }]),
     "I got it in my browser — doi:10.1/x, lab.example is available now. Please continue.");
 });

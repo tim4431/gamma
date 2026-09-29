@@ -23,7 +23,7 @@ would go, so the chat can hand the fetch to the user's browser
 import html
 import re
 import threading
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest
 
@@ -59,6 +59,7 @@ WALLS = {
     "login": "a sign-in page",
     "denied": "a refusal to this server (no access)",
     "rate": "a rate limit",
+    "script": "a page that only works in a browser (it runs on JavaScript)",
     "abstract": "the article page only (the full text needs access)",
 }
 
@@ -272,6 +273,14 @@ _LOGIN_PATH_RE = re.compile(
     r"/(?:(?:show)?login|log-in|logon|signin|sign-in|sso|ssostart|idp|shibboleth|wayf|saml2?|"
     r"authorize|authorization|auth/realms|cas/login)(?:[/.?;]|$)", re.I)
 _LOGIN_HOST_RE = re.compile(r"^(?:login|idp|sso|signin|auth|shibboleth|wayf)\.", re.I)
+# Hosts that serve nothing but a bot check for other sites (Radware's
+# validate.perfdrive.com in front of IOP, DataDome's captcha host).
+_CHECK_HOST_RE = re.compile(
+    r"(?:^|\.)(?:perfdrive\.com|captcha-delivery\.com|hcaptcha\.com|challenges\.cloudflare\.com)$", re.I)
+# Query keys an interstitial keeps the page to go back to under.
+_RETURN_KEYS = {"ssc", "referer", "referrer", "return", "returnurl", "return_url", "returnto", "redirect",
+                "redirecturl", "redirect_uri", "next", "url", "target", "continue", "uri", "dest",
+                "destination", "service", "goto"}
 _THIN_PAGE = 2000  # readable chars below which a page may be all widget or form
 
 
@@ -279,7 +288,7 @@ def access_wall(url: str, headers, body: bytes, text: str | None = None) -> str:
     """"captcha" / "login" when a response is an interstitial for a person
     rather than the document, else "". ``text`` is the page's readable text
     when the caller has it already."""
-    if ((headers or {}).get("cf-mitigated") or "").lower() == "challenge":
+    if ((headers or {}).get("cf-mitigated") or "").lower() == "challenge" or _check_host(url):
         return "captcha"
     head = body[:300_000].decode("utf-8", "replace") if body else ""
     if _CHALLENGE_RE.search(head):
@@ -299,11 +308,37 @@ def _sign_in_url(url: str) -> bool:
     return bool(_LOGIN_PATH_RE.search(where.path) or _LOGIN_HOST_RE.match(where.hostname or ""))
 
 
+def _check_host(url: str) -> bool:
+    return bool(_CHECK_HOST_RE.search(urlsplit(url or "").hostname or ""))
+
+
+def _interstitial(url: str) -> bool:
+    return _sign_in_url(url) or _check_host(url)
+
+
+def _return_url(url: str) -> str:
+    """The page an interstitial sends the visitor back to, when its address
+    carries it (Radware's ``ssc=``, a sign-in page's ``next=`` / ``uri=``)."""
+    for key, value in parse_qsl(urlsplit(url).query):
+        if key.lower() in _RETURN_KEYS:
+            back = urljoin(url, value.strip())
+            if back.lower().startswith(("http://", "https://")) and not _interstitial(back):
+                return back
+    return ""
+
+
 def _entry(*urls: str) -> str:
     """The page a person should open for a blocked fetch: the first of
-    ``urls`` (most specific first) that is not itself a sign-in page — a
-    sign-in flow started from the paper's page returns to it."""
-    return next((u for u in urls if u and not _sign_in_url(u)), next((u for u in urls if u), ""))
+    ``urls`` (most specific first) that is the site's own page — for a
+    sign-in or bot-check page, the page it would return to. Starting there,
+    the site sends the person through its check and back to the paper."""
+    for url in urls:
+        if url and not _interstitial(url):
+            return url
+        back = _return_url(url) if url else ""
+        if back:
+            return back
+    return next((u for u in urls if u), "")
 
 
 def _refusal(e: HTTPError) -> str:
@@ -393,7 +428,7 @@ def fetch_document(source: str) -> dict:
 
 
 def _fetch(source: str) -> dict:
-    from .routers.pdf import BROWSER_HEADERS, resolve_source
+    from .routers.pdf import BROWSER_HEADERS, meta_refresh, resolve_source
 
     reason = wall = source_note = referer = ""
     trace: dict = {}
@@ -430,19 +465,24 @@ def _fetch(source: str) -> dict:
     fallback = _source_url(source)
     if wall and fallback == pdf_url:
         raise FetchError(reason, wall=wall, open_url=_entry(page_url, pdf_url), pdf_url=want_pdf)
-    try:
-        final_url, ctype, data, headers = _read_bounded(fallback, HTML_MAX_BYTES, {
-            **BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"})
-    except FetchError:
-        raise
-    except HTTPError as e:
-        raise FetchError(f"no PDF ({reason}) and the page {fallback} answered HTTP {e.code}"
-                         + (" — the site blocks server-side fetching" if e.code in (401, 403) else ""),
-                         wall=_refusal(e) or wall, open_url=_entry(e.geturl(), page_url, fallback),
-                         pdf_url=want_pdf)
-    except (URLError, OSError, ValueError) as e:
-        raise FetchError(f"no PDF ({reason}) and {fallback} could not be fetched: {e}",
-                         wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
+    url = fallback
+    for hop in range(3):  # a page that only redirects (a meta refresh) is followed
+        try:
+            final_url, ctype, data, headers = _read_bounded(url, HTML_MAX_BYTES, {
+                **BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"})
+        except FetchError:
+            raise
+        except HTTPError as e:
+            raise FetchError(f"no PDF ({reason}) and the page {url} answered HTTP {e.code}"
+                             + (" — the site blocks server-side fetching" if e.code in (401, 403) else ""),
+                             wall=_refusal(e) or wall, open_url=_entry(e.geturl(), page_url, fallback),
+                             pdf_url=want_pdf)
+        except (URLError, OSError, ValueError) as e:
+            raise FetchError(f"no PDF ({reason}) and {url} could not be fetched: {e}",
+                             wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
+        url = meta_refresh(_decode(data, ctype), final_url) if hop < 2 and "html" in ctype else ""
+        if not url:
+            break
     if "html" not in ctype and "xml" not in ctype:
         raise FetchError(f"no PDF ({reason}) and {fallback} is not a web page ({ctype or 'no content type'})",
                          wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
@@ -452,8 +492,10 @@ def _fetch(source: str) -> dict:
         raise FetchError(f"no PDF ({reason}) and the page {final_url} is {WALLS[page_wall]}",
                          wall=page_wall, open_url=_entry(final_url, page_url, fallback), pdf_url=want_pdf)
     if not text:
-        raise FetchError(f"no PDF ({reason}) and the page {fallback} has no readable text",
-                         wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
+        # A page with nothing to read without its scripts: a browser shows it.
+        raise FetchError(f"no PDF ({reason}) and the page {final_url} has no readable text",
+                         wall=wall or "script", open_url=_entry(final_url, page_url, fallback),
+                         pdf_url=want_pdf)
     # PDF links the resolver has not tried already (those met the wall).
     tried = {pdf_url, *(trace.get("pdf_urls") or [])}
     links = [u for u in pdf_links(data, final_url, ctype) if u not in tried]

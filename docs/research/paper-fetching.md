@@ -99,9 +99,47 @@ Chromium run with the real Connector used a local fake publisher whose PDF
 needs a sign-in cookie. Nothing was delivered before sign-in; after it the
 PDF arrived, the chat continued and the Gamma tab came forward.
 
-Still unverified: real publishers (Science's Cloudflare, an institutional
-SSO round trip, Atypon's `epdf` reader), whether a stored User-Agent makes a
-transferred `cf_clearance` usable from a server on the browser's machine,
-and the desktop app's path through the system browser.
+The first real run (nine papers, gpt-5.6-sol) found five PDFs, one abstract
+page and three blocked papers, and exposed three gaps:
+
+- **Elsevier's DOI landing got no card.** linkinghub answers with a
+  "Redirecting" page (a meta refresh, no text); the fetch stopped there. It
+  now follows the refresh to ScienceDirect and hands the refusal over, and a
+  page with no readable text is itself handed over (`script`).
+- **IOP's card opened `validate.perfdrive.com`**, Radware's bot check, not the
+  article. The card now opens the page the check returns to (`ssc=`).
+- **`arxiv.org/pdf/2401.04219` answered 406** to every program, including
+  plain urllib, while `export.arxiv.org` served the same PDF; the resolver now
+  falls back to that host.
+
+The Connector did not take the handed-off tabs. The card now asks the
+Connector before the user opens the page and names the likely cause: not
+installed, not reloaded after the update, set to another address, or signed
+out. The Connector also accepts the `/go` address on any host (localhost
+versus 127.0.0.1 no longer matters). Re-checked live: the arXiv paper
+arrives (69 pages), Elsevier gets a ScienceDirect card, IOP a card for its
+article, and Science a card for its article.
+
+With the Connector now taking the tabs (ScienceDirect for the Josephson
+paper, AIP behind Cloudflare), both cards kept waiting after the checks.
+The publishers' download paths explain it: ScienceDirect's "View PDF" is a
+`pdfft` page whose script redirects to a signed `pdf.sciencedirectassets.com`
+URL, and its pages carry no `citation_pdf_url` or DOI metadata; Silverchair
+(AIP) redirects the PDF to its watermark host, which the page's own fetch
+cannot follow across origins, and bot rules refuse requests that are not
+navigations. Automated Chromium is blocked by both sites (ScienceDirect's
+error page names "HeadlessChrome"), so the behavior was reproduced against a
+local fake instead. The Connector also skipped such pages entirely when it
+guessed a DOI from the page's text, which on an article page is usually one
+of its references. Now it finds "View PDF"-style links rendered after load,
+opens a link in the tab when downloads fail (not when the link leads to a
+sign-in), takes the PDF from the viewer, ignores text-guessed DOIs, and
+reports each step on the card.
+
+Still unverified: completing a real publisher's check through the Connector
+(Science's Cloudflare, Radware at IOP, an institutional SSO round trip,
+Atypon's `epdf` reader), whether a stored User-Agent makes a transferred
+`cf_clearance` usable from a server on the browser's machine, and the
+desktop app's path through the system browser.
 
 Mechanics and permissions: [Agent tools](../dev/ai_tools.md).

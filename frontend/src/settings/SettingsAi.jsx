@@ -13,8 +13,8 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
-import { UsageCalendar } from "./UsageCalendar.jsx";
-import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
+import { UsageChart } from "./UsageChart.jsx";
+import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
@@ -891,8 +891,8 @@ function AllowanceRow({ allowance }) {
 
 // Settings → AI → Token usage: what the account's AI calls cost in tokens,
 // as the providers reported it (GET /api/ai/usage — one row per call in
-// users.db, see gamma/ai_usage.py). A daily calendar, then tiles for today / 7 days /
-// 30 days, the all-time line with Reset, then the last 30 days by model
+// users.db, see gamma/ai_usage.py). Overall totals and a bar chart in one
+// card with Reset, then the last 30 days by model
 // and by kind. No prices: they differ per provider and change.
 function AiUsageSection({ confirm, setStatus, canReset = true }) {
   const [data, setData] = React.useState(null);
@@ -926,15 +926,6 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
     } else run();
   }
 
-  const w = data?.windows || {};
-  const tile = (label, u, icon = ActivityIcon) => (
-    <StatText icon={icon} label={label}
-      value={u?.calls ? `↑ ${fmtTokens(u.input)} · ↓ ${fmtTokens(u.output)}` : "—"}
-      hint={u?.calls ? `${u.calls} call${u.calls === 1 ? "" : "s"}${cachedPercent(u) ? ` · ${cachedPercent(u)}% cached` : ""}` : t("no calls")}
-      title={u?.calls ? usageDetail(u) : t("No AI calls in this window")} />
-  );
-  const all = w.all;
-  const since = data?.first_at ? new Date(data.first_at).toLocaleDateString() : "";
   const models = data?.models || [];
   const kinds = Object.entries(data?.kinds || {}).sort((a, b) => (b[1].input + b[1].output) - (a[1].input + a[1].output));
   return (
@@ -946,20 +937,9 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
       {error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Usage unavailable: {error}", { error: error })}</p> : null}
       {!data && !error ? <p className="setNotice">{t("Loading…")}</p> : null}
       {data ? <>
-        {data.daily ? <UsageCalendar daily={data.daily} /> : null}
-        <div className="setStats">
-          {tile("today", w.today)}
-          {tile(t("last 7 days"), w.week)}
-          {tile(t("last 30 days"), w.month)}
-        </div>
+        <UsageChart daily={data.daily} total={data.windows?.all} firstAt={data.first_at}
+          keepDays={data.keep_days} onReset={canReset ? reset : null} busy={busy} />
         {data.allowance ? <AllowanceRow allowance={data.allowance} /> : null}
-        <Row icon={ActivityIcon} label={t("All time")}
-          hint={all?.calls
-            ? t("↑ {input} in · ↓ {output} out · {calls} calls{since}", { input: fmtTokens(all.input), output: fmtTokens(all.output), calls: all.calls, since: since ? ` since ${since}` : "" })
-            : t("No AI calls recorded yet — counts appear once a provider reports them.")}
-          title={t("Prompt tokens in, reply tokens out, as each provider reported them. Rows older than {keep_days} days are dropped. {all}", { keep_days: data.keep_days, all: usageDetail(all) })}>
-          {canReset ? <button className="uiBtn sm danger" disabled={!all?.calls} onClick={reset}>{t("Reset")}</button> : null}
-        </Row>
         {models.length ? (
           <div className="aiUsageTable" role="table" aria-label={t("Token usage by model, last 30 days")}>
             <div className="aiUsageRow aiUsageHeader" role="row">

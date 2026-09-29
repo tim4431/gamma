@@ -156,8 +156,12 @@ Connector tries a browser upload first when saving from a PDF tab; on article
 pages it falls back to the browser if the server's save fails.
 
 `/api/resolve-pdf`: arXiv abs/html→pdf rewrite (new- and old-style ids,
-`pdf.ARXIV_ID`) → direct fetch → HTML pages inspected
-for the `citation_pdf_url` meta tag → Unpaywall open-access fallback for DOIs
+`pdf.ARXIV_ID`) → direct fetch (an arXiv PDF that `arxiv.org` refuses, as it
+does some to programs with a 406, is fetched from `export.arxiv.org`, arXiv's
+host for automated clients) → HTML pages inspected for the `citation_pdf_url`
+meta tag, a page that only redirects by `<meta http-equiv="refresh">` followed
+first (up to two hops; Elsevier's DOI landing, linkinghub, is one) → Unpaywall
+open-access fallback for DOIs
 (prefers published > accepted > submitted version; disabled when the request
 sends `allow_oa: false`; identifies itself with a fixed project email in
 `pdf.py` — no config). Non-published substitutions return a `note` the frontend

@@ -5,7 +5,7 @@
 // worker being put to sleep.
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
-import { handoffIdFrom, harvestUrls, sameWork } from "./handoff.js";
+import { handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, siteOf } from "./handoff.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
 import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
 
@@ -209,11 +209,15 @@ async function autoRefreshPublisher(tabId, url, { force = false } = {}) {
 // with target=_blank — is bound to that request (POST …/watch, so the card
 // says the Connector is on it). Each page such a tab finishes loading is a
 // chance to download the PDF with the browser's session (bytesFromTab, the
-// save pipeline's two attempts); the first real PDF goes to the request
-// (POST …/pdf), the Gamma tab that asked comes forward, and a connected
-// publisher's cookies are refreshed from the session that just worked.
-const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener}
+// save pipeline's two attempts). When those fail on the page's PDF links,
+// the tab itself opens the first, as a click would (handoff.js nextToOpen),
+// and the PDF it ends on is taken on its next load. The first real PDF goes
+// to the request (POST …/pdf), the Gamma tab that asked comes forward, and a
+// connected publisher's cookies are refreshed from the session that just
+// worked. What the Connector is doing shows on the card (noteHandoff).
+const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener, app, opened, from, away}
 const harvesting = new Set();     // request ids with a download in flight
+const again = new Set();          // tabs that loaded while their request's download was in flight
 
 async function handoffTabs() {
   return (await chrome.storage.session.get(HANDOFFS_KEY))[HANDOFFS_KEY] || {};
@@ -233,24 +237,27 @@ async function releaseHandoff(id) {
 }
 
 async function bindHandoff(tabId, url, openerTabId) {
-  const id = handoffIdFrom(url, await serverOrigin());
+  const id = handoffIdFrom(url);
   if (!id || (await handoffTabs())[tabId]?.id === id) return;
   let req;
   // Another account's request, an expired one, or signed out: not ours to help.
   try { req = await api(`/ai/handoffs/${encodeURIComponent(id)}/watch`, { method: "POST" }); }
   catch (err) { console.warn(`[gamma] fetch request ${id} not taken: ${err.message}`); return; }
   if (req.status !== "waiting") return;
+  // `app`: the address the Gamma page that asked is open at (the /go
+  // address's), which need not be the one the Connector is set to.
   await setHandoffTab(tabId, { id, source: req.source, url: req.url, pdf_url: req.pdf_url,
-                               host: req.host, opener: openerTabId ?? null });
+                               host: req.host, opener: openerTabId ?? null, app: new URL(url).origin });
 }
 
 // The Gamma tab to bring back: the one that opened the request, else the
-// most recently used tab of the server (not an API address like /go).
-async function focusGamma(openerTabId) {
-  const origin = await serverOrigin();
-  const isApp = (t) => t && t.url && t.url.startsWith(origin + "/") && !t.url.startsWith(origin + "/api/");
+// most recently used Gamma page at the address it asked from (or the
+// Connector's own), never an API address like /go.
+async function focusGamma({ opener, app }) {
+  const origins = [app, await serverOrigin()].filter(Boolean);
+  const isApp = (t) => t && t.url && origins.some((o) => t.url.startsWith(o + "/") && !t.url.startsWith(o + "/api/"));
   let tab = null;
-  if (openerTabId != null) { try { tab = await chrome.tabs.get(openerTabId); } catch {} }
+  if (opener != null) { try { tab = await chrome.tabs.get(opener); } catch {} }
   if (!isApp(tab)) {
     tab = (await chrome.tabs.query({})).filter(isApp)
       .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
@@ -262,13 +269,25 @@ async function focusGamma(openerTabId) {
   } catch {}
 }
 
-async function harvestHandoff(tabId) {
+// Tell the card what the Connector is doing: "looking" (no PDF link on the
+// page yet), "opening" (the tab opens one), "refused" (no link gave a PDF).
+async function noteHandoff(bound, note) {
+  try { await api(`/ai/handoffs/${encodeURIComponent(bound.id)}/watch`, { json: { note } }); } catch {}
+}
+
+async function harvestHandoff(tabId, attempt = 0) {
   const bound = (await handoffTabs())[tabId];
-  if (!bound || harvesting.has(bound.id)) return;
+  if (!bound) return;
+  if (harvesting.has(bound.id)) { again.add(tabId); return; }
   let tab;
   try { tab = await chrome.tabs.get(tabId); } catch { return; }
   const origin = await serverOrigin();
-  if (!tab.url || !/^https?:/i.test(tab.url) || tab.url.startsWith(origin + "/")) return;
+  if (!tab.url || !/^https?:/i.test(tab.url) || tab.url.startsWith(origin + "/") || handoffIdFrom(tab.url)) return;
+  // Since a link was opened, has the tab been on another site (a sign-in)?
+  if (bound.from && !bound.away && siteOf(tab.url) !== siteOf(bound.from)) {
+    bound.away = true;
+    await setHandoffTab(tabId, bound);
+  }
   harvesting.add(bound.id);
   try {
     let req;
@@ -276,12 +295,22 @@ async function harvestHandoff(tabId) {
     catch (err) { if (err.status === 404 || err.status === 401) await releaseHandoff(bound.id); return; }
     if (req.status !== "waiting") { await releaseHandoff(bound.id); return; }
     let fromPage = null;
-    try { fromPage = await chrome.tabs.sendMessage(tabId, { type: "get-detection" }); } catch {}
+    try { fromPage = await chrome.tabs.sendMessage(tabId, { type: "get-detection", fresh: true }); } catch {}
+    const viewer = !fromPage; // Chrome's PDF viewer runs no content script
     const candidate = mergeCandidates(fromPage, candidateFromUrl(tab.url, tab.title));
     if (!sameWork(candidate, bound)) return;
-    for (const url of harvestUrls(candidate, bound, { tabUrl: tab.url, viewer: !fromPage })) {
+    const urls = harvestUrls(candidate, bound, { tabUrl: tab.url, viewer });
+    if (!urls.length) {
+      // Publisher pages render their PDF link after they loaded: look again.
+      if (attempt < 2) setTimeout(() => harvestHandoff(tabId, attempt + 1).catch(() => {}), 3000 * (attempt + 1));
+      else await noteHandoff(bound, "looking");
+      return;
+    }
+    const tried = [];
+    for (const url of urls) {
       let blob;
-      try { blob = await bytesFromTab(url, tabId); } catch { continue; } // a sign-in page, not yet
+      try { blob = await bytesFromTab(url, tabId); }
+      catch (err) { tried.push({ url, landed: err.landed || "" }); continue; } // a sign-in page, not yet
       const form = new FormData();
       form.append("file", blob, "paper.pdf");
       form.append("url", url);
@@ -294,12 +323,22 @@ async function harvestHandoff(tabId) {
       }
       await releaseHandoff(bound.id);
       await notify(`Sent to your Gamma chat: ${out.pages} page${out.pages === 1 ? "" : "s"} from ${new URL(url).hostname}.`);
-      await focusGamma(bound.opener);
+      await focusGamma(bound);
       if (!tab.incognito && /^https:/i.test(url)) autoRefreshPublisher(tabId, tab.url, { force: true }).catch(() => {});
       return;
     }
+    // No download gave a PDF: open the link in the tab, as a click would —
+    // unless the downloads ended on a sign-in page (the user signs in first).
+    const opened = bound.opened || {};
+    const next = nextToOpen(tried, { tabUrl: tab.url, viewer, opened, away: bound.away });
+    if (!next) { await noteHandoff(bound, needsSignIn(tried) ? "signin" : "refused"); return; }
+    await setHandoffTab(tabId, { ...bound, opened: { ...opened, [next]: (opened[next] || 0) + 1 },
+                                 from: tab.url, away: false });
+    await noteHandoff(bound, "opening");
+    await chrome.tabs.update(tabId, { url: next });
   } finally {
     harvesting.delete(bound.id);
+    if (again.delete(tabId)) harvestHandoff(tabId).catch(() => {});
   }
 }
 
@@ -331,6 +370,8 @@ function pdfUrlVariants(url) {
   return list;
 }
 
+// A failed attempt remembers where its download ended (`landed` on the
+// error): a sign-in page means the user has no access yet (harvestHandoff).
 async function bytesFromTab(url, tabId) {
   // The browser's own session (institutional login, cookies) fetches what
   // the server can't. Two attempts per URL variant: the worker's direct
@@ -339,9 +380,11 @@ async function bytesFromTab(url, tabId) {
   // like the reader loading the PDF. Raw PDF tabs have no content script;
   // sendMessage fails there and the direct error stands.
   let lastErr = new Error("the browser couldn't download the PDF");
+  let landed = "";
   for (const u of pdfUrlVariants(url)) {
     try {
       const res = await fetch(u, { credentials: "include" });
+      landed = res.url || landed;
       if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
       const blob = await res.blob();
       if (await looksLikePdf(blob)) return blob;
@@ -360,11 +403,15 @@ async function bytesFromTab(url, tabId) {
       if (await looksLikePdf(blob)) return blob;
       lastErr = new Error(NOT_PDF_MSG);
       console.warn(`[gamma] in-page fetch of ${u} returned non-PDF bytes`);
+    } else if (r && r.notPdf) {
+      lastErr = new Error(NOT_PDF_MSG);
     } else if (r && (r.status || r.error)) {
       lastErr = new Error(r.error || `the browser couldn't download the PDF (${r.status})`);
       console.warn(`[gamma] in-page fetch failed for ${u}: ${lastErr.message}`);
     }
+    if (r && r.landed) landed = r.landed;
   }
+  lastErr.landed = landed;
   throw lastErr;
 }
 
@@ -556,6 +603,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const origin = await serverOrigin();
         await chrome.tabs.create({ url: origin + (msg.path || "/") });
         return true;
+      }
+      // A chat card asking (bridge.js) whether this Connector can fetch for
+      // its request. The answer comes from the Connector's own server; a
+      // page that is not that server's app hears only "ok", and nothing
+      // when its request is not one this Connector can serve.
+      case "connector-probe": {
+        const origin = await serverOrigin();
+        const own = !!origin && sender.origin === origin;
+        const id = String(msg.id || "");
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return null;
+        try {
+          await api(`/ai/handoffs/${encodeURIComponent(id)}`);
+          return { status: "ok" };
+        } catch (err) {
+          if (!own) return null;
+          return { status: err.status === 401 ? "signed-out" : [403, 404].includes(err.status) ? "other-account" : "unreachable" };
+        }
       }
       default:
         return null;

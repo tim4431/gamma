@@ -292,8 +292,14 @@ What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
 - `login`: the request ended on a sign-in page (a login or SSO path or host,
   or a password field on a thin page).
 - `denied`: HTTP 401, 403 or 418. `rate`: HTTP 429.
+- `script`: the page has no readable text without its scripts (a browser
+  shows it).
 - `abstract`: the page fallback read an article page whose PDF was out of
   reach (the page advertised one, or its DOI's publisher refused).
+
+The page fallback follows `<meta http-equiv="refresh">` redirects (up to two
+hops, `pdf.meta_refresh`) as the resolver does, so a DOI landing that only
+redirects (Elsevier's linkinghub) reaches the publisher and its wall.
 
 A wall on the PDF still falls back to the page's text, so the model keeps
 what was readable. In an account's own chat (`_chat_scope`'s `handoff_user`:
@@ -301,8 +307,11 @@ not a guest, not a share link), a wall opens a request in
 `gamma/fetch_handoff.py`. Requests are per account and in memory, live 6
 hours, at most 20 are kept, and there is one per work however its source is
 spelled (reused while it waits). The page to open is the publisher's, never
-`doi.org` or a sign-in page (`ai_web._entry`: a sign-in flow started from the
-paper's page returns to it). The action carries `handoff: {id, host, wall,
+`doi.org`, a sign-in page or a bot check's own host (`ai_web._entry`). For a
+sign-in or bot-check address the page it would return to is taken from its
+query (Radware's `ssc=` on `validate.perfdrive.com` in front of IOP, a sign-in
+page's `next=` / `uri=`): starting from the paper's page, the site sends the
+person through its check and back. The action carries `handoff: {id, host, wall,
 source}`. A blocked fetch is an error action ("Needs your browser: host")
 whose result tells the model to say briefly what blocked it and end its
 reply, without retrying, switching versions or answering from memory. An
@@ -319,6 +328,20 @@ The chat renders a card per request under the reply
   takes the request (the card then reads "Gamma Connector is watching the
   tab") and sends the PDF from it once the user has signed in or passed the
   check ([extension.md](extension.md#fetches-handed-from-the-chat)).
+- Before that, the card asks the Connector whether it can
+  (`window.postMessage` → the extension's `bridge.js`, answered after the
+  Connector checked the request with its own server) and says so under the
+  hint (`connectorNote`): it will send the PDF back; it is signed out of
+  this server or signed in to another account; or no answer came within
+  4.5 s — not in this browser, a version from before chat fetching, or set
+  to another server — naming the address to set. In the desktop app (an
+  `Electron/` User-Agent) the page opens in the system browser, and the card
+  says a Connector there works too. It asks again when the page is opened
+  again or the window regains focus.
+- While the Connector watches the tab, the card also shows what it reports
+  doing there (the request's `note`, `watchNote`): no PDF link on the page
+  yet, the PDF link leads to a sign-in, opening the PDF in the tab, or the
+  site did not hand it over (save it from the tab and drop it here).
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
 - **Dismiss** settles the request.

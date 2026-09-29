@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoffIdFrom, harvestUrls, sameWork, sourceIds } from "../handoff.js";
+import { MAX_OPENS, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, signInUrl, sourceIds } from "../handoff.js";
 
 const ORIGIN = "https://gamma.example";
 
-test("a tab is fetching for the chat only on its own server's /go address", () => {
-  assert.equal(handoffIdFrom(`${ORIGIN}/api/ai/handoffs/AbC_12-xyzXYZ09/go`, ORIGIN), "AbC_12-xyzXYZ09");
+test("a tab is fetching for the chat on any server's /go address", () => {
+  assert.equal(handoffIdFrom(`${ORIGIN}/api/ai/handoffs/AbC_12-xyzXYZ09/go`), "AbC_12-xyzXYZ09");
+  // The Connector set to 127.0.0.1 while the app is open on localhost: the
+  // server it asks decides (a look-alike elsewhere just gets a 404 there).
+  assert.equal(handoffIdFrom("http://localhost:9001/api/ai/handoffs/AbC_12-xyzXYZ09/go?x=1"), "AbC_12-xyzXYZ09");
   for (const url of [
-    "https://evil.example/api/ai/handoffs/AbC_12-xyzXYZ09/go",   // another site's look-alike
     `${ORIGIN}/api/ai/handoffs/AbC_12-xyzXYZ09`,                // the status, not the page
     `${ORIGIN}/api/ai/handoffs/AbC_12-xyzXYZ09/go/extra`,
     `${ORIGIN}/api/ai/handoffs/a/go`,                           // not an id's shape
+    "file:///api/ai/handoffs/AbC_12-xyzXYZ09/go",
     "not a url", "",
-  ]) assert.equal(handoffIdFrom(url, ORIGIN), "", url);
-  assert.equal(handoffIdFrom(`${ORIGIN}/api/ai/handoffs/AbC_12-xyzXYZ09/go`, ""), "");
-  assert.equal(handoffIdFrom("http://localhost:5173/api/ai/handoffs/AbC_12-xyzXYZ09/go?x=1", "http://localhost:5173"),
-    "AbC_12-xyzXYZ09");
+  ]) assert.equal(handoffIdFrom(url), "", url);
 });
 
 test("a request's source names its DOI or arXiv id in any spelling", () => {
@@ -34,6 +34,9 @@ test("another paper's PDF never answers the request", () => {
   assert.equal(sameWork({}, request), true, "a page that names no DOI may still be it (a PDF viewer)");
   assert.equal(sameWork({ doi: "10.1/x" }, { source: "https://lab.example/p.pdf" }), true);
   assert.equal(sameWork({ arxiv_id: "2101.00001" }, { source: "arXiv:2301.12345" }), false);
+  // A DOI only guessed from the page's text — often one of its references —
+  // must not turn the paper's own page away (ScienceDirect names none in meta).
+  assert.equal(sameWork({ kind: "maybe", doi: "10.1103/PhysRevLett.9.9" }, request), true);
 });
 
 test("what the tab tries: itself when it shows a PDF, the advertised link, the server's on its site", () => {
@@ -52,4 +55,35 @@ test("what the tab tries: itself when it shows a PDF, the advertised link, the s
   assert.deepEqual(harvestUrls({ kind: "none" }, request, { tabUrl: "https://www.science.org/action/ssostart" }), []);
   assert.deepEqual(harvestUrls({}, request, { tabUrl: "https://idp.university.edu/login" }), []);
   assert.deepEqual(harvestUrls({ pdf_url: "javascript:alert(1)" }, {}, { tabUrl: "https://x.example/" }), []);
+  // The page's own "View PDF" links (ScienceDirect's pdfft), same site only.
+  const sd = "https://www.sciencedirect.com/science/article/pii/0031916362913690";
+  assert.deepEqual(harvestUrls({ kind: "none", pdf_links: [`${sd}/pdfft?md5=a&pid=b.pdf`, "https://ads.example/x.pdf"] }, {},
+    { tabUrl: sd }), [`${sd}/pdfft?md5=a&pid=b.pdf`]);
+});
+
+test("when downloads fail, the tab opens the next untried link — never from the viewer", () => {
+  const urls = ["https://a.example/pdf/1", "https://a.example/pdf/2"];
+  const tried = urls.map((url) => ({ url, landed: url })); // refused or an HTML redirect page
+  assert.equal(nextToOpen(tried), urls[0]);
+  assert.equal(nextToOpen(tried, { opened: { [urls[0]]: 1 } }), urls[1]);
+  const both = { [urls[0]]: 1, [urls[1]]: 1 };
+  assert.equal(nextToOpen(tried, { opened: both }), "", "each link once: then the card says so");
+  // Opened too early, then back from the university's sign-in on another
+  // site: worth opening again.
+  assert.equal(nextToOpen(tried, { opened: both, away: true }), urls[0]);
+  const spent = { [urls[0]]: MAX_OPENS, [urls[1]]: MAX_OPENS };
+  assert.equal(nextToOpen(tried, { opened: spent, away: true }), "", "a redirect loop ends");
+  assert.equal(nextToOpen(tried, { viewer: true }), "", "the viewer's own URL is the PDF already");
+});
+
+test("a download that ends on a sign-in page, or back on the article, waits for the user", () => {
+  const article = "https://pub.example/article/1";
+  const toLogin = [{ url: "https://pub.example/pdf/1", landed: "https://pub.example/action/showLogin?uri=%2Fpdf%2F1" }];
+  assert.equal(nextToOpen(toLogin, { tabUrl: article }), "", "opening it would leave the page's sign-in buttons");
+  assert.equal(needsSignIn(toLogin), true);
+  const back = [{ url: "https://pub.example/pdf/1", landed: `${article}#no-access` }];
+  assert.equal(nextToOpen(back, { tabUrl: article }), "", "the link leads back here: no access yet");
+  assert.equal(needsSignIn(back), false);
+  assert.equal(signInUrl("https://idp.stanford.edu/idp/profile/SAML2/Redirect/SSO"), true);
+  assert.equal(signInUrl("https://www.sciencedirect.com/science/article/pii/1/pdfft"), false);
 });

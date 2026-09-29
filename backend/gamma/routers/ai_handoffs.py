@@ -8,6 +8,7 @@ import html
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from .. import fetch_handoff as handoff
 from ..ai_web import FETCH_MAX_BYTES, FetchError
@@ -37,9 +38,13 @@ def status(rid: str, request: Request):
     return _found(handoff.get(_user(request), rid))
 
 
+class WatchNote(BaseModel):
+    note: str = ""  # fetch_handoff.NOTES; anything else clears it
+
+
 @router.post("/{rid}/watch")
-def watch(rid: str, request: Request):
-    return _found(handoff.watch(_user(request), rid))
+def watch(rid: str, request: Request, payload: WatchNote | None = None):
+    return _found(handoff.watch(_user(request), rid, payload.note if payload else ""))
 
 
 @router.delete("/{rid}")

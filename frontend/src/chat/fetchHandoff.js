@@ -58,6 +58,7 @@ export function wallHeadline(wall, host) {
     case "login": return t("{host} asked to sign in", { host });
     case "rate": return t("{host} is limiting Gamma's requests", { host });
     case "abstract": return t("{host} showed only the article page", { host });
+    case "script": return t("{host} only shows the paper in a browser", { host });
     default: return t("{host} refused Gamma's download", { host });
   }
 }
@@ -68,7 +69,7 @@ export function handoffHint(state, { pages = 0 } = {}) {
     case "watching":
       return t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
     case "opened":
-      return t("Finish in the tab that opened, then download the PDF and drop it here. With Gamma Connector signed in, this happens by itself.");
+      return t("Finish in the tab that opened.");
     case "done":
       return tn("Got the PDF from your browser ({n} page).", "Got the PDF from your browser ({n} pages).", pages);
     case "dismissed":
@@ -76,7 +77,49 @@ export function handoffHint(state, { pages = 0 } = {}) {
     case "gone":
       return t("This request has expired — ask the chat again.");
     default:
-      return t("Open the page in your browser and sign in or pass the check. Gamma Connector sends the PDF back from that tab; without it, download the PDF and drop it here.");
+      return t("Open the page and sign in or pass the check there.");
+  }
+}
+
+// Whether the PDF can come back by itself: Gamma Connector's answer to the
+// card's probe (the extension's bridge.js asks the Connector's own server
+// about the request) — "ok", "signed-out", "other-account", "unreachable" —
+// or "missing" when none came (not in this browser, a version from before
+// chat fetching, or set to another server); "desktop" in the desktop app,
+// which opens pages in the system browser; "unknown" while it asks.
+export function connectorNote(connector, { origin = "" } = {}) {
+  switch (connector) {
+    case "ok":
+      return t("Gamma Connector sends the PDF back from that tab by itself.");
+    case "signed-out":
+      return t("Gamma Connector is signed out of this server: sign in from its toolbar button, then open the page again — or download the PDF and drop it here.");
+    case "other-account":
+      return t("Gamma Connector is signed in to another account here: sign in as you, then open the page again — or download the PDF and drop it here.");
+    case "unreachable":
+      return t("Gamma Connector can't reach this server right now. Download the PDF and drop it here.");
+    case "desktop":
+      return t("The page opens in your default browser: Gamma Connector there, set to {origin}, sends the PDF back by itself. Or download the PDF and drop it here.", { origin });
+    case "missing":
+      return t("Gamma Connector isn't answering in this browser — install it, or reload it after an update, and set it to {origin}. Or download the PDF and drop it here.", { origin });
+    default:
+      return "";
+  }
+}
+
+// What Gamma Connector reports doing in the watched tab (the request's
+// `note`, set by the extension's harvest): "" says nothing more.
+export function watchNote(note) {
+  switch (note) {
+    case "looking":
+      return t("It doesn't see the paper's PDF link on that page yet — sign in if needed, or open the PDF there.");
+    case "signin":
+      return t("The PDF link there leads to a sign-in: sign in on that page (or through your institution), and it takes the PDF once you are in.");
+    case "opening":
+      return t("It is opening the PDF in that tab.");
+    case "refused":
+      return t("The site didn't hand it the PDF. Open the PDF there, save it, and drop it here.");
+    default:
+      return "";
   }
 }
 

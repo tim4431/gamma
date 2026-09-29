@@ -27,7 +27,8 @@
       ],
       "js": [
         "ids.js",
-        "detect.js"
+        "detect.js",
+        "bridge.js"
       ],
       "run_at": "document_idle"
     }

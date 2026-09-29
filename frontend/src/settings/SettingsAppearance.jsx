@@ -2,11 +2,10 @@ import React from "react";
 import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
-import { MenuSelect } from "../shared/ui/Menus";
-import { ContrastIcon, GlobeIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
+import { ContrastIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE, themeScheme } from "../app/prefs";
-import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // The swatches paint from each theme's own tokens (ThemePreview).
 const THEMES = [
@@ -28,14 +27,6 @@ export function AppearanceSettings({ value, diagnostics }) {
       <Section title={t("Theme")} scope="account" prefs={SECTION_PREFS.appearance["Theme"]}>
         <PictureChoices label={t("Theme")} value={value.theme} onChange={value.setTheme}
           options={THEMES.map(([id, label, hint]) => ({ value: id, label, hint, preview: <ThemePreview theme={id} scheme={themeScheme(id)} /> }))} />
-      </Section>
-
-      <Section title={t("Language")} scope="account" prefs={SECTION_PREFS.appearance["Language"]}>
-        <Row icon={GlobeIcon} label={t("Language")} hint={t("Interface text only.")}
-          title={t("Menus, settings and messages. Your notes, PDFs and the AI's replies are not affected; System follows the browser's language.")}>
-          <MenuSelect label={t("Language")} value={value.language} onChange={value.setLanguage}
-            options={LANGUAGES.map(([code, name]) => [code, code === "system" ? t("System") : name])} />
-        </Row>
       </Section>
 
       <Section title={t("PDF pages")} scope="account" prefs={SECTION_PREFS.appearance["PDF pages"]}>

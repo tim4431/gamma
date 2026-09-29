@@ -77,7 +77,8 @@ helpers — never re-implement it in the extension.
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`) |
-| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), and which URLs to try in it (`harvestUrls`) — pure, tested in `tests/` |
+| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`) — pure, tested in `tests/` |
+| `bridge.js` | content script answering a chat card's `connector-probe` window message with the worker's `connector-probe` verdict (`ok` / `signed-out` / `other-account` / `unreachable`), or nothing; a question a second per request |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
@@ -263,34 +264,68 @@ opens `<server>/api/ai/handoffs/<id>/go`, a short Gamma page that goes on to
 the publisher; that address is how the Connector knows the tab:
 
 1. **Bind.** `tabs.onUpdated` (and `onCreated`, by the pending URL) sees the
-   tab load the `/go` address of the configured server (`handoffIdFrom`). The
-   worker takes the request with `POST /api/ai/handoffs/<id>/watch` — which
-   also refuses another account's or an expired request — and records the
-   tab under `handoffs` in session storage. A tab the bound tab opens (a
-   "PDF" link with `target=_blank`) is bound to the same request.
+   tab load a `/go` address (`handoffIdFrom`) — on any host, since one server
+   is often reached as `localhost` and `127.0.0.1` or through a proxy. The
+   worker takes the request with `POST /api/ai/handoffs/<id>/watch` on its
+   own server, which refuses another account's, an expired or a made-up
+   request, and records the tab under `handoffs` in session storage, with
+   the address the Gamma page asked from (`app`). A tab the bound tab opens
+   (a "PDF" link with `target=_blank`) is bound to the same request.
 2. **Harvest.** Each page a bound tab finishes loading off the Gamma server
    is a chance: the worker checks the request still waits (`GET …/<id>`;
-   settled or gone releases the tab), reads the page's detection, skips a
-   page that names another DOI or arXiv id (`sameWork`), and tries, in
-   order, the tab itself when it shows a PDF (Chrome's viewer runs no content
-   script), the page's advertised PDF link, and the server's PDF link when
-   the page is a paper page of that site (`harvestUrls`: a sign-in page costs
-   no request). Each URL goes through the save pipeline's `bytesFromTab` —
-   the worker's credentialed fetch, then the tab's own same-origin fetch —
-   and only a real `%PDF` counts. Before the user signs in these attempts
-   meet the sign-in page and nothing is sent.
-3. **Deliver.** The first PDF goes to `POST /api/ai/handoffs/<id>/pdf` with
+   settled or gone releases the tab), reads the page's detection afresh
+   (`get-detection` with `fresh`), skips a page that names another DOI or
+   arXiv id in its metadata (`sameWork`; a DOI only guessed from the page's
+   text, often a reference's, does not count), and tries, in order, the tab
+   itself when it shows a PDF (Chrome's viewer runs no content script), the
+   page's advertised PDF link, its "View PDF"-style links on the same site
+   (`detect.js` `pdfLinks`: a `/pdf`, `/epdf`, `/pdfft` or `/article-pdf`
+   route, or "PDF" in the link text; supplementary files left out), and the
+   server's PDF link when the page is a paper page of that site
+   (`harvestUrls`: a sign-in page costs no request). A page that shows no
+   link yet is looked at again after 3 and 6 s (publisher pages render the
+   link after load). Each URL goes through the save pipeline's
+   `bytesFromTab` — the worker's credentialed fetch, then the tab's own
+   same-origin fetch — and only a real `%PDF` counts; a failed attempt
+   remembers where it ended (`landed`).
+3. **Open.** When every download failed, the tab opens a link itself, as a
+   click would (`nextToOpen`), and the PDF it ends on is taken from Chrome's
+   viewer on the next load. A navigation gets what a script's download does
+   not: ScienceDirect's `pdfft` is an HTML page whose script redirects to a
+   signed `pdf.sciencedirectassets.com` URL; Silverchair (AIP) redirects to
+   its watermark host, which the page's own fetch cannot follow across
+   origins; bot rules refuse requests that are not navigations. A link whose
+   download ended on a sign-in page, or back on the article itself, is not
+   opened — the user has no access yet, and opening it would lead away from
+   the page's sign-in buttons. Each link is opened once, again (at most
+   three times) only after the tab has been on another site since, such as
+   a university sign-in that sends the user back to the article.
+4. **Deliver.** The first PDF goes to `POST /api/ai/handoffs/<id>/pdf` with
    the URL it came from. The worker releases every tab of the request, shows a
    "Sent to your Gamma chat" notification, brings the Gamma tab forward (the
-   tab that opened the request, else the server's most recently used tab),
+   tab that opened the request, else the most recently used Gamma page at the
+   address it asked from, else at the Connector's own),
    and — on HTTPS — refreshes that publisher's connected cookies right away
    (`autoRefreshPublisher(…, {force: true})`: the session just worked, so the
    server's copy should match it; still only for a host connected by hand,
    with the cookies permission).
 
+What the worker is doing reaches the card through `POST …/watch {note}`
+(`noteHandoff`): `looking` (no PDF link on the page yet), `signin` (the PDF
+link leads to a sign-in), `opening` (the tab opens a link), `refused` (no
+link gave a PDF — the user saves it from the tab and drops it on the card).
+
 The chat's card follows the request on the server and continues the
-conversation once the PDF has arrived. Without the Connector (or signed in
-as another account) the user downloads the PDF and drops it on the card.
+conversation once the PDF has arrived. Before the user opens the page it asks
+whether the Connector can do this (`bridge.js` → the worker's
+`connector-probe`, which asks its own server about the request): `ok` when it
+can, from any page, since only the request's account knows its id; to the
+Connector's own server's page also why not (`signed-out`, `other-account`,
+`unreachable`); to any other page nothing, so a site learns neither that the
+Connector is installed nor anything about the account. No answer reads as
+"not in this browser, outdated, or set to another server" on the card.
+Without the Connector (or signed in as another account) the user downloads
+the PDF and drops it on the card.
 The desktop app opens the link in the system browser, where a Connector
 signed in to the same server works the same way.
 
@@ -345,6 +380,15 @@ signed in to the same server works the same way.
   sign-in cookie: the card's Open → `/go` → the Connector took the tab → no
   delivery before sign-in → sign in → the PDF arrived (2 pages), the chat
   continued by itself, the Gamma tab came forward and the tab was released.
+  Again with the Connector set to `127.0.0.1` and the app open on `localhost`:
+  the probe answered `ok`, the loop completed and the `localhost` tab came
+  forward; a probe from another site with a made-up id got no answer. And
+  against a ScienceDirect-like fake (no citation metadata but a reference's
+  DOI in the text, "View PDF" rendered 1.5 s after load, the PDF route
+  refusing everything but a navigation and answering it with a script
+  redirect to a signed PDF on another host): the tab opened the link and the
+  PDF from the other host arrived. The plain publisher's PDF link, which
+  leads to its sign-in, was not opened; the card asked the user to sign in.
 
 ## Not done yet
 

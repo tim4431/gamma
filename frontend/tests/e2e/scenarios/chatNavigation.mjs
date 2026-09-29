@@ -632,6 +632,16 @@ export async function chatNavigationScenarios(env) {
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    // Gamma Connector's content script (extension/bridge.js), answering the
+    // card's probe the way it does when it can serve the request — once
+    // `connectorOn` is set; until then the page hears nothing, like a browser
+    // without it (or with a version from before chat fetching).
+    await ctx.addInitScript(() => window.addEventListener("message", (e) => {
+      const d = e.data;
+      if (window.connectorOn && d?.source === "gamma-app" && d.type === "connector-probe") {
+        window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+      }
+    }));
     await ctx.route(`**/api/ai/handoffs/${HID}**`, async (route) => {
       const req = route.request();
       const path = new URL(req.url()).pathname;
@@ -652,6 +662,11 @@ export async function chatNavigationScenarios(env) {
       const card = page.locator(".chatHandoff");
       await card.getByText("www.science.org asked for a CAPTCHA or bot check").waitFor();
       assert((await card.innerText()).includes(handoff.source), "the card names the paper");
+      await card.getByText("Gamma Connector isn't answering in this browser").waitFor({ timeout: 8000 });
+      assert((await card.innerText()).includes(`set it to ${server.base}`), "it says what address to set");
+      // The Connector installed (or reloaded) meanwhile: coming back asks again.
+      await page.evaluate(() => { window.connectorOn = true; window.dispatchEvent(new Event("focus")); });
+      await card.getByText("Gamma Connector sends the PDF back from that tab by itself.").waitFor();
 
       const popup = ctx.waitForEvent("page");
       await card.getByRole("button", { name: "Open www.science.org" }).click();

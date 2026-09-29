@@ -21,7 +21,7 @@ const e = (pane, label, section, hint, keywords, target) => ({ pane, label, sect
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
-  e("appearance", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
+  e("translation", t("Language"), null, t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
   e("appearance", t("Interface size"), t("Interface"), t("Text, buttons, icons and switches."), "zoom text buttons controls scale touch"),
   e("appearance", t("Status bar"), t("Interface"), t("Show the latest activity below your tabs."), "notifications messages"),

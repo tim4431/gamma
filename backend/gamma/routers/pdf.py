@@ -9,6 +9,7 @@ network; publisher bot challenges may still require a browser.
 """
 
 import hashlib
+import html as html_lib
 import json
 import re
 import urllib.parse
@@ -70,6 +71,25 @@ def _identifier_to_url(text: str) -> str:
     if m:
         return f"https://doi.org/{m.group(1)}"
     return text
+
+
+_REFRESH_TAG_RE = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?refresh[^>]*>", re.I)
+_REFRESH_CONTENT_RE = re.compile(r"""\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_REFRESH_URL_RE = re.compile(r"""^\s*[\d.]*\s*[;,]\s*url\s*=\s*['"]?([^'"]+)""", re.I)
+_ARXIV_PDF_URL_RE = re.compile(r"^https?://arxiv\.org/pdf/", re.I)
+
+
+def meta_refresh(html: str, base: str) -> str:
+    """Where a page's ``<meta http-equiv="refresh">`` sends the visitor,
+    absolute, or "". Some DOI landings are only that (Elsevier's
+    linkinghub → ScienceDirect), so a fetch follows it like a 3xx."""
+    tag = _REFRESH_TAG_RE.search(html[:50_000])
+    content = _REFRESH_CONTENT_RE.search(tag.group(0)) if tag else None
+    m = _REFRESH_URL_RE.match((content.group(1) or content.group(2)) if content else "")
+    if not m:
+        return ""
+    url = urllib.parse.urljoin(base, html_lib.unescape(m.group(1).strip()))
+    return url if url.lower().startswith(("http://", "https://")) and url != base else ""
 
 
 def _meta_content(html: str, name: str) -> str:
@@ -171,6 +191,16 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
             return {"source_url": final_url}
         trace["page_url"] = final_url
     except HTTPError as e:
+        # arxiv.org refuses some PDFs to programs (406) that its export
+        # host, the one arXiv asks automated clients to use, serves.
+        mirror = _ARXIV_PDF_URL_RE.sub("https://export.arxiv.org/pdf/", url)
+        if mirror != url:
+            try:
+                _, mirror_type, _ = try_resolve(mirror)
+                if "application/pdf" in mirror_type:
+                    return {"source_url": mirror}
+            except Exception as mirror_error:
+                log.warning(f"[resolve-pdf] arXiv export host failed too: {mirror_error}")
         if e.code not in (401, 403, 418, 429):
             raise HTTPException(status_code=400, detail=f"upstream HTTP error: {e.code}")
         blocked = trace["blocked"] = True
@@ -184,6 +214,26 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
     # pages, …). Publishers advertise the "Download PDF" target in the
     # citation_pdf_url meta tag — the same tag Google Scholar reads.
     html = body.decode("utf-8", "replace") if body else ""
+    # A page that only redirects (a meta refresh) is followed like a 3xx.
+    for _ in range(2):
+        hop = meta_refresh(html, final_url) if html and not _publisher_pdf_candidates(final_url, html) else ""
+        if not hop:
+            break
+        try:
+            final_url, content_type, body = try_resolve(hop)
+        except HTTPError as e:
+            if e.code in (401, 403, 418, 429):
+                blocked = trace["blocked"] = True
+                trace["page_url"] = e.geturl() or hop
+            html = ""
+            break
+        except Exception as e:
+            log.warning(f"[resolve-pdf] following {hop} failed: {e}")
+            break
+        if "application/pdf" in content_type:
+            return {"source_url": final_url}
+        trace["page_url"] = final_url
+        html = body.decode("utf-8", "replace") if body else ""
     trace["pdf_urls"] = _publisher_pdf_candidates(final_url, html)
     for pdf_url in trace["pdf_urls"]:
         try:

@@ -439,42 +439,39 @@
 .aiProvModelsLabel { color: var(--text-dim); font-size: var(--fs-2xs); align-self: center; margin-right: 2px; }
 /* Provider rows double as the active-key picker in the Providers pane. */
 .aiProvSelectable { cursor: pointer; }
-/* Daily usage calendar: Sunday-first columns, like a contribution graph. */
-.usageCalendar {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  margin-bottom: 14px;
-  min-width: 0;
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
+/* Usage totals and history share a card; bars follow the active theme accent. */
+.usageChart { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 12px; min-width: 0; flex-shrink: 0; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.usageChartEyebrow { color: var(--text-muted); font-size: var(--fs-xs); }
+.usageChartHeadline { display: flex; align-items: baseline; gap: 7px; margin: 5px 0 8px; color: var(--text-muted); }
+.usageChartHeadline strong { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.03em; color: var(--text-primary); }
+.usageChartTotals { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--text-muted); }
+.usageChartSince { margin-top: 7px; color: var(--text-dim); font-size: var(--fs-2xs); }
+.usageChartHead, .usageChartFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.usageChartHead { margin: 20px 0 18px; }
+.usageChartToggle { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-block); }
+.usageChartToggle button { border: 0; background: transparent; color: var(--text-muted); padding: 4px 10px; border-radius: var(--radius-xs); font-size: var(--fs-xs); cursor: pointer; }
+.usageChartToggle button[aria-pressed="true"] { background: var(--bg-surface); color: var(--accent); box-shadow: var(--shadow-1); }
+.usageChartPlot { display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: 150px auto; gap: 10px 8px; }
+.usageChartAxis { display: flex; flex-direction: column; justify-content: space-between; text-align: right; color: var(--text-dim); font-size: var(--fs-2xs); }
+.usageChartBars { position: relative; display: flex; gap: 3px; min-width: 0; }
+.usageChartGrid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+.usageChartGrid i { border-top: 1px solid var(--border-subtle); }
+.usageChartBar { position: relative; flex: 1; min-width: 0; display: flex; align-items: flex-end; justify-content: center; padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: var(--radius-xs); }
+.usageChartFill { display: block; width: 100%; max-width: 38px; background: color-mix(in oklab, var(--accent) 65%, var(--bg-surface)); border-radius: 3px 3px 0 0; pointer-events: none; }
+.usageChartBar:not([data-value="0"]) .usageChartFill { min-height: 2px; }
+.usageChartBar[data-value="0"]::after { content: ""; position: absolute; bottom: 0; height: 2px; width: 100%; max-width: 38px; background: var(--border); }
+.usageChartBar:hover, .usageChartBar[aria-pressed="true"] { background: var(--bg-selected); }
+.usageChartBar:hover .usageChartFill, .usageChartBar[aria-pressed="true"] .usageChartFill { background: var(--accent); }
+.usageChartBar:focus-visible, .usageChartToggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.usageChartDates { grid-column: 2; display: flex; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: var(--fs-2xs); }
+.usageChartDetail { display: flex; flex-direction: column; gap: 4px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); line-height: 1.6; min-height: 54px; }
+.usageChartDetail strong { color: var(--text-primary); font-weight: 500; }
+.usageChartFooter { margin-top: 10px; color: var(--text-dim); font-size: var(--fs-2xs); }
+@media (max-width: 600px) {
+  .usageChart { padding: 12px; }
+  .usageChartBars { gap: 2px; }
+  .usageChartPlot { grid-template-columns: 28px minmax(0, 1fr); column-gap: 5px; }
 }
-.usageCalendarHead, .usageCalendarLegend { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.usageCalendarHead strong { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
-.usageCalendarSummary { margin-top: 5px; color: var(--text-muted); }
-.usageCalendarToggle { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-block); }
-.usageCalendarToggle button { border: 0; background: transparent; color: var(--text-muted); padding: 4px 10px; border-radius: var(--radius-xs); font-size: var(--fs-xs); cursor: pointer; }
-.usageCalendarToggle button[aria-pressed="true"] { background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--shadow-1); }
-.usageCalendarScroll { overflow-x: auto; margin: 20px 0 12px; padding: 3px; }
-.usageCalendarPlot { display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: 18px auto; gap: 5px; min-width: 680px; }
-.usageCalendarMonths { grid-column: 2; display: grid; grid-template-columns: repeat(var(--usage-weeks), minmax(0, 1fr)); gap: 3px; color: var(--text-muted); overflow: hidden; }
-.usageCalendarMonths span { white-space: nowrap; font-size: var(--fs-2xs); }
-.usageCalendarWeekdays { grid-row: 2; display: grid; grid-template-rows: repeat(7, minmax(0, 1fr)); gap: 3px; color: var(--text-muted); font-size: var(--fs-2xs); align-items: center; }
-.usageCalendarDays { grid-column: 2; grid-row: 2; display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, minmax(0, 1fr)); grid-template-columns: repeat(var(--usage-weeks), minmax(0, 1fr)); gap: 3px; }
-.usageCalendarCell { display: block; aspect-ratio: 1; min-width: 0; padding: 0; border: 1px solid var(--border-subtle); border-radius: 3px; background: var(--bg-block); }
-button.usageCalendarCell { cursor: pointer; }
-.usageCalendarCell[data-level="1"] { background: color-mix(in oklab, var(--ok) 25%, var(--bg-surface)); }
-.usageCalendarCell[data-level="2"] { background: color-mix(in oklab, var(--ok) 50%, var(--bg-surface)); }
-.usageCalendarCell[data-level="3"] { background: color-mix(in oklab, var(--ok) 75%, var(--bg-surface)); }
-.usageCalendarCell[data-level="4"] { background: var(--ok); }
-.usageCalendarCell[aria-pressed="true"], button.usageCalendarCell:hover { outline: 1px solid var(--text-primary); outline-offset: 1px; }
-.usageCalendarCell:focus-visible, .usageCalendarToggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.usageCalendarLegend { color: var(--text-muted); font-size: var(--fs-2xs); }
-.usageCalendarScale { display: flex; gap: 4px; align-items: center; }
-.usageCalendarScale .usageCalendarCell { width: 11px; }
-.usageCalendarDetail { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); line-height: 1.6; }
-.usageCalendarDetail strong { color: var(--text-primary); font-weight: 500; }
 /* Token usage by model (AI pane): a compact grid table, numbers right-aligned. */
 .aiUsageTable {
   border: 1px solid var(--border);

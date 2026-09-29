@@ -1079,13 +1079,15 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   entries' 24-hour allowance (above), null when no shared entry applies.
   `DELETE /api/ai/usage` forgets the account's rows except those the
   allowance still counts. Settings → AI › Connections → **Token usage**
-  renders a contribution-style daily heatmap (`UsageCalendar.jsx`) with
-  token/call intensity, month and weekday labels, and a selected day's
-  counts. Arrow keys navigate days (up/down) or weeks (left/right); on narrow
-  screens the calendar scrolls to the most recent dates. The graph uses UTC
-  to match the server's Today total. It is followed by three tiles
-  (today / 7 days / 30 days), the allowance row, the
-  all-time line with Reset, and a by-model table (plus a by-kind block when
+  renders one usage card (`UsageChart.jsx`): the overall retained totals
+  from `windows.all` (tokens, input/output, calls, cache percentage, start
+  date), an accent-colored bar chart, and Reset. There are no separate
+  today/week/month total tiles. The chart switches between the latest 30
+  UTC days and the latest 12 calendar months, and between tokens and calls;
+  monthly bars sum the daily data (the current month is partial). Left/right
+  arrows select bars; Home/End select the first/last. The chart fits narrow
+  screens without scrolling. The allowance row and a by-model table follow
+  (plus a by-kind block when
   more than one kind ran). A guest sees it without Reset while a shared
   entry applies. No prices anywhere: they differ per provider and change;
   the tokens are what every provider agrees on.

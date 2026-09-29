@@ -143,6 +143,9 @@ def test_card_endpoints_deliver_watch_dismiss_and_privacy(accounts, web, fetch):
     assert bob.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))}).status_code == 404
 
     assert alice.post(f"/api/ai/handoffs/{rid}/watch").json()["watched"] is True
+    # What the Connector is doing in the tab shows on the card; unknown notes clear.
+    assert alice.post(f"/api/ai/handoffs/{rid}/watch", json={"note": "opening"}).json()["note"] == "opening"
+    assert alice.post(f"/api/ai/handoffs/{rid}/watch", json={"note": "<b>x</b>"}).json()["note"] == ""
     r = alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("x.pdf", b"<html>login</html>")})
     assert r.status_code == 400 and "Not a PDF" in r.json()["detail"]
     r = alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))},
@@ -330,3 +333,66 @@ def test_search_keeps_both_identifiers_and_ranks_the_exact_title_first(monkeypat
 def test_prompt_tells_the_model_to_stop_for_the_card():
     assert "end your reply instead of retrying" in agent_system(folder(""))
     assert "a card lets the user" not in agent_system(folder(""), {"web_read": False})
+
+
+# ------------------------------------------- what real publishers do
+
+def test_meta_refresh_landing_is_followed_to_the_refusing_publisher(web, fetch):
+    """Elsevier's DOI landing (linkinghub) is a "Redirecting" page with a
+    meta refresh and no text; its target, ScienceDirect, refuses. Before, the
+    empty page ended the fetch with no card."""
+    routes, _ = web
+    doi, hub = "https://doi.org/10.1016/0031-9163(62)91369-0", "https://linkinghub.elsevier.com/retrieve/pii/0031916362913690"
+    hop = "https://linkinghub.elsevier.com/retrieve/articleSelectSinglePerm?Redirect=x&key=k"
+    article = "https://www.sciencedirect.com/science/article/pii/0031916362913690"
+    routes[doi] = (302, {"Location": hub}, b"")
+    routes[hub] = (200, {"Content-Type": "text/html"}, (
+        b"<html><head><meta HTTP-EQUIV=\"REFRESH\" content=\"2; url='/retrieve/articleSelectSinglePerm"
+        b"?Redirect=x&amp;key=k'\"/><title>Redirecting</title></head><body></body></html>"))
+    routes[hop] = (302, {"Location": article}, b"")
+    routes[article] = (403, {"Content-Type": "text/html"}, b"<html><title>Access denied</title></html>")
+    text, action = fetch("doi:10.1016/0031-9163(62)91369-0")
+    assert action["handoff"]["host"] == "www.sciencedirect.com"
+    assert fetch_handoff.get(USER, action["handoff"]["id"])["url"] == article
+
+
+def test_bot_check_host_opens_the_page_it_guards(web, fetch):
+    """IOP sends server fetches to Radware's validate.perfdrive.com; the card
+    opens the IOP article the check returns to (its ssc=), not the check."""
+    routes, _ = web
+    doi, article = "https://doi.org/10.1088/1361-6633/aa7e1a", "https://iopscience.iop.org/article/10.1088/1361-6633/aa7e1a"
+    check = ("https://validate.perfdrive.com/fb80/?ssa=1&ssc=https%3A%2F%2Fiopscience.iop.org%2Farticle"
+             "%2F10.1088%2F1361-6633%2Faa7e1a&ssk=botmanager_support@radware.com")
+    routes[doi] = (302, {"Location": article}, b"")
+    routes[article] = (302, {"Location": check}, b"")
+    routes[check] = (200, {"Content-Type": "text/html"}, b"<html><body>" + b"<p>Please verify.</p>" * 200 + b"</body></html>")
+    text, action = fetch("doi:10.1088/1361-6633/aa7e1a")
+    assert action["handoff"]["wall"] == "captcha" and action["handoff"]["host"] == "iopscience.iop.org"
+    assert fetch_handoff.get(USER, action["handoff"]["id"])["url"] == article
+
+
+def test_arxiv_refusal_falls_back_to_its_export_host(web, fetch):
+    """arxiv.org answers some PDFs with 406 to programs; export.arxiv.org,
+    arXiv's host for automated clients, serves them."""
+    routes, _ = web
+    routes["https://arxiv.org/pdf/2401.04219"] = (406, {}, b"")
+    routes["https://export.arxiv.org/pdf/2401.04219"] = (200, {"Content-Type": "application/pdf"}, _text_pdf([PDF_TEXT]))
+    text, action = fetch("arXiv:2401.04219")
+    assert PDF_TEXT in text and action["url"] == "https://export.arxiv.org/pdf/2401.04219"
+
+
+def test_a_page_with_nothing_to_read_is_handed_to_the_browser(web, fetch):
+    routes, _ = web
+    page = "https://app.example.org/paper/42"
+    routes[page] = (200, {"Content-Type": "text/html"}, b"<html><head><script src=app.js></script></head><body><div id=root></div></body></html>")
+    text, action = fetch(page)
+    assert action["handoff"]["wall"] == "script" and "only works in a browser" in text
+
+
+def test_meta_refresh_parsing():
+    from gamma.routers.pdf import meta_refresh
+    base = "https://hub.example/retrieve/pii/1"
+    assert meta_refresh("<meta http-equiv='refresh' content='0;URL=https://x.example/a'>", base) == "https://x.example/a"
+    assert meta_refresh('<META content="5; url=/b?c=1&amp;d=2" HTTP-EQUIV="Refresh">', base) == "https://hub.example/b?c=1&d=2"
+    assert meta_refresh('<meta http-equiv="refresh" content="30">', base) == ""  # a reload, not a redirect
+    assert meta_refresh("<meta http-equiv='refresh' content='0;url=javascript:alert(1)'>", base) == ""

@@ -20,6 +20,10 @@ from urllib.parse import urlsplit
 TTL = 6 * 3600              # a request (with what was delivered for it) lives this long
 MAX_PER_ACCOUNT = 20        # requests kept per account; the oldest are dropped first
 MAX_DELIVERED_CHARS = 30_000_000  # delivered text kept in all, the oldest dropped first
+# What the Connector reports doing in the tab, shown on the card: no PDF link
+# on the page yet, the PDF link leads to a sign-in, opening one in the tab,
+# no link gave a PDF.
+NOTES = ("looking", "signin", "opening", "refused")
 
 _requests: dict[str, dict] = {}   # id → request (insertion order = age)
 _lock = threading.Lock()
@@ -60,7 +64,7 @@ def open_request(user: str, source: str, *, wall: str, url: str, pdf_url: str = 
         req = {"id": secrets.token_urlsafe(18), "user": user, "key": key, "source": source,
                "url": url, "pdf_url": pdf_url, "host": urlsplit(url).hostname or "",
                "wall": wall, "detail": detail, "status": "waiting", "created": now,
-               "watched": 0.0, "done_at": 0.0, "from_url": "", "doc": None}
+               "watched": 0.0, "note": "", "done_at": 0.0, "from_url": "", "doc": None}
         _requests[req["id"]] = req
         return dict(req)
 
@@ -91,9 +95,10 @@ def _update(user: str, rid: str, **fields) -> dict | None:
         return dict(req)
 
 
-def watch(user: str, rid: str) -> dict | None:
-    """The Connector took the request's tab: the card says so."""
-    return _update(user, rid, watched=time.time())
+def watch(user: str, rid: str, note: str = "") -> dict | None:
+    """The Connector took the request's tab, and what it is doing there
+    (a NOTES entry; "" when it just took it): the card says so."""
+    return _update(user, rid, watched=time.time(), note=note if note in NOTES else "")
 
 
 def dismiss(user: str, rid: str) -> dict | None:
@@ -162,7 +167,8 @@ def public(req: dict) -> dict:
     return {"id": req["id"], "source": req["source"], "url": req["url"],
             "pdf_url": req["pdf_url"], "host": req["host"], "wall": req["wall"],
             "detail": req["detail"], "status": req["status"],
-            "watched": bool(req["watched"]), "pages": len(doc.get("pages") or []),
+            "watched": bool(req["watched"]), "note": req.get("note", ""),
+            "pages": len(doc.get("pages") or []),
             "from_url": req["from_url"]}
 
 
