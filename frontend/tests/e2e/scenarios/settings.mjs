@@ -34,6 +34,126 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
+  await step("settings: web search saves masked keys, preferred services and saved-only tests", async () => {
+    const braveKey = "brave-e2e-search-secret-123456789";
+    const openaiKey = "sk-openai-e2e-search-secret-123456789";
+    await user.api("/api/ai/web-search", { method: "PUT", body: { provider: "off",
+      clear_openai_api_key: true, clear_brave_api_key: true, openai_connection: "", searxng_url: "" } });
+    const connection = await user.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "Search connection", api_key: "sk-saved-search-connection-e2e",
+      base_url: "https://api.openai.com/v1", models: "gpt-4.1-mini",
+    } });
+    const connectionId = connection.providers.find((p) => p.label === "Search connection").id;
+    let tests = 0;
+    const { ctx, page } = await setup(undefined, async (context) => {
+      await fakeAiModels(context);
+      await context.route("**/api/ai/web-search/test", (route) => {
+        assertEq(route.request().postData(), "{}", "Test uses the saved configuration only");
+        tests += 1;
+        return route.fulfill({ json: tests === 1 ? { ok: true, provider: "brave", count: 1 }
+          : { ok: false, provider: "brave", error: "Search service is temporarily unavailable.", code: "provider_error" } });
+      });
+    });
+    const editor = () => page.getByRole("dialog", { name: "Web search settings", exact: true });
+    const serviceRow = () => row(page, "Search service");
+    const choose = async (label, option) => {
+      await editor().getByRole("button", { name: label, exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: option, exact: true }).click();
+    };
+    const edit = () => serviceRow().getByRole("button", { name: "Manage", exact: true }).click();
+    const save = async () => {
+      const response = page.waitForResponse((r) => r.url().endsWith("/api/ai/web-search") && r.request().method() === "PUT");
+      await editor().getByRole("button", { name: "Save", exact: true }).click();
+      const payload = await (await response).json();
+      for (const key of [braveKey, openaiKey]) assert(!JSON.stringify(payload).includes(key), "save returns no full key");
+      await editor().waitFor({ state: "hidden" });
+      return payload;
+    };
+    try {
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await edit();
+      await choose("Preferred search service", "Brave Search");
+      // Password inputs intentionally have no implicit textbox role.
+      await editor().getByLabel("Brave Search API key", { exact: true }).fill(braveKey);
+      assertEq(await editor().getByLabel("Brave Search API key", { exact: true }).getAttribute("type"), "password");
+      assertEq(await serviceRow().getByRole("button", { name: "Test search", exact: true }).isDisabled(), true);
+      let saved = await save();
+      assertEq(saved.provider, "brave");
+      assert(!!saved.brave_key_hint && saved.brave_key_hint !== braveKey, "saved key is masked");
+      const manageBox = await serviceRow().getByRole("button", { name: "Manage", exact: true }).boundingBox();
+      const testBox = await serviceRow().getByRole("button", { name: "Test search", exact: true }).boundingBox();
+      assert(Math.abs(manageBox.y - testBox.y) < 2, "search actions share the settings row");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/web-search-summary.png`, animations: "disabled" });
+      await serviceRow().getByRole("button", { name: "Test search", exact: true }).click();
+      await page.getByText("Brave Search: 1 search result", { exact: true }).waitFor();
+      await serviceRow().getByRole("button", { name: "Test search", exact: true }).click();
+      await page.getByText("Search service is temporarily unavailable.", { exact: true }).waitFor();
+
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await edit();
+      assertEq(await editor().getByRole("button", { name: "Preferred search service", exact: true }).innerText(), "Brave Search");
+      assertEq(await editor().getByLabel("Brave Search API key", { exact: true }).inputValue(), "");
+      await choose("Preferred search service", "Automatic");
+      await editor().getByLabel("OpenAI search key", { exact: true }).fill(openaiKey);
+      await editor().getByLabel("Search model", { exact: true }).fill("gpt-4.1-mini");
+      await editor().getByLabel("SearXNG address", { exact: true }).fill("https://search.example.org");
+      saved = await save();
+      assertEq(saved.provider, "auto");
+      assertEq(saved.effective_provider, "openai");
+      assert(!!saved.brave_key_hint, "a blank key input kept the saved Brave key");
+      assertEq(saved.searxng_url, "https://search.example.org");
+      await edit();
+      await choose("OpenAI connection", "Search connection");
+      saved = await save();
+      assertEq(saved.openai_connection, connectionId);
+      await edit();
+      await choose("OpenAI connection", "Search key or automatic connection");
+      await editor().getByRole("checkbox", { name: "Remove saved OpenAI search key", exact: true }).check();
+      await editor().getByRole("checkbox", { name: "Remove saved Brave Search key", exact: true }).check();
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/web-search-settings.png`, animations: "disabled" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      const fits = await editor().evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+      assert(fits.scroll <= fits.width + 1, "search settings fit a narrow screen");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/web-search-settings-390.png`, animations: "disabled" });
+      await page.setViewportSize({ width: 1280, height: 860 });
+      saved = await save();
+      assertEq(saved.openai_key_hint, "");
+      assertEq(saved.brave_key_hint, "");
+      await edit();
+      await editor().getByLabel("OpenAI search key", { exact: true }).fill("sk-discard-this-key");
+      await editor().getByRole("button", { name: "Cancel", exact: true }).click();
+      await editor().getByRole("button", { name: "Discard changes", exact: true }).click();
+      await editor().waitFor({ state: "hidden" });
+      assertEq((await user.api("/api/ai/web-search")).openai_key_hint, "");
+      const storage = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
+      const profile = JSON.stringify(await user.api("/api/prefs/profile"));
+      const html = await page.content();
+      for (const secret of [braveKey, openaiKey, "sk-discard-this-key"]) {
+        assert(!storage.includes(secret) && !profile.includes(secret) && !html.includes(secret), "secrets stay out of browser storage, profile and saved markup");
+      }
+      assertEq(tests, 2, "saving credentials never makes a provider request");
+      // Guests receive this API capability; the UI must offer no mutation.
+      const readonly = { ...(await user.api("/api/ai/web-search")), can_edit: false };
+      await ctx.route("**/api/ai/web-search", (route) => route.fulfill({ json: readonly }));
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await page.getByText("Guest accounts cannot store API keys. Ask the admin for an account.", { exact: true }).waitFor();
+      assertEq(await serviceRow().getByRole("button").count(), 0, "read-only accounts cannot manage or test search");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api(`/api/ai/providers/${connectionId}`, { method: "DELETE" });
+      await user.api("/api/ai/web-search", { method: "PUT", body: { provider: "auto",
+        clear_openai_api_key: true, clear_brave_api_key: true, openai_connection: "", searxng_url: "" } });
+    }
+  });
+
   await step("settings: usage chart combines overall totals with themed daily and monthly bars", async () => {
     const daily = Array.from({ length: 365 }, (_, index) => ({
       date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),

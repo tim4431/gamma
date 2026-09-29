@@ -14,6 +14,7 @@ import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
 import { UsageChart } from "./UsageChart.jsx";
+import WebSearchSettings from "./WebSearchSettings.jsx";
 import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
@@ -869,7 +870,7 @@ function ProviderForm({ value, onCancel }) {
   );
 }
 
-const USAGE_KIND_LABELS = { chat: t("Chat"), translate: t("Translation"), metadata: t("Metadata"), cite: t("Citations"), test: t("Connection tests") };
+const USAGE_KIND_LABELS = { chat: t("Chat"), translate: t("Translation"), metadata: t("Metadata"), cite: t("Citations"), test: t("Connection tests"), web_search: t("Web search") };
 
 // The shared allowance (GET /api/ai/usage's `allowance`, present while a
 // shared entry applies): what the account spent on the server's keys in the
@@ -1066,6 +1067,7 @@ export function AiSettings({ value, confirm, setStatus }) {
           ) : null}
         </>
       ) : null}
+      <WebSearchSettings connectionsVersion={value.aiKeysInfo} />
       {providers.length ? <>
       <Section title={t("Models")} scope="browser">
         {(value.aiModels || []).length ? <Row icon={SparklesIcon} label={t("Default chat model")}

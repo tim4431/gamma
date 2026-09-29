@@ -48,6 +48,7 @@ const entries = [
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),
   e("ai", t("Connections"), null, t("AI providers, keys and ChatGPT sign-in"), "provider credentials API key ChatGPT login service"),
+  e("ai", t("Web search"), null, t("Find papers, author pages and repository copies across the web."), "search service preferred OpenAI Brave SearXNG API key credentials automatic"),
   e("ai", t("Check at login"), t("Connection check"), t("Verify the active provider when Gamma opens"), "connection test credential ping"),
   e("ai", t("Default chat model"), t("Models"), t("Also used by citations and generated titles"), "AI model"),
   e("ai", t("Metadata model"), t("Models"), t("Used only when identifiers cannot resolve the paper"), "AI extraction identifiers"),

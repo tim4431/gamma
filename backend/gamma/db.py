@@ -459,8 +459,8 @@ def connect_users_db() -> Connection:
 
 # Prefs that follow the account regardless of workspace (stored with
 # workspace_id ''): the AI provider entries, the active entry, the
-# translation engine keys (gamma/translate_engines.py), and the preference
-# profile. Everything else is per account + workspace, because the
+# translation and web search service keys, and the preference profile.
+# Everything else is per account + workspace, because the
 # value names that workspace's pages (open tabs, recents, pinned folders,
 # reading positions).
 PROFILE_PREF_KEY = "profile"
@@ -468,7 +468,7 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", PROFILE_PREF_KEY,
+USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "web-search-settings", PROFILE_PREF_KEY,
                             PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
 
 

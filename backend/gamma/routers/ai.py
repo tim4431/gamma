@@ -1386,6 +1386,16 @@ def _next_drop(drop: int, history: int) -> int:
 def _chat_scope(request: Request, user: str, payload) -> dict:
     """The tool scope of a chat request: what its tools reach and what the
     agent prompt names."""
+    from ..web_search_settings import SearchConfigurationError, credentials
+
+    search_user = user if not request.state.is_guest and not request.query_params.get("share") else None
+    search_available = False
+    if search_user:
+        try:
+            credentials(search_user)
+            search_available = True
+        except SearchConfigurationError:
+            pass
     return {"type": payload.agent_scope, "folder": payload.folder,
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "context_pages": list(payload.pages),
@@ -1397,6 +1407,9 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             "note_selections": request_note_selections(payload),
             "actor": user, "can_write": can_write(request),
             "permissions": dict(payload.permissions),
+            # Only the authenticated account selects credentials; never the
+            # model's arguments. Secrets stay out of the prompt and scope.
+            "search_user": search_user, "web_search_available": search_available,
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             "publisher_user": (user if not request.state.is_guest
@@ -1412,7 +1425,7 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             "read_texts": {}}
 
 
-def _chat_tools(payload, writable: bool) -> list | None:
+def _chat_tools(payload, writable: bool, web_search_available: bool = True) -> list | None:
     """The armed tool specs: the scope decides which tools exist, the
     permission toggles pick the subset — None (or no scope) is a plain chat.
     Without ``writable`` (a viewer, a read-scope token) no mutating tool is
@@ -1420,7 +1433,8 @@ def _chat_tools(payload, writable: bool) -> list | None:
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
     return (agent_tools(payload.agent_scope, payload.permissions,
-                        payload.read_char_limit, can_write=writable) or None) if valid_scope else None
+                        payload.read_char_limit, can_write=writable,
+                        web_search_available=web_search_available) or None) if valid_scope else None
 
 
 def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
@@ -1506,7 +1520,7 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     ws = require_ws(request)  # a token too: the chat reads its workspace
     user = request.state.user
     scope = _chat_scope(request, user, payload)
-    tools = _chat_tools(payload, scope["can_write"])
+    tools = _chat_tools(payload, scope["can_write"], scope["web_search_available"])
     _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
     text = context_markdown(payload.title, system, messages, tools, coverage,
                             _parse_images(payload.images) + crops)
@@ -1535,7 +1549,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
     scope = _chat_scope(request, user, payload)
     access = ai_permissions.AccessRun(user, ws, payload.permissions)
     scope["access"] = access
-    tools = _chat_tools(payload, scope["can_write"])
+    tools = _chat_tools(payload, scope["can_write"], scope["web_search_available"])
     # Which model answers, at what effort, with tools or not — the reply's
     # footer names them, and the coverage chip's advice depends on the tools.
     answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}

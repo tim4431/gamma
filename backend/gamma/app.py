@@ -47,6 +47,7 @@ from .routers import (
     sync,
     trash as trash_router,
     uploads,
+    web_search,
     workspaces as workspaces_router,
     ws_backups, cloud_auth as cloud_auth_router)
 from .seed import ensure_admin_seed
@@ -178,6 +179,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_backups.router)
     app.include_router(backup_tasks.router)
     app.include_router(ai.router)
+    app.include_router(web_search.router)
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
