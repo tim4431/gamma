@@ -9,12 +9,13 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards from "./FetchHandoffCards";
+import ReplyPapers from "./ReplyPapers";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
-import { pageAttachment } from "../library/libraryUtils";
+import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { changePlace, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
@@ -381,6 +382,10 @@ export default function ChatDock({
   agentEnabled, setAgentEnabled, onLibraryChange, onNotesChange, onAgentEvent,
   // Opens a page the reply links to (/?page=<id>) in place.
   onOpenPage,
+  // A blocked fetch's card hands it to Gamma Connector by itself, to fetch
+  // out of sight (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
+  // fetchMetadata}, how a reply's "Save to library" saves (Settings → Reading).
+  fetchInBackground = false, paperSave = {},
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState([]);
@@ -400,6 +405,10 @@ export default function ChatDock({
   // The conversation's saves keep failing (chatSession retried what was
   // worth retrying): it lives only in this tab until one goes through.
   const saveError = session.saveError(chatKey);
+  // Where a reply's "Save to library" files papers: the folder the chat is
+  // about — the one viewed, else the open paper's first.
+  const paperFolder = organizeFolder != null ? organizeFolder
+    : parseFolderTags(homeBlocks.find((b) => b.id === focusedBlockId)?.properties?.folder)[0] || "";
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
@@ -1693,7 +1702,11 @@ export default function ChatDock({
                     {!isUser && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
-                        onContinue={(text) => sendChat(text)} />
+                        autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
+                    ) : null}
+                    {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
+                      <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder} options={paperSave}
+                        onOpenPage={onOpenPage} onLibraryChange={onLibraryChange} />
                     ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />

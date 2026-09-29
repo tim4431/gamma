@@ -1,9 +1,10 @@
 // Fetches the chat hands to this browser (the server's gamma/fetch_handoff.py):
-// a chat card's "Open" goes to <server>/api/ai/handoffs/<id>/go on its way to
-// the publisher, so the tab that loads that address is fetching for the chat.
-// The worker binds the tab to the request and, on each page the tab finishes
-// loading, tries the URLs below with the browser's own session; the first real
-// PDF goes back to the chat. Pure rules, tested in tests/.
+// a chat card asks the worker to open the publisher's page (bridge.js), or its
+// "Open" goes to <server>/api/ai/handoffs/<id>/go on its way there, so the tab
+// that loads that address is fetching for the chat. The worker binds the tab
+// to the request and, on each page the tab finishes loading, tries the URLs
+// below with the browser's own session; the first real PDF goes back to the
+// chat. Pure rules, tested in tests/.
 
 // The request id when `url` is a Gamma server's /go address, else "". Any
 // host: the same server is often reached as localhost and 127.0.0.1, or
@@ -105,4 +106,31 @@ export function nextToOpen(tried, { tabUrl = "", viewer = false, opened = {}, aw
 // Whether the downloads' ends say the user must sign in first.
 export function needsSignIn(tried) {
   return tried.some(({ landed }) => landed && signInUrl(landed));
+}
+
+// A bot check or CAPTCHA page, by what the tab shows: a check host (the
+// server's ai_web._CHECK_HOST_RE), a challenge's title, or what the page's
+// content script found (detect.js `check`: a challenge widget on a page with
+// little else).
+const CHECK_HOST = /(?:^|\.)(?:perfdrive\.com|captcha-delivery\.com|hcaptcha\.com|challenges\.cloudflare\.com)$/i;
+const CHECK_TITLE = /^\s*(?:just a moment|attention required|one more step|are you (?:a )?(?:robot|human)|verify(?:ing)? (?:that )?you are (?:a )?human|human verification|security check|bot (?:check|verification)|please verify|请稍候)/i;
+export function checkPage({ url = "", title = "", check = false } = {}) {
+  if (check) return true;
+  let host = "";
+  try { host = new URL(url).hostname; } catch {}
+  return CHECK_HOST.test(host) || CHECK_TITLE.test(title || "");
+}
+
+// Out-of-sight fetches (the chat's "in the background" setting) load in a
+// minimized window of their own, a few at a time; the rest wait their turn.
+// A tab that waits for the user (these notes) does not hold a turn.
+export const MAX_BACKGROUND = 3;
+export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "other"]);
+
+// Whether every turn is taken, from the worker's bindings (tabId → binding).
+export function backgroundBusy(bindings) {
+  const working = new Set(Object.values(bindings || {})
+    .filter((b) => b && b.background && !NEEDS_YOU.has(b.note || ""))
+    .map((b) => b.id));
+  return working.size >= MAX_BACKGROUND;
 }

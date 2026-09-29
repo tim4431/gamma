@@ -657,6 +657,10 @@ function AssistantSettings({ value, ai }) {
           title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
           checked={value.agentEnabled} onChange={value.setAgentEnabled} />
         <AgentToolMatrix perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
+        <Toggle icon={CloudDownloadIcon} label={t("Fetch blocked papers in the background")}
+          hint={t("Gamma Connector tries in a minimized window and sends the PDF back")}
+          title={t("When a publisher stops a chat's fetch with a sign-in or a bot check, the card hands it to Gamma Connector without a click: it opens the page in a minimized window, and when your browser gets the PDF without you (you're signed in, or the check passes by itself) the PDF comes back to the chat and the tab closes. When the page needs you — to sign in or solve a CAPTCHA — the card says so and shows you the tab. Needs Gamma Connector in this browser.")}
+          checked={value.fetchInBackground} onChange={value.setFetchInBackground} />
       </Section>
     </>
   );

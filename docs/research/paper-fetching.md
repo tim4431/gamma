@@ -136,10 +136,35 @@ opens a link in the tab when downloads fail (not when the link leads to a
 sign-in), takes the PDF from the viewer, ignores text-guessed DOIs, and
 reports each step on the card.
 
+The next real run showed the IEEE paper open in its tab while the card
+waited: IEEE's `stamp.jsp` shows the PDF in a frame, which is not a link.
+The Connector now takes a PDF from a frame too. Three requests followed:
+
+- **No Gamma page on the way.** The card now asks the Connector to open the
+  publisher's tab itself; `/go` remains only for the desktop app and a
+  Connector that has not answered yet, and goes on without delay.
+- **In the background.** A setting (off by default) lets a card hand its
+  request to the Connector without a click. The Connector opens the page in
+  a minimized window, three at a time, and closes the tab after delivery.
+  It does not solve CAPTCHAs; it finishes what the browser gets unasked,
+  which is a lot: a paper the user's session or institution network already
+  has access to, and checks that pass a real browser on their own. When the
+  page needs the user, the card says why (sign-in, bot check, another paper
+  shown) and **Show the tab** brings it next to Gamma.
+- **Saving.** Each reply lists the papers it read or linked, with checkboxes,
+  and saves the chosen ones through the Connector's ingest (`POST
+  /api/clip`); a PDF the browser delivered is held for this, so a paper the
+  server cannot download still arrives with its PDF.
+
+Checked in real Chromium with the real Connector against local fakes (see
+[extension.md](../dev/extension.md#testing)). That run also caught
+concurrent background opens overwriting each other's bindings, since fixed.
+
 Still unverified: completing a real publisher's check through the Connector
 (Science's Cloudflare, Radware at IOP, an institutional SSO round trip,
 Atypon's `epdf` reader), whether a stored User-Agent makes a transferred
-`cf_clearance` usable from a server on the browser's machine, and the
-desktop app's path through the system browser.
+`cf_clearance` usable from a server on the browser's machine, the
+desktop app's path through the system browser, and whether real publishers'
+checks pass by themselves in a minimized window.
 
 Mechanics and permissions: [Agent tools](../dev/ai_tools.md).

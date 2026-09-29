@@ -1,4 +1,5 @@
-import { api, getSettings, login, normalizeServer, originPattern, setSettings } from "./api.js";
+import { api, getSettings, login, normalizeServer, originPattern, removeServer, setSettings } from "./api.js";
+import { renderServerList } from "./serverList.js";
 import { connectPublisher, describeSession, publisherHost, publisherRoot } from "./publisherSessions.js";
 
 const $ = (id) => document.getElementById(id);
@@ -12,6 +13,65 @@ let labelTags = [];                        // committed label chips; #labels hol
 let labelSelIdx = -1;                      // keyboard selection in the label suggestion menu
 let pub = null;                            // publisher sessions: the worker's `publisher-status` answer
 let cookieTimer = 0;                       // the cookie button's "done" flash
+let serverBusy = false;
+let serverTrigger = null;
+
+function closeServerMenu(focus = false) {
+  show("server-menu", false);
+  if (serverTrigger) {
+    serverTrigger.setAttribute("aria-expanded", "false");
+    if (focus) serverTrigger.focus();
+  }
+}
+
+async function openServerMenu(trigger) {
+  if (serverBusy) return;
+  if (serverTrigger === trigger && !$("server-menu").classList.contains("hidden")) {
+    closeServerMenu(true);
+    return;
+  }
+  closeServerMenu();
+  closeDrawer();
+  serverTrigger = trigger;
+  const settings = await getSettings();
+  renderServerList($("server-list"), settings, {
+    select: (origin) => changeServer(origin),
+    remove: (origin) => changeServer(origin, true),
+  });
+  trigger.closest(".foot").before($("server-menu"));
+  trigger.setAttribute("aria-expanded", "true");
+  show("server-menu");
+  show("server-error", false);
+  ($("server-list").querySelector('[aria-pressed="true"]') || $("server-list").querySelector("button") || $("manage-servers")).focus();
+  trigger.scrollIntoView({ block: "nearest" });
+}
+
+async function changeServer(origin, forget = false) {
+  if (serverBusy) return;
+  serverBusy = true;
+  for (const button of $("server-menu").querySelectorAll("button")) button.disabled = true;
+  try {
+    if (forget) await removeServer(origin);
+    else {
+      const granted = await chrome.permissions.request({ origins: [originPattern(origin)] });
+      if (!granted) throw new Error("Permission to talk to that server was declined.");
+      await setSettings({ server: origin });
+    }
+    closeServerMenu();
+    closeDrawer();
+    $("login-user").value = "";
+    $("login-pass").value = "";
+    show("login-msg", false);
+    await refresh(true);
+    document.querySelector('[id^="view-"]:not(.hidden) [data-server-switch]')?.focus();
+  } catch (err) {
+    $("server-error").textContent = err.message;
+    show("server-error");
+  } finally {
+    serverBusy = false;
+    for (const button of $("server-menu").querySelectorAll("button")) button.disabled = false;
+  }
+}
 
 async function send(msg) {
   const r = await chrome.runtime.sendMessage(msg);
@@ -498,6 +558,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     g.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-gear"/></svg>';
     g.onclick = () => chrome.runtime.openOptionsPage();
   }
+  for (const button of document.querySelectorAll("[data-server-switch]")) {
+    button.appendChild(icon("chevronDown"));
+    button.onclick = () => openServerMenu(button);
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        openServerMenu(button);
+      }
+    });
+  }
+  $("manage-servers").onclick = () => chrome.runtime.openOptionsPage();
   $("setup-connect").onclick = doConnect;
   $("setup-server").addEventListener("keydown", (e) => { if (e.key === "Enter") doConnect(); });
   $("login-form").addEventListener("submit", doLogin);
@@ -535,10 +606,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("labels").addEventListener("focus", updateLabelMenu);
   $("labels").addEventListener("blur", () => { labelSelIdx = -1; show("label-menu", false); });
   document.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest("#server-menu, [data-server-switch]")) closeServerMenu();
     if (!e.target.closest("#folder-wrap")) show("folder-menu", false);
     if (!e.target.closest("#labels-wrap")) show("label-menu", false);
   });
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("server-menu").classList.contains("hidden")) closeServerMenu(true);
     if (e.key === "Escape") { show("folder-menu", false); show("label-menu", false); closeDrawer(); }
   });
   $("save").onclick = () => doSave();
@@ -554,6 +627,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("pub-auto").addEventListener("change", () => setSettings({ autoRefreshSessions: $("pub-auto").checked }));
   // Progress written by the worker while a save runs (even if this popup was reopened).
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && (changes.server || changes.servers) && !serverBusy) {
+      closeServerMenu();
+      closeDrawer();
+      $("login-user").value = "";
+      $("login-pass").value = "";
+      refresh(true).catch(() => {});
+    }
     if (area !== "session" || !tab) return;
     // The worker refreshed a journal session in the background while the popup is open.
     if (changes["publisher:auto"] && state && pub && pub.supported) loadPublisher(state, true);

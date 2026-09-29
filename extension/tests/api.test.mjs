@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, getSettings, setSettings, whoAmI } from "../api.js";
+import { api, getSettings, removeServer, setSettings, whoAmI } from "../api.js";
 
 function settings(t, server) {
   const stored = { server };
@@ -128,4 +128,18 @@ test("a request pinned to the previous server cannot send data after switching",
     json: { doc_id: "old-server-document" }, expectedOrigin: "http://localhost:9001",
   }), /server changed/);
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("forgetting a server persists without re-adding it or choosing a different destination", async (t) => {
+  const { stored } = settings(t, "http://localhost:9001");
+  await setSettings({ server: "https://gamma.example" });
+  await removeServer("http://localhost:9001");
+  assert.deepEqual((await getSettings()).servers, ["https://gamma.example"]);
+  assert.equal(stored.server, "https://gamma.example");
+  await setSettings({ server: "http://localhost:9001" });
+  await removeServer("http://localhost:9001");
+  assert.equal(stored.server, "");
+  assert.deepEqual((await getSettings()).servers, ["https://gamma.example"]);
+  await removeServer("https://gamma.example");
+  assert.deepEqual((await getSettings()).servers, []);
 });

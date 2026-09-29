@@ -719,18 +719,23 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: Enter-as-new-block preference, in the default workspace", async () => {
     // The Enter key is an account preference: the profile's copy wins over this browser's.
     const { value: profile } = await alice.api("/api/prefs/profile");
-    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
     const ctxD = await alice.context(browser);
-    await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
-    const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
-    const id = await newPageViaUi(p, "Default ws page");
-    await p.keyboard.type("hello");
-    await p.keyboard.press("Enter");
-    await p.keyboard.type("world");
-    await closeEditor(p);
-    await until(async () => same(await tree(alice, id), [{ content: "hello", children: [] }, { content: "world", children: [] }]), { what: "two blocks saved" });
-    assertNoProblems(p);
-    await ctxD.close();
+    try {
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
+      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
+      const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
+      const id = await newPageViaUi(p, "Default ws page");
+      await p.keyboard.type("hello");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("world");
+      await closeEditor(p);
+      await until(async () => same(await tree(alice, id), [{ content: "hello", children: [] }, { content: "world", children: [] }]), { what: "two blocks saved" });
+      assertNoProblems(p);
+    } finally {
+      await ctxD.close();
+      // Workers reuse Alice in later groups; Shift+Enter must keep its original meaning.
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+    }
   });
 
   await step("notes: images and tables are objects — a press selects, a drag lands between or inside blocks, right-click edits the source", async () => {

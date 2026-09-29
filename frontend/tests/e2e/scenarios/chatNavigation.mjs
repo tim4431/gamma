@@ -635,13 +635,22 @@ export async function chatNavigationScenarios(env) {
     // Gamma Connector's content script (extension/bridge.js), answering the
     // card's probe the way it does when it can serve the request — once
     // `connectorOn` is set; until then the page hears nothing, like a browser
-    // without it (or with a version from before chat fetching).
-    await ctx.addInitScript(() => window.addEventListener("message", (e) => {
-      const d = e.data;
-      if (window.connectorOn && d?.source === "gamma-app" && d.type === "connector-probe") {
-        window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
-      }
-    }));
+    // without it (or with a version from before chat fetching). It takes the
+    // card's open / show / close too, noting each in `connectorAsked`.
+    await ctx.addInitScript(() => {
+      window.connectorAsked = [];
+      window.addEventListener("message", (e) => {
+        const d = e.data;
+        if (!window.connectorOn || d?.source !== "gamma-app") return;
+        if (d.type === "connector-probe") {
+          window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+        } else if (d.type === "connector-tab") {
+          window.connectorAsked.push({ do: d.do, background: !!d.background });
+          const status = { open: "opened", show: "shown", close: "closed" }[d.do];
+          window.postMessage({ source: "gamma-connector", type: "connector-tab", id: d.id, do: d.do, status }, location.origin);
+        }
+      });
+    });
     await ctx.route(`**/api/ai/handoffs/${HID}**`, async (route) => {
       const req = route.request();
       const path = new URL(req.url()).pathname;
@@ -668,16 +677,20 @@ export async function chatNavigationScenarios(env) {
       await page.evaluate(() => { window.connectorOn = true; window.dispatchEvent(new Event("focus")); });
       await card.getByText("Gamma Connector sends the PDF back from that tab by itself.").waitFor();
 
-      const popup = ctx.waitForEvent("page");
+      // The Connector opens the publisher's tab itself: no Gamma page on the way.
+      const pagesBefore = ctx.pages().length;
       await card.getByRole("button", { name: "Open www.science.org" }).click();
-      const opened = await popup;
-      assert(opened.url().endsWith(`/api/ai/handoffs/${HID}/go`), `the tab goes through /go: ${opened.url()}`);
-      await opened.close();
       await card.getByText("Finish in the tab that opened").waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: false }]));
+      assertEq(ctx.pages().length, pagesBefore, "the page opened no window of its own");
 
-      // The Connector took the tab: the card says so on its next look.
+      // The Connector took the tab: the card says so on its next look, and
+      // brings that tab forward on request.
       request = { ...request, watched: true };
       await card.getByText("Gamma Connector is watching the tab").waitFor({ timeout: 8000 });
+      await card.getByRole("button", { name: "Show the tab" }).click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
+        { what: "the card asks to show the tab" });
 
       // A PDF dropped on the card goes to the request, not into the library.
       const drop = await page.evaluateHandle((bytes) => {
@@ -691,6 +704,8 @@ export async function chatNavigationScenarios(env) {
       assertEq(uploads.length, 1, "one upload to the request");
       assert(uploads[0].includes(Buffer.from("%PDF")), "the upload carries the PDF");
       assertEq(libraryUploads.length, 0, "the page underneath did not import the drop");
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
+        { what: "the Connector lets its tab go" });
 
       await until(() => prompts.length === 1, { what: "the chat continues by itself" });
       assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
@@ -705,6 +720,93 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  await step("chat navigation: in the background the Connector takes a blocked fetch unasked; a reply's papers save to the library", async () => {
+    const HID = "e2eHandoffBackground1";
+    const handoff = { id: HID, host: "www.worldscientific.com", wall: "captcha", source: "doi:10.1142/e2e.bg" };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { id: "bg-q", role: "user", text: "Find papers on proximity junctions" },
+      { id: "bg-a", role: "ai",
+        text: "I read [Proximity effect in superconductors](https://arxiv.org/abs/2301.01234); see also "
+          + "[A junction review](https://doi.org/10.1234/e2e.review). World Scientific asked for a bot check.",
+        actions: [
+          { kind: "fetch", tool: "fetch_paper", summary: "Fetched “2301.01234”", args: { source: "arXiv:2301.01234" },
+            result: "Fetched PDF", url: "https://arxiv.org/pdf/2301.01234", title: "", pdf: true },
+          { kind: "fetch", error: true, summary: "Needs your browser: www.worldscientific.com", tool: "fetch_paper",
+            args: { source: handoff.source }, result: "error: blocked", handoff },
+        ] },
+    ] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), fetchInBackground: true } } });
+    let request = { ...handoff, url: "https://www.worldscientific.com/doi/10.1142/e2e.bg", pdf_url: "", detail: "",
+      status: "waiting", watched: false, note: "", background: false, pages: 0, from_url: "" };
+    const clips = [];
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.addInitScript(() => {
+      window.connectorAsked = [];
+      window.addEventListener("message", (e) => {
+        const d = e.data;
+        if (d?.source !== "gamma-app") return;
+        if (d.type === "connector-probe") {
+          window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+        } else if (d.type === "connector-tab") {
+          window.connectorAsked.push({ do: d.do, background: !!d.background });
+          const status = { open: "opened", show: "shown", close: "closed" }[d.do];
+          window.postMessage({ source: "gamma-connector", type: "connector-tab", id: d.id, do: d.do, status }, location.origin);
+        }
+      });
+    });
+    await ctx.route(`**/api/ai/handoffs/${HID}**`, (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      return route.fulfill({ json: request });
+    });
+    // The server's side of saving is POST /api/clip (tests/test_clip.py): here it only records.
+    await ctx.route("**/api/clip", (route) => {
+      const body = route.request().postDataJSON();
+      clips.push(body);
+      return route.fulfill({ json: { block_id: `saved-${clips.length}`, doc_id: `doc-${clips.length}`,
+        title: body.title, existed: false, folder: body.folder, labels: [], open_url: "/" } });
+    });
+    await ctx.route("**/api/library/preview*", (route) => route.fulfill({ status: 404, json: { detail: "no registry record" } }));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const card = page.locator(".chatHandoff");
+      await card.getByText("www.worldscientific.com asked for a CAPTCHA or bot check").waitFor();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).length > 0,
+        { what: "the card hands the request to the Connector without a click" });
+      assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
+      request = { ...request, watched: true, background: true };
+      await card.getByText("Gamma Connector is getting it in a minimized window").waitFor({ timeout: 8000 });
+      // The page wants the user: the card says so and offers the tab.
+      request = { ...request, note: "check" };
+      await card.getByText("The site is showing a bot check or CAPTCHA").waitFor({ timeout: 8000 });
+      await card.locator("button.primary", { hasText: "Show the tab" }).click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
+        { what: "the card asks to show the tab" });
+
+      // The reply's papers: the one it read, the blocked one, the one it links.
+      const pill = page.getByRole("button", { name: /3 papers in this reply · Save to library/ });
+      await pill.click();
+      const list = page.getByRole("group", { name: "Papers in this reply" });
+      await list.getByText("Proximity effect in superconductors").waitFor();
+      await list.getByRole("checkbox", { name: "Proximity effect in superconductors" }).check();
+      await list.getByRole("checkbox", { name: "A junction review" }).check();
+      await list.getByRole("button", { name: "Save 2 papers to library" }).click();
+      await until(async () => (await list.getByText("Saved", { exact: true }).count()) === 2, { what: "both rows say Saved" });
+      assertEq(JSON.stringify(clips.map((c) => [c.arxiv_id, c.doi, c.pdf_url, c.source_url, c.title])), JSON.stringify([
+        ["2301.01234", "", "https://arxiv.org/pdf/2301.01234", "https://arxiv.org/abs/2301.01234", "Proximity effect in superconductors"],
+        ["", "10.1234/e2e.review", "", "https://doi.org/10.1234/e2e.review", "A junction review"],
+      ]));
+      assert(clips.every((c) => c.folder === "" && c.save_copy === true && !c.doc_id), "into the library root, stored");
+      assertNoProblems(page, [/api\/library\/(lookup|preview)/, /status of 404/]);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });

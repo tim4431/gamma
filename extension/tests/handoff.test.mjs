@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAX_OPENS, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, signInUrl, sourceIds } from "../handoff.js";
+import {
+  MAX_BACKGROUND, MAX_OPENS, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork,
+  signInUrl, sourceIds,
+} from "../handoff.js";
 
 const ORIGIN = "https://gamma.example";
 
@@ -86,4 +89,27 @@ test("a download that ends on a sign-in page, or back on the article, waits for 
   assert.equal(needsSignIn(back), false);
   assert.equal(signInUrl("https://idp.stanford.edu/idp/profile/SAML2/Redirect/SSO"), true);
   assert.equal(signInUrl("https://www.sciencedirect.com/science/article/pii/1/pdfft"), false);
+});
+
+test("a bot check shows by its host, its title, or the challenge the page carries", () => {
+  assert.equal(checkPage({ url: "https://validate.perfdrive.com/?ssa=1", title: "" }), true);
+  assert.equal(checkPage({ url: "https://www.worldscientific.com/doi/10.1142/x", title: "Just a moment..." }), true);
+  assert.equal(checkPage({ url: "https://www.science.org/doi/x", title: "Attention Required! | Cloudflare" }), true);
+  assert.equal(checkPage({ url: "https://pubs.example/x", title: "Verifying you are human" }), true);
+  assert.equal(checkPage({ url: "https://pubs.example/x", title: "An article", check: true }), true, "detect.js saw a challenge");
+  assert.equal(checkPage({ url: "https://onlinelibrary.wiley.com/doi/10.1002/x", title: "Josephson Junctions - Wiley" }), false);
+  assert.equal(checkPage({}), false);
+});
+
+test("out-of-sight fetches take a few turns; a tab waiting for the user holds none", () => {
+  const bg = (id, note = "") => ({ id, background: true, note });
+  assert.equal(backgroundBusy({}), false);
+  const full = Object.fromEntries(Array.from({ length: MAX_BACKGROUND }, (_, i) => [i + 1, bg(`r${i}`)]));
+  assert.equal(backgroundBusy(full), true);
+  // Two tabs of one request (a PDF link opened in a new tab) are one turn.
+  assert.equal(backgroundBusy({ 1: bg("a"), 2: bg("a"), 3: bg("b") }), false);
+  assert.equal(backgroundBusy({ ...full, 1: bg("r0", "signin") }), false, "a sign-in waits for the user");
+  assert.equal(backgroundBusy({ ...full, 1: bg("r0", "check") }), false);
+  assert.equal(backgroundBusy({ ...full, 1: { id: "r0", background: false } }), false, "a tab the user sees");
+  assert.equal(backgroundBusy({ ...full, 1: bg("r0", "opening") }), true, "opening a PDF link still works on it");
 });

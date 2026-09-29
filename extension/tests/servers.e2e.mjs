@@ -60,7 +60,7 @@ try {
       document.getElementById("who").textContent === user, user);
   }
   await ready("alice");
-  assert.deepEqual(await page.locator("#saved-server option").allTextContents(), [a.origin]);
+  assert.deepEqual(await page.locator("#saved-servers .serverPick .ctxMenuText").allTextContents(), [a.origin]);
 
   const paper = await context.newPage();
   await paper.goto(`${a.origin}/doi/10.1234/testing`);
@@ -71,42 +71,42 @@ try {
   await page.locator("#server").fill(b.origin);
   await page.locator("#connect").click();
   await ready("bob");
-  assert.deepEqual(await page.locator("#saved-server option").allTextContents(), [a.origin, b.origin]);
+  assert.deepEqual(await page.locator("#saved-servers .serverPick .ctxMenuText").allTextContents(), [a.origin, b.origin]);
   assert.equal((await getState()).result.hit.block_id, "bob-paper");
-  await page.locator("#saved-server").selectOption(a.origin);
+  await page.getByRole("button", { name: a.origin, exact: true }).click();
   await ready("alice");
   assert.equal((await getState()).result.hit.block_id, "alice-paper");
   await page.reload();
   await ready("alice");
-  assert.equal(await page.locator("#saved-server option").count(), 2);
+  assert.equal(await page.locator("#saved-servers .serverPick .ctxMenuText").count(), 2);
 
   await page.locator("#server").fill("");
   await page.locator("#connect").click();
   assert.equal(await page.locator("#server-status").textContent(), "Enter a valid URL.");
   await page.evaluate(() => { chrome.permissions.request = async () => false; });
-  await page.locator("#saved-server").selectOption(b.origin);
+  await page.getByRole("button", { name: b.origin, exact: true }).click();
   await page.waitForFunction(() => document.getElementById("server-status").textContent.includes("declined"));
-  assert.equal(await page.locator("#saved-server").inputValue(), a.origin);
+  assert.equal(await page.locator('#saved-servers [aria-pressed="true"]').textContent(), a.origin);
   assert.equal((await worker.evaluate(() => chrome.storage.sync.get("server"))).server, a.origin);
   await page.reload();
   await ready("alice");
 
   b.state.user = null;
-  await page.locator("#saved-server").selectOption(b.origin);
+  await page.getByRole("button", { name: b.origin, exact: true }).click();
   await ready("");
   assert.equal(await page.locator("#signed-out").isVisible(), true);
   assert.equal(await page.locator("#signed-in").isVisible(), false);
   await page.locator("#user").fill("unsent user");
   await page.locator("#pass").fill("unsent password");
-  await page.locator("#saved-server").selectOption(a.origin);
+  await page.getByRole("button", { name: a.origin, exact: true }).click();
   await ready("alice");
   assert.equal(await page.locator("#pass").inputValue(), "");
   b.state.offline = true;
-  await page.locator("#saved-server").selectOption(b.origin);
+  await page.getByRole("button", { name: b.origin, exact: true }).click();
   await page.waitForFunction(() => !document.getElementById("connect").disabled && document.getElementById("server-status").classList.contains("err"));
   assert.equal(await page.locator("#signed-in").isVisible(), false);
   assert.equal(await page.locator("#who").textContent(), "");
-  await page.locator("#saved-server").selectOption(a.origin);
+  await page.getByRole("button", { name: a.origin, exact: true }).click();
   await ready("alice");
 
   // A browser download begun for A must not upload or save to B after a switch.
@@ -116,15 +116,84 @@ try {
   await started;
   b.state.offline = false;
   b.state.user = "bob";
-  await page.locator("#saved-server").selectOption(b.origin);
+  await page.getByRole("button", { name: b.origin, exact: true }).click();
   await ready("bob");
   releasePdf();
   const result = await save;
   assert.equal(result.ok, false);
   assert.match(result.error, /server changed/);
   assert.deepEqual(writes, []);
+
+  const popup = await context.newPage();
+  popup.on("pageerror", (error) => errors.push(error.message));
+  await popup.goto(`chrome-extension://${id}/popup.html?tab=${tabId}`);
+  const mainTrigger = popup.locator("#view-main [data-server-switch]");
+  await mainTrigger.waitFor({ state: "visible" });
+  await mainTrigger.click();
+  await popup.locator('#server-list [aria-pressed="true"]').waitFor({ state: "visible" });
+  assert.equal(await popup.locator('#server-list [aria-pressed="true"]').textContent(), b.origin);
+  await popup.keyboard.press("Home");
+  assert.equal(await popup.evaluate(() => document.activeElement.dataset.origin), a.origin);
+  await popup.keyboard.press("Escape");
+  assert.equal(await mainTrigger.getAttribute("aria-expanded"), "false");
+  assert.equal(await mainTrigger.evaluate((el) => el === document.activeElement), true);
+  await mainTrigger.click();
+  await popup.getByRole("button", { name: a.origin, exact: true }).click();
+  await popup.waitForFunction(() => document.getElementById("foot").textContent.includes("alice"));
+  await ready("alice"); // The open options page also follows the popup's selection.
+  assert.equal(await popup.locator("#server-menu").isVisible(), false);
+  b.state.user = null;
+  await mainTrigger.click();
+  await popup.getByRole("button", { name: b.origin, exact: true }).click();
+  const loginTrigger = popup.locator("#view-login [data-server-switch]");
+  await loginTrigger.waitFor({ state: "visible" });
+  await loginTrigger.click();
+  await popup.getByRole("button", { name: a.origin, exact: true }).click();
+  await mainTrigger.waitFor({ state: "visible" });
+  b.state.offline = true;
+  await mainTrigger.click();
+  await popup.getByRole("button", { name: b.origin, exact: true }).click();
+  const offlineTrigger = popup.locator("#view-offline [data-server-switch]");
+  await offlineTrigger.waitFor({ state: "visible" });
+  await offlineTrigger.click();
+  await popup.getByRole("button", { name: a.origin, exact: true }).click();
+  await mainTrigger.waitFor({ state: "visible" });
+  await ready("alice");
+
+  // Each row's remove action leaves the other addresses and session intact.
+  await page.getByRole("button", { name: `Remove ${b.origin}`, exact: true }).click();
+  await ready("alice");
+  assert.equal(await page.locator("#saved-servers .serverPick").count(), 1);
+  await page.reload();
+  await ready("alice");
+  assert.equal(await page.locator("#saved-servers .serverPick").count(), 1);
+  await mainTrigger.click();
+  assert.equal(await popup.locator("#server-list .serverPick").count(), 1);
+  await popup.getByRole("button", { name: `Remove ${a.origin}`, exact: true }).click();
+  await popup.locator("#view-setup").waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.getElementById("server-status").textContent === "Not connected.");
+  assert.equal(await page.locator("#saved-servers").isVisible(), false);
+  assert.equal(await page.locator("#server").inputValue(), "");
+  assert.deepEqual((await worker.evaluate(() => chrome.storage.sync.get("servers"))).servers, []);
+  // Reconnecting after removing the final row still works.
+  await page.locator("#server").fill(a.origin);
+  await page.locator("#connect").click();
+  await ready("alice");
+  await mainTrigger.waitFor({ state: "visible" });
+  if (process.env.GAMMA_SERVER_SCREENSHOTS) {
+    await page.locator("#server").fill(b.origin);
+    await page.locator("#connect").click();
+    await page.waitForFunction(() => !document.getElementById("connect").disabled);
+    await page.getByRole("button", { name: a.origin, exact: true }).click();
+    await ready("alice");
+    await page.setViewportSize({ width: 520, height: 820 });
+    await page.screenshot({ path: "tmp/connector-server-rows.png" });
+    await popup.setViewportSize({ width: 360, height: 650 });
+    await mainTrigger.click();
+    await popup.screenshot({ path: "tmp/connector-footer-switcher.png" });
+  }
   assert.deepEqual(errors, []);
-  console.log("PASS: existing-server migration, add/switch/reload, account and offline states, library isolation, in-flight save isolation.");
+  console.log("PASS: server rows, footer switching, keyboard access, removal/reconnect, account/offline states, library and in-flight save isolation.");
 } finally {
   releasePdf?.();
   await context?.close();

@@ -1,8 +1,10 @@
 """The AI chat's fetch handoffs (``gamma/fetch_handoff.py``): the chat card
 polls a request, uploads the PDF the user downloaded, or dismisses it; Gamma
-Connector recognizes the tab opened on ``/go``, takes the request (``watch``)
-and sends the PDF from that tab. Personal accounts only, like the publisher
-sessions the Connector also refreshes."""
+Connector opens the page itself when the card asks it to (or recognizes a tab
+opened on ``/go``), takes the request (``watch``) and sends the PDF from that
+tab. ``store`` puts a delivered PDF into the workspace, for the chat's "Save
+to library". Personal accounts only, like the publisher sessions the
+Connector also refreshes."""
 
 import html
 
@@ -12,8 +14,8 @@ from pydantic import BaseModel
 
 from .. import fetch_handoff as handoff
 from ..ai_web import FETCH_MAX_BYTES, FetchError
-from ..auth import require_personal_user
-from ..storage import is_pdf
+from ..auth import require_personal_user, require_ws
+from ..storage import is_pdf, store_pdf
 
 router = APIRouter(prefix="/api/ai/handoffs", tags=["ai"])
 
@@ -39,12 +41,14 @@ def status(rid: str, request: Request):
 
 
 class WatchNote(BaseModel):
-    note: str = ""  # fetch_handoff.NOTES; anything else clears it
+    note: str = ""            # fetch_handoff.NOTES; anything else clears it
+    background: bool = False  # the tab is one the Connector keeps out of sight
 
 
 @router.post("/{rid}/watch")
 def watch(rid: str, request: Request, payload: WatchNote | None = None):
-    return _found(handoff.watch(_user(request), rid, payload.note if payload else ""))
+    payload = payload or WatchNote()
+    return _found(handoff.watch(_user(request), rid, payload.note, payload.background))
 
 
 @router.delete("/{rid}")
@@ -71,6 +75,23 @@ def deliver(rid: str, request: Request, file: UploadFile = File(...), url: str =
         raise HTTPException(409, f"This request is {e} — nothing more to send") from None
 
 
+# Sync def: hashing and writing the file run in the threadpool.
+@router.post("/{rid}/store")
+def store(rid: str, request: Request):
+    """Put the PDF delivered for this request into the workspace's uploads
+    (content-hash deduped, like ``POST /api/uploads``), for ``POST
+    /api/clip`` to make the library page from — the chat's "Save to
+    library" for a paper only the user's browser could get."""
+    user = _user(request)
+    ws = require_ws(request, write=True)
+    held = handoff.held_pdf(user, rid)
+    if held is None:
+        raise HTTPException(404, "The PDF is no longer held here — save it from your browser instead")
+    data, url = held
+    doc_id, source_url, existed = store_pdf(ws, data)
+    return {"doc_id": doc_id, "source_url": source_url, "already_existed": existed, "url": url}
+
+
 _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -94,11 +115,13 @@ a {{ display: inline-block; padding: 8px 14px; border-radius: 8px; background: v
 
 @router.get("/{rid}/go", response_class=HTMLResponse)
 def go(rid: str, request: Request):
-    """The page a card's "Open" leads to, on its way to the publisher. Its
-    address is how Gamma Connector knows the tab is fetching for the chat.
-    The request's owner goes on after a moment; anyone else holding the
-    link (another account, a browser signed in to no one) is asked first,
-    so the link is not an open redirect."""
+    """The page a card's "Open" leads to on its way to the publisher when
+    the card cannot hand the tab to Gamma Connector itself (the desktop app
+    opens it in the system browser; a Connector that has not answered yet).
+    Its address is how the Connector knows the tab is fetching for the chat.
+    The request's owner goes straight on; anyone else holding the link
+    (another account, a browser signed in to no one) is asked first, so the
+    link is not an open redirect."""
     found = handoff.target(rid)
     if not found:
         return HTMLResponse(_PAGE.format(refresh="", title="This link has expired",
@@ -108,7 +131,7 @@ def go(rid: str, request: Request):
     link = f'<a href="{url}">Continue to {host}</a>'
     if owner:
         return HTMLResponse(_PAGE.format(
-            refresh=f'<meta http-equiv="refresh" content="1;url={url}">\n',
+            refresh=f'<meta http-equiv="refresh" content="0;url={url}">\n',
             title=f"Opening {host}…", link=link,
             text="Sign in or complete the check there. Gamma Connector sends the PDF back to "
                  "your chat as soon as it opens; without the Connector, download the PDF and "

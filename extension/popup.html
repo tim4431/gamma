@@ -23,6 +23,15 @@
     </div>
     <div id="setup-msg" class="msg err hidden"></div>
     <div class="actions"><button id="setup-connect" class="uiBtn primary block">Connect</button></div>
+    <div class="foot"><button type="button" class="footStatus serverTrigger" data-server-switch aria-label="Switch server" aria-haspopup="dialog" aria-expanded="false" aria-controls="server-menu"><span class="serverName">Choose a saved server</span></button><button class="gearBtn" data-gear title="Options"></button></div>
+  </div>
+
+  <!-- A single shared switcher moves above the active view's footer. -->
+  <div id="server-menu" class="ctxMenu serverMenu hidden" role="dialog" aria-label="Switch server">
+    <div class="serverMenuLabel">Saved servers</div>
+    <div id="server-list" role="group" aria-label="Saved servers"></div>
+    <div id="server-error" class="status err hidden" role="status"></div>
+    <button id="manage-servers" class="ctxMenuItem serverManage" type="button">Manage servers...</button>
   </div>
 
   <!-- server configured but unreachable -->
@@ -30,7 +39,7 @@
     <div class="head"><span class="dot bad"></span><div><div class="t">Can't reach your Gamma server</div><div class="s" id="offline-server"></div></div></div>
     <div id="offline-msg" class="msg err"></div>
     <div class="actions"><button id="offline-retry" class="uiBtn primary block">Retry</button></div>
-    <div class="foot"><span class="footStatus"><span class="connDot bad" title="Server unreachable"></span><span id="offline-foot"></span></span><button class="gearBtn" data-gear title="Options"></button></div>
+    <div class="foot"><button type="button" class="footStatus serverTrigger" data-server-switch aria-label="Switch server" aria-haspopup="dialog" aria-expanded="false" aria-controls="server-menu"><span class="connDot bad" title="Server unreachable"></span><span id="offline-foot" class="serverName"></span></button><button class="gearBtn" data-gear title="Options"></button></div>
   </div>
 
   <!-- not signed in -->
@@ -42,7 +51,7 @@
     </form>
     <div id="login-msg" class="msg err hidden"></div>
     <div class="actions"><button id="login-btn" class="uiBtn primary block">Sign in</button></div>
-    <div class="foot"><span class="footStatus"><span class="connDot warn" title="Connected — not signed in"></span><span id="login-foot"></span></span><button class="gearBtn" data-gear title="Options"></button></div>
+    <div class="foot"><button type="button" class="footStatus serverTrigger" data-server-switch aria-label="Switch server" aria-haspopup="dialog" aria-expanded="false" aria-controls="server-menu"><span class="connDot warn" title="Connected — not signed in"></span><span id="login-foot" class="serverName"></span></button><button class="gearBtn" data-gear title="Options"></button></div>
   </div>
 
   <!-- the main popup -->
@@ -114,7 +123,7 @@
     </div>
 
     <div class="foot">
-      <span class="footStatus"><span id="conn" class="connDot"></span><span id="foot"></span></span>
+      <button type="button" class="footStatus serverTrigger" data-server-switch aria-label="Switch server" aria-haspopup="dialog" aria-expanded="false" aria-controls="server-menu"><span id="conn" class="connDot"></span><span id="foot" class="serverName"></span></button>
       <span class="footBtns">
         <button id="cookie-btn" class="footBtn cookieBtn hidden" type="button" aria-haspopup="dialog" aria-expanded="false">
           <span class="cookieGlyph" id="cookie-glyph"></span><span class="cookieRing"></span><span class="cookieBadge"></span>

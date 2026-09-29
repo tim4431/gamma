@@ -38,6 +38,16 @@ export async function setSettings(patch) {
   await chrome.storage.sync.set(patch);
 }
 
+// Forgetting an active address disconnects, without logging out or selecting
+// another destination for saves. Write both keys together to avoid re-adding it.
+export async function removeServer(origin) {
+  const settings = await getSettings();
+  await chrome.storage.sync.set({
+    server: settings.server === origin ? "" : settings.server,
+    servers: settings.servers.filter((server) => server !== origin),
+  });
+}
+
 // "gamma.local:9001" → "http://gamma.local:9001"; keeps an explicit scheme.
 export function normalizeServer(raw) {
   let s = (raw || "").trim().replace(/\/+$/, "");

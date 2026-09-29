@@ -76,9 +76,9 @@ helpers — never re-implement it in the extension.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`) |
-| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`) — pure, tested in `tests/` |
-| `bridge.js` | content script answering a chat card's `connector-probe` window message with the worker's `connector-probe` verdict (`ok` / `signed-out` / `other-account` / `unreachable`), or nothing; a question a second per request |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`, `handoff:window`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-probe` / `connector-tab`) |
+| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every out-of-sight turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
+| `bridge.js` | content script between a chat card and the worker: a `connector-probe` window message gets the worker's verdict (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
@@ -87,6 +87,7 @@ helpers — never re-implement it in the extension.
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
 | `options.html/js` | server + host permission, account, saving defaults |
+| `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
 | `icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
 ## Detection
@@ -260,31 +261,55 @@ side and the security model: [paper_metadata.md](paper_metadata.md#connected-pub
 The AI chat's `fetch_paper` hands a paper to the browser when a CAPTCHA, a
 sign-in page or a paywall stopped the server
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). The reply's card
-opens `<server>/api/ai/handoffs/<id>/go`, a short Gamma page that goes on to
-the publisher; that address is how the Connector knows the tab:
+asks the Connector to open the publisher's page itself (`bridge.js` →
+`connector-tab` `open`); when no Connector has answered it yet, or in the
+desktop app, the card opens `<server>/api/ai/handoffs/<id>/go` instead, a
+Gamma page that goes straight on to the publisher and whose address the
+Connector knows the tab by:
 
-1. **Bind.** `tabs.onUpdated` (and `onCreated`, by the pending URL) sees the
-   tab load a `/go` address (`handoffIdFrom`) — on any host, since one server
-   is often reached as `localhost` and `127.0.0.1` or through a proxy. The
-   worker takes the request with `POST /api/ai/handoffs/<id>/watch` on its
-   own server, which refuses another account's, an expired or a made-up
-   request, and records the tab under `handoffs` in session storage, with
-   the address the Gamma page asked from (`app`). A tab the bound tab opens
-   (a "PDF" link with `target=_blank`) is bound to the same request.
+1. **Bind.** On `open` the worker checks the request with its own server
+   (`GET …/<id>`: another account's, an expired or a made-up request gets no
+   answer), makes a blank tab next to the Gamma tab that asked, records it
+   under `handoffs` in session storage with the address the Gamma page asked
+   from (`app`) and the Gamma tab (`opener`), takes the request with `POST
+   /api/ai/handoffs/<id>/watch`, and only then loads the publisher's page, so
+   the binding exists before the page can finish loading. A page already
+   open for the request is shown instead. On the `/go` path `tabs.onUpdated`
+   (and `onCreated`, by the pending URL) sees the tab load a `/go` address
+   (`handoffIdFrom`) — on any host, since one server is often reached as
+   `localhost` and `127.0.0.1` or through a proxy — and the worker binds it
+   the same way. A tab the bound tab opens (a "PDF" link with
+   `target=_blank`) is bound to the same request.
+
+   **Out of sight.** With the chat's "Fetch blocked papers in the
+   background" setting the card sends `open` with `background` by itself.
+   The tab then loads in a minimized, unfocused window of the Connector's
+   own (`handoff:window`, made when there is none, closing with its last
+   tab), `MAX_BACKGROUND` (3) requests at a time; more wait in
+   `handoff:queue` (the card reads `queued`) and start as turns free up. A
+   tab waiting for the user (a `NEEDS_YOU` note: `signin`, `check`,
+   `looking`, `refused`, `other`) holds no turn. The watch call says
+   `background`, so the card can say where the page is.
 2. **Harvest.** Each page a bound tab finishes loading off the Gamma server
    is a chance: the worker checks the request still waits (`GET …/<id>`;
    settled or gone releases the tab), reads the page's detection afresh
    (`get-detection` with `fresh`), skips a page that names another DOI or
    arXiv id in its metadata (`sameWork`; a DOI only guessed from the page's
-   text, often a reference's, does not count), and tries, in order, the tab
+   text, often a reference's, does not count; the note `other` says so), and tries, in order, the tab
    itself when it shows a PDF (Chrome's viewer runs no content script), the
    page's advertised PDF link, its "View PDF"-style links on the same site
    (`detect.js` `pdfLinks`: a `/pdf`, `/epdf`, `/pdfft` or `/article-pdf`
    route, or "PDF" in the link text; supplementary files left out), and the
    server's PDF link when the page is a paper page of that site
-   (`harvestUrls`: a sign-in page costs no request). A page that shows no
-   link yet is looked at again after 3 and 6 s (publisher pages render the
-   link after load). Each URL goes through the save pipeline's
+   (`harvestUrls`: a sign-in page costs no request). A PDF the page shows
+   in a frame counts as a link (`iframe` / `embed` / `object` with "pdf" in
+   its address — IEEE's `stamp.jsp` frames `stampPDF/getPDF.jsp`). A page
+   that shows no link yet is looked at again after 3 and 6 s (publisher
+   pages render the link after load), or after 3, 6, 9 and 12 s when it is
+   a bot check (`checkPage`: a check host, a challenge title, or `detect.js`
+   finding a challenge widget on a page with little else), which a real
+   browser often passes by itself; then it is noted `looking` or `check`.
+   Each URL goes through the save pipeline's
    `bytesFromTab` — the worker's credentialed fetch, then the tab's own
    same-origin fetch — and only a real `%PDF` counts; a failed attempt
    remembers where it ended (`landed`).
@@ -301,19 +326,29 @@ the publisher; that address is how the Connector knows the tab:
    three times) only after the tab has been on another site since, such as
    a university sign-in that sends the user back to the article.
 4. **Deliver.** The first PDF goes to `POST /api/ai/handoffs/<id>/pdf` with
-   the URL it came from. The worker releases every tab of the request, shows a
-   "Sent to your Gamma chat" notification, brings the Gamma tab forward (the
-   tab that opened the request, else the most recently used Gamma page at the
-   address it asked from, else at the Connector's own),
-   and — on HTTPS — refreshes that publisher's connected cookies right away
-   (`autoRefreshPublisher(…, {force: true})`: the session just worked, so the
-   server's copy should match it; still only for a host connected by hand,
-   with the cookies permission).
+   the URL it came from. On HTTPS the worker refreshes that publisher's
+   connected cookies right away (`autoRefreshPublisher(…, {force: true})`: the
+   session just worked, so the server's copy should match it; still only for
+   a host connected by hand, with the cookies permission). Then it releases
+   every tab of the request. A tab out of sight closes, with nothing else to
+   see. After a tab the user saw, the worker shows a "Sent to your Gamma chat"
+   notification and brings the Gamma tab forward (the tab that opened the
+   request, else the most recently used Gamma page at the address it asked
+   from, else at the Connector's own).
 
-What the worker is doing reaches the card through `POST …/watch {note}`
-(`noteHandoff`): `looking` (no PDF link on the page yet), `signin` (the PDF
-link leads to a sign-in), `opening` (the tab opens a link), `refused` (no
-link gave a PDF — the user saves it from the tab and drops it on the card).
+What the worker is doing reaches the card through `POST …/watch {note,
+background}` (`noteHandoff`): `looking` (no PDF link on the page yet),
+`check` (the page is a bot check or CAPTCHA), `signin` (the PDF link leads to
+a sign-in), `opening` (the tab opens a link), `refused` (no link gave a PDF —
+the user saves it from the tab and drops it on the card), `other` (the tab
+shows another paper), `closed` (the request's last tab was closed before the
+PDF came; the card offers Open again). The card's **Show the tab** sends
+`show`: a tab out of sight moves next to the Gamma tab that asked and comes
+forward (its window restored), and counts as seen from then on. Dismiss and a
+PDF dropped on the card send `close`, which releases the request's tabs and
+closes the ones out of sight. Every change to the bindings and the queue runs
+through one serialized section (`changeHandoffs`), since several requests
+open, note and deliver at once.
 
 The chat's card follows the request on the server and continues the
 conversation once the PDF has arrived. Before the user opens the page it asks
@@ -347,6 +382,13 @@ signed in to the same server works the same way.
   defaults are shared. Library lookups are scoped to their server, old badges
   are cleared on a switch, and save uploads/clip requests reject a changed
   server instead of sending the old server's document IDs to the new one.
+- Saved servers appear as individual rows with a checkmark on the active
+  address and an accessible remove button on every row. The popup's footer
+  opens the same controls above it, in all connection states; arrow keys
+  move between servers and Escape closes the switcher and returns focus.
+  Removing the active address disconnects without choosing another server
+  or deleting browser cookies. Open options and popup views follow changes
+  to the shared server settings.
 - After a successful `/api/session` check, the Connector
   remembers an HTTP-to-HTTPS redirect to the exact same host, port and API path,
   with the standard port changing from 80 to 443. The worker and options page
@@ -372,7 +414,8 @@ signed in to the same server works the same way.
   API settings and origin guards.
 - `node extension/tests/servers.e2e.mjs` — full Chromium with the unpacked
   extension and two local test servers: remembered addresses, switching,
-  account/offline states, denied permission, library results and saves that
+  account/offline states, denied permission, footer keyboard navigation,
+  removing/reconnecting servers, library results and saves that
   are interrupted by a server switch. Uses `frontend/`'s Playwright install.
 - `frontend/tests/themes.test.mjs` — `tokens.css` and `fonts/` equal their
   sources, and both pages load `theme.js`, then `tokens.css`, then
@@ -401,6 +444,20 @@ signed in to the same server works the same way.
   redirect to a signed PDF on another host): the tab opened the link and the
   PDF from the other host arrived. The plain publisher's PDF link, which
   leads to its sign-in, was not opened; the card asked the user to sign in.
+  After the Connector opened tabs itself (2026-09-28, the same recipe): the
+  card's Open made a tab straight at the publisher, with no `/go` on the way;
+  four requests in the background with the user signed in were delivered
+  without a click, never more than three tabs at once, the tabs and their
+  window closed, and the chat continued once; a check that passes by itself
+  (a script sets the clearance cookie and reloads) was delivered without a
+  click; one that does not got the `check` note, and Show the tab moved it
+  into Gamma's window and forward; an IEEE-like page framing its PDF behind
+  a sign-in got `signin`, and after signing in in the shown tab the framed
+  PDF arrived and saved to the library with its PDF. The window is created
+  minimized and unfocused, but headless Chromium reports it `normal` right
+  after (no window manager), so staying minimized on a desktop is unchecked.
+  Concurrent opens first lost bindings to each other's writes, which is why
+  the changes are serialized.
 
 ## Not done yet
 

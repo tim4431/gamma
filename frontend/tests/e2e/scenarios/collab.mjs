@@ -275,12 +275,13 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await A.keyboard.press("Shift+Enter"); // a new note …
     await A.keyboard.type("alice made this"); // … and typing in it
     await closeEditor(A);
+    const texts = async () => (await pg.tree()).map((b) => b.content);
+    await until(async () => same(await texts(), ["existing block", "alice made this"]), { what: "alice's new note is a separate block" });
     await bodyHas(B, "alice made this");
     await editRow(B, "alice made this");
     await B.keyboard.type(" and bob wrote this");
     await closeEditor(B);
     await bodyHas(A, "alice made this and bob wrote this");
-    const texts = async () => (await pg.tree()).map((b) => b.content);
     await A.keyboard.press("Control+z");
     await until(async () => same(await texts(), ["existing block", " and bob wrote this"]), { what: "alice's typing taken out, bob's kept" });
     await A.keyboard.press("Control+z"); // would delete the note bob wrote in
