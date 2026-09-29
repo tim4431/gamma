@@ -972,6 +972,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // recents and folders name pages of one library.
   useEffect(() => {
     const u = authUser?.user && wsId ? `${authUser.user}@${wsId}` : "";
+    tabHistoryRef.current = [];
     if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
@@ -1871,6 +1872,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // Local viewing order, separate from the link-jump Back stack and the
+  // synced tab order. Home keeps its folder/label so closing a page can
+  // return to the view it was opened from.
+  const tabHistoryRef = useRef([]);
+  useEffect(() => {
+    if (shareMode || !prefsUserRef.current) return;
+    const blockId = focusedBlockId || null;
+    const history = tabHistoryRef.current.filter((entry) => entry.blockId !== blockId);
+    tabHistoryRef.current = [...history, { blockId, folder: folderFilter, category: categoryFilter }];
+  }, [focusedBlockId, folderFilter, categoryFilter, authUser?.user, wsId, shareMode]);
   const prefsUserRef = useRef(""); // whose tabs/folders are currently loaded
   const tabsSyncRef = useRef("");  // updated_at of the last server state we applied/wrote
   const tabsPushTimerRef = useRef(null);
@@ -5441,9 +5452,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function closeTab(id) {
     const next = openTabs.filter((t) => t.id !== id);
     updateTabs(next);
-    // Closing the on-screen paper returns to the folder/label view the user
-    // was last browsing, not the library root.
-    if (id === focusedBlockId) goHome(true, true);
+    // Closed tabs must never become a later close's return destination.
+    tabHistoryRef.current = tabHistoryRef.current.filter((entry) => entry.blockId !== id);
+    if (id !== focusedBlockId) return;
+    const entry = [...tabHistoryRef.current].reverse().find((entry) =>
+      !entry.blockId || next.some((tab) => tab.id === entry.blockId));
+    if (entry?.blockId) {
+      openBlock(entry.blockId, { restoreScroll: true });
+    } else if (entry) {
+      goHome();
+      openFolder(entry.folder);
+      if (entry.category) openLabel(entry.category, entry.folder);
+    } else {
+      goHome(true, true);
+    }
   }
 
   // Drag any window by its grip; drop zones dock it left, right, or bottom.

@@ -20,7 +20,7 @@ import { changePlace, isChange, noteChangeText, runningLabel, splitActions, step
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
-import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
+import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
@@ -1387,7 +1387,7 @@ export default function ChatDock({
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
-                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings. The model and reasoning effort are on the message box.")}</div>
+                  <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
@@ -1403,7 +1403,7 @@ export default function ChatDock({
                     <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
                   </div>
                   <div className="popoverHint">
-                    {t("Applies to all {kind} conversations in this browser.", { kind: chatKindLabel.toLowerCase() })}
+                    {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
                   </div>
                   <div className="popoverSection">{t("Tokens · this conversation")}</div>
                   {totalUsage ? (

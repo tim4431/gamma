@@ -57,9 +57,10 @@ def ai_fetch(accounts, monkeypatch):
     monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
     ai_web.clear_cache()
 
-    def fetch(caller, *, stream=True, **kwargs):
+    def fetch(caller, *, stream=True, permissions=None, **kwargs):
         response = caller.post("/api/ai/chat", json={
-            "prompt": "Read the cited paper", "agent_scope": "folder", "stream": stream}, **kwargs)
+            "prompt": "Read the cited paper", "agent_scope": "folder", "stream": stream,
+            "permissions": permissions or {}}, **kwargs)
         assert response.status_code == 200, response.text
         assert SECRET not in response.text
         actions = ([line["action"] for line in map(json.loads, response.text.splitlines())
@@ -224,6 +225,29 @@ def test_ai_fetch_retries_cached_abstract_after_connect_and_refresh(accounts, tr
     seen.clear()
     assert "New session content." in ai_fetch(alice)["result"]
     assert (AI_PDF, "access=refreshed-access") in seen
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_ai_fetch_cookie_permission_bypasses_private_cache_without_disconnecting(
+        accounts, transport, ai_fetch, stream):
+    alice, _ = accounts
+    routes, seen = transport
+    routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
+    routes[AI_PDF] = (200, {"Content-Type": "application/pdf"}, _text_pdf([AI_TEXT]))
+    assert connect(alice).status_code == 200
+    assert AI_TEXT in ai_fetch(alice, stream=stream)["result"]
+
+    seen.clear()
+    routes[AI_PDF] = (200, {"Content-Type": "text/html"}, b"<p>Public abstract.</p>")
+    action = ai_fetch(alice, stream=stream, permissions={"publisher_cookies": False})
+    assert action["kind"] == "fetch" and "Public abstract." in action["result"]
+    assert AI_TEXT not in action["result"]
+    assert seen and all(cookie is None for _, cookie in seen)
+    assert alice.get("/api/publisher-sessions").json()["sessions"]
+
+    seen.clear()
+    assert AI_TEXT in ai_fetch(alice, stream=stream, permissions={"publisher_cookies": True})["result"]
+    assert seen == []  # the account's authenticated cache is still available
 
 
 @pytest.mark.parametrize("revoke", ["disconnect", "expire"])

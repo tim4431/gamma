@@ -49,6 +49,10 @@ _cache_lock = threading.Lock()
 class FetchError(Exception):
     """A document could not be fetched; the message is for the model."""
 
+    def __init__(self, message: str, *, access_blocked: bool = False):
+        super().__init__(message)
+        self.access_blocked = access_blocked
+
 
 # ---------------------------------------------------------------- search
 
@@ -232,8 +236,11 @@ def fetch_document(source: str) -> dict:
     from .routers.pdf import BROWSER_HEADERS, resolve_source
 
     reason = ""
+    source_note = ""
     try:
-        pdf_url = resolve_source(source)["source_url"]
+        resolved = resolve_source(source)
+        pdf_url = resolved["source_url"]
+        source_note = resolved.get("note", "")
     except HTTPException as e:
         reason, pdf_url = str(e.detail), ""
     if pdf_url:
@@ -242,7 +249,8 @@ def fetch_document(source: str) -> dict:
         except FetchError:
             raise
         except HTTPError as e:
-            raise FetchError(f"the PDF at {pdf_url} answered HTTP {e.code}")
+            raise FetchError(f"the PDF at {pdf_url} answered HTTP {e.code}",
+                             access_blocked=e.code in (401, 403, 418, 429))
         except (URLError, OSError, ValueError) as e:
             raise FetchError(f"could not fetch the PDF at {pdf_url}: {e}")
         if "application/pdf" in ctype or data[:5] == b"%PDF-":
@@ -254,7 +262,8 @@ def fetch_document(source: str) -> dict:
             if not any(p.strip() for p in pages):
                 raise FetchError(f"the PDF at {final_url} has no text layer (a scan?)")
             return _remember(source, {"url": pdf_url, "kind": "pdf", "title": "",
-                                      "pages": pages, "chars": sum(len(p) for p in pages)}, scope)
+                                      "pages": pages, "chars": sum(len(p) for p in pages),
+                                      "note": source_note}, scope)
         reason = f"{pdf_url} is not a PDF ({ctype or 'no content type'})"
     # No PDF: the source's own page, if it is one, as readable text.
     page_url = _source_url(source)
@@ -265,7 +274,8 @@ def fetch_document(source: str) -> dict:
         raise
     except HTTPError as e:
         raise FetchError(f"no PDF ({reason}) and the page {page_url} answered HTTP {e.code}"
-                         + (" — the site blocks server-side fetching" if e.code in (401, 403) else ""))
+                         + (" — the site blocks server-side fetching" if e.code in (401, 403) else ""),
+                         access_blocked=e.code in (401, 403, 418, 429))
     except (URLError, OSError, ValueError) as e:
         raise FetchError(f"no PDF ({reason}) and {page_url} could not be fetched: {e}")
     if "html" not in ctype and "xml" not in ctype:

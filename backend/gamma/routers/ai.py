@@ -1391,7 +1391,8 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             "publisher_user": (user if not request.state.is_guest
-                               and not request.query_params.get("share") else None),
+                               and not request.query_params.get("share")
+                               and payload.permissions.get("publisher_cookies", True) is not False else None),
             # This turn's reads, {block_id: full text}: what an edit_block
             # replace merges from (ai_tools.notes_seen).
             "read_texts": {}}

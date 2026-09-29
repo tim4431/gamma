@@ -235,8 +235,9 @@ from the Read window preference, shared through `_window_args`), `pdf_page`,
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags, the Unpaywall open-access fallback,
-browser headers). Connected publisher sessions are used for the authenticated
-caller's account, restricted to each connected HTTPS host; guest and share
+browser headers). When **Use journal sign-ins** is on, connected publisher
+sessions are used for the authenticated caller's account, restricted to each
+connected HTTPS host; guest and share
 requests use none. The tool binds that identity in its worker from the chat
 scope, never from model arguments, and resets it after the fetch. Cookie values
 never enter the model's context. It is downloaded through the SSRF guard under a size cap

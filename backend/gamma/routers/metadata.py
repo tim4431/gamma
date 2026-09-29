@@ -397,14 +397,19 @@ def _fetch_arxiv(arxiv_id: str) -> dict | None:
 
 
 def _arxiv_search(query: str, rows: int = 5) -> list[dict]:
-    """Full-record search of the arXiv API (title, authors, abstract — every
-    word ANDed), candidates in arXiv's relevance order. Keyless, like the
-    Crossref search; the agent's search_papers queries both."""
-    words = [w for w in re.findall(r"[\w-]+", query or "") if len(w) > 1][:12]
+    """Title-phrase OR full-record search, in arXiv's relevance order.
+
+    An all-fields AND alone can miss an exact title containing stopwords
+    (e.g. Bahdanau's "... by Jointly Learning to Align and Translate").
+    The phrase branch keeps those citations findable in the same request.
+    """
+    tokens = re.findall(r"[\w-]+", query or "")[:12]
+    words = [w for w in tokens if len(w) > 1]
     if not words:
         return []
+    search = 'ti:"' + " ".join(tokens) + '" OR (' + " AND ".join(f"all:{w}" for w in words) + ")"
     url = ("https://export.arxiv.org/api/query?max_results=%d&search_query=" % rows
-           + urllib.parse.quote(" AND ".join(f"all:{w}" for w in words)))
+           + urllib.parse.quote(search))
     try:
         entries = ET.fromstring(_http_get(url)).findall(f"{_ATOM}entry")
     except Exception as e:

@@ -3202,10 +3202,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow: hidden;
 }
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */
-.chatSettingsPop { min-width: 250px; }
-.chatSettingsPop .setSlider { padding: 0 4px; }
+/* Anchor to the whole header so a narrow chat dock cannot clip the controls. */
+.dockWindowHeader:has(.chatPanelHeaderBtns) { position: relative; }
+.chatPanelHeaderBtns [data-popover="chatsettings"] { position: static; }
+.chatSettingsPop { right: 8px; width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+.chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
+.chatSettingsPop .setRange { flex: 1; min-width: 0; }
 .chatToolPicker { padding: 2px 4px; }
-.chatToolPicker .toggleGroup { justify-content: flex-start; }
 /* Chat history popover (header clock): search box over the bucket's earlier
    conversations; the active one leads, highlighted. Layout only — rows are
    plain hover rows, actions are ctlBtn icons, rename is an aiKeyInput. */

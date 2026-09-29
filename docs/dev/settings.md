@@ -329,9 +329,10 @@ AI:
 - **Chat**: **Chat** (the default reasoning effort — every level, since
   each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
   and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
-  kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
-  `ToggleGroup` the chat header's settings popover shows for the open chat).
-  No presets.
+  kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
+  `AssistantTools.jsx`). Rows explain library reading, web research and changes;
+  columns offer Read library / Read & search / All tools presets. Web search,
+  fetching and using connected journal sign-ins have separate switches.
 - **Advanced**: tool limits and the context budgets (the section's action
   is the Standard / Larger / Custom preset).
 - **Prompts**: the accordion with one Cancel / Save pair.
@@ -484,8 +485,10 @@ tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
-chats of that kind. Both surfaces show the same tool chips per chat kind;
-there are no presets.
+chats of that kind. Settings compares all three kinds in a table; the chat
+popover shows grouped checkbox rows for its kind. They share the permission
+catalog and presets in `AssistantTools.jsx`. The journal-sign-in choice is
+disabled while fetching is off, with its value preserved.
 
 Reasoning effort, the context budgets, the tools switch and the permissions
 are account preferences: they live in the profile and follow the account to

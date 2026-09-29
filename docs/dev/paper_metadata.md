@@ -196,8 +196,11 @@ outbound cookie jar from the caller's snapshots via a request-local ContextVar.
 AI chat's `fetch_paper` tool also uses the caller's snapshots: `_chat_scope`
 captures the authenticated account, and the tool binds and resets the ContextVar
 inside its worker (streamed tools run in a separate thread). The model cannot
-choose an account and never receives the cookie values. The existing **Fetch
-documents** permission controls the tool; no separate cookie switch is needed.
+choose an account and never receives the cookie values. **Fetch documents**
+controls the tool; the per-chat-kind **Use journal sign-ins** permission
+(`publisher_cookies`, default on) controls cookie use. When off, `_chat_scope`
+excludes the account from the fetch context, so it also bypasses authenticated
+cached text. Stored connections and interactive PDF downloads are unchanged.
 Host, path, HTTPS and expiry checks apply on every redirect. Parent-domain cookies
 are narrowed to the exact connected host. Guest, anonymous and share requests,
 other AI tools and background jobs do not use these credentials. Fetched text

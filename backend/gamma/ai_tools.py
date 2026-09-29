@@ -1088,6 +1088,16 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     try:
         doc = fetch_document(source)
     except FetchError as e:
+        if e.access_blocked:
+            return (f"error: {e}. No document text was retrieved. If the publisher asks for sign-in "
+                    "or CAPTCHA, the user must complete it in their own browser. For supported publishers, "
+                    "open Gamma Connector's Publisher sessions (cookie button), use Connect this publisher "
+                    "or Refresh now for that exact host, enable Use journal sign-ins for this chat type, "
+                    "then retry. Cookies may not satisfy browser- or IP-bound challenges; do not promise "
+                    "they will. Alternatively, save from the open PDF tab with Gamma Connector, or "
+                    "download and drop the PDF onto Gamma. Select that page and enable Read pages "
+                    "before asking the chat to read it. Do not repeatedly retry the blocked URL; "
+                    "respect Retry-After on rate limits.", None)
         return (f"error: {e}. If the user can open it in their browser, ask them to drop "
                 "the PDF onto Gamma and read it with read_page.", None)
     finally:
@@ -1096,6 +1106,8 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     label = doc.get("title") or doc["url"]
     if doc["kind"] == "pdf":
         head = f'Fetched PDF {doc["url"]} ({len(doc["pages"])} pages, {doc["chars"]} chars of text)'
+        if doc.get("note"):
+            head += f'\nSource note: {doc["note"]}'
     else:
         head = (f'Fetched web page "{doc["title"]}" ({doc["url"]}, {doc["chars"]} chars) — no PDF '
                 f'was reachable ({doc.get("note", "")})')

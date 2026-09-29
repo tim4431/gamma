@@ -100,6 +100,8 @@ On the home page or in a folder, the chat can act on your library: list, read an
 
 In a paper or a notes page it can also edit your notes when you ask — rewrite a block, add one, append to it, move it — if the **Edit note blocks** permission is on.
 
+**Settings → Chat → Tools** compares permissions for folder, PDF and notes chats. Start with **Read library**, **Read & search**, or **All tools**, then adjust individual switches. Online paper search, document fetching and **Use journal sign-ins** are separate choices. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+
 While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
@@ -245,6 +247,7 @@ The installed web app still needs the server to be reachable. For a library that
 
 - The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
 - **Tabs** sync to your account across devices. Each shows whether it is a paper or a page; the tab you are on always scrolls into view, and a plain mouse wheel over the strip scrolls it sideways. When they don't all fit, **⌄** with the count lists every open tab, with a filter. Middle-click closes a tab; right-click pins it (pinned tabs move to the front, show a pin in place of × — click it to unpin — and can't be middle-closed); drag to reorder.
+- Closing the active tab returns to the page you were viewing before it, at its saved reading position, or to the folder or label view you opened it from. Closed tabs are skipped. Closing a background tab keeps your current page open.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing. A link to a page in Recently deleted says so and offers **Restore**.
 - On a phone, and on a tablet held upright, everything becomes full-screen views behind one bottom bar: **Library** (home), the page's **PDF** and **Notes**, **Chat**, then **Add**, **Search**, a page's **Share** and **More** — your account and settings, background tasks (a spinner on More while something runs), Import/Export and the PDF window toggle. The top bar shows only while tabs are open. Turn the tablet sideways for the docked windows.
