@@ -82,7 +82,7 @@ public actor GammaRepository {
         if let existing = try documents().first(where: { $0.properties["doc_id"]?.string == id }) { return existing }
         return try createPage(title: title, properties: ["doc_id": .string(id), "source_url": .string(reference), "original_filename": .string(title)])
     }
-    public static let defaultPaper: [String: JSONValue] = ["width": .number(595.28), "height": .number(841.89), "color": .string("#ffffff"), "pattern": .string("ruled"), "spacing": .number(24), "line_color": .string("#cbd5e1")]
+    public static let defaultPaper: [String: JSONValue] = ["width": .number(595.28), "height": .number(841.89), "color": .string("#ffffff"), "pattern": .string("blank"), "spacing": .number(24), "line_color": .string("#d6dce5")]
     public func createNotebook(title: String, paper: [String: JSONValue] = GammaRepository.defaultPaper) throws -> GammaDocument {
         let full = Self.defaultPaper.merging(paper) { _, new in new }
         let document = try createPage(title: title, properties: ["notebook": .object(["version": .number(1), "default_paper": .object(full)])])
@@ -192,6 +192,7 @@ public actor GammaRepository {
         try db.run("INSERT INTO journal(page_id,source,value) VALUES (?,?,?)", [pageID, source, try GammaJSON.string(ops)])
     }
     func replace(_ tree: GammaSnapshot, pageID: String, source: String, ops: [GammaOperation]) throws {
+        if try snapshot(pageID) == tree { return }
         // A block ID is global to this workspace. Cross-page arrival is handled before
         // this write, never by silently replacing another page's row.
         for block in tree.values {

@@ -10,8 +10,8 @@ extension GammaRepository {
         guard !token.isEmpty else { throw GammaError.authentication("Unlock the saved integration token before syncing.") }
         syncing = true; mirror.running = true; mirror.lastError = nil
         roundLeft = [:]
-        try db.set("mirror", mirror)
         defer { syncing = false; roundLeft = [:] }
+        try db.set("mirror", mirror)
         var remote = GammaRemote(mirror: mirror, token: token, transport: transport)
         let startHead = try journalHead()
         do {
@@ -56,6 +56,9 @@ extension GammaRepository {
             if mirror.mode == "two-way" && !canPush { mirror.lastError = "The token or remote role is read-only. Local edits remain on this iPad." }
             try db.transaction {
                 if canPush { try db.set("local_cursor", startHead) }
+                // Keep the last acknowledged sequence (AUTOINCREMENT never rewinds),
+                // but do not accumulate a permanent event history on the device.
+                try db.run("DELETE FROM journal WHERE source='sync' OR seq < ?", [String(try localCursor())])
                 mirror.pending = try journalHead() > localCursor() || !failures.isEmpty
                 try db.set("mirror", mirror)
             }
@@ -91,7 +94,7 @@ extension GammaRepository {
         var local = try snapshot(pageID)
         let base = state?.base ?? [:]
         let fetched: (GammaSnapshot?, Int)
-        if let state, state.remoteSeq >= 0, state.pending.isEmpty, !state.creating, !remoteDeleted,
+        if let state, !local.isEmpty, state.remoteSeq >= 0, state.pending.isEmpty, !state.creating, !remoteDeleted,
            (hint == nil || hint == state.remoteSeq), !base.isEmpty {
             fetched = (base, state.remoteSeq)
         } else { fetched = try await remote.tree(pageID) }
@@ -124,6 +127,7 @@ extension GammaRepository {
             try await syncPage(pageID, remote: remote, canPush: canPush, remoteDeleted: false, hint: created.1)
             return
         }
+        if local == there, state?.base == there, state?.remoteSeq == fetched.1 { return }
         if local.isEmpty {
             if state != nil, there == base, canPush {
                 _ = try await remote.call("DELETE", "/api/blocks/" + pageID, allowed: [200, 204, 404])
@@ -249,8 +253,10 @@ extension GammaRepository {
             } else if current == old && current != value { if rest.props == nil { rest.props = [:] }; rest.props?[key] = value }
             else { if landed.props == nil { landed.props = [:] }; landed.props?[key] = value }
         }
-        if rest.props?["ink_url"] != nil {
+        if let props = rest.props, !Set(props.keys).isDisjoint(with: GammaTree.inkKeys) {
             rest.baseProps = op.baseProps
+        }
+        if rest.props?["ink_url"] != nil {
             for key in ["pdf_position", "pdf_page", "sheet_id", "ink_strokes"] {
                 if let value = op.props?[key] { rest.props?[key] = value; landed.props?.removeValue(forKey: key) }
             }

@@ -23,7 +23,7 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
     var inkSize: Double = 2
     var isReadOnly = false
     var activeGroupID: String?
-    var playback: (([String: Any]) -> [String: Any]?)? { didSet { setNeedsDisplay() } }
+    var playback: (([String: Any], String) -> [String: Any])? { didSet { setNeedsDisplay() } }
     private var samples: [[String: Double]] = []
     private var predicted: [[String: Double]] = []
     private var estimated: [NSNumber: Int] = [:]
@@ -41,6 +41,7 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
     private var selectionRect: CGRect?
     private weak var activeTouch: UITouch?
     private var predictionGeneration = 0
+    var isEditing: Bool { activeTouch != nil }
 
     init(engine: InkEngine) {
         self.engine = engine
@@ -96,11 +97,8 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
         context.scaleBy(x: bounds.width / pageSize.width, y: bounds.height / pageSize.height)
         do {
             for group in groups {
-                for original in group.ink["strokes"] as? [[String: Any]] ?? [] {
-                    let stroke: [String: Any]?
-                    if let playback { stroke = playback(original) } else { stroke = original }
-                    if let stroke { try engine.draw(stroke, in: context) }
-                }
+                let ink = playback?(group.ink, group.id) ?? group.ink
+                for stroke in ink["strokes"] as? [[String: Any]] ?? [] { try engine.draw(stroke, in: context) }
             }
             if !samples.isEmpty { try engine.draw(encoded(samples + predicted), in: context) }
         } catch { onError?(error) }
@@ -215,10 +213,15 @@ final class InkCanvasView: UIView, UIPencilInteractionDelegate {
         onChange?(groups)
     }
     private func snapshot(_ groups: [InkGroup]) -> [String: Any] { Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0.ink) }) }
-    func undoInk() { if let prior = undoStack.popLast() { redoStack.append(groups); groups = prior; selected = [:]; selectionRect = nil; onChange?(groups) } }
-    func redoInk() { if let next = redoStack.popLast() { undoStack.append(groups); groups = next; onChange?(groups) } }
-    func newGroup() { activeGroupID = nil }
+    func undoInk() { guard playback == nil, !isReadOnly else { return }; if let prior = undoStack.popLast() { redoStack.append(groups); groups = prior; selected = [:]; selectionRect = nil; onChange?(groups) } }
+    func redoInk() { guard playback == nil, !isReadOnly else { return }; if let next = redoStack.popLast() { undoStack.append(groups); groups = next; onChange?(groups) } }
+    func newGroup() { guard playback == nil, !isReadOnly else { return }; activeGroupID = nil }
+    func replaceRemoteGroups(_ groups: [InkGroup]) {
+        self.groups = groups; undoStack = []; redoStack = []; selected = [:]; selectionRect = nil
+        if !groups.contains(where: { $0.id == activeGroupID }) { activeGroupID = nil }
+    }
     func editSelection(_ action: String, value: Any? = nil) {
+        guard playback == nil, !isReadOnly else { return }
         before = groups
         do {
             for index in groups.indices {

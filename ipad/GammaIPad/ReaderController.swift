@@ -4,7 +4,7 @@ import SwiftUI
 import GammaCore
 
 @MainActor
-final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UIScrollViewDelegate {
+final class ReaderController: UIViewController, @preconcurrency PDFPageOverlayViewProvider, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let repository: GammaRepository
     let documentID: String
     let directory: URL
@@ -70,6 +70,9 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
             sheets.bottomAnchor.constraint(equalTo: notebookScroll.contentLayoutGuide.bottomAnchor, constant: -16),
             sheets.widthAnchor.constraint(equalTo: notebookScroll.frameLayoutGuide.widthAnchor, constant: -32)])
         NotificationCenter.default.addObserver(self, selector: #selector(pdfPageChanged), name: .PDFViewPageChanged, object: pdf)
+        NotificationCenter.default.addObserver(self, selector: #selector(librarySynced(_:)), name: .gammaLibraryDidSync, object: nil)
+        let seek = UITapGestureRecognizer(target: self, action: #selector(seekStroke(_:)))
+        seek.cancelsTouchesInView = false; seek.delegate = self; view.addGestureRecognizer(seek)
         Task { await load() }
     }
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -108,6 +111,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
                 self.recordButton.isEnabled = self.audio?.isFinalizing != true
             }
             audio.onError = { [weak self] in self?.showError($0) }
+            audio.canRollSegment = { [weak self] in self?.canvases.values.allSatisfy { !$0.isEditing } ?? true }
             audio.onSegment = { [weak self] id, url, duration, events in try await self?.saveSegment(id: id, url: url, duration: duration, events: events) }
             audio.onPlayback = { [weak self] segment, time in self?.replay(segment: segment, time: time) }
             try await audio.recover()
@@ -127,10 +131,12 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
         guard let engine else { return nil }
         let canvas = InkCanvasView(engine: engine); canvas.pageSize = size
         canvas.groups = allGroups.values.filter { self.key(for: $0.ink) == key }.sorted { $0.id < $1.id }
-        canvas.makeGroup = { [weak self] in
+        canvas.makeGroup = { [weak self, weak canvas] in
+            let size = canvas?.pageSize ?? size
             let space: [String: Any] = key.hasPrefix("pdf:") ? ["kind": "pdf-page", "page": Int(key.dropFirst(4)) ?? 1, "width": size.width, "height": size.height] :
                 ["kind": "notebook-page", "sheet_id": key, "width": size.width, "height": size.height]
-            return InkGroup(id: gammaID(), parentID: self?.documentID ?? "", ink: ["format": "gamma-ink", "version": key.hasPrefix("pdf:") ? 1 : 2, "space": space, "strokes": []])
+            return InkGroup(id: gammaID(), parentID: key.hasPrefix("pdf:") ? self?.documentID ?? "" : key,
+                            ink: ["format": "gamma-ink", "version": key.hasPrefix("pdf:") ? 1 : 2, "space": space, "strokes": []])
         }
         canvas.onChange = { [weak self] groups in self?.activeKey = key; self?.save(groups: groups, key: key) }
         canvas.onStroke = { [weak self] group, stroke, start, end in
@@ -158,6 +164,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
             let page = PaperView(paper: paper); page.clipsToBounds = true
             page.heightAnchor.constraint(equalTo: page.widthAnchor, multiplier: size.height / size.width).isActive = true
             if let canvas = canvas(key: sheet.id, size: size) {
+                canvas.pageSize = size
                 canvas.removeFromSuperview(); canvas.translatesAutoresizingMaskIntoConstraints = false; page.addSubview(canvas)
                 NSLayoutConstraint.activate([canvas.leadingAnchor.constraint(equalTo: page.leadingAnchor), canvas.trailingAnchor.constraint(equalTo: page.trailingAnchor),
                                              canvas.topAnchor.constraint(equalTo: page.topAnchor), canvas.bottomAnchor.constraint(equalTo: page.bottomAnchor)])
@@ -196,6 +203,7 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
                         self.savedData[saved.id] = data
                         if saved.id != target {
                             self.groupRemap[target] = saved.id
+                            self.audio?.remapGroup(target, to: saved.id)
                             if var latest = self.allGroups.removeValue(forKey: target) { latest.id = saved.id; self.allGroups[saved.id] = latest }
                             for canvas in self.canvases.values {
                                 for index in canvas.groups.indices where canvas.groups[index].id == target { canvas.groups[index].id = saved.id }
@@ -319,7 +327,54 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
         }
     }
     private func sync() {
-        Task { await saveTask?.value; do { _ = try await repository.sync(); status.text = "Library synced. Reopen to see remote changes." } catch { showError(error) } }
+        Task {
+            await saveTask?.value
+            do { let result = try await repository.sync(); await refreshRemote(); status.text = result.lastError ?? "Library synced" }
+            catch { showError(error) }
+        }
+    }
+    @objc private func librarySynced(_ notification: Notification) {
+        guard let source = notification.object as? GammaRepository, source === repository else { return }
+        Task { await refreshRemote() }
+    }
+    private func refreshRemote() async {
+        guard let engine else { return }
+        do {
+            let fresh = try await repository.document(id: documentID)
+            var remoteIDs = Set<String>()
+            for block in fresh.blocks {
+                let properties = propertyObject(block.properties)
+                guard let reference = properties["ink_url"] as? String, !reference.isEmpty else { continue }
+                remoteIDs.insert(block.id)
+                if let local = allGroups[block.id], canvases[key(for: local.ink)]?.isEditing == true { continue }
+                if let local = allGroups[block.id], try engine.data(local.ink) != savedData[block.id] { continue }
+                let url = try await repository.assetURL(reference: reference)
+                let bytes = try Data(contentsOf: url)
+                guard let ink = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { continue }
+                allGroups[block.id] = InkGroup(id: block.id, parentID: block.parent, ink: ink)
+                baseURLs[block.id] = reference; savedData[block.id] = try engine.data(ink)
+            }
+            for id in Array(allGroups.keys) where !remoteIDs.contains(id) {
+                if let local = allGroups[id], canvases[key(for: local.ink)]?.isEditing == true { continue }
+                if let local = allGroups[id], try engine.data(local.ink) == savedData[id] { allGroups.removeValue(forKey: id); savedData.removeValue(forKey: id); baseURLs.removeValue(forKey: id) }
+            }
+            for (key, canvas) in canvases {
+                if canvas.isEditing { continue }
+                let values = allGroups.values.filter { self.key(for: $0.ink) == key }.sorted { $0.id < $1.id }
+                let before = try JSONSerialization.data(withJSONObject: canvas.groups.map(\.ink), options: [.sortedKeys])
+                let after = try JSONSerialization.data(withJSONObject: values.map(\.ink), options: [.sortedKeys])
+                if before != after { canvas.replaceRemoteGroups(values) }
+            }
+            document = fresh; title = fresh.title
+            if propertyObject(fresh.properties)["notebook"] != nil { try showNotebook(fresh) }
+            if audio?.recorder == nil, audio?.isFinalizing != true,
+               let block = fresh.blocks.last(where: { propertyObject($0.properties)["type"] as? String == "audio" }) {
+                audioBlockID = block.id
+                let properties = propertyObject(block.properties)
+                segmentValues = properties["audio_segments"] as? [[String: Any]] ?? []
+                eventValues = properties["audio_events"] as? [[String: Any]] ?? []
+            }
+        } catch { status.text = error.localizedDescription }
     }
     @objc private func record() {
         guard let audio else { return }
@@ -328,9 +383,17 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
     }
     private func saveSegment(id: String, url: URL, duration: Int, events: [[String: Any]]) async throws {
         if segmentValues.contains(where: { $0["id"] as? String == id }) { return }
+        await saveTask?.value
         let reference = try await repository.storeAsset(data: Data(contentsOf: url), extension: "m4a")
         let nextSegments = segmentValues + [["id": id, "url": reference, "duration_ms": duration]]
-        let nextEvents = eventValues + events
+        let resolvedEvents = events.map { original -> [String: Any] in
+            var event = original
+            if var id = original["block_id"] as? String {
+                while let mapped = groupRemap[id], mapped != id { id = mapped }; event["block_id"] = id
+            }
+            return event
+        }
+        let nextEvents = eventValues + resolvedEvents
         let props = try jsonProperties(["type": "audio", "audio_segments": nextSegments, "audio_events": nextEvents])
         if let audioBlockID { try await repository.apply(pageID: documentID, ops: [GammaOperation(op: "set", id: audioBlockID, props: props)]) }
         else {
@@ -360,24 +423,9 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
     private func replay(segment: String?, time: Double) {
         guard let segment, let engine else { for canvas in canvases.values { canvas.playback = nil }; followingKey = nil; return }
         let segmentOrder = segmentValues.compactMap { $0["id"] as? String }
-        let currentIndex = segmentOrder.firstIndex(of: segment) ?? 0
+        _ = try? engine.call("setReplay", [["events": playbackEvents, "segmentIds": segmentOrder, "segmentId": segment, "ms": time]])
         for canvas in canvases.values {
-            canvas.playback = { [weak self] stroke in
-                guard let self else { return stroke }
-                let id = stroke["source_id"] as? String ?? stroke["id"] as? String ?? ""
-                guard let event = self.playbackEvents.first(where: { $0["stroke_id"] as? String == id }), let eventSegment = event["segment_id"] as? String else { return stroke }
-                let eventIndex = segmentOrder.firstIndex(of: eventSegment) ?? 0
-                if eventIndex < currentIndex { return stroke }; if eventIndex > currentIndex { return nil }
-                let start = event["start_ms"] as? Double ?? 0
-                if time < start { return nil }
-                if time >= (event["end_ms"] as? Double ?? start) { return stroke }
-                guard let samples = try? engine.call("decodeStroke", [stroke]) as? [[String: Any]] else { return stroke }
-                let visible = samples.filter { ($0["t"] as? Double ?? 0) <= time - start }
-                guard !visible.isEmpty else { return nil }
-                var request = stroke; request["samples"] = visible
-                guard let encoded = try? engine.object("encodeStroke", [request]) else { return stroke }
-                var result = stroke; result["pts"] = encoded["pts"]; return result
-            }
+            canvas.playback = { ink, groupID in (try? engine.object("projectReplay", [ink, groupID])) ?? ink }
         }
         if let event = playbackEvents.last(where: { $0["segment_id"] as? String == segment && ($0["start_ms"] as? Double ?? 0) <= time }) {
             let key = (event["sheet_id"] as? String) ?? "pdf:\(event["pdf_page"] as? Int ?? 1)"
@@ -388,6 +436,28 @@ final class ReaderController: UIViewController, PDFPageOverlayViewProvider, UISc
                     notebookScroll.scrollRectToVisible(sheets.arrangedSubviews[index].frame, animated: false)
                 }
             }
+        }
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        audio?.player != nil && !(touch.view is UIControl)
+    }
+    @objc private func seekStroke(_ gesture: UITapGestureRecognizer) {
+        guard let audio, audio.player != nil, let engine else { return }
+        for canvas in canvases.values {
+            let point = gesture.location(in: canvas)
+            guard canvas.bounds.contains(point), canvas.window != nil else { continue }
+            let scale = canvas.pageSize.width / max(1, canvas.bounds.width)
+            let groups = canvas.groups.map { ["id": $0.id, "ink": $0.ink] as [String: Any] }
+            guard let hit = try? engine.call("nearestInkStroke", [groups, point.x * scale, point.y * scale, 10 * scale]) as? [String: Any],
+                  let groupID = hit["id"] as? String, let id = (hit["ids"] as? [String])?.first,
+                  let stroke = canvas.groups.first(where: { $0.id == groupID })?.ink["strokes"] as? [[String: Any]],
+                  let selected = stroke.first(where: { $0["id"] as? String == id }) else { continue }
+            let source = selected["source_id"] as? String ?? id
+            guard let event = playbackEvents.first(where: { $0["stroke_id"] as? String == source }), let segment = event["segment_id"] as? String else { continue }
+            do { try audio.play(playlist, startingAt: segment, milliseconds: max(0, (event["start_ms"] as? Double ?? 0) - 2000)) }
+            catch { showError(error) }
+            return
         }
     }
     private func showError(_ error: Error) {
@@ -408,10 +478,10 @@ final class PaperView: UIView {
         let width = paper["width"] as? Double ?? 612, height = paper["height"] as? Double ?? 792
         context.scaleBy(x: bounds.width / width, y: bounds.height / height)
         let spacing = max(4, paper["spacing"] as? Double ?? 24), pattern = paper["pattern"] as? String ?? "blank"
-        let color = UIColor.gamma(paper["line_color"] as? String ?? "#cbd5e1")
+        let color = UIColor.gamma(paper["line_color"] as? String ?? "#d6dce5")
         context.setStrokeColor(color.cgColor); context.setFillColor(color.cgColor); context.setLineWidth(0.5)
         if pattern == "dots" {
-            for x in stride(from: spacing, to: width, by: spacing) { for y in stride(from: spacing, to: height, by: spacing) { context.fillEllipse(in: CGRect(x: x - 0.8, y: y - 0.8, width: 1.6, height: 1.6)) } }
+            for x in stride(from: spacing, to: width, by: spacing) { for y in stride(from: spacing, to: height, by: spacing) { context.fillEllipse(in: CGRect(x: x - 0.65, y: y - 0.65, width: 1.3, height: 1.3)) } }
         } else if pattern == "ruled" || pattern == "grid" {
             for y in stride(from: spacing, to: height, by: spacing) { context.move(to: CGPoint(x: 0, y: y)); context.addLine(to: CGPoint(x: width, y: y)) }
             if pattern == "grid" { for x in stride(from: spacing, to: width, by: spacing) { context.move(to: CGPoint(x: x, y: 0)); context.addLine(to: CGPoint(x: x, y: height)) } }
@@ -429,19 +499,20 @@ struct PaperSettingsView: View {
     @State private var pattern: String
     @State private var spacing: Double
     @State private var future = false
-    let lineColor: String
+    @State private var lineColor: String
     init(paper: [String: Any], apply: @escaping ([String: Any], Bool) -> Void) {
         self.apply = apply
         _width = State(initialValue: paper["width"] as? Double ?? 612); _height = State(initialValue: paper["height"] as? Double ?? 792)
         _color = State(initialValue: paper["color"] as? String ?? "#ffffff"); _pattern = State(initialValue: paper["pattern"] as? String ?? "blank")
-        _spacing = State(initialValue: paper["spacing"] as? Double ?? 24); lineColor = paper["line_color"] as? String ?? "#cbd5e1"
+        _spacing = State(initialValue: paper["spacing"] as? Double ?? 24); _lineColor = State(initialValue: paper["line_color"] as? String ?? "#d6dce5")
     }
     var body: some View {
         NavigationStack {
             Form {
                 Picker("Pattern", selection: $pattern) { ForEach(["blank", "ruled", "grid", "dots"], id: \.self) { Text($0.capitalized) } }
-                Picker("Paper", selection: $color) { Text("White").tag("#ffffff"); Text("Cream").tag("#fff8dc"); Text("Light blue").tag("#eff6ff") }
-                HStack { Text("Spacing"); Slider(value: $spacing, in: 8...48, step: 2); Text("\(Int(spacing)) pt") }
+                ColorPicker("Paper color", selection: Binding(get: { Color(uiColor: .gamma(color)) }, set: { color = UIColor($0).gammaHex }), supportsOpacity: false)
+                ColorPicker("Line color", selection: Binding(get: { Color(uiColor: .gamma(lineColor)) }, set: { lineColor = UIColor($0).gammaHex }), supportsOpacity: false)
+                LabeledContent("Spacing (pt)") { TextField("Spacing", value: $spacing, format: .number).keyboardType(.decimalPad).multilineTextAlignment(.trailing) }
                 HStack { Button("A4") { width = 595.28; height = 841.89 }; Spacer(); Button("Letter") { width = 612; height = 792 }; Spacer(); Button("Rotate") { swap(&width, &height) } }
                 LabeledContent("Width") { TextField("Width", value: $width, format: .number).keyboardType(.decimalPad).multilineTextAlignment(.trailing) }
                 LabeledContent("Height") { TextField("Height", value: $height, format: .number).keyboardType(.decimalPad).multilineTextAlignment(.trailing) }
@@ -453,7 +524,7 @@ struct PaperSettingsView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Apply") {
                     apply(["width": width, "height": height, "pattern": pattern, "color": color, "spacing": spacing, "line_color": lineColor], future)
-                }.disabled(width < 72 || height < 72 || width > 2880 || height > 2880) }
+                }.disabled(width < 24 || height < 24 || width > 10000 || height > 10000 || spacing < 4 || spacing > 1000 || (pattern == "dots" && ceil(width / spacing) * ceil(height / spacing) > 100000)) }
             }
         }
     }

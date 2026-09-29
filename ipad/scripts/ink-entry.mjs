@@ -1,4 +1,5 @@
 import * as ink from '../../frontend/src/ink/ink.js';
+import { replayInk } from '../../frontend/src/ink/inkReplay.js';
 import { getStroke } from '../../frontend/node_modules/perfect-freehand/dist/esm/index.mjs';
 
 // JavaScriptCore runs the same pure codec and editing functions as the browser.
@@ -12,4 +13,7 @@ export function geometry(stroke) {
   return { line, points: points.map(p => p.map(round)),
     midpoints: points.map((p, i) => p.map((v, axis) => round((v + points[(i + 1) % points.length][axis]) / 2))), size: stroke.size };
 }
-globalThis.GammaInk = { ...ink, geometry };
+let replay = null;
+globalThis.GammaInk = { ...ink, geometry, replayInk,
+  setReplay(value) { replay = value; return true; },
+  projectReplay(value, blockId) { return replayInk(value, blockId, replay); } };

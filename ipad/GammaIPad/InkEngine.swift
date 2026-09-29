@@ -79,6 +79,11 @@ final class InkEngine {
 }
 
 extension UIColor {
+    var gammaHex: String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, alpha: CGFloat = 1
+        guard getRed(&r, green: &g, blue: &b, alpha: &alpha) else { return "#ffffff" }
+        return String(format: "#%02x%02x%02x", Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
+    }
     static func gamma(_ text: String) -> UIColor {
         if text.hasPrefix("#"), let value = UInt32(text.dropFirst(), radix: 16) {
             return UIColor(red: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255,

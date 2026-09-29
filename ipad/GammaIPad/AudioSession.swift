@@ -4,11 +4,12 @@ import UIKit
 
 /// One recording block contains independently recoverable AAC segments.
 @MainActor
-final class NoteAudioSession: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDelegate {
+final class NoteAudioSession: NSObject, @preconcurrency AVAudioRecorderDelegate, @preconcurrency AVAudioPlayerDelegate {
     var onChange: (() -> Void)?
     var onError: ((Error) -> Void)?
     var onSegment: ((String, URL, Int, [[String: Any]]) async throws -> Void)?
     var onPlayback: ((String?, Double) -> Void)?
+    var canRollSegment: (() -> Bool)?
     private(set) var recorder: AVAudioRecorder?
     private(set) var player: AVAudioPlayer?
     private(set) var segmentID = ""
@@ -47,8 +48,11 @@ final class NoteAudioSession: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDe
         guard next.record() else { throw InkEngineError.failure("Could not start recording.") }
         recorder = next; events = []; roll = false
         try persistEvents()
-        rollTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.roll = true; self?.pause() }
+        rollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, (self.recorder?.currentTime ?? 0) >= 300, self.canRollSegment?() != false else { return }
+                self.roll = true; self.pause()
+            }
         }
         onChange?()
     }
@@ -69,6 +73,10 @@ final class NoteAudioSession: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDe
         event.merge(["kind": "page", "segment_id": segmentID, "start_ms": time, "end_ms": time]) { _, new in new }
         events.append(event)
         do { try persistEvents() } catch { onError?(error) }
+    }
+    func remapGroup(_ old: String, to new: String) {
+        for index in events.indices where events[index]["block_id"] as? String == old { events[index]["block_id"] = new }
+        if recorder != nil { do { try persistEvents() } catch { onError?(error) } }
     }
     private func persistEvents() throws {
         try JSONSerialization.data(withJSONObject: events, options: [.sortedKeys]).write(
@@ -98,7 +106,9 @@ final class NoteAudioSession: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDe
         }
     }
     func recover() async throws {
+        var failure: Error?
         for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where url.pathExtension == "m4a" {
+            do {
             let id = url.deletingPathExtension().lastPathComponent
             let duration = try AVAudioPlayer(contentsOf: url).duration
             let metadata = directory.appendingPathComponent(id + ".json")
@@ -106,7 +116,9 @@ final class NoteAudioSession: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDe
             let recovered = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
             try await onSegment?(id, url, Int(duration * 1000), recovered)
             try FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: metadata)
+            } catch { failure = error }
         }
+        if let failure { throw failure }
     }
     @objc private func backgrounded() {
         roll = false

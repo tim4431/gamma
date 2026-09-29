@@ -10,7 +10,8 @@ func propertyObject(_ value: [String: JSONValue]) -> [String: Any] {
     (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(value))) as? [String: Any] ?? [:]
 }
 func gammaID() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "") }
-let defaultPaper: [String: Any] = ["width": 612, "height": 792, "color": "#ffffff", "pattern": "ruled", "spacing": 24, "line_color": "#cbd5e1"]
+let defaultPaper: [String: Any] = propertyObject(GammaRepository.defaultPaper)
+extension Notification.Name { static let gammaLibraryDidSync = Notification.Name("GammaLibraryDidSync") }
 
 enum MirrorCredential {
     static func set(_ value: String, key: String) throws {
@@ -75,8 +76,19 @@ final class LibraryModel: ObservableObject {
     }
     func sync() async {
         guard let repository else { return }; busy = true; defer { busy = false }
-        do { mirror = try await repository.sync(); await refresh() }
+        do {
+            mirror = try await repository.sync(); await refresh()
+            NotificationCenter.default.post(name: .gammaLibraryDidSync, object: repository)
+        }
         catch { self.error = error.localizedDescription; await refresh() }
+    }
+    func syncAutomatically() async {
+        guard let repository, !busy, let mirror, mirror.mode != "off" else { return }
+        busy = true; defer { busy = false }
+        do {
+            self.mirror = try await repository.sync(); await refresh()
+            NotificationCenter.default.post(name: .gammaLibraryDidSync, object: repository)
+        } catch { await refresh() } // Connection failures remain visible in the mirror status.
     }
     func mirrorAction(_ action: String) async {
         guard let repository else { return }
@@ -117,6 +129,7 @@ struct GammaApp: App {
 }
 
 struct LibraryView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = LibraryModel()
     @State private var importing = false
     @State private var connecting = false
@@ -178,7 +191,14 @@ struct LibraryView: View {
                 }
             }
             .refreshable { if model.mirror != nil { await model.sync() } else { await model.refresh() } }
-            .task { await model.open() }
+            .task {
+                await model.open(); await model.syncAutomatically()
+                while !Task.isCancelled {
+                    do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { break }
+                    if scenePhase == .active { await model.syncAutomatically() }
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await model.syncAutomatically() } } }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf]) { result in
                 switch result { case .success(let url): Task { await model.importPDF(url) }; case .failure(let error): model.error = error.localizedDescription }
             }
