@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "setup-only-rb85-lattice",
+      "kind": "discovery",
+      "prompt": "Find papers relevant to density-dependent loss and Raman sideband cooling for 85Rb in a 1D standing-wave lattice at 785 nm, waist about 100 micrometres, and temperature about 15 microkelvin. Identify useful experimental references before advising on the setup.",
+      "reference_sources": [
+        "https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.81.5768",
+        "https://eapg.mit.edu/wp-content/uploads/2018/01/prl_81_5768.pdf"
+      ],
+      "criteria": [
+        "Search several useful combinations of the experimental concepts instead of requiring every parameter in one query.",
+        "Find and read relevant experimental work; Degenerate Raman Sideband Cooling of Trapped Cesium Atoms at Very High Atomic Densities (10.1103/PhysRevLett.81.5768) is one useful geometry match, not a required unique answer.",
+        "Explain species and geometry differences, distinguish direct 85Rb evidence from cesium analogies, and avoid treating a reported density as a universal limit."
+      ],
+      "review": "Judge discovery against the question and the retrieved paper's contents, not simply whether a known title occurs in the answer."
+    },
+    {
+      "id": "mit-long-publication-list",
+      "kind": "discovery",
+      "prompt": "Locate and read the 1998 paper Degenerate Raman Sideband Cooling of Trapped Cesium Atoms at Very High Atomic Densities by Vuletic, Chin, Kerman and Chu, including an accessible lab-hosted copy if available.",
+      "starting_points": [
+        "https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.81.5768",
+        "https://eapg.mit.edu/publications-by-subject/atom-cavity-interaction-cavity-cooling/",
+        "https://eapg.mit.edu/wp-content/uploads/2018/01/prl_81_5768.pdf"
+      ],
+      "criteria": [
+        "Find the target PDF using its citation context on a long publication list, even when the correct link appears after the first eight links.",
+        "Verify the fetched title and authors against DOI 10.1103/PhysRevLett.81.5768; a successful HTTP response alone does not establish the correct document.",
+        "Record the actual source URL and version of the copy used."
+      ],
+      "review": "Live link positions can change. For deterministic component tests use a controlled page with the target after at least eight distractors."
+    },
+    {
+      "id": "broken-first-pdf-candidate",
+      "kind": "retrieval",
+      "prompt": "Fetch the requested paper, allowing a legitimate open-access version, when the highest-ranked PDF location is unavailable.",
+      "criteria": [
+        "Use a controlled resolver response containing at least two locations for the same DOI; make the first return an access error or invalid PDF and the second serve the correct PDF.",
+        "Try the second eligible location within the request budget before requesting human assistance.",
+        "Identify the successful copy and version, and retain enough attempt evidence to explain the fallback."
+      ],
+      "review": "Record discovery relevance as null if the run starts from a known DOI. This is a deterministic failure-injection case, not a claim about a particular publisher."
+    },
+    {
+      "id": "published-version-required",
+      "kind": "retrieval",
+      "prompt": "Read the published version of DOI 10.1126/sciadv.aay5901. Do not substitute an accepted manuscript or submitted preprint.",
+      "criteria": [
+        "Enforce published-only selection when metadata also offers an accepted manuscript or preprint.",
+        "Read a verified published copy if one is available; otherwise explain that full text was not obtained and use the browser handoff when appropriate.",
+        "Do not report findings as read from a PDF that was never retrieved."
+      ],
+      "review": "Version correctness can pass when substitution was correctly refused. Set correct_document and extraction_usable to null if no document was retrieved; human intervention is an observation, not automatically a failure."
+    },
+    {
+      "id": "similar-title-wrong-paper",
+      "kind": "identity",
+      "prompt": "Fetch the cited paper by its title and DOI when a search result or PDF candidate has a similar title but different authors or an unrelated DOI.",
+      "criteria": [
+        "Use a controlled candidate set with a title-similar distractor and the correct citation.",
+        "Check the requested identity against candidate metadata and the downloaded first page before relying on its contents.",
+        "Reject or clearly flag a conflicting DOI or author/title mismatch rather than silently answering from the distractor."
+      ],
+      "review": "Record the requested and obtained identifiers in evidence. Keyword overlap alone does not earn a correct-document pass."
+    },
+    {
+      "id": "scanned-or-malformed-text",
+      "kind": "extraction",
+      "prompt": "Read the requested paper and explain an equation with a page citation, when its PDF is scanned or the extracted equation text is garbled.",
+      "criteria": [
+        "Use a controlled scanned PDF or a known malformed text layer and verify document identity independently of extraction success.",
+        "Recognize unreadable text or equations instead of presenting the extraction as reliable evidence.",
+        "Use an available visual-reading route or clearly state the limitation and request appropriate assistance; record whether usable evidence was ultimately obtained."
+      ],
+      "review": "Correct document and usable extraction are separate assessments. An honest limitation is not a usable-extraction pass."
+    }
+  ]
+}

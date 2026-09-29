@@ -17,7 +17,7 @@ const PERMISSIONS = [
   ["block_read", OutlineIcon, t("Read note blocks"), t("Read individual notes and their outline"), "library"],
   ["view", EyeIcon, t("View PDF pages"), t("Look at figures, tables and scanned pages"), "library"],
   ["search", SearchIcon, t("Search library"), t("Find text in your notes and PDFs"), "library"],
-  ["web_search", GlobeIcon, t("Search papers online"), t("Find papers on Crossref and arXiv"), "web"],
+  ["web_search", GlobeIcon, t("Search papers online"), t("Find papers through Crossref, arXiv and configured web search"), "web"],
   ["web_read", CloudDownloadIcon, t("Fetch documents"), t("Read a DOI or URL without saving it to your library"), "web"],
   ["publisher_cookies", ShieldIcon, t("Use journal sign-ins"), t("Use connected publisher cookies when fetching documents"), "web"],
   ["rename", PenIcon, t("Rename pages"), t("Change page titles on request"), "edit"],

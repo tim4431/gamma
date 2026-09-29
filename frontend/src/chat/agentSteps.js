@@ -69,6 +69,7 @@ export function runningLabel(step, titleOf = () => "") {
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
     case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
+    case "search_web": return t("Searching web for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
     case "rename_page":
       if (args.title) {
