@@ -38,7 +38,7 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
    also names the new page on save (`auto_title`, so the metadata lookup may
    still replace it).
 6. **Ctrl+Shift+S** saves the current page with the default folder.
-7. **Options**: server URL, sign in / out, default folder + labels, *prefer
+7. **Options**: saved-server switcher, server URL, sign in / out, default folder + labels, *prefer
    open-access fallback* and *keep a PDF copy* (the app's `oaFallback` /
    `pdfSaveLocal` prefs, sent as `allow_oa` / `save_copy`), and whether
    connected publisher sessions refresh automatically.
@@ -81,7 +81,7 @@ helpers — never re-implement it in the extension.
 | `bridge.js` | content script answering a chat card's `connector-probe` window message with the worker's `connector-probe` verdict (`ok` / `signed-out` / `other-account` / `unreachable`), or nothing; a question a second per request |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
-| `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
+| `api.js` | settings (`chrome.storage.sync`: `server, servers, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
 | `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). Saving remembers the folder but not the labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
@@ -340,6 +340,13 @@ signed in to the same server works the same way.
 - The server origin is user-configured (self-hosted); `normalizeServer()`
   keeps explicit schemes and adds `http://` when missing. Plain-HTTP LAN /
   Tailscale origins work — the cookie isn't `Secure` on http.
+- Options remembers normalized origins in `servers`, including the existing
+  `server` on upgrade. Connecting a new address adds it; choosing a saved
+  address switches immediately and refreshes the account display. Sessions
+  stay in the browser's cookie jar; switching does not log out. Saving
+  defaults are shared. Library lookups are scoped to their server, old badges
+  are cleared on a switch, and save uploads/clip requests reject a changed
+  server instead of sending the old server's document IDs to the new one.
 - After a successful `/api/session` check, the Connector
   remembers an HTTP-to-HTTPS redirect to the exact same host, port and API path,
   with the standard port changing from 80 to 443. The worker and options page
@@ -361,7 +368,12 @@ signed in to the same server works the same way.
   `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
-  the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`.
+  the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`, plus
+  API settings and origin guards.
+- `node extension/tests/servers.e2e.mjs` — full Chromium with the unpacked
+  extension and two local test servers: remembered addresses, switching,
+  account/offline states, denied permission, library results and saves that
+  are interrupted by a server switch. Uses `frontend/`'s Playwright install.
 - `frontend/tests/themes.test.mjs` — `tokens.css` and `fonts/` equal their
   sources, and both pages load `theme.js`, then `tokens.css`, then
   `popup.css`.

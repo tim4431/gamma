@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, whoAmI } from "../api.js";
+import { api, getSettings, setSettings, whoAmI } from "../api.js";
 
 function settings(t, server) {
   const stored = { server };
@@ -37,7 +37,7 @@ test("account check remembers HTTPS before the guarded publisher-session request
   const me = await whoAmI();
   assert.deepEqual(me, { user: "alice", origin: "https://gamma.example" });
   assert.equal(stored.server, me.origin);
-  assert.deepEqual(writes, [{ server: me.origin }]);
+  assert.deepEqual(writes, [{ server: me.origin, servers: ["http://gamma.example", me.origin] }]);
   const data = await api("/publisher-sessions", { expectedUser: me.user, expectedOrigin: me.origin });
   assert.deepEqual(data.sessions, []);
   assert.equal(calls[1].url, "https://gamma.example/api/publisher-sessions");
@@ -105,4 +105,27 @@ test("guarded requests still reject redirects without retrying or changing setti
   }), /Can't reach/);
   assert.equal(calls, 1);
   assert.deepEqual(writes, []);
+});
+
+test("switching servers remembers the existing address and deduplicates normalized origins", async (t) => {
+  const { stored } = settings(t, "http://localhost:9001");
+  stored.folder = "Papers";
+  assert.deepEqual((await getSettings()).servers, [stored.server]);
+  await setSettings({ server: "https://gamma.example/library" });
+  await setSettings({ server: "localhost:9001/" });
+  assert.equal(stored.server, "http://localhost:9001");
+  assert.deepEqual(stored.servers, ["http://localhost:9001", "https://gamma.example"]);
+  assert.equal(stored.folder, "Papers");
+  await setSettings({ allowOa: false });
+  assert.deepEqual(stored.servers, ["http://localhost:9001", "https://gamma.example"]);
+});
+
+test("a request pinned to the previous server cannot send data after switching", async (t) => {
+  settings(t, "http://localhost:9001");
+  await setSettings({ server: "https://gamma.example" });
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("must not fetch"); });
+  await assert.rejects(api("/clip", {
+    json: { doc_id: "old-server-document" }, expectedOrigin: "http://localhost:9001",
+  }), /server changed/);
+  assert.equal(fetch.mock.callCount(), 0);
 });

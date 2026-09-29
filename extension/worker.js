@@ -84,8 +84,8 @@ function mergeCandidates(fromPage, fromUrl) {
 let authCache = { at: 0, value: null };
 
 async function checkAuth(force = false) {
-  if (!force && Date.now() - authCache.at < 60_000 && authCache.value) return authCache.value;
   const origin = await serverOrigin();
+  if (!force && Date.now() - authCache.at < 60_000 && authCache.value?.origin === origin) return authCache.value;
   let value;
   if (!origin) value = { configured: false, auth: null, user: null, origin: "" };
   else {
@@ -100,10 +100,11 @@ async function checkAuth(force = false) {
   return value;
 }
 
-async function lookup(candidate) {
+async function lookup(candidate, origin) {
   if (!candidate || candidate.kind === "none") return { hit: null };
   try {
     const hit = await api("/library/lookup", {
+      expectedOrigin: origin,
       params: { doi: candidate.doi, arxiv_id: candidate.arxiv_id, url: candidate.pdf_url || candidate.source_url },
     });
     return { hit };
@@ -128,9 +129,10 @@ async function setDetection(tabId, candidate) {
   const auth = await checkAuth();
   if (!auth.configured) return st;
   if (auth.auth === false) return setTabState(tabId, { auth: false });
-  const res = await lookup(candidate);
+  const res = await lookup(candidate, auth.origin);
+  if (await serverOrigin() !== auth.origin) return getTabState(tabId);
   if (res.auth === false) { authCache.at = 0; return setTabState(tabId, { auth: false, looked: true }); }
-  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true });
+  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true, origin: auth.origin });
   // Off the badge's critical path: doi.org can take a second or two. The
   // popup re-renders its head when the record lands (storage.onChanged).
   preview(candidate).then(async (pv) => {
@@ -415,12 +417,12 @@ async function bytesFromTab(url, tabId) {
   throw lastErr;
 }
 
-async function uploadBlob(tabId, blob, url) {
+async function uploadBlob(tabId, blob, url, expectedOrigin) {
   const form = new FormData();
   const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
   form.append("file", blob, name);
   if (tabId != null) await progress(tabId, "uploading…");
-  const up = await api("/uploads", { form });
+  const up = await api("/uploads", { form, expectedOrigin });
   return up.doc_id;
 }
 
@@ -451,13 +453,13 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       // Best-effort: on failure the server-side resolve below still runs.
       try {
         if (tabId != null) await progress(tabId, "downloading in your browser…");
-        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl);
+        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl, settings.server);
       } catch (err) { console.warn(`[gamma] browser-first upload failed, server will try: ${err.message}`); }
     }
     if (tabId != null) await progress(tabId, "saving to your library…");
     let out;
     try {
-      out = await api("/clip", { json: payload });
+      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     } catch (err) {
       // The server couldn't fetch the PDF (paywall, bot check) — this
       // browser's session often can. Download here, upload, save again.
@@ -466,11 +468,11 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       let blob;
       try { blob = await bytesFromTab(fetchUrl, tabId); }
       catch (bErr) { throw new Error(`${err.message} The browser-side download failed too: ${bErr.message}.`); }
-      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl);
+      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl, settings.server);
       if (tabId != null) await progress(tabId, "saving to your library…");
-      out = await api("/clip", { json: payload });
+      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     }
-    if (tabId != null) await setTabState(tabId, { saving: "", hit: out, last: out, error: "" });
+    if (tabId != null && await serverOrigin() === settings.server) await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server });
     return out;
   } catch (err) {
     const message = err.message || "save failed";
@@ -481,9 +483,10 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
 }
 
 async function clipSelection({ tabId, text, source_url, title }) {
+  const origin = await serverOrigin();
   const st = tabId != null ? await getTabState(tabId) : {};
-  const page_id = st.hit && st.hit.block_id || "";
-  return api("/clip/note", { json: { text, source_url, title, page_id } });
+  const page_id = st.origin === origin && st.hit && st.hit.block_id || "";
+  return api("/clip/note", { json: { text, source_url, title, page_id }, expectedOrigin: origin });
 }
 
 // ---------- notifications (context menu + shortcut results) ----------
@@ -515,7 +518,7 @@ async function openInGamma(out) {
 
 async function ensureDetection(tabId) {
   const st = await getTabState(tabId);
-  if (st.candidate && st.looked) return st;
+  if (st.candidate && st.looked && st.origin === await serverOrigin()) return st;
   let tab = null;
   try { tab = await chrome.tabs.get(tabId); } catch { return st; }
   let fromPage = null;
@@ -675,5 +678,16 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && changes.server) { authCache.at = 0; publisherCache = null; }
+  if (area === "sync" && changes.server) {
+    authCache.at = 0;
+    publisherCache = null;
+    // Library hits and badges belong to the server that resolved them.
+    chrome.storage.session.get(null).then(async (stored) => {
+      for (const [k, st] of Object.entries(stored)) {
+        if (k.startsWith("tab:") && st.origin !== changes.server.newValue) {
+          await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
+        }
+      }
+    }).catch(() => {});
+  }
 });

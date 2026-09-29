@@ -32,6 +32,10 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
 
 ## Use
 
+- In options, enter an address and **Connect** to remember it. Use **Saved
+  servers** to switch back to any previous server; the account section checks
+  that server's browser session. Switching does not sign out of the previous
+  server. Saving defaults remain shared across servers.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when

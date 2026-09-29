@@ -29,7 +29,7 @@ body.options { width: auto; min-width: 380px; max-width: 520px; padding: 4px 0; 
 .hidden { display: none !important; }
 a { color: var(--accent-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button, input { font-family: inherit; font-size: inherit; color: inherit; }
+button, input, select { font-family: inherit; font-size: inherit; color: inherit; }
 code, kbd { font-family: var(--font-mono); }
 
 /* Keyboard focus: Gamma's one ring, shown only for keyboard focus; menu
@@ -268,6 +268,7 @@ code, kbd { font-family: var(--font-mono); }
 .section p { margin: 0 0 8px; color: var(--text-secondary); font-size: var(--fs-sm); }
 .inline { display: flex; gap: 8px; align-items: center; }
 .inline input { flex: 1; }
+#saved-server-row .row { grid-template-columns: 92px 1fr; }
 .status { font-size: var(--fs-sm); color: var(--text-secondary); margin-top: 6px; overflow-wrap: anywhere; }
 .status.ok { color: var(--ok); }
 .status.err { color: var(--danger); }
