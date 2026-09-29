@@ -5525,6 +5525,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (dragging) {
         const zone = zoneFor(ev);
         moveWindow(winId, zone.side, zone.index);
+        if (ev.type !== "pointercancel") guideEvents.emit("window.moved", { id: winId, side: zone.side });
       }
       setDockPreview(null);
       try { target.releasePointerCapture(pointerId); } catch (_) {}
@@ -6689,7 +6690,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       // the first tour's finish card: "Connect an AI provider"
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
-      show: (surface) => { if (surface === "chat") showChat(); },
+      show: (surface) => {
+        if (surface === "chat" || surface === "windows") showChat();
+        if (surface === "windows" && !homeMode && pageAttach && !pdfHidden) {
+          setNotesVisible(true);
+          setCollapsedWins((prev) => ({ ...prev, notes: false }));
+        }
+      },
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -6736,6 +6743,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
       phone: !!isPhone,
+      dockedNotes: !isPhone && !homeMode && !!pageAttach && !pdfHidden,
       sharedWorkspace: workspaces.some((w) => !w.personal),
       // the open page's share audience ("" unshared or not loaded): the
       // sharing tour words its access step for an anyone-with-the-link share
@@ -8875,12 +8883,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and closing just returns to the main view.
     const common = {
       onGrip: isPhone ? undefined : (e) => startWindowDock(e, id),
-      onGripDoubleClick: isPhone ? undefined : () => setCollapsedWins((prev) => ({ ...prev, [id]: !prev[id] })),
+      onGripDoubleClick: isPhone ? undefined : () => {
+        const collapsed = !collapsedWins[id];
+        setCollapsedWins((prev) => ({ ...prev, [id]: collapsed }));
+        guideEvents.emit("window.collapsed", { id, collapsed });
+      },
       collapsed: isPhone ? false : !!collapsedWins[id],
     };
     if (id === "notes") {
       return (
-        <DockWindow title={t("Notes")} {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
+        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
           {notesWindow}
         </DockWindow>
       );
@@ -9024,6 +9036,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         className={`iconBtn ${openPopover === "menu" ? "activeIcon" : ""}`}
         onClick={() => setOpenPopover((p) => (p === "menu" ? null : "menu"))}
         title={t("View — windows, import, export")}
+        data-guide="header.view"
         aria-label={t("View")}
       >
         <MenuIcon size={16} />

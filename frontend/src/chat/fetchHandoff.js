@@ -1,0 +1,87 @@
+// Fetches handed to the user's browser (gamma/fetch_handoff.py): when the
+// agent's fetch_paper meets a CAPTCHA, a sign-in page or a paywall, its
+// action carries a `handoff` ({id, host, wall, source}) and the reply shows a
+// card for it (FetchHandoffCards.jsx). The rules here are the card's pure part:
+// which requests a reply opened, what each one's state reads as, how often
+// to ask the server, and when the chat continues on its own.
+import { t, tn } from "../shared/i18n/i18n.js";
+
+// The requests a reply's tool calls opened, once each, in call order (a
+// model retrying a blocked source gets the same request back).
+export function replyHandoffs(actions) {
+  const seen = new Map();
+  for (const a of actions || []) {
+    const h = a?.handoff;
+    if (h?.id && !seen.has(h.id)) seen.set(h.id, h);
+  }
+  return [...seen.values()];
+}
+
+// The card's state from the server's view of the request (null while the
+// first answer is out) and whether the user opened the page from it.
+export function handoffState(view, { opened = false } = {}) {
+  if (!view) return "loading";
+  if (view.status === "done") return "done";
+  if (view.status === "dismissed") return "dismissed";
+  if (view.status !== "waiting") return "gone"; // expired, or unknown to the server
+  if (view.watched) return "watching";
+  return opened ? "opened" : "waiting";
+}
+
+export const SETTLED = new Set(["done", "dismissed", "gone"]);
+const ACTIVE = new Set(["opened", "watching"]);
+
+// Milliseconds until the card asks the server again (null: it stops). Often
+// while the user is at the page; now and then while the request waits in
+// the conversation's last reply, so a Connector delivery shows up; older
+// replies ask only when the window regains focus.
+export function pollDelay(state, { isLast = true } = {}) {
+  if (SETTLED.has(state)) return null;
+  if (ACTIVE.has(state)) return 2500;
+  return isLast ? 10000 : null;
+}
+
+// Whether the chat sends the continuation by itself: the reply is the
+// conversation's last, every request it opened is settled with at least one
+// PDF delivered, a request was seen waiting in this tab (a reload of a
+// finished card never resends), and the composer holds nothing of the
+// user's — otherwise the card offers a Continue button instead.
+export function shouldContinue({ states, sawWaiting, isLast, idle }) {
+  if (!isLast || !idle || !sawWaiting || !states.length) return false;
+  return states.every((s) => SETTLED.has(s)) && states.includes("done");
+}
+
+// The card's headline: who stopped the server, and how.
+export function wallHeadline(wall, host) {
+  switch (wall) {
+    case "captcha": return t("{host} asked for a CAPTCHA or bot check", { host });
+    case "login": return t("{host} asked to sign in", { host });
+    case "rate": return t("{host} is limiting Gamma's requests", { host });
+    case "abstract": return t("{host} showed only the article page", { host });
+    default: return t("{host} refused Gamma's download", { host });
+  }
+}
+
+// What the user does next, per state.
+export function handoffHint(state, { pages = 0 } = {}) {
+  switch (state) {
+    case "watching":
+      return t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
+    case "opened":
+      return t("Finish in the tab that opened, then download the PDF and drop it here. With Gamma Connector signed in, this happens by itself.");
+    case "done":
+      return tn("Got the PDF from your browser ({n} page).", "Got the PDF from your browser ({n} pages).", pages);
+    case "dismissed":
+      return t("Dismissed.");
+    case "gone":
+      return t("This request has expired — ask the chat again.");
+    default:
+      return t("Open the page in your browser and sign in or pass the check. Gamma Connector sends the PDF back from that tab; without it, download the PDF and drop it here.");
+  }
+}
+
+// The message the chat continues with, naming what arrived.
+export function continuePrompt(handoffs) {
+  const what = handoffs.map((h) => h.source || h.host).filter(Boolean).join(", ");
+  return t("I got it in my browser — {what} is available now. Please continue.", { what });
+}

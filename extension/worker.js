@@ -1,9 +1,11 @@
 // Service worker: per-tab detection state + toolbar badge, the save pipeline
 // (thin — one POST /api/clip does the ingest server-side), context menus, the
-// keyboard command, and the popup's message API. State lives in
-// chrome.storage.session so it survives the worker being put to sleep.
+// keyboard command, the popup's message API, and the tabs a chat handed a
+// blocked fetch to. State lives in chrome.storage.session so it survives the
+// worker being put to sleep.
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
+import { handoffIdFrom, harvestUrls, sameWork } from "./handoff.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
 import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
 
@@ -171,7 +173,9 @@ async function publisherStatus(force = false) {
 // already connected, when the server's snapshot has gone stale
 // (publisherSessions.shouldAutoRefresh) — never a host that was not connected
 // by hand, never without the optional cookies permission, never a prompt.
-async function autoRefreshPublisher(tabId, url) {
+// `force` (a chat's fetch just succeeded in this tab, so the browser's
+// cookies are fresh and working) skips the age and retry checks.
+async function autoRefreshPublisher(tabId, url, { force = false } = {}) {
   const { autoRefreshSessions } = await getSettings();
   if (!autoRefreshSessions) return;
   if (!(await chrome.permissions.contains({ permissions: ["cookies"] }))) return;
@@ -184,7 +188,7 @@ async function autoRefreshPublisher(tabId, url) {
   const session = status.sessions.find((s) => s.host === host);
   const attempts = (await chrome.storage.session.get(ATTEMPTS_KEY))[ATTEMPTS_KEY] || {};
   const now = Date.now() / 1000;
-  if (!shouldAutoRefresh({ session, attempts, now })) return;
+  if (!session || (!force && !shouldAutoRefresh({ session, attempts, now }))) return;
   attempts[host] = now;
   await chrome.storage.session.set({ [ATTEMPTS_KEY]: attempts });
   try {
@@ -194,6 +198,108 @@ async function autoRefreshPublisher(tabId, url) {
   } catch (err) {
     console.warn(`[gamma] automatic publisher-session refresh for ${host} failed: ${err.message}`);
     await chrome.storage.session.set({ [AUTO_KEY]: { host, at: now, ok: false, error: err.message } });
+  }
+}
+
+// ---------- fetches a chat handed to this browser ----------
+
+// A chat card's "Open" goes through <server>/api/ai/handoffs/<id>/go on its
+// way to a publisher that stopped the server (a CAPTCHA, a sign-in, a
+// paywall). The tab that loads it — and any tab it opens, like a "PDF" link
+// with target=_blank — is bound to that request (POST …/watch, so the card
+// says the Connector is on it). Each page such a tab finishes loading is a
+// chance to download the PDF with the browser's session (bytesFromTab, the
+// save pipeline's two attempts); the first real PDF goes to the request
+// (POST …/pdf), the Gamma tab that asked comes forward, and a connected
+// publisher's cookies are refreshed from the session that just worked.
+const HANDOFFS_KEY = "handoffs"; // tabId → {id, source, url, pdf_url, host, opener}
+const harvesting = new Set();     // request ids with a download in flight
+
+async function handoffTabs() {
+  return (await chrome.storage.session.get(HANDOFFS_KEY))[HANDOFFS_KEY] || {};
+}
+
+async function setHandoffTab(tabId, binding) {
+  const all = await handoffTabs();
+  if (binding) all[tabId] = binding;
+  else delete all[tabId];
+  await chrome.storage.session.set({ [HANDOFFS_KEY]: all });
+}
+
+async function releaseHandoff(id) {
+  const all = await handoffTabs();
+  for (const [tabId, b] of Object.entries(all)) if (b.id === id) delete all[tabId];
+  await chrome.storage.session.set({ [HANDOFFS_KEY]: all });
+}
+
+async function bindHandoff(tabId, url, openerTabId) {
+  const id = handoffIdFrom(url, await serverOrigin());
+  if (!id || (await handoffTabs())[tabId]?.id === id) return;
+  let req;
+  // Another account's request, an expired one, or signed out: not ours to help.
+  try { req = await api(`/ai/handoffs/${encodeURIComponent(id)}/watch`, { method: "POST" }); }
+  catch (err) { console.warn(`[gamma] fetch request ${id} not taken: ${err.message}`); return; }
+  if (req.status !== "waiting") return;
+  await setHandoffTab(tabId, { id, source: req.source, url: req.url, pdf_url: req.pdf_url,
+                               host: req.host, opener: openerTabId ?? null });
+}
+
+// The Gamma tab to bring back: the one that opened the request, else the
+// most recently used tab of the server (not an API address like /go).
+async function focusGamma(openerTabId) {
+  const origin = await serverOrigin();
+  const isApp = (t) => t && t.url && t.url.startsWith(origin + "/") && !t.url.startsWith(origin + "/api/");
+  let tab = null;
+  if (openerTabId != null) { try { tab = await chrome.tabs.get(openerTabId); } catch {} }
+  if (!isApp(tab)) {
+    tab = (await chrome.tabs.query({})).filter(isApp)
+      .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
+  }
+  if (!tab) return;
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+  } catch {}
+}
+
+async function harvestHandoff(tabId) {
+  const bound = (await handoffTabs())[tabId];
+  if (!bound || harvesting.has(bound.id)) return;
+  let tab;
+  try { tab = await chrome.tabs.get(tabId); } catch { return; }
+  const origin = await serverOrigin();
+  if (!tab.url || !/^https?:/i.test(tab.url) || tab.url.startsWith(origin + "/")) return;
+  harvesting.add(bound.id);
+  try {
+    let req;
+    try { req = await api(`/ai/handoffs/${encodeURIComponent(bound.id)}`); }
+    catch (err) { if (err.status === 404 || err.status === 401) await releaseHandoff(bound.id); return; }
+    if (req.status !== "waiting") { await releaseHandoff(bound.id); return; }
+    let fromPage = null;
+    try { fromPage = await chrome.tabs.sendMessage(tabId, { type: "get-detection" }); } catch {}
+    const candidate = mergeCandidates(fromPage, candidateFromUrl(tab.url, tab.title));
+    if (!sameWork(candidate, bound)) return;
+    for (const url of harvestUrls(candidate, bound, { tabUrl: tab.url, viewer: !fromPage })) {
+      let blob;
+      try { blob = await bytesFromTab(url, tabId); } catch { continue; } // a sign-in page, not yet
+      const form = new FormData();
+      form.append("file", blob, "paper.pdf");
+      form.append("url", url);
+      let out;
+      try { out = await api(`/ai/handoffs/${encodeURIComponent(bound.id)}/pdf`, { form }); }
+      catch (err) {
+        console.warn(`[gamma] sending the PDF to the chat failed: ${err.message}`);
+        if ([404, 409].includes(err.status)) await releaseHandoff(bound.id);
+        return;
+      }
+      await releaseHandoff(bound.id);
+      await notify(`Sent to your Gamma chat: ${out.pages} page${out.pages === 1 ? "" : "s"} from ${new URL(url).hostname}.`);
+      await focusGamma(bound.opener);
+      if (!tab.incognito && /^https:/i.test(url)) autoRefreshPublisher(tabId, tab.url, { force: true }).catch(() => {});
+      return;
+    }
+  } finally {
+    harvesting.delete(bound.id);
   }
 }
 
@@ -372,6 +478,7 @@ async function ensureDetection(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.url) bindHandoff(tabId, info.url, tab && tab.openerTabId).catch(() => {});
   if (info.status === "loading" && info.url) {
     chrome.storage.session.remove(key(tabId));
     updateBadge(tabId, {}).catch(() => {});
@@ -384,10 +491,23 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
       if (!st.candidate) setDetection(tabId, candidateFromUrl(tab.url, tab.title)).catch(() => {});
     }, 800);
     if (!tab.incognito && /^https:/i.test(tab.url)) autoRefreshPublisher(tabId, tab.url).catch(() => {});
+    harvestHandoff(tabId).catch((err) => console.warn(`[gamma] fetch for the chat: ${err.message}`));
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(key(tabId)));
+// A tab a bound tab opens (a "PDF" link with target=_blank) works for the
+// same request; the /go tab itself may be known only by its pending URL.
+chrome.tabs.onCreated.addListener(async (tab) => {
+  if (tab.pendingUrl || tab.url) bindHandoff(tab.id, tab.pendingUrl || tab.url, tab.openerTabId).catch(() => {});
+  if (tab.openerTabId == null) return;
+  const parent = (await handoffTabs())[tab.openerTabId];
+  if (parent) await setHandoffTab(tab.id, { ...parent });
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session.remove(key(tabId));
+  setHandoffTab(tabId, null).catch(() => {});
+});
 
 // ---------- messages ----------
 

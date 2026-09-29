@@ -2,6 +2,9 @@
 
 PDF requests and AI paper fetches opt into an authenticated user's snapshots.
 A connection authorizes one exact HTTPS host; cookies never authorize sibling hosts.
+A snapshot also keeps the connecting browser's User-Agent: requests to that
+host present it, so a cookie the site bound to that browser (a bot-check
+clearance) is sent the way it was issued.
 """
 
 import hashlib
@@ -117,10 +120,22 @@ def normalize_cookies(host: str, cookies: list) -> list[dict]:
     return list(normalized.values())
 
 
-def save(username: str, host: str, cookies: list) -> dict:
+def browser_agent(value) -> str:
+    """The Connector's ``navigator.userAgent``, or "" when absent or not a
+    plain header value (optional metadata: never a reason to refuse)."""
+    if not isinstance(value, str) or not 0 < len(value) <= 512:
+        return ""
+    return value if all(32 <= ord(c) < 127 for c in value) else ""
+
+
+def save(username: str, host: str, cookies: list, user_agent: str = "") -> dict:
     host = valid_host(host)
     cookies = normalize_cookies(host, cookies)
-    payload = json.dumps({"user": username, "host": host, "cookies": cookies}).encode()
+    payload = {"user": username, "host": host, "cookies": cookies}
+    agent = browser_agent(user_agent)
+    if agent:
+        payload["agent"] = agent
+    payload = json.dumps(payload).encode()
     encrypted = cipher().encrypt(payload).decode("ascii")
     updated = page_now()
     expires = max(c["expires"] for c in cookies)
@@ -185,25 +200,36 @@ class _PublisherPolicy(DefaultCookiePolicy):
         return super().return_ok(cookie, request)
 
 
-def cookie_jar() -> CookieJar:
-    jar = CookieJar(policy=_PublisherPolicy())
+def _snapshots() -> list[dict]:
+    """The current user's unexpired, decryptable snapshots (their payloads)."""
     username = current_user.get()
     if not username:
-        return jar
+        return []
     with connect_users_db() as conn:
         rows = conn.execute("SELECT host, encrypted FROM publisher_sessions "
                             "WHERE username=? AND expires_at>?", (username, time.time())).fetchall()
     if not rows:
-        return jar
+        return []
     try:
         box = cipher()
     except (OSError, ValueError):
-        return jar  # Missing/replaced key: user can reconnect; no plaintext fallback.
+        return []  # Missing/replaced key: user can reconnect; no plaintext fallback.
+    out = []
     for host, encrypted in rows:
         try:
             payload = json.loads(box.decrypt(encrypted.encode("ascii")))
-            if payload["user"] != username or payload["host"] != host:
-                continue
+        except (InvalidToken, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get("user") == username and payload.get("host") == host:
+            out.append(payload)
+    return out
+
+
+def _jar(snapshots: list[dict]) -> CookieJar:
+    jar = CookieJar(policy=_PublisherPolicy())
+    for payload in snapshots:
+        host = payload["host"]
+        try:
             # Narrow parent-domain cookies to the connected host. If narrowing
             # collapses duplicate names/paths, prefer the most specific domain.
             for c in sorted(payload["cookies"], key=lambda item: len(item["domain"])):
@@ -213,9 +239,20 @@ def cookie_jar() -> CookieJar:
                     0, c["name"], c["value"], None, False,
                     host, False, False, c["path"], True,
                     True, c["expires"], False, None, None, {"gamma_host": host}, False))
-        except (InvalidToken, ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError):
             continue
     return jar
+
+
+def cookie_jar() -> CookieJar:
+    return _jar(_snapshots())
+
+
+def browser_profile() -> tuple[CookieJar, dict]:
+    """``(cookie jar, {host: User-Agent})`` of the current user's connected
+    sessions, from one read — what an outbound fetch presents per host."""
+    snapshots = _snapshots()
+    return _jar(snapshots), {p["host"]: p["agent"] for p in snapshots if browser_agent(p.get("agent"))}
 
 
 def cache_scope() -> tuple[str | None, str]:

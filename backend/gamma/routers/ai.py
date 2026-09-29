@@ -1393,6 +1393,10 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             "publisher_user": (user if not request.state.is_guest
                                and not request.query_params.get("share")
                                and payload.permissions.get("publisher_cookies", True) is not False else None),
+            # The account a blocked fetch_paper hands to the user's browser
+            # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
+            "handoff_user": (user if not request.state.is_guest
+                             and not request.query_params.get("share") else None),
             # This turn's reads, {block_id: full text}: what an edit_block
             # replace merges from (ai_tools.notes_seen).
             "read_texts": {}}

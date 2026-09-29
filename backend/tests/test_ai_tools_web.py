@@ -208,7 +208,7 @@ def test_fetch_paper_falls_back_to_page_text(org, upstream):
 
 def test_fetch_paper_reports_open_access_version_on_every_window(org, upstream, monkeypatch):
     note = "The publisher's PDF couldn't be fetched — loaded the open-access preprint (submitted version) instead."
-    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source: {
+    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source, **kw: {
         "source_url": "https://arxiv.org/pdf/1905.00450", "note": note,
     })
     ws = org[1]["ws"]
@@ -233,7 +233,7 @@ def test_fetch_paper_refuses_bad_sources_and_big_files(org, upstream, monkeypatc
 
 @pytest.mark.parametrize("status", [401, 403, 429])
 def test_fetch_paper_access_failure_explains_connector_and_upload_recovery(org, upstream, monkeypatch, status):
-    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source: {"source_url": source})
+    monkeypatch.setattr(pdf_mod, "resolve_source", lambda source, **kw: {"source_url": source})
 
     def blocked(req, timeout=30):
         raise HTTPError(req.full_url, status, "Blocked", {}, None)

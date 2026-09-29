@@ -21,6 +21,7 @@ from .mcp_oauth import router as mcp_oauth_router
 from .routers import (
     admin,
     ai,
+    ai_handoffs,
     auth as auth_router,
     blocks,
     backup_tasks,
@@ -177,6 +178,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_backups.router)
     app.include_router(backup_tasks.router)
     app.include_router(ai.router)
+    app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
     app.include_router(prefs.router)

@@ -439,6 +439,42 @@
 .aiProvModelsLabel { color: var(--text-dim); font-size: var(--fs-2xs); align-self: center; margin-right: 2px; }
 /* Provider rows double as the active-key picker in the Providers pane. */
 .aiProvSelectable { cursor: pointer; }
+/* Daily usage calendar: Sunday-first columns, like a contribution graph. */
+.usageCalendar {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: 14px;
+  min-width: 0;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.usageCalendarHead, .usageCalendarLegend { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.usageCalendarHead strong { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
+.usageCalendarSummary { margin-top: 5px; color: var(--text-muted); }
+.usageCalendarToggle { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-block); }
+.usageCalendarToggle button { border: 0; background: transparent; color: var(--text-muted); padding: 4px 10px; border-radius: var(--radius-xs); font-size: var(--fs-xs); cursor: pointer; }
+.usageCalendarToggle button[aria-pressed="true"] { background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--shadow-1); }
+.usageCalendarScroll { overflow-x: auto; margin: 20px 0 12px; padding: 3px; }
+.usageCalendarPlot { display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: 18px auto; gap: 5px; min-width: 680px; }
+.usageCalendarMonths { grid-column: 2; display: grid; grid-template-columns: repeat(var(--usage-weeks), minmax(0, 1fr)); gap: 3px; color: var(--text-muted); overflow: hidden; }
+.usageCalendarMonths span { white-space: nowrap; font-size: var(--fs-2xs); }
+.usageCalendarWeekdays { grid-row: 2; display: grid; grid-template-rows: repeat(7, minmax(0, 1fr)); gap: 3px; color: var(--text-muted); font-size: var(--fs-2xs); align-items: center; }
+.usageCalendarDays { grid-column: 2; grid-row: 2; display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, minmax(0, 1fr)); grid-template-columns: repeat(var(--usage-weeks), minmax(0, 1fr)); gap: 3px; }
+.usageCalendarCell { display: block; aspect-ratio: 1; min-width: 0; padding: 0; border: 1px solid var(--border-subtle); border-radius: 3px; background: var(--bg-block); }
+button.usageCalendarCell { cursor: pointer; }
+.usageCalendarCell[data-level="1"] { background: color-mix(in oklab, var(--ok) 25%, var(--bg-surface)); }
+.usageCalendarCell[data-level="2"] { background: color-mix(in oklab, var(--ok) 50%, var(--bg-surface)); }
+.usageCalendarCell[data-level="3"] { background: color-mix(in oklab, var(--ok) 75%, var(--bg-surface)); }
+.usageCalendarCell[data-level="4"] { background: var(--ok); }
+.usageCalendarCell[aria-pressed="true"], button.usageCalendarCell:hover { outline: 1px solid var(--text-primary); outline-offset: 1px; }
+.usageCalendarCell:focus-visible, .usageCalendarToggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.usageCalendarLegend { color: var(--text-muted); font-size: var(--fs-2xs); }
+.usageCalendarScale { display: flex; gap: 4px; align-items: center; }
+.usageCalendarScale .usageCalendarCell { width: 11px; }
+.usageCalendarDetail { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); line-height: 1.6; }
+.usageCalendarDetail strong { color: var(--text-primary); font-weight: 500; }
 /* Token usage by model (AI pane): a compact grid table, numbers right-aligned. */
 .aiUsageTable {
   border: 1px solid var(--border);

@@ -133,21 +133,29 @@ def resolve_pdf(payload: ResolvePdfRequest, request: Request):
     return resolve_source(payload.source_url, payload.allow_oa)
 
 
-def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
-    """URL / bare identifier → ``{"source_url": <fetchable PDF url>, "note"?}``,
-    or an HTTPException(400) with a human-readable reason. Shared by the
-    resolve endpoint and the extension's /api/clip."""
+def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = None) -> dict:
+    """URL / bare identifier → ``{"source_url": <fetchable PDF url>, "note"?,
+    "referer"?}``, or an HTTPException(400) with a human-readable reason.
+    Shared by the resolve endpoint, the extension's /api/clip and the AI's
+    fetch_paper. ``referer`` is the article page a PDF link came from (the
+    download should send it, as the page's own link would). A ``trace`` dict
+    collects what the walk saw — ``page_url`` (the landing page after
+    redirects), ``pdf_urls`` (the PDF links it advertised), ``doi``,
+    ``blocked`` (the first request was refused) — so a caller can say where
+    a person could get the PDF instead."""
     url = _identifier_to_url((source_url or "").strip())
+    trace = {} if trace is None else trace
 
     # arXiv abstract and HTML pages (and arXiv DOIs) go straight to the PDF
     m = _ARXIV_PAGE_RE.search(url) or _ARXIV_DOI_RE.search(url)
     if m:
         url = f"https://arxiv.org/pdf/{m.group(1)}"
+    trace.update(page_url=url, pdf_urls=[], doi="", blocked=False)
 
-    def try_resolve(u: str):
+    def try_resolve(u: str, referer: str = ""):
         """(final_url, content_type, body). Body is only read for non-PDF
         responses (capped) so HTML pages can be inspected for PDF pointers."""
-        req = URLRequest(u, headers=BROWSER_HEADERS)
+        req = URLRequest(u, headers={**BROWSER_HEADERS, **({"Referer": referer} if referer else {})})
         with guarded_urlopen(req, timeout=20) as resp:
             ctype = resp.headers.get("Content-Type", "").lower()
             body = b"" if "application/pdf" in ctype else resp.read(600_000)
@@ -161,10 +169,12 @@ def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
         final_url, content_type, body = try_resolve(url)
         if "application/pdf" in content_type:
             return {"source_url": final_url}
+        trace["page_url"] = final_url
     except HTTPError as e:
         if e.code not in (401, 403, 418, 429):
             raise HTTPException(status_code=400, detail=f"upstream HTTP error: {e.code}")
-        blocked = True
+        blocked = trace["blocked"] = True
+        trace["page_url"] = e.geturl() or url  # the refusing host, past doi.org's redirect
     except URLError as e:
         raise HTTPException(status_code=400, detail=f"upstream URL error: {e.reason}")
     except Exception as e:
@@ -174,14 +184,15 @@ def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
     # pages, …). Publishers advertise the "Download PDF" target in the
     # citation_pdf_url meta tag — the same tag Google Scholar reads.
     html = body.decode("utf-8", "replace") if body else ""
-    for pdf_url in _publisher_pdf_candidates(final_url, html):
+    trace["pdf_urls"] = _publisher_pdf_candidates(final_url, html)
+    for pdf_url in trace["pdf_urls"]:
         try:
-            _, ct2, _ = try_resolve(pdf_url)
+            _, ct2, _ = try_resolve(pdf_url, referer=final_url)
             if "application/pdf" in ct2:
                 # Return the canonical URL, not the redirect target — hosts
                 # like nature.com append one-time tokens on redirect, and the
                 # doc id is a hash of this URL, so it must stay stable.
-                return {"source_url": pdf_url}
+                return {"source_url": pdf_url, "referer": final_url}
         except Exception as e:
             log.warning(f"[resolve-pdf] publisher PDF fetch failed: {e}")
 
@@ -194,6 +205,7 @@ def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
         doi = re.sub(r"^doi:\s*", "", doi, flags=re.I)
         if not re.match(r"^10\.\d{4,9}/", doi):
             doi = ""
+    trace["doi"] = doi
     if doi:
         if not allow_oa:
             raise HTTPException(
@@ -236,13 +248,14 @@ def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
                "and the page doesn't advertise a PDF). Download it in your browser and drop it onto Gamma.")
 
 
-def download_pdf(source_url: str, want_bytes: bool = True) -> tuple[str, bytes]:
+def download_pdf(source_url: str, want_bytes: bool = True, referer: str = "") -> tuple[str, bytes]:
     """Fetch `source_url` the way the proxy does (browser headers, SSRF guard)
     and require a PDF content type. Returns ``(final_url, data)``; with
     ``want_bytes=False`` only the headers are checked and ``data`` is empty.
+    ``referer`` is the article page the link came from (resolve_source's).
     Failures raise HTTPException(400) with the proxy's human-readable texts."""
     try:
-        req = URLRequest(source_url, headers=BROWSER_HEADERS)
+        req = URLRequest(source_url, headers={**BROWSER_HEADERS, **({"Referer": referer} if referer else {})})
         resp = guarded_urlopen(req, timeout=30)
     except HTTPError as e:
         if e.code in (401, 403):

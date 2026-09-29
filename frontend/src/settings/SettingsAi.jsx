@@ -13,6 +13,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
+import { UsageCalendar } from "./UsageCalendar.jsx";
 import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
@@ -890,7 +891,7 @@ function AllowanceRow({ allowance }) {
 
 // Settings → AI → Token usage: what the account's AI calls cost in tokens,
 // as the providers reported it (GET /api/ai/usage — one row per call in
-// users.db, see gamma/ai_usage.py). Three tiles for today / 7 days /
+// users.db, see gamma/ai_usage.py). A daily calendar, then tiles for today / 7 days /
 // 30 days, the all-time line with Reset, then the last 30 days by model
 // and by kind. No prices: they differ per provider and change.
 function AiUsageSection({ confirm, setStatus, canReset = true }) {
@@ -945,6 +946,7 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
       {error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Usage unavailable: {error}", { error: error })}</p> : null}
       {!data && !error ? <p className="setNotice">{t("Loading…")}</p> : null}
       {data ? <>
+        {data.daily ? <UsageCalendar daily={data.daily} /> : null}
         <div className="setStats">
           {tile("today", w.today)}
           {tile(t("last 7 days"), w.week)}

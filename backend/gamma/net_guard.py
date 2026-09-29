@@ -16,10 +16,12 @@ egress firewall for defense in depth.
 import ipaddress
 import socket
 import urllib.parse
+from contextlib import contextmanager
+from contextvars import ContextVar
 from urllib.error import URLError
-from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, build_opener
+from urllib.request import BaseHandler, HTTPCookieProcessor, HTTPRedirectHandler, build_opener
 
-from .publisher_sessions import cookie_jar
+from .publisher_sessions import browser_profile
 
 _ALLOWED_SCHEMES = ("http", "https")
 
@@ -80,16 +82,50 @@ class _GuardedRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _BrowserAgent(BaseHandler):
+    """Present a connected host's own browser User-Agent (the one that
+    imported its cookies) on every request to that host, redirects included."""
+
+    def __init__(self, agents: dict):
+        self.agents = agents
+
+    def https_request(self, req):
+        agent = self.agents.get(urllib.parse.urlsplit(req.full_url).hostname or "")
+        if agent:
+            req.add_header("User-Agent", agent)
+        return req
+
+
+# The (jar, agents) of the browsing session this thread is in, if any.
+_session = ContextVar("net_guard_session", default=None)
+
+
+@contextmanager
+def browsing_session():
+    """Share one cookie jar between the guarded fetches inside the block,
+    the way a browser tab does: what a landing page sets (a session id, an
+    institutional-access handshake) reaches the PDF request it advertises.
+    Seeded like any fetch's jar; it lives in this thread's context for the
+    block only, so nothing carries across operations or users."""
+    token = _session.set(browser_profile())
+    try:
+        yield
+    finally:
+        _session.reset(token)
+
+
 def guarded_urlopen(req, timeout=30):
     """Drop-in for urllib.request.urlopen that validates the URL (and every
     redirect) against the SSRF guard first. ``req`` may be a str or a Request.
 
     Keep publisher cookies through this fetch's redirects (e.g. Nature's
-    institutional-access handshake). Each call gets a fresh, in-memory jar:
-    cookies are never shared between users. Authenticated PDF operations can
-    seed the jar from that user's explicitly connected publisher sessions.
+    institutional-access handshake). Each call gets a fresh, in-memory jar
+    unless it runs inside ``browsing_session``: cookies are never shared
+    between users. Authenticated PDF operations can seed the jar from that
+    user's explicitly connected publisher sessions.
     """
     url = req.full_url if hasattr(req, "full_url") else req
     validate_public_url(url)
-    opener = build_opener(_GuardedRedirectHandler, HTTPCookieProcessor(cookie_jar()))
+    jar, agents = _session.get() or browser_profile()
+    opener = build_opener(_GuardedRedirectHandler, HTTPCookieProcessor(jar), _BrowserAgent(agents))
     return opener.open(req, timeout=timeout)

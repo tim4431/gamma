@@ -610,4 +610,87 @@ export async function chatNavigationScenarios(env) {
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
+
+  // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
+  // card opens the page through /go, follows the request on the server (the
+  // Connector taking the tab shows), takes a PDF dropped on it — never the
+  // library underneath — and the chat continues once, by itself. The
+  // request's endpoints are faked here; the server's are in
+  // backend/tests/test_fetch_handoff.py.
+  await step("chat navigation: a blocked fetch's card gets the PDF from the browser and the chat continues", async () => {
+    const HID = "e2eHandoffRequest01";
+    const handoff = { id: HID, host: "www.science.org", wall: "captcha", source: "doi:10.1126/e2e.handoff" };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { id: "handoff-q", role: "user", text: "Read the Science paper" },
+      { id: "handoff-a", role: "ai", text: "Science asked for a bot check, so I could not download it.",
+        actions: [{ kind: "fetch", error: true, summary: "Needs your browser: www.science.org", tool: "fetch_paper",
+          args: { source: handoff.source }, result: "error: blocked", handoff }] },
+    ] } });
+    let request = { ...handoff, url: "https://www.science.org/doi/10.1126/e2e.handoff", pdf_url: "", detail: "",
+      status: "waiting", watched: false, pages: 0, from_url: "" };
+    const uploads = [], prompts = [], libraryUploads = [];
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route(`**/api/ai/handoffs/${HID}**`, async (route) => {
+      const req = route.request();
+      const path = new URL(req.url()).pathname;
+      if (path.endsWith("/go")) return route.fulfill({ contentType: "text/html", body: "<title>Opening</title>" });
+      if (path.endsWith("/pdf")) {
+        uploads.push(req.postDataBuffer());
+        request = { ...request, status: "done", pages: 3 };
+      }
+      return route.fulfill({ json: request });
+    });
+    await ctx.route("**/api/ai/chat", (route) => {
+      prompts.push(route.request().postDataJSON().prompt);
+      return route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"Reading the delivered PDF now."}\n' });
+    });
+    ctx.on("request", (r) => { if (r.method() === "POST" && /\/api\/uploads\b/.test(r.url())) libraryUploads.push(r.url()); });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const card = page.locator(".chatHandoff");
+      await card.getByText("www.science.org asked for a CAPTCHA or bot check").waitFor();
+      assert((await card.innerText()).includes(handoff.source), "the card names the paper");
+
+      const popup = ctx.waitForEvent("page");
+      await card.getByRole("button", { name: "Open www.science.org" }).click();
+      const opened = await popup;
+      assert(opened.url().endsWith(`/api/ai/handoffs/${HID}/go`), `the tab goes through /go: ${opened.url()}`);
+      await opened.close();
+      await card.getByText("Finish in the tab that opened").waitFor();
+
+      // The Connector took the tab: the card says so on its next look.
+      request = { ...request, watched: true };
+      await card.getByText("Gamma Connector is watching the tab").waitFor({ timeout: 8000 });
+
+      // A PDF dropped on the card goes to the request, not into the library.
+      const drop = await page.evaluateHandle((bytes) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array(bytes)], "paper.pdf", { type: "application/pdf" }));
+        return dt;
+      }, [...makePdf([["Delivered handoff paper"]])]);
+      await card.dispatchEvent("dragover", { dataTransfer: drop });
+      await card.dispatchEvent("drop", { dataTransfer: drop });
+      await card.getByText("Got the PDF from your browser (3 pages).").waitFor();
+      assertEq(uploads.length, 1, "one upload to the request");
+      assert(uploads[0].includes(Buffer.from("%PDF")), "the upload carries the PDF");
+      assertEq(libraryUploads.length, 0, "the page underneath did not import the drop");
+
+      await until(() => prompts.length === 1, { what: "the chat continues by itself" });
+      assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("Reading the delivered PDF now."));
+
+      // A reload shows the settled card and sends nothing again.
+      await page.reload();
+      await page.locator(".chatHandoff.done").waitFor();
+      await page.waitForTimeout(500);
+      assertEq(prompts.length, 1, "no second continuation");
+      assertEq(await page.locator(".chatHandoffContinue").count(), 0, "the conversation moved on: no Continue");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
 }

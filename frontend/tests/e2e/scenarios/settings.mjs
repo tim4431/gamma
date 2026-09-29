@@ -34,6 +34,54 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
+  await step("settings: usage calendar shows daily counts, keyboard navigation, and narrow layouts", async () => {
+    const daily = Array.from({ length: 365 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),
+      calls: index % 5 === 0 ? 0 : index % 7 + 1,
+      input: index % 5 === 0 ? 0 : (index % 13 + 1) * 1000,
+      output: index % 5 === 0 ? 0 : 200,
+      cache_read: index % 5 === 0 ? 0 : 300, cache_write: 0,
+    }));
+    let empty = false;
+    const { ctx, page } = await setup(undefined, async (context) => {
+      await context.route("**/api/ai/usage", async (route) => {
+        const response = await route.fetch();
+        const data = await response.json();
+        await route.fulfill({ json: { ...data, daily: empty
+          ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
+      });
+    });
+    try {
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const graph = page.locator(".usageCalendar");
+      await graph.scrollIntoViewIfNeeded();
+      assertEq(await graph.locator("button.usageCalendarCell").count(), 365);
+      const today = graph.locator('[data-date="2026-09-28"]');
+      await today.click();
+      assert((await graph.locator(".usageCalendarDetail").innerText()).includes("1 call"));
+      await today.press("ArrowLeft");
+      assertEq(await graph.locator('button[aria-pressed="true"].usageCalendarCell').getAttribute("data-date"), "2026-09-21");
+      await graph.getByRole("button", { name: "Calls", exact: true }).click();
+      assertEq(await today.getAttribute("data-level"), "1");
+      await graph.getByRole("button", { name: "Tokens", exact: true }).click();
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-light.png` });
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-dark.png` });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await graph.scrollIntoViewIfNeeded();
+      assert(await graph.locator(".usageCalendarScroll").evaluate((el) => el.scrollWidth > el.clientWidth));
+      assert(await graph.evaluate((el) => el.getBoundingClientRect().right <= innerWidth));
+      await today.click();
+      if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-calendar-mobile.png` });
+      empty = true;
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await until(() => graph.locator(".usageCalendarDetail").innerText().then((text) => text.includes("No AI calls on this day")));
+      assertEq(await graph.locator('button.usageCalendarCell:not([data-level="0"])').count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a translation service is set up in the Translation pane and picked as the translator", async () => {
     const { ctx, page } = await setup();
     try {
