@@ -1,7 +1,6 @@
 """FastAPI application assembly: middleware, routers, startup maintenance, SPA serving."""
 
 import asyncio
-import mimetypes
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -210,12 +209,17 @@ def create_app() -> FastAPI:
     static_dir = Path(config.STATIC_DIR) if config.STATIC_DIR else None
     if static_dir and static_dir.is_dir():
         index_html = static_dir / "index.html"
-        # The web app manifest (/media/manifest.webmanifest, the "Add to Home
-        # Screen" install) and the bundled interface font (/assets/*.woff2):
-        # FileResponse guesses types from the OS table, which may lack these
-        # on Windows and in slim images.
-        mimetypes.add_type("application/manifest+json", ".webmanifest")
-        mimetypes.add_type("font/woff2", ".woff2")
+        # Pin browser-critical types instead of trusting the OS MIME table.
+        # Windows registry entries can label .mjs as text/plain, preventing
+        # Chromium from loading the PDF worker; slim images can lack types.
+        media_types = {
+            ".html": "text/html",
+            ".css": "text/css",
+            ".js": "text/javascript",
+            ".mjs": "text/javascript",
+            ".webmanifest": "application/manifest+json",
+            ".woff2": "font/woff2",
+        }
 
         def revalidating(file: Path, request: Request):
             """An unhashed file (index.html, favicons) changes in place on
@@ -228,7 +232,7 @@ def create_app() -> FastAPI:
             headers = {"Cache-Control": "no-cache", "ETag": etag}
             if request.headers.get("if-none-match") == etag:
                 return Response(status_code=304, headers=headers)
-            return FileResponse(file, headers=headers)
+            return FileResponse(file, media_type=media_types.get(file.suffix.lower()), headers=headers)
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str, request: Request):
@@ -240,7 +244,8 @@ def create_app() -> FastAPI:
                 if path.startswith("assets/"):
                     # Vite content-hashes these filenames (the pdf.js worker
                     # among them) — safe to cache forever.
-                    return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+                    return FileResponse(candidate, media_type=media_types.get(candidate.suffix.lower()),
+                                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
                 return revalidating(candidate, request)
             # index.html must revalidate every load, or clients keep referencing
             # deleted hashed assets after a deploy.

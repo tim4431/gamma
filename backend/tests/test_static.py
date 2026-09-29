@@ -1,6 +1,9 @@
 """The SPA static route (gamma/app.py): hashed assets cache forever, unhashed
 files revalidate and answer 304 when the browser already holds them."""
 
+import mimetypes
+
+import pytest
 from fastapi.testclient import TestClient
 
 from gamma import config
@@ -62,3 +65,40 @@ def test_web_app_manifest_has_its_media_type(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/manifest+json")
     assert r.headers["cache-control"] == "no-cache"
+
+
+@pytest.mark.parametrize("name, media_type", [
+    ("pdf.worker-abc123.mjs", "text/javascript"),
+    ("index-abc123.js", "text/javascript"),
+    ("index-abc123.css", "text/css"),
+    ("index.html", "text/html"),
+    ("manifest.webmanifest", "application/manifest+json"),
+    ("inter.woff2", "font/woff2"),
+])
+@pytest.mark.parametrize("directory", ["assets", "media"])
+def test_static_media_types_ignore_system_mappings(tmp_path, monkeypatch, name, media_type, directory):
+    # Windows' registry (or a system mime.types file) can label JS as plain
+    # text. Exercise both static-response paths without changing the host OS.
+    mimetypes.init()
+    suffix = "." + name.rsplit(".", 1)[1]
+    monkeypatch.setitem(mimetypes.types_map, suffix, "text/plain")
+    c = _static_client(tmp_path, monkeypatch)
+    (tmp_path / directory / name).write_bytes(b"asset contents")
+
+    r = c.get(f"/{directory}/{name}")
+    assert r.status_code == 200
+    assert r.content == b"asset contents"
+    assert r.headers["content-type"].split(";")[0] == media_type
+    assert r.headers["cache-control"] == (
+        "public, max-age=31536000, immutable" if directory == "assets" else "no-cache"
+    )
+
+
+def test_spa_fallback_is_html_despite_system_mapping(tmp_path, monkeypatch):
+    mimetypes.init()
+    monkeypatch.setitem(mimetypes.types_map, ".html", "text/plain")
+    c = _static_client(tmp_path, monkeypatch)
+    r = c.get("/some/deep/route")
+    assert r.status_code == 200
+    assert r.headers["content-type"].split(";")[0] == "text/html"
+    assert "Gamma" in r.text

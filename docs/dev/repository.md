@@ -65,10 +65,19 @@ one-year cache policy. Unversioned public files belong under `/media/`, sent
 `no-cache` with a real `304` on revalidation (`gamma/app.py`) — the favicon,
 the web app manifest and the home-screen icons ([ipad.md](ipad.md)).
 
+The static route explicitly sets MIME types for HTML, CSS, JavaScript (`.js`
+and `.mjs`), the web manifest and WOFF2 fonts. These must not depend on the
+host's MIME table: Windows registry entries can label `.mjs` as `text/plain`,
+which browsers refuse to execute as a module. Both desktop sidecars and
+Docker use this route. `backend/tests/test_static.py` covers incorrect OS
+mappings for hashed assets, public files and the SPA fallback.
+
 The pdf.js worker is one of those hashed assets: `frontend/src/pdf/PdfViewer.jsx`
 imports `pdfjs-dist/legacy/build/pdf.worker.min.mjs?url`, so it is always the
 installed package's legacy build and is cached like the bundle. Nothing to
 copy or check when `pdfjs-dist` is upgraded.
+The worker URL also has a stable `?mime=js` query to bypass old immutable
+responses cached with an incorrect MIME type before this fix.
 
 ## Desktop inputs and outputs
 
