@@ -527,6 +527,21 @@ property too (the default every viewer opens the page with) and the
 viewer's own fold; a block the viewer never touched follows the stored
 value, a remote change included.
 
+`flattenBlocks` includes every block, even descendants hidden by a fold;
+use it for lookups. `visibleBlocks(blocks, view)` skips folded descendants
+for the outliner, using `isFolded` to resolve the viewer's override or stored
+default. `closeEditing(view, id)` only closes that editor, so a late blur
+cannot close another block's newly opened editor.
+
+The page has one undo stack (`editor/blockHistory.js`), derived from committed
+tree transitions; call sites do not opt individual edits into history.
+CodeMirror has no separate `history()`. Loads, remote transitions, undo/redo
+applications, and folding changes do not create entries. Rapid content edits
+of one block coalesce. An editor change records the pre-change selection:
+undo while editing restores it, while undo outside an editor opens none.
+The stack clears on page switches and fetched loads; cross-page moves are
+not undoable. Remote changes are rebased as described above.
+
 Ops on the page root (a rename, page properties) update the title / page
 state in App instead of the tree.
 

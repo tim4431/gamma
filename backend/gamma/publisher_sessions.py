@@ -1,9 +1,10 @@
 """Private, encrypted publisher-cookie snapshots imported by the Connector.
 
-Only PDF requests opt into an authenticated user's snapshots. A connection
-authorizes one exact HTTPS host; cookies never authorize sibling hosts.
+PDF requests and AI paper fetches opt into an authenticated user's snapshots.
+A connection authorizes one exact HTTPS host; cookies never authorize sibling hosts.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -27,8 +28,8 @@ PUBLISHER_ROOTS = (
     "tandfonline.com", "pnas.org", "rsc.org", "optica.org",
 )
 current_user = ContextVar("publisher_session_user", default=None)
-# The only requests that may borrow the caller's publisher sessions: the
-# interactive PDF operations (auth.py sets current_user for them).
+# Interactive PDF operations bind current_user in auth.py. AI fetch_paper
+# binds it inside the tool worker, from the chat's authenticated scope.
 PDF_PATHS = ("/api/pdf", "/api/resolve-pdf", "/api/clip")
 MAX_AGE = 30 * 24 * 3600
 SESSION_AGE = 24 * 3600
@@ -215,3 +216,17 @@ def cookie_jar() -> CookieJar:
         except (InvalidToken, ValueError, KeyError, TypeError):
             continue
     return jar
+
+
+def cache_scope() -> tuple[str | None, str]:
+    """Partition fetched text by account and usable publisher cookies.
+
+    Connecting, refreshing, disconnecting or expiring cookies changes the
+    fingerprint, so an earlier abstract/blocked page cannot mask new access.
+    Only the digest is kept in cache keys, never cookie values.
+    """
+    fingerprint = hashlib.sha256()
+    for cookie in sorted(cookie_jar(), key=lambda c: (c.domain, c.path, c.name)):
+        fingerprint.update(json.dumps([cookie.domain, cookie.path, cookie.name,
+                                       cookie.value, cookie.expires]).encode())
+    return current_user.get(), fingerprint.hexdigest()

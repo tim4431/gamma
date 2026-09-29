@@ -169,7 +169,8 @@ npm run dev        # :5173, proxies /api → :9001
 Frontend source is grouped by function (`editor/`, `pdf/`, `settings/`, and
 others), with startup/session code in `app/` and reused code in `shared/`.
 See the [frontend source map](./frontend/src/README.md) for file locations and
-naming conventions.
+naming conventions, and the [developer guide](./docs/dev/README.md) for
+architecture, shared rules, and topic documentation.
 
 **Tests**
 

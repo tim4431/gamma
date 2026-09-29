@@ -15,6 +15,13 @@ def _provider(ai_provider):
     """Every chat here needs a provider entry on the module's account."""
 
 
+@pytest.fixture(autouse=True)
+def _offline_model_facts(monkeypatch):
+    # The chat loop also looks up model limits before calling _open_ai.
+    # Stub that separate network path along with each test's fake model.
+    monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+
+
 def test_chat_agent_loop_streams_actions(org, monkeypatch):
     c, ids = org
     import gamma.routers.ai as ai_mod

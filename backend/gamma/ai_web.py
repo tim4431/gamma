@@ -23,6 +23,7 @@ from urllib.request import Request as URLRequest
 
 from fastapi import HTTPException
 
+from . import publisher_sessions
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .pdf_text import extract_pages
@@ -40,8 +41,8 @@ _ARXIV_RE = re.compile(
     r"^(?:https?://arxiv\.org/(?:abs|pdf)/|arxiv:\s*)?"
     r"([0-9]{4}\.[0-9]{4,5}|[a-z][a-z-]*(?:\.[a-z]{2})?/[0-9]{7})(?:v\d+)?(?:\.pdf)?$", re.I)
 
-_cache: dict = {}        # resolved url → {"url", "kind", "title", "pages": [str]}
-_aliases: dict = {}      # source string as given → resolved url
+_cache: dict = {}        # (account/session scope, resolved URL) → document
+_aliases: dict = {}      # (account/session scope, source string) → cache key
 _cache_lock = threading.Lock()
 
 
@@ -178,27 +179,29 @@ def html_text(raw: bytes, ctype: str = "") -> tuple[str, str]:
     return title, text
 
 
-def _remember(source: str, doc: dict) -> dict:
+def _remember(source: str, doc: dict, scope: tuple) -> dict:
+    key = (scope, doc["url"])
     with _cache_lock:
-        _cache.pop(doc["url"], None)
-        _cache[doc["url"]] = doc
-        _aliases[source] = doc["url"]
+        _cache.pop(key, None)
+        _cache[key] = doc
+        _aliases[scope, source] = key
         total = sum(d["chars"] for d in _cache.values())
         while _cache and (len(_cache) > _CACHE_MAX_DOCS or total > _CACHE_MAX_CHARS):
-            old = _cache.pop(next(iter(_cache)))  # insertion order = least recently used
+            old_key = next(iter(_cache))  # insertion order = least recently used
+            old = _cache.pop(old_key)
             total -= old["chars"]
-            for key in [k for k, v in _aliases.items() if v == old["url"]]:
-                del _aliases[key]
+            for alias in [k for k, v in _aliases.items() if v == old_key]:
+                del _aliases[alias]
     return doc
 
 
-def cached(source: str) -> dict | None:
+def cached(source: str, scope: tuple) -> dict | None:
     with _cache_lock:
-        url = _aliases.get(source) or source
-        doc = _cache.get(url)
+        key = _aliases.get((scope, source), (scope, source))
+        doc = _cache.get(key)
         if doc:  # LRU touch
-            _cache.pop(url)
-            _cache[url] = doc
+            _cache.pop(key)
+            _cache[key] = doc
         return doc
 
 
@@ -220,7 +223,8 @@ def fetch_document(source: str) -> dict:
     source = (source or "").strip()
     if not source:
         raise FetchError("empty source — pass a DOI, an arXiv id or an http(s) URL")
-    doc = cached(source)
+    scope = publisher_sessions.cache_scope()
+    doc = cached(source, scope)
     if doc:
         return doc
     if not _source_url(source):
@@ -250,7 +254,7 @@ def fetch_document(source: str) -> dict:
             if not any(p.strip() for p in pages):
                 raise FetchError(f"the PDF at {final_url} has no text layer (a scan?)")
             return _remember(source, {"url": pdf_url, "kind": "pdf", "title": "",
-                                      "pages": pages, "chars": sum(len(p) for p in pages)})
+                                      "pages": pages, "chars": sum(len(p) for p in pages)}, scope)
         reason = f"{pdf_url} is not a PDF ({ctype or 'no content type'})"
     # No PDF: the source's own page, if it is one, as readable text.
     page_url = _source_url(source)
@@ -270,7 +274,7 @@ def fetch_document(source: str) -> dict:
     if not text:
         raise FetchError(f"no PDF ({reason}) and the page {page_url} has no readable text")
     return _remember(source, {"url": final_url, "kind": "html", "title": title,
-                              "pages": [text], "chars": len(text), "note": reason})
+                              "pages": [text], "chars": len(text), "note": reason}, scope)
 
 
 def window(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[str, int | None, int]:

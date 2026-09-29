@@ -300,6 +300,26 @@ blocks' chats; pruning reads `block_fts_meta` alone). The `pdf_fts` schema and i
 `search_pdf`, `store_doc`, `doc_pages`) live in `gamma/pdf_index.py`; extraction and the background
 indexer in `search.py` (a paper's rows are written a few hundred pages per transaction).
 
+#### Search matching and display
+
+Search normalization lives in `gamma/textnorm.py` and its frontend mirror,
+`shared/lib/textnorm.js`: ligatures, hyphenated line breaks, and digit
+separators should match consistently. Bump `textnorm.INDEX_VERSION` when
+extraction or normalization changes so old indexes rebuild. Add shared cases
+to `tests/shared/textnorm.json` and run both Python and Node coverage.
+
+`search/SearchPanel.jsx` groups titles, the current page's notes and PDF,
+other notes, reference links, and library PDF hits. It can collapse into a
+compact find bar. `buildSearchRegex` supplies the frontend matcher; the
+server's `/block-search` uses its own bounded fuzzy scan after an SQL
+prefilter and refuses caller-supplied regexes. There is no replace UI.
+
+Opening a library content hit pins the query across navigation. Once the PDF
+renders, `PdfViewer` re-finds the query through `searchRef` over normalized
+page text, maps character offsets back to rendered rectangles, and scrolls
+to the match. Search indexes store text, not highlight coordinates: the
+positions must come from pdf.js, which renders the page.
+
 ### Link previews (`links.py`)
 | Method | Path | Purpose |
 |---|---|---|

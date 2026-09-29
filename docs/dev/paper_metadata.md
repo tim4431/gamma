@@ -193,9 +193,18 @@ the key separately or reconnect after moving/restoring to another machine.
 
 Authenticated `/api/resolve-pdf`, `/api/pdf`, and `/api/clip` requests seed their
 outbound cookie jar from the caller's snapshots via a request-local ContextVar.
+AI chat's `fetch_paper` tool also uses the caller's snapshots: `_chat_scope`
+captures the authenticated account, and the tool binds and resets the ContextVar
+inside its worker (streamed tools run in a separate thread). The model cannot
+choose an account and never receives the cookie values. The existing **Fetch
+documents** permission controls the tool; no separate cookie switch is needed.
 Host, path, HTTPS and expiry checks apply on every redirect. Parent-domain cookies
 are narrowed to the exact connected host. Guest, anonymous and share requests,
-AI tools and background jobs do not use these credentials. Proxy responses are
+other AI tools and background jobs do not use these credentials. Fetched text
+and URL aliases are cached by account and a fingerprint of its usable cookies,
+so one account cannot reuse another's authenticated document. Connecting,
+refreshing, disconnecting or expiring cookies changes that cache partition,
+allowing a previously cached abstract to be retried with new access. Proxy responses are
 private and not cached by shared HTTP caches. Saved PDFs retain the workspace's
 normal access rules; connecting a session does not alter workspace permissions.
 

@@ -235,7 +235,11 @@ from the Read window preference, shared through `_window_args`), `pdf_page`,
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags, the Unpaywall open-access fallback,
-browser headers). It is downloaded through the SSRF guard under a size cap
+browser headers). Connected publisher sessions are used for the authenticated
+caller's account, restricted to each connected HTTPS host; guest and share
+requests use none. The tool binds that identity in its worker from the chat
+scope, never from model arguments, and resets it after the fetch. Cookie values
+never enter the model's context. It is downloaded through the SSRF guard under a size cap
 (`FETCH_MAX_BYTES`, 40 MB) and extracted page by page
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
 model can cite pages. When no PDF is reachable (a paywall, a plain web page)
@@ -243,9 +247,13 @@ and the source is a page, its readable text is returned instead
 (`ai_web.html_text`: head, scripts and styles dropped, block tags to line
 breaks, entities unescaped), labelled as a web page with the reason no PDF
 came. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
-`_CACHE_MAX_CHARS`) keyed by its resolved URL, with the source string as an
-alias, so the windows of one paper cost one download. Nothing is written to
-disk or to the workspace; a restart forgets everything. Failures (not a PDF
+`_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
+with source aliases in the same partition, so the windows of one paper cost one
+download without sharing authenticated text between accounts. A session connect,
+refresh, disconnect or cookie expiry changes the partition, so the next fetch
+can retry an earlier abstract or blocked page. The fetched document is not
+written to disk or added to the workspace; a restart forgets the cache (chat
+history still keeps answers and shortened tool results). Failures (not a PDF
 and not a page, blocked site, too large, no text layer) come back as
 `error:` text suggesting the user drop the PDF onto Gamma.
 

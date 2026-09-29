@@ -56,7 +56,8 @@ account the cookies go to. While the snapshot uploads the cookie spins, and
 a green check confirms the connection.
 
 This explicitly transfers the publisher cookies to Gamma for later backend
-PDF downloads. Normal Save actions still transfer only the PDF. Connected
+PDF downloads, including the AI chat's **Fetch documents** tool. The AI receives
+the fetched text, never the cookie values. Normal Save actions still transfer only the PDF. Connected
 journals are **refreshed automatically**: when you visit one and Gamma's copy
 of its cookies is over an hour old, the Connector sends a fresh copy (at most
 once every ten minutes per journal). Journals you never connected are never

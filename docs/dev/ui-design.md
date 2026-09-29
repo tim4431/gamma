@@ -427,6 +427,40 @@ account on this server" divider. A failed sign-in says why (wrong password,
 too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
 box, and a refused password also takes the focus and a red border.
 
+## Block editor interactions
+
+`editor/BlockTree.jsx` owns row interactions and the editor's popups;
+`editor/BlockCmEditor.jsx` supplies the CodeMirror facade. Opening rendered
+text maps the clicked character through `clickToSource.js` and keeps that
+line under the pointer. A drag that began on rendered text continues as a
+selection in the editor. A blur while the window is unfocused (Alt+Tab or
+a file dialog) must not close the editor: `document.hasFocus()` gates the
+blur callback, and the browser restores the active element on return.
+
+The row gutter (`.rowHandles`) holds the drag/menu handle and an out-of-flow
+add button so one-line rows stay one line tall. Add uses the same sibling
+creation path as Enter: below by default, above with Alt+click; a home-library
+row creates a page. The handle menu copies a link or the subtree as Markdown,
+attaches the block to chat (also Ctrl+click), duplicates with fresh IDs and
+without highlight anchors, moves to another page, or deletes.
+
+Clipboard handling preserves Markdown storage:
+
+- A URL offers the existing link/mention/embed choices; Gamma page/citation
+  links are stored without host or workspace ([PDF citations](pdf_citations.md)).
+- Strict TSV offers Table / Text / Blocks; other multiline text offers Text /
+  Blocks. Blocks uses `POST /api/markdown-blocks`, the Markdown import parser,
+  and inserts siblings, replacing an empty block without children.
+- A clipboard containing one HTML table becomes a formatted Markdown table.
+  Files upload and insert at the caret ([files and documents](block_centric.md#stage-4--files-and-documents-done-2026-09-13)).
+
+An editable `![[embed]]` card writes to its source block, including checkbox,
+image, table, and raw-text edits. Same-page sources use `onChangeText` and the
+page's normal save path; cross-page sources use `PUT /blocks/{id}` with `base`
+and reconcile the reference cache with the response ([collaboration](collab.md)).
+Its editor shares `useMathUi`, completion, preview, and image/table paste with
+the ordinary row editor. The card footer navigates to the source.
+
 ## File map (frontend/src)
 
 | File | Owns |

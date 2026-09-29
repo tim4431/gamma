@@ -1075,6 +1075,7 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     """Read a document that is not in the library, in windows like
     read_page's document excerpt. The fetch goes through the same resolver
     and SSRF guard as opening a link; the text is cached in memory only."""
+    from . import publisher_sessions
     from .ai_web import FetchError, fetch_document, window
 
     source = str(args.get("source") or "").strip()
@@ -1082,11 +1083,15 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
         return "error: empty source — pass a DOI, an arXiv id or an http(s) URL", None
     budget, offset, page = _window_args(scope, args)
     budget = max(1, budget)  # a fetched document has no "notes only" reading
+    # Identity comes from the authenticated chat scope, never model arguments.
+    token = publisher_sessions.current_user.set(scope.get("publisher_user"))
     try:
         doc = fetch_document(source)
     except FetchError as e:
         return (f"error: {e}. If the user can open it in their browser, ask them to drop "
                 "the PDF onto Gamma and read it with read_page.", None)
+    finally:
+        publisher_sessions.current_user.reset(token)
     text, next_offset, total = window(doc, budget, offset, page)
     label = doc.get("title") or doc["url"]
     if doc["kind"] == "pdf":

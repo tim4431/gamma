@@ -3,6 +3,20 @@
 These aids apply inside `$...$` and `$$...$$` in notes and editable embedded
 notes. Ordinary prose and fenced code retain their usual typing behavior.
 
+`BlockCmEditor.jsx` auto-pairs `$`: the first press inserts `$|$` (the bar is
+the caret), and a second press inside that freshly created pair makes `$$|$$`.
+A per-view marker distinguishes that upgrade from typing over an existing
+display-math closer. A selection is wrapped; an existing closer is stepped
+over. Backspace reduces an empty `$$|$$` to `$|$`, then removes the pair.
+Escaped `\$` and dollars inside code fences stay literal.
+
+Inside math, `(`, `[`, and `{` also pair, wrap selections, skip existing
+closers, and delete empty pairs with Backspace; `\{` pairs with `\}`. Prose
+and fenced-code brackets stay plain. `mathTabJump` in `latexCompletion.js`
+moves among argument groups, skips `\begin{...}` / `\end{...}` names, and
+leaves the math span; block indentation handles Tab only when math navigation
+has nowhere to go. The scalable delimiters and snippets below build on this.
+
 | Type | Result / action |
 | --- | --- |
 | `\left(` | Inserts `\right)` and leaves the caret between them |

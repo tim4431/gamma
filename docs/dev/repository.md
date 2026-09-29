@@ -31,6 +31,22 @@ Desktop-specific developer documentation remains in `desktop/docs/`.
 The [frontend refactor plan](frontend-refactor.md) covers what remains of the
 App.jsx decomposition.
 
+## Documentation conventions
+
+The [developer guide](README.md) indexes shared architecture and topic docs.
+Keep implementation details in the relevant `docs/dev/` file, and surveys and
+design rationale in [research notes](../research/README.md). Label plans and
+dated inventories so they are not mistaken for the current implementation.
+The root `CLAUDE.md` is an ignored local guide for machine setup and general
+working rules; shared project documentation belongs here.
+
+The root README is for users: plain headings without emoji or icons, "Read
+from any place" first, pictures linked to the matching section of the
+[user guide](../user_guide.md), and a "→ Guide:" line per feature section.
+Keep its copy consistent with the website and Store listing. Typed text in
+generated illustrations uses `branding.typewriter()`; see the
+[branding workflow](../../tools/branding/README.md).
+
 ## Asset ownership
 
 | Location | Contents and consumers |
