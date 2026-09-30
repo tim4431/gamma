@@ -183,7 +183,22 @@
 @media (prefers-reduced-motion: reduce) {
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
   .guideRing, .guideCard, .guideBeacon { animation: none; }
+  /* A drawing carries its own animation, whatever it is: one rule stops
+     every one of them, so an asset never has to remember (guide/media.js). */
+  .guideMedia svg * { animation: none !important; }
 }
+/* A step's drawing (`media`): the box takes its height from the registry's
+   ratio through an inline aspect-ratio, so the card is already its final
+   size when place.js measures it. The drawing paints with the theme's
+   tokens, so it needs no colours of its own. */
+.guideMedia {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  overflow: hidden;
+}
+.guideMedia svg { display: block; width: 100%; height: 100%; }
 /* One type scale for every card: tour and offer titles 15/600, a hint's
    sentence 14/500, bodies 13/1.5, meta 11. */
 .guideTitle {

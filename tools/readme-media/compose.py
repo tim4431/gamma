@@ -13,11 +13,18 @@ import math
 from pathlib import Path
 import subprocess
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 from imageio_ffmpeg import get_ffmpeg_exe
+
+from media_output import ROOT, encode_master, publish
 
 VW, VH = 1440, 900          # CSS size of every capture
 PAPER, EDGE = (246, 244, 239), (227, 224, 216)
+# A light motion blur: the camera is averaged over this share of a frame, and
+# softened by up to SOFTEN px (at 1600 wide) at full speed. Moving frames are
+# what an animated WebP pays for, and detail nobody can follow costs the most.
+SHUTTER = 0.15
+SOFTEN = 0.6
 
 
 class Capture:
@@ -57,11 +64,15 @@ def focus(*boxes, margin=40, max_zoom=1.6):
     x1 = max(b['x'] + b['width'] for b in boxes) + margin
     y1 = max(b['y'] + b['height'] for b in boxes) + margin
     zoom = min(max_zoom, VW / (x1 - x0), VH / (y1 - y0))
-    return view((x0 + x1) / 2, (y0 + y1) / 2, zoom)
+    x, y, w, h = view((x0 + x1) / 2, (y0 + y1) / 2, zoom)
+    # An edge that would cut through the tab strip or the side rail snaps to the app's edge.
+    x = 0 if x < 56 else VW - w if x + w > VW - 56 else x
+    y = 0 if y < 56 else VH - h if y + h > VH - 56 else y
+    return (x, y, w, h)
 
 
 def ease(u):
-    """Ease-in-out with a gentle start and a long settle, like a damped camera."""
+    """Smootherstep: the camera starts and settles without a jolt."""
     u = min(max(u, 0.0), 1.0)
     return u * u * u * (u * (6*u - 15) + 10)
 
@@ -72,7 +83,7 @@ class Camera:
         self.start = start
         self.moves = []
 
-    def move(self, t, rect, seconds=0.9):
+    def move(self, t, rect, seconds=0.5):
         self.moves.append((t, rect, seconds))
         self.moves.sort(key=lambda m: m[0])
         return self
@@ -139,12 +150,12 @@ def mix(layers):
     return acc
 
 
-def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.3, loop_fade=0.6):
+def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.3, loop_fade=0.5):
     """Write `master` (lossless FFV1) from capture-time `segments` [(start, end), ...].
 
     Consecutive segments dissolve over `fade` seconds; the last frame dissolves
     into the first over `loop_fade`, so the loop has no jump. Camera moves get
-    motion blur: each frame averages the camera across a 180-degree shutter.
+    a light motion blur: each frame averages the camera across `SHUTTER` of it.
     Returns the output duration in seconds.
     """
     frame = Frame(width)
@@ -159,17 +170,15 @@ def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.
         """(cache key, output px the camera travels in half a frame, renderer)"""
         a, b = camera.at(t - step/4), camera.at(t + step/4)
         travel = max(abs(p - q) for p, q in zip(a, b)) * cw / min(a[2], b[2])
-        samples = min(16, max(1, math.ceil(travel / 1.5)))
+        samples = min(8, max(1, math.ceil(travel * SHUTTER * 2 / 1.5)))
         if samples == 1:
             return (capture.index(t), camera.at(t)), travel, lambda: card(t, camera.at(t))
-        rects = [camera.at(t + step/2 * (j / (samples-1) - 0.5)) for j in range(samples)]
-        # Detail the eye cannot follow mid-move costs the most to encode: soften
-        # with speed, on top of the directional blur. Rests stay sharp.
-        soften = min(3.0, travel / 4) * width / 1600
+        rects = [camera.at(t + step * SHUTTER * (j / (samples-1) - 0.5)) for j in range(samples)]
+        soften = min(SOFTEN, travel / 12) * width / 1600
 
         def render():
             image = mix((1, card(t, r)) for r in rects)
-            return image.filter(ImageFilter.GaussianBlur(soften)) if soften >= 0.3 else image
+            return image.filter(ImageFilter.GaussianBlur(soften)) if soften >= 0.2 else image
         return (capture.index(t), tuple(rects)), travel, render
 
     # Each output frame is a list of (weight, capture time) layers.
@@ -201,10 +210,47 @@ def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.
                 previous_key = key
             proc.stdin.write(data)
             # How much of the frame is in flux: camera travel, or a dissolve.
-            motion.append(round(max(travel for _, _, travel, _ in parts) + (8.0 if len(parts) > 1 else 0), 2))
+            motion.append(round(max(travel for _, _, travel, _ in parts) + (3.0 if len(parts) > 1 else 0), 2))
     finally:
         proc.stdin.close()
         if proc.wait():
             raise RuntimeError('ffmpeg could not write the master')
     Path(master).with_suffix('.json').write_text(json.dumps({'fps': fps, 'size': [frame.width, frame.height], 'motion': motion}), encoding='utf-8')
     return len(timeline) / fps
+
+
+def quiet(capture, start, end, hold=2.5, keep=0.7):
+    """[start, end] as segments without its still stretches longer than `hold`
+    seconds, keeping `keep` seconds on each side. The screencast only sends a
+    frame when something repaints; a blinking caret does not count as change."""
+    changes, previous = [], None
+    for t, file in zip(capture.times, capture.files):
+        if t > end:
+            break
+        with Image.open(capture.dir / file) as im:
+            im.draft('L', (im.width // 8, im.height // 8))
+            small = im.convert('L')
+        if previous is not None and t >= start and ImageStat.Stat(ImageChops.difference(small, previous)).mean[0] >= 0.05:
+            changes.append(t)
+        previous = small
+    segments, cursor = [], start
+    for a, b in zip(changes, changes[1:]):
+        if b - a > hold and b - a - 2*keep > 1:
+            segments.append((cursor, a + keep))
+            cursor = b - keep
+    return segments + [(cursor, end)]
+
+
+def publish_demo(name, capture, segments, camera, scratch, width=1600, fps=25, fade=0.3, loop_fade=0.5, **encoding):
+    """Render, encode and publish docs/assets/demos/demo-<name>.webp; the master
+    and a render report stay in `scratch`."""
+    scratch = Path(scratch)
+    master = scratch / f'{name}-master.mkv'
+    render_master(capture, segments, camera, master, width=width, fps=fps, fade=fade, loop_fade=loop_fade)
+    output = scratch / f'{name}.webp'
+    report = {'name': name, 'fps': fps, 'width': width, **encoding, **encode_master(master, output, **encoding),
+              'segments': segments, 'capture': str(capture.dir)}
+    (scratch / f'{name}-render.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    publish(output, ROOT / 'docs/assets/demos' / f'demo-{name}.webp')
+    print(json.dumps(report), flush=True)
+    return report

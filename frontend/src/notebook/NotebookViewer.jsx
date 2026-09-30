@@ -10,6 +10,8 @@ import { InkLayer } from "../ink/InkLayer";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { Segmented } from "../settings/SettingsKit";
 import { t, T } from "../shared/i18n/i18n.js";
+import { installPinchZoom } from "../shared/lib/pinchZoom.js";
+import { clampZoom } from "../shared/model/zoom.js";
 import {
   DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperLines, paperSizeKey, turnPaper,
 } from "./notebook";
@@ -17,6 +19,39 @@ import "./notebook.css";
 
 const PAD = 24; // css px around the column at fit-width
 const EMPTY = [];
+
+// A point of a notebook, in the only terms a zoom scales cleanly: which sheet
+// and where on it (as a fraction of its box). Neither the column's padding nor
+// the gaps between sheets scale with the zoom, so a hold kept as a ratio of
+// scroll offsets drifts by them; a sheet's own box does scale, exactly.
+// `cx`/`cy` are content coordinates (what `scrollLeft` + a view offset gives).
+// Off the sheets — in a gap, or past the last one — the nearest sheet's
+// fraction, which runs outside 0..1 and reads back the same way.
+function holdAt(el, cx, cy) {
+  let best = null, dist = Infinity;
+  for (const node of el.querySelectorAll(".nbSheet")) {
+    const top = node.offsetTop, bottom = top + node.offsetHeight;
+    const d = cy < top ? top - cy : cy > bottom ? cy - bottom : 0;
+    if (d < dist) { dist = d; best = node; }
+  }
+  if (!best || !best.offsetWidth || !best.offsetHeight) return null;
+  return {
+    id: best.dataset.sheetId,
+    fx: (cx - best.offsetLeft) / best.offsetWidth,
+    fy: (cy - best.offsetTop) / best.offsetHeight,
+  };
+}
+
+// Scroll so a hold's point sits at (hold.vx, hold.vy) in the view. Call it
+// once the sheets have taken their new size; false if the sheet it names is
+// gone, and the caller should fall back.
+function applyHold(el, hold) {
+  const node = [...el.querySelectorAll(".nbSheet")].find((n) => n.dataset.sheetId === hold.id);
+  if (!node) return false;
+  el.scrollLeft = node.offsetLeft + hold.fx * node.offsetWidth - hold.vx;
+  el.scrollTop = node.offsetTop + hold.fy * node.offsetHeight - hold.vy;
+  return true;
+}
 
 // A sheet's paper: the background, then the pattern as two paths (lines,
 // and dots drawn as round-capped zero-length segments).
@@ -81,12 +116,20 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
   const fit = boxW ? Math.max(0.1, (boxW - 2 * PAD) / widest) : 1;
   const scale = scaleValue === "page-width" || !Number(scaleValue) ? fit : Number(scaleValue);
 
-  // A zoom keeps the point at the top of the view where it was.
+  // A zoom keeps the point at the top of the view where it was, unless it
+  // named a point to hold instead (holdRef, which a pinch fills in with what
+  // its fingers were on). The hold is read before the re-render and spent
+  // here, after the sheets have taken their new size.
   const prevScale = useRef(scale);
+  const holdRef = useRef(null); // { id, fx, fy, vx, vy } from holdAt, plus the view point to put it at
   useLayoutEffect(() => {
     const el = boxRef.current, was = prevScale.current;
     prevScale.current = scale;
-    if (el && was && was !== scale) el.scrollTop = el.scrollTop * (scale / was);
+    const hold = holdRef.current;
+    holdRef.current = null;
+    if (el && was && was !== scale && !(hold && applyHold(el, hold))) {
+      el.scrollTop = el.scrollTop * (scale / was);
+    }
     onEffectiveScale?.(scale);
   }, [scale]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -103,6 +146,37 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Two fingers zoom and pan the sheets, the only zoom gesture a tablet has
+  // (the viewport meta turns the browser's own off — docs/dev/ipad.md). The
+  // gesture itself is shared/lib/pinchZoom.js, the same reader the PDF viewer
+  // uses; only the commit below is the notebook's own.
+  const columnRef = useRef(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return undefined;
+    return installPinchZoom(el, {
+      layer: () => columnRef.current,
+      scale: () => zoomRef.current.scale,
+      clamp: clampZoom,
+      onCommit: (next, g) => {
+        // A zoom re-lays-out the sheets, so the paper the fingers started over
+        // is handed to the hold, which puts it back under them afterwards —
+        // that carries the pan too, since it aims at the final midpoint. A
+        // change this small would be rounded away by the commit, leaving the
+        // hold unclaimed; below it the fingers only dragged, so just pan.
+        const hold = Math.abs(next - g.scale) > 1e-3 ? holdAt(el, g.sl + g.mx, g.st + g.my) : null;
+        if (hold) {
+          holdRef.current = { ...hold, vx: g.vx, vy: g.vy };
+          zoomRef.current.onZoomTo?.(next);
+        } else {
+          holdRef.current = null;
+          el.scrollLeft = g.sl + g.mx - g.vx;
+          el.scrollTop = g.st + g.my - g.vy;
+        }
+      },
+    });
   }, []);
 
   // The sheet under the middle of the view, for the paper menu.
@@ -162,7 +236,7 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
   return (
     <div ref={boxRef} className={"nbViewer" + (inkTool ? " inkArmed" : "") + (inkTool && !inkPenOnly ? " inkTouchDraw" : "")}
 >
-      <div className="nbColumn" style={{ padding: `${PAD}px` }}>
+      <div ref={columnRef} className="nbColumn" style={{ padding: `${PAD}px` }}>
         {sheets.map((s, i) => (
           <NotebookSheet key={s.id} sheet={s} number={i + 1} scale={scale} blocks={inkBySheet.get(s.id) || EMPTY} ink={ink}
             selection={inkSelection && inkSelection.page === s.id ? inkSelection : null}
@@ -200,7 +274,7 @@ export function PaperMenu({ paper, number, onChange, onApplyAll, onClose }) {
     onChange(isLandscape(paper) ? turnPaper(next) : next);
   };
   return (
-    <div className="nbPaperMenu" role="dialog" aria-label={t("Paper of page {n}", { n: number })}>
+    <div className="nbPaperMenu" role="dialog" data-guide="notebook.paperMenu" aria-label={t("Paper of page {n}", { n: number })}>
       <div className="nbPaperHead">
         <span>{t("Paper · page {n}", { n: number })}</span>
         <button type="button" className="uiClose" onClick={onClose} title={t("Close")} aria-label={t("Close")}><XIcon size={14} /></button>

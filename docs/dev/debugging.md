@@ -499,6 +499,8 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   streams send a keepalive line every 15 s of silence ([ai.md](ai.md)) and
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
+- The docks use `react-resizable-panels` v2, pinned on purpose: v4 changed
+  the API incompatibly. Do not let a dependency refresh move it.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is

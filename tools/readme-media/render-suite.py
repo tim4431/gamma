@@ -1,6 +1,8 @@
 """Re-render freshly captured README cases at 25 fps, as small animated WebP images.
 
 Raw captures and timing manifests stay in ignored artifacts/readme-media/suite.
+Notes and library are retina captures rendered by compose.py; the other cases
+are the earlier WebM recordings.
 """
 import argparse
 import json
@@ -10,12 +12,13 @@ import subprocess
 import sys
 
 from imageio_ffmpeg import get_ffmpeg_exe
+from compose import Capture, Camera, FULL, focus, publish_demo, quiet
 from media_output import ROOT, FRAME, concat_segments, encode_webp, publish
 
 FF = get_ffmpeg_exe()
 SUITE = ROOT / 'artifacts/readme-media/suite'
 OUT = ROOT / 'docs/assets/demos'
-NAMES = ['notes', 'library', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector']
+NAMES = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector']
 
 
 def run(*args):
@@ -56,18 +59,49 @@ def connector(directory):
     return master, 0, duration(master), None
 
 
+def notes(directory):
+    m = read(directory, 'notes_marks.json')
+    capture, f = Capture(m['frames']), m['framing']
+    # The note fills the width at 130% interface size, so the typing stays in
+    # the full view; the camera closes in on the equation and the new sheet
+    # while the pen sketches, and pulls back for the end.
+    camera = (Camera()
+              .move(m['sheetAt'] + 0.3, focus(f['equation'], f['sketch'], margin=30), 0.6)
+              .move(m['m1'] - 1.3, FULL, 0.6))
+    return publish_demo('notes', capture, quiet(capture, max(0, m['m0'] - 0.25), m['m1']), camera, directory)
+
+
+def library(directory):
+    m = read(directory, 'library_marks.json')
+    capture, f = Capture(m['frames']), m['framing']
+    # Close in on the search panel while it fills and narrows; pull back as
+    # the paper opens (the frame changes anyway), then settle on the match.
+    camera = (Camera()
+              .move(m['m0'] + 0.6, focus(f['popover'], margin=30), 0.75)
+              .move(m['mOpen'] + 0.35, FULL, 0.75)
+              .move(m['mMark'] + 0.6, focus(f['mark'], margin=150, max_zoom=1.5), 0.75))
+    return publish_demo('library', capture, quiet(capture, m['m0'] - 0.25, m['tEnd'] - 0.8), camera, directory)
+
+
+def search(directory):
+    m = read(directory, 'search_marks.json')
+    capture, f = Capture(m['frames']), m['framing']
+    # Close in on the find bar and the match it marks, pan to the palette, and pull
+    # back as the label's papers open (the page changes there anyway). The end
+    # differs from the start everywhere, so the loop's dissolve is kept short.
+    camera = (Camera()
+              .move(m['m0'] + 0.3, focus(f['find'], f['match'], margin=60), 0.5)
+              .move(m['palette'] + 0.1, focus(f['palette'], margin=40), 0.5)
+              .move(m['label'] + 0.1, FULL, 0.5))
+    return publish_demo('search', capture, quiet(capture, m['m0'] - 0.6, m['end']), camera, directory, loop_fade=0.3)
+
+
 def shot(name, directory):
     if name == 'connector':
         return connector(directory)
-    filenames = {'notes': 'video_path.txt', 'library': 'video_library.txt', 'metadata': 'video_meta_path.txt',
-                 'agent': 'video_agent.txt', 'download-and-chat': 'video_path.txt', 'reference-links': 'video_links_path.txt'}
+    filenames = {'metadata': 'video_meta_path.txt', 'agent': 'video_agent.txt',
+                 'download-and-chat': 'video_path.txt', 'reference-links': 'video_links_path.txt'}
     source = Path((directory / filenames[name]).read_text().strip())
-    if name == 'notes':
-        m = read(directory, 'notes_marks.json')
-        return source, max(0, m['m0']-0.25), min(duration(source), m['m1']), f"crop=1440:{m.get('cropHeight', 600)}:0:0"
-    if name == 'library':
-        m = read(directory, 'library_marks.json')
-        return source, m['m0']-0.25, m['tEnd']-0.8, None
     if name == 'metadata':
         m = read(directory, 'meta_zoom.json')
         # Fixed detail crop keeps both popovers and the Share control readable.
@@ -89,6 +123,8 @@ def shot(name, directory):
 
 def render(name):
     directory = SUITE / name
+    if name in RETINA:
+        return RETINA[name](directory)
     source, start, end, crop = shot(name, directory)
     if end <= start:
         raise ValueError(f'Invalid timeline: {name}')
@@ -130,13 +166,17 @@ def render(name):
     print(json.dumps(report), flush=True)
 
 
+RETINA = {'notes': notes, 'library': library, 'search': search}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('cases', nargs='+', choices=NAMES+['annotate-and-ink', 'native-agentic', 'all'])
+    features = ['annotate-and-ink', 'native-agentic', 'agentic-notes']   # render-feature-demos.py
+    parser.add_argument('cases', nargs='+', choices=NAMES+features+['all'])
     args = parser.parse_args()
-    published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + ['annotate-and-ink', 'native-agentic']
+    published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + features
     for name in published if 'all' in args.cases else args.cases:
-        if name in ('annotate-and-ink', 'native-agentic'):
+        if name in features:
             subprocess.run([sys.executable, str(Path(__file__).with_name('render-feature-demos.py')), name], check=True)
         else:
             render(name)

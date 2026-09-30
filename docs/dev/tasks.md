@@ -12,6 +12,11 @@ of work meet there:
   an AI lookup (metadata, a title, a slide citation), a translation. These
   rows exist in this tab only; they stop with the tab.
 
+The **Background tasks** tour says the part a spinner cannot — that the job
+is the server's, so it outlives the dialog and the tab. It is offered on the
+first `job.started`, which the store's `adopt` emits
+([onboarding.md](onboarding.md)).
+
 Code: `gamma/jobs.py` (the registry), `routers/jobs.py` (its API); each
 kind's start endpoint in the router of its work; `frontend/src/tasks/` (the
 store, the pure model, the kind registry, the tray).

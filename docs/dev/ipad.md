@@ -262,7 +262,8 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   (`paintStatusBar` in App.jsx).
 
 Nothing else is tablet-specific: the viewport meta already disables
-browser zoom in favour of the viewer's own pinch-zoom, `touch-action:
+browser zoom in favour of each viewer's own pinch-zoom (the PDF's and the
+notebook's — [notebooks.md](notebooks.md)), `touch-action:
 manipulation` removes double-tap zoom, and both layouts carry the touch
 rules the ink layer and the viewer already have.
 

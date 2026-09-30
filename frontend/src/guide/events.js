@@ -23,6 +23,9 @@ export const EVENTS = [
   "ink.options",      // the armed tool's options row opened
   "ink.erased",       // handwriting was erased
   "ink.undone",       // a handwriting change was undone
+  "sheet.created",    // {id}: a sheet of paper was added to a page (a new notebook, +, /page, or writing low on the last one)
+  "job.started",      // {kind}: a background job was started on the server (an export, a backup, a restore, an import)
+  "approval.shown",   // {tool}: the assistant asked before a change
   "table.shown",      // an editable table rendered in the notes
   "table.created",    // a table made with /table or a paste first rendered as one
   "table.edited",     // a table cell's in-place editor committed

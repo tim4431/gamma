@@ -112,6 +112,69 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assertEq(await page.evaluate(() => scrollCorrections.length), 0, "diagonal pan is not pulled back");
     assertNoProblems(page);
   });
+  // The other half of shared/lib/pinchZoom.js: the notebook's side of it is
+  // tests/e2e/scenarios/notebooks.mjs.
+  if (browser.browserType().name() === "chromium") await step("pdf touch: two fingers pinch-zoom the pages and hold the point under them, and pan", async () => {
+    const cdp = await ctx.newCDPSession(page);
+    await page.getByRole("button", { name: "Fit to width", exact: true }).click();
+    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 612) > 1,
+      { what: "fit-width settles off the 100% width" });
+    const pageWidth = async () => (await page.locator('[data-page="1"]').boundingBox()).width;
+    // Which page a view point sits on, and where down it: what a zoom holds.
+    const pointAt = (vx, vy) => page.evaluate(([vx, vy]) => {
+      for (const node of document.querySelectorAll(".pdfPageWrap")) {
+        const r = node.getBoundingClientRect();
+        if (vy >= r.top && vy <= r.bottom) return { page: node.dataset.page, fy: (vy - r.top) / r.height };
+      }
+      return null;
+    }, [vx, vy]);
+    const box = await page.locator(".pdfViewer").boundingBox();
+    const cx = Math.round(box.x + box.width / 2), cy = Math.round(box.y + box.height / 2);
+    const twoFingers = async (from, to, dx = 0, dy = 0) => {
+      const pts = (gap, f) => [
+        { x: cx + dx * f - gap / 2, y: cy + dy * f, id: 1 },
+        { x: cx + dx * f + gap / 2, y: cy + dy * f, id: 2 },
+      ];
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts(from, 0) });
+      for (let i = 1; i <= 12; i++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pts(from + (to - from) * i / 12, i / 12) });
+        await sleep(16);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await sleep(400);
+    };
+
+    for (const [from, to] of [[120, 300], [300, 150]]) {
+      const was = await pageWidth(), held = await pointAt(cx, cy);
+      await twoFingers(from, to);
+      const now = await until(async () => {
+        const w = await pageWidth();
+        return Math.abs(w - was) > 1 ? w : false;
+      }, { what: `pages resize for a ${(to / from).toFixed(2)}x pinch` });
+      assert(Math.abs(now / was - to / from) < 0.03, `pinch ${from}->${to}: ${(now / was).toFixed(3)}x is the fingers' ${(to / from).toFixed(3)}x`);
+      const after = await pointAt(cx, cy);
+      assert(after && after.page === held.page && Math.abs(after.fy - held.fy) < 0.03,
+        `the page under the fingers is held: ${held.page}@${held.fy.toFixed(3)} -> ${after?.page}@${after?.fy.toFixed(3)}`);
+    }
+    assertEq(await page.evaluate(() => visualViewport.scale), 1, "the browser's own zoom stays out of it");
+
+    const zoomed = await pageWidth();
+    // Against the room the view actually has: a pan that asks for more than
+    // the content has left is clamped, and that is not a failure.
+    const room = () => page.locator(".pdfViewer").evaluate((el) => ({
+      left: el.scrollLeft, top: el.scrollTop,
+      maxLeft: el.scrollWidth - el.clientWidth, maxTop: el.scrollHeight - el.clientHeight,
+    }));
+    const from = await room();
+    await twoFingers(200, 200, -120, -150);
+    const to = await room();
+    const want = [Math.min(from.left + 120, from.maxLeft), Math.min(from.top + 150, from.maxTop)];
+    assert(Math.abs(to.left - want[0]) < 3 && Math.abs(to.top - want[1]) < 3,
+      `a two-finger drag pans by what the fingers travelled: ${[from.left, from.top]} -> ${[to.left, to.top]}, wanted ${want}`);
+    assertEq(await pageWidth(), zoomed, "and does not change the zoom");
+    assertNoProblems(page);
+  });
+
   await step("pdf touch: prefers native fullscreen and exits with the toggle or browser", async () => {
     await until(async () => (await alice.api(`/api/blocks/${pageId}/subtree`)).block.children.some((b) => b.properties?.ink_url), { what: "ink saved before navigation" });
     await page.reload(); // Start independently of the previous fling and its instrumentation.

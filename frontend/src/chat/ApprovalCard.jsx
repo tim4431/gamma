@@ -8,11 +8,12 @@
 // call unmade; the assistant gets that line with the decline. The buttons
 // never take the focus by themselves, so a keystroke meant for the message
 // box can't answer.
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
 import { ALLOWING, approvalTitle } from "./approvals.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
+import { guideEvents } from "../guide/events.js";
 
 function ApprovalPreview({ preview = {}, args = {} }) {
   if (preview.diff?.length) {
@@ -41,6 +42,9 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   const [note, setNote] = useState("");
   const permission = permissionLabel(approval.perm);
   const Icon = permissionIcon(approval.perm);
+  // The card is up: the hint that explains the four answers may show
+  // beside it (guide/tours/hints.js). It goes again with the card.
+  useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
   const decide = async (decision, said = "") => {
     if (sent) return;
     setSent(decision);
@@ -54,7 +58,7 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   };
   const instead = t("What should the assistant do instead? (optional)");
   return (
-    <div className={`chatApproval${sent ? " sent" : ""}`} role="group" aria-label={t("Approval needed")}>
+    <div className={`chatApproval${sent ? " sent" : ""}`} role="group" data-guide="chat.approval" aria-label={t("Approval needed")}>
       <div className="chatApprovalCaption"><ShieldIcon size={14} />{t("Approval needed")} · {permission}</div>
       <div className="chatApprovalHead"><Icon size={16} /><span>{approvalTitle(approval, { titleOf, permission })}</span></div>
       <ApprovalPreview preview={approval.preview} args={approval.args} />

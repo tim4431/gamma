@@ -137,8 +137,9 @@ provider/model and refresh commands rather than every form setter.
 
 Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared; transfer
 dialogs, workspace docks, and chat/editor rendering belong with their feature.
-The highlight palette is `shared/model/highlightColors.js`, so the block
-editor does not import the viewer for constants. Split `shared/lib/utils.js` into API transport and
+The highlight palette is `shared/model/highlightColors.js` and the zoom
+limits are `shared/model/zoom.js`, so neither the block editor nor the
+notebook viewer imports the PDF viewer for constants. Split `shared/lib/utils.js` into API transport and
 domain helpers as actual consumers are moved; avoid another catch-all folder.
 
 ## Implementation order

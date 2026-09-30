@@ -8,6 +8,11 @@ page that has sheets: nothing else marks it. The page shows its sheets
 among its notes or, in the notebook view, in the viewer's place. The web
 app and the iPad app ([ipad.md](ipad.md)) write them the same way.
 
+The **Pages to write on** tour walks through this in the app, offered
+once a sheet is made (`sheet.created`); its anchors are on the sheet and its
+tool row, so moving one of those controls moves its `data-guide` with it
+([onboarding.md](onboarding.md)).
+
 Code: `gamma/notebook.py` (server: paper rules, the PDF), `frontend/src/notebook/notebook.js`
 (the same rules on the client, pure), `notebook/NotebookViewer.jsx`
 (the notebook view and the paper menu), `notebook/NoteSheet.jsx` (a sheet
@@ -30,8 +35,11 @@ the shared cases in `tests/shared/paper.json`, and e2e
   - The **notebook view** puts the sheets in the viewer's place, one under
     the other, fitted to the width, with the zoom buttons, the pen button
     and the ink strip a PDF has, **Add page** at the end, and the paper
-    button for the sheet in the middle of the view. The notes beside them
-    list each sheet as a row.
+    button for the sheet in the middle of the view. Two fingers pinch to
+    zoom and drag to pan, off the same gesture reader as the PDF viewer —
+    the only zoom gesture a tablet has, since the app turns the browser's
+    own off ([ipad.md](ipad.md)). The notes beside them list each sheet
+    as a row.
 - **Switching.** A sheet's **Notebook view** button (under it in the notes
   view) opens the notebook view; it shows when the page has no PDF. The
   **Notes view** button in the notebook view's side bar, under the paper
@@ -155,8 +163,15 @@ No schema change: sheets are blocks and properties.
   each sheet a `PaperBackground` under an `InkLayer` keyed by the sheet's
   id instead of a page number, with the stroke handlers held stable so a
   sheet re-renders only for its own ink. It sizes to fit the widest sheet
-  at `page-width`, else follows the viewer's zoom (`pdfScale`,
-  Ctrl+wheel), and keeps the top of the view in place across a zoom. It
+  at `page-width`, else follows the viewer's zoom (`pdfScale`, from the
+  buttons, Ctrl+wheel or a two-finger pinch), and keeps a point of the
+  paper still across a zoom: the point the fingers pinched, else the one
+  at the top of the view. The pinch itself is
+  `shared/lib/pinchZoom.js`; what is here is the commit it hands back.
+  `holdAt`/`applyHold` keep the held point as a sheet and a fraction of
+  its box, since neither the column's padding nor the gaps between sheets
+  scale with the zoom — a hold kept as a ratio of scroll offsets drifts
+  by them. Two fingers that only travelled pan instead. It
   reports the sheet under the middle of the view and scrolls to a sheet
   and box on request. `PaperMenu` is the paper panel.
 - `notebook/NoteSheet.jsx`: `NoteSheet`, a sheet in the notes view, and

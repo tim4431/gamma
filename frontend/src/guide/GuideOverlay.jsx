@@ -11,6 +11,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
+import { mediaRatio } from "./media.js";
 import { CARD_W, placeCard } from "./place.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
@@ -42,6 +43,24 @@ function renderBody(text, bindings) {
 }
 // A practice step may word its body for touch ("Long-press a word…").
 const COARSE = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
+// A step's illustration (`media`, guide/media.js): the drawing of that id,
+// bundled from guide/media/. It goes into the card as markup rather than an
+// <img> so it reads the theme's tokens — these are this repo's own
+// build-time files, never anything a user supplies. The box takes its height
+// from the registry's ratio, so the card is its final size when place.js
+// measures it. The drawing says the same thing as the copy beside it, so it
+// stays out of the accessibility tree.
+const DRAWINGS = import.meta.glob("./media/*.svg", { eager: true, query: "?raw", import: "default" });
+function Media({ id }) {
+  const svg = DRAWINGS[`./media/${id}.svg`];
+  if (!svg) { console.warn(`guide: no drawing for media "${id}"`); return null; }
+  return (
+    <div className="guideMedia" data-media={id} aria-hidden="true"
+      style={{ aspectRatio: mediaRatio(id) }} dangerouslySetInnerHTML={{ __html: svg }} />
+  );
+}
+
 const PlayGlyph = () => <svg width="8" height="9" viewBox="0 0 8 9" aria-hidden="true"><path d="M0 0.5 L8 4.5 L0 8.5 Z" fill="currentColor" /></svg>;
 // The copy as one plain line, for an aria-label.
 const plainText = (text, bindings) => keyText(text, bindings).replace(/\*\*|\*|`/g, "");
@@ -326,6 +345,9 @@ export default function GuideOverlay({ guide, keybindings }) {
                 )}
                 <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}><XIcon size={14} /></button>
               </div>
+              {/* The step's drawing leads, its copy explains. An offer and a
+                  hint stay a card of words (guide/media.js). */}
+              {!inviting && step.media ? <Media id={step.media} /> : null}
               <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
               {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
               {busy && live?.status ? (

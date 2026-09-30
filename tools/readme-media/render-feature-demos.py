@@ -1,99 +1,66 @@
-"""Render the annotation/ink and native-agentic README stories from real captures."""
+"""Render the annotation/ink and the two AI README stories from retina captures."""
 import argparse
 import json
-from pathlib import Path
 
-from media_output import ROOT, FRAME, concat_segments, encode_webp, publish
+from compose import Capture, Camera, FULL, focus, publish_demo
+from media_output import ROOT
 
 SCRATCH = ROOT / 'artifacts/readme-media'
-OUT = ROOT / 'docs/assets/demos'
 
 
-def render(name):
-    framing = {}
-    if name == 'annotate-and-ink':
-        directory = SCRATCH / name
-        timeline = json.loads((directory / 'ink-timeline.json').read_text(encoding='utf-8'))
-        m = timeline['marks']
-        if not timeline['verified'].get('annotation'):
-            raise ValueError('Capture must include a persisted text annotation')
-        segments = [(m['start'], m['end'], 'full')]
-    else:
-        directory = SCRATCH / 'revised'
-        timeline = json.loads((directory / 'agentic-timeline.json').read_text(encoding='utf-8'))
-        m = timeline['marks']
-        framing = timeline.get('framing', {})
-        verified = timeline.get('verified', {})
-        if not all(verified.get(key) for key in ('citationMarks', 'singleConversation', 'pdfChat', 'boxAttachment', 'savedFigure')):
-            raise ValueError('Capture both PDF questions, an exact citation and a persisted figure attachment first')
-        if verified.get('expandedSteps') != 0 or verified.get('citationNotice'):
-            raise ValueError('Keep tool steps collapsed and show an exact PDF citation match')
-        # Keep interactions at real speed; cut only the waits between AI actions.
-        segments = [
-            (m['start'], m['questionZoom'], 'full'),
-            (m['questionZoom'], m['pdfSent'] + .6, 'zoom-bottom'),
-        ]
-        actions = [a for a in timeline['actions'] if a['phase'] == 'pdf']
-        answer_start = max(m['pdfSent'] + .6, m['pdfAnswer'] - 3)
-        # Briefly show real search/read progress without replaying overlapping time.
-        windows = []
-        for action in actions:
-            start = max(m['pdfSent'] + .6, action['at'] - .25)
-            end = min(answer_start, action['at'] + 1.25)
-            if end <= start:
-                continue
-            if windows and start <= windows[-1][1]:
-                windows[-1] = (windows[-1][0], max(windows[-1][1], end))
-            else:
-                windows.append((start, end))
-        segments.extend((start, end, 'detail-top') for start, end in windows)
-        segments.extend([
-            (answer_start, m['citationClick'] + .45, 'detail-response'),
-            (m['citationReady'] - .4, m['citationReady'] + 1.5, 'full'),
-            (m['citationReady'] + 1.5, m['passageEnd'], 'zoom-passage'),
-            (m['figureStart'], m['figureQuestionZoom'], 'full'),
-            (m['figureQuestionZoom'], m['figureSent'] + .6, 'zoom-bottom'),
-            (max(m['figureSent'] + .6, m['figureAnswer'] - 2), m['figureAnswer'] + 1, 'detail-figure-answer'),
-            (m['figureAnswer'] + 1, m['end'], 'full'),
-        ])
-    if any(end <= start for start, end, _ in segments):
-        raise ValueError('Capture timing changed; review the edit points')
-    source = Path(timeline['video'])
-    parts = []
-    for i, (start, end, camera) in enumerate(segments):
-        filters = f'trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,fps=25'
-        if camera != 'full':
-            # Fixed detail cuts keep dense PDF text readable and compact.
-            zoom = '2'
-            anchor = '1' if camera.endswith('bottom') else '0.10'
-            x, y = 'iw-iw/zoom', f'(ih-ih/zoom)*{anchor}'
-            if camera == 'detail-response':
-                y = str(max(0, min(450, framing['citation']['y'] - 300)))
-            elif camera == 'detail-figure-answer':
-                y = str(max(0, min(450, framing['figureAnswer']['y'] - 30)))
-            elif camera == 'zoom-passage':
-                box = framing['passage']
-                # Frame the highlighted passage inside the PDF pane.
-                # The recorder places the PDF/chat divider at x=790. Keep the
-                # source passage in that pane, including wrapped quote lines.
-                x = f'max(0,min(790-iw/zoom,{box["x"] + box["width"]/2}-iw/zoom/2))'
-                y = f'max(0,min(ih-ih/zoom,{box["y"] + box["height"]/2}-ih/zoom/2))'
-            filters += f",zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s=1440x900:fps=25"
-        parts.append(f'[0:v]{filters},setsar=1')
-    master = directory / f'{name}-master.mkv'
-    concat_segments(master, [source], parts, FRAME)
-    output = directory / f'{name}.webp'
-    width, quality, effort = (960, 65, 6) if name == 'native-agentic' else (1040, 75, 4)
-    report = {'name': name, 'fps': 25, 'width': width, 'quality': quality, 'effort': effort, 'source': str(source), 'segments': segments,
-              **encode_webp(master, output, f'fps=25,scale={width}:-2:flags=lanczos', quality=quality, effort=effort)}
-    (directory / f'{name}-render.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-    publish(output, OUT / f'demo-{name}.webp')
-    print(json.dumps(report), flush=True)
+def annotate_and_ink():
+    directory = SCRATCH / 'annotate-and-ink'
+    timeline = json.loads((directory / 'ink-timeline.json').read_text(encoding='utf-8'))
+    m, f = timeline['marks'], timeline['framing']
+    if not timeline['verified'].get('annotation'):
+        raise ValueError('Capture must include a persisted text annotation')
+    # Close in on the sentence, its colour popup and the note being typed; the
+    # pen, the lasso edit and the ink card use the whole window.
+    camera = (Camera()
+              .move(m['start'] + 0.3, focus(f['sentence'], f['tip'], f['note'], f['notesHead'], margin=30), 0.5)
+              .move(m['annotation'] + 0.05, FULL, 0.5))
+    return publish_demo('annotate-and-ink', Capture(timeline['frames']), [(m['start'], m['end'])], camera, directory)
 
+
+def native_agentic():
+    directory = SCRATCH / 'revised'
+    timeline = json.loads((directory / 'agentic-timeline.json').read_text(encoding='utf-8'))
+    m, f, verified = timeline['marks'], timeline['framing'], timeline.get('verified', {})
+    if not all(verified.get(key) for key in ('boxAttachment', 'savedFigure', 'citationMarks', 'singleConversation', 'pdfChat')) or verified.get('savedPapers', 0) < 2:
+        raise ValueError('Capture the figure question, an exact citation and two saved papers first')
+    if verified.get('expandedSteps') != 0 or verified.get('citationNotice'):
+        raise ValueError('Keep tool steps collapsed and show an exact PDF citation match')
+    # Real speed throughout; only the model's waits are cut, each with a
+    # dissolve inside one framing (a dissolve between framings changes every
+    # pixel and costs as much as a camera move). The figure, the question and
+    # the cited passage use the whole window; the camera then closes in on the
+    # agent's steps, its approval card and what it saved, and stays there.
+    ask = (m['start'], m['pdfSent'] + 0.8)
+    read = (max(ask[1], m['pdfAnswer'] - 3), m['saveSent'] + 0.8)
+    approve = (max(read[1], m['approval'] - 1.5), m['allowed'] + 1.2)
+    saved = (max(approve[1], m['saveAnswer'] - 3), m['end'])
+    camera = Camera().move(m['saveSent'] + 0.1, focus(f['approval'], f['saveAnswer'], margin=30), 0.5)
+    return publish_demo('native-agentic', Capture(timeline['frames']), [ask, read, approve, saved], camera, directory, loop_fade=0.3)
+
+
+def agentic_notes():
+    directory = SCRATCH / 'agentic-notes'
+    timeline = json.loads((directory / 'agentic-notes-timeline.json').read_text(encoding='utf-8'))
+    m, verified = timeline['marks'], timeline.get('verified', {})
+    if not verified.get('katex'):
+        raise ValueError('Capture the pasted equation saved as a KaTeX block first')
+    # The note and the chat sit at opposite edges: the whole window, recorded
+    # at a 130% interface size. The model's wait is cut.
+    ask = (m['start'], m['sent'] + 1.0)
+    rest = (max(ask[1], m['approval'] - 1.0), m['end'])
+    return publish_demo('agentic-notes', Capture(timeline['frames']), [ask, rest], Camera(), directory)
+
+
+CASES = {'annotate-and-ink': annotate_and_ink, 'native-agentic': native_agentic, 'agentic-notes': agentic_notes}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('cases', nargs='+', choices=['annotate-and-ink', 'native-agentic', 'all'])
+    parser.add_argument('cases', nargs='+', choices=[*CASES, 'all'])
     args = parser.parse_args()
-    for name in ['annotate-and-ink', 'native-agentic'] if 'all' in args.cases else args.cases:
-        render(name)
+    for name in CASES if 'all' in args.cases else args.cases:
+        CASES[name]()

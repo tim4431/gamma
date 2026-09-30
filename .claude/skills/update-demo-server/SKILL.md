@@ -1,6 +1,6 @@
 ---
 name: update-demo-server
-description: Build the Gamma server image from a branch by dispatching docker.yml (only :sha-<short>, never :latest), then pin that tag in the demo's own compose project on the VPS (/root/Container/gamma-demo, demo.gammapdf.com) and restart it. No merge to main is needed.
+description: Pin the public demo (demo.gammapdf.com) to main's newest server image — the :sha-<short> tag a merge's docker.yml run pushed, not :latest — in its own compose project on the VPS (/root/Container/gamma-demo) and restart it. The demo runs main; branch work reaches it through a merge.
 ---
 
 # Updating the public demo on the VPS
@@ -16,9 +16,12 @@ account project's Caddy (`/root/Container/gamma-account/`) routes the name to
 it. The repository's copies are in `cloud/deploy/demo/`; setup and the layout:
 [cloud/deploy/demo/README.md](../../../cloud/deploy/demo/README.md).
 
-`.github/workflows/docker.yml` dispatched on a branch without a version pushes
-exactly the `sha-<short>` tag and never moves `:latest`, which the NAS pulls.
-This skill builds through it and pins the result by writing the demo's `.env`.
+The demo runs `main`, like the NAS. Every `docker.yml` run on `main` (each
+merge) pushes `sha-<short>` beside `:latest`; the demo pins that tag rather
+than following `:latest`, so it changes only when deployed and a rollback is
+one line. This skill builds nothing: it takes `main`'s newest green run and
+writes its tag into the demo's `.env`. Branch work reaches the demo through
+the `merge` skill, run only on the user's yes.
 Workflows: [docs/dev/github_actions.md](../../../docs/dev/github_actions.md#dockeryml).
 
 Rules:
@@ -29,8 +32,8 @@ Rules:
   (the Caddyfile's `@demo` handle, Caddy on `gamma-edge`) lives there too; if
   it is missing, say so and point to that skill.
 - Never read out, copy off the host or overwrite `demo.env` or `data/`.
-- Never commit. Never pass `-f version` to `docker.yml`: a version adds the
-  release tags, and with them `:latest`.
+- Never commit, never merge on your own, and never dispatch `docker.yml` from
+  here.
 
 In every command below, `<sha>` is the full `headSha` and `<tag>` is `sha-`
 plus its first 7 characters (`echo sha-${sha:0:7}`). The metadata action's
@@ -39,53 +42,32 @@ be used for the tag.
 
 ## 1. What will ship
 
-Branch: the one given as an argument, else `git branch --show-current`
-(normally `dev`). The image is built from what is PUSHED on that branch:
+`main`'s newest `docker.yml` run:
 
 ```bash
-git status --short backend/ frontend/ Dockerfile docker-entrypoint.sh
 git fetch -q origin
-git log --oneline origin/<branch>..<branch>
+gh run list --workflow docker.yml --branch main --limit 3 --json databaseId,headSha,status,conclusion,url
 ```
 
-- Uncommitted changes under `backend/`, `frontend/` or the image files will
-  NOT be in the image. Tell the user and ask whether to go on. Never commit
-  them yourself.
-- Local commits not on the remote: `git push origin <branch>`.
+- `completed success` → its `headSha` is `<sha>`. It can be older than
+  `origin/main` when the merges since touched only `cloud/` or `sites/`
+  (`paths-ignore`: no run, nothing in the image changed).
+- `queued` / `in_progress` → wait in the background with
+  `gh run watch <run-id> --exit-status` (about 10 minutes), then use it.
+- `completed failure` → report `gh run view <run-id> --log-failed` and stop:
+  no tag was pushed and nothing changes on the host.
 
-## 2. Build (or reuse a build)
+Work that is only on a branch is not in any of these. Say how many image
+files `main` lacks (`git diff --name-only origin/main origin/<branch> --
+backend/app.py backend/manage.py backend/gamma backend/requirements.txt
+frontend ':!frontend/tests' Dockerfile docker-entrypoint.sh`) and offer the
+`merge` skill; the merge's own run is then the one to wait for.
 
-A commit that already has a green `docker.yml` run has its tag in GHCR (every
-run, including a push to `main`, pushes `sha-<short>`). Look before building:
+## 2. An older build
 
-```bash
-git rev-parse origin/<branch>
-gh run list --workflow docker.yml --commit <that sha> --status success --limit 1 --json databaseId,headSha,event,url
-```
-
-If a run is listed, skip the build and use its `headSha`. To redeploy an older
-published commit without building (the user names it, or pick one from
-`gh run list --workflow docker.yml --status success --limit 10 --json headSha,headBranch,event,createdAt`),
-use that `headSha` and go to step 3.
-
-Otherwise dispatch and find the run:
-
-```bash
-gh workflow run docker.yml --ref <branch>
-gh run list --workflow docker.yml --branch <branch> --event workflow_dispatch --limit 1 --json databaseId,headSha,status,url
-```
-
-The run may take a few seconds to appear; list it again rather than guess. Its
-`headSha` must equal `git rev-parse origin/<branch>`. Then wait (run it in the
-background; a multi-arch build under QEMU takes about 10 minutes, longer
-without a warm cache):
-
-```bash
-gh run watch <run-id> --exit-status
-```
-
-Red → report `gh run view <run-id> --log-failed` and stop: no tag was pushed
-and nothing changes on the host.
+To go back to an earlier `main` build (the user names it, or pick one from
+`gh run list --workflow docker.yml --branch main --status success --limit 10 --json headSha,createdAt,url`),
+use its `headSha` as `<sha>`: every run's tag stays in GHCR.
 
 ## 3. What runs now
 
@@ -187,8 +169,8 @@ curl -s -o /dev/null -w "%{http_code}\n" https://demo.gammapdf.com/            #
   the allowance are the admin's to set in the GUI (Settings → Server → Shared
   AI provider). AI keys never go into `demo.env`.
 
-Report the old → new tag and commit (short sha + subject), the run link if one
-was built, and anything unusual in the log (a migration step, errors).
+Report the old → new tag and commit (short sha + subject), the `docker.yml`
+run it came from, and anything unusual in the log (a migration step, errors).
 
 ## Resetting the demo (only when the user asks)
 
