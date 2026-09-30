@@ -459,7 +459,14 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
     except Exception as e:
-        log.warning(f"[metadata] doi lookup failed: {e}")
+        # A 404 is "no such DOI" — routine when a paper's text, or a model,
+        # names one that does not exist; the caller answers "not found"
+        # either way. Anything else (doi.org down, a timeout) is worth an
+        # admin's attention in the warnings filter.
+        if getattr(e, "code", 0) == 404:
+            log.info(f"[metadata] no DOI record for {doi}")
+        else:
+            log.warning(f"[metadata] doi lookup failed: {e}")
         return None, ""
     title = data.get("title") or ""
     if isinstance(title, list):
