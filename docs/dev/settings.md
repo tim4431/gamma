@@ -489,10 +489,15 @@ tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
-chats of that kind. Settings compares all three kinds in a table; the chat
-popover shows grouped checkbox rows for its kind. They share the permission
-catalog and presets in `AssistantTools.jsx`. The journal-sign-in choice is
-disabled while fetching is off, with its value preserved.
+chats of that kind. Each is a state menu: Allow, Ask (an approval card before
+each call) or Off. Settings compares all three kinds in a table; the chat
+popover shows grouped rows for its kind. They share one catalog: the keys,
+groups, states, defaults and presets in `chat/chatSettings.js`, the labels and
+icons in `AssistantTools.jsx`. The journal-sign-in choice is disabled while
+fetching is off, with its value preserved. An approval card's **Always
+allow** writes the same preference. **Allow in this chat** is not a setting:
+it lasts for one conversation and stays in the browser
+([ai.md](ai.md#asking-before-a-call-approvals)).
 
 Reasoning effort, the context budgets, the tools switch and the permissions
 are account preferences: they live in the profile and follow the account to

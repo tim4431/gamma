@@ -27,6 +27,11 @@ test("changes are split by where they landed; failures and no-ops are not change
   assert.equal(changePlace({ kind: "move", block_id: "x" }), "notes");
   assert.equal(changePlace({ kind: "rename" }), "library");
   assert.equal(isChange({ kind: "rename", summary: "ok — title already is that" }), false);
+  // A call the user did not allow is neither a change nor a failure.
+  const declined = { kind: "error", tool: "rename_page", summary: "Not allowed: rename_page", error: true, declined: true };
+  assert.deepEqual(splitActions([...actions, declined]).declined, 1);
+  assert.equal(splitActions([...actions, declined]).failed, 1);
+  assert.equal(isChange(declined), false);
 });
 
 test("the running step reads as what the agent is doing", () => {

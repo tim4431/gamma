@@ -10,10 +10,13 @@ Every chat has a *scope* deciding what its tools can touch:
 ``context_pages`` extends either scope for reads; mutations keep the base scope.
 
 Each TOOLS entry declares its wire spec, the Settings permission key
-(Settings → Assistant → Folder agent), the scopes it exists in, whether it
-mutates, and its executor — so arming a chat is one filter
-(:func:`agent_tools`) and dispatch is one lookup (:func:`run_agent_tool`),
-with the in-scope check shared by every executor.
+(Settings → AI → Chat → Tools), the scopes it exists in, whether it
+mutates, its executor and, for a changing tool, the preview of its approval
+card — so arming a chat is one filter (:func:`agent_tools`) and dispatch is
+one lookup (:func:`run_agent_tool`), with the in-scope check shared by every
+executor. A permission is Allow, Ask or Off (``ai_permissions.py``): Ask
+tools are armed, and the chat's tool loop shows :func:`approval_preview` to
+the user before such a call runs.
 
 Reads: list the pages and the folder tree (folder scope only); read a page
 (its notes and highlights, plus the extracted text of its PDF attachment when
@@ -42,10 +45,12 @@ import base64
 import json
 import re
 import secrets
+from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
 from fractional_indexing import generate_key_between
 
+from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          page_report_section, pdf_path, render_area_crops)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
@@ -811,7 +816,12 @@ def replace_selection_text(existing: str, sel: dict, replacement: str):
     return existing[:start] + replacement + existing[start + len(text):], start
 
 
-def _run_edit_block(conn, ws: str, scope: dict, args: dict):
+def _plan_edit_block(conn, scope: dict, args: dict):
+    """``(plan, None)``: the block (``block``) on its page (``page_id``,
+    ``title``), the ``mode``, the block's whole new ``text``, the merge
+    ``base`` and, for a selection edit, the selection (``sel``) with the
+    offset its replacement lands at (``start``). ``(None, answer)`` for a
+    call that changes nothing."""
     mode = str(args.get("mode") or "replace").strip().lower()
     sel = None
     if mode == "selection":
@@ -819,79 +829,153 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
         sel = find_selection(scope, args.get("selection"))
         if not sel:
             labels = [s["label"] for s in scope.get("note_selections") or []]
-            return ("error: the user selected no note text for this message — use another mode"
-                    if not labels else
-                    f"error: name the selection to edit — one of {', '.join(labels)}"), None
+            return None, ("error: the user selected no note text for this message — use another mode"
+                          if not labels else
+                          f"error: name the selection to edit — one of {', '.join(labels)}")
         if args.get("block_id") and args.get("block_id") != sel["block_id"]:
-            return f'error: selection {sel["label"]} is in block [{sel["block_id"]}], not that one', None
+            return None, f'error: selection {sel["label"]} is in block [{sel["block_id"]}], not that one'
         args = {**args, "block_id": sel["block_id"]}
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
-        return error, None
+        return None, error
     block, page_id, page_title = loaded
     if block["parent_id"] == "root":
-        return "error: that id is a page — page titles change via rename_page", None
+        return None, "error: that id is a page — page titles change via rename_page"
     content = args.get("content")
     if not isinstance(content, str):
-        return "error: content must be a string (the block's markdown)", None
+        return None, "error: content must be a string (the block's markdown)"
     if mode not in EDIT_MODES:
-        return f"error: mode must be one of {', '.join(EDIT_MODES)}", None
-    seen = notes_seen(scope)
+        return None, f"error: mode must be one of {', '.join(EDIT_MODES)}"
     # A replace is the model's rewrite of the text it read: the base of the
-    # merge below. Without a full read this turn (only a snipped outline
-    # line, or an earlier turn's read) it would drop what it never saw.
-    base = seen.get(block["id"]) if mode == "replace" else block["content"]
+    # merge. Without a full read this turn (only a snipped outline line, or
+    # an earlier turn's read) it would drop what it never saw.
+    base = notes_seen(scope).get(block["id"]) if mode == "replace" else block["content"]
     if mode == "replace" and _TRUNCATED_MARK in content:
-        return (f'error: content carries read_block\'s truncation marker — call '
-                f'read_block(block_id="{block["id"]}") for the block\'s full text and rewrite that, '
-                "or use mode append / patch"), None
+        return None, (f'error: content carries read_block\'s truncation marker — call '
+                      f'read_block(block_id="{block["id"]}") for the block\'s full text and rewrite that, '
+                      "or use mode append / patch")
     if base is None:
-        return (f'error: read the block first — call read_block(block_id="{block["id"]}") in this '
-                "turn: replace rewrites the whole text, so it must start from the full current text "
-                "(or use mode append / patch, which need no read)"), None
+        return None, (f'error: read the block first — call read_block(block_id="{block["id"]}") in this '
+                      "turn: replace rewrites the whole text, so it must start from the full current text "
+                      "(or use mode append / patch, which need no read)")
     if mode == "replace" and content == base:
-        return "ok — the block already says that", None
+        return None, "ok — the block already says that"
+    start = None
     if mode == "patch":
         # Patch rewrites one passage in place: `find` names it, `content`
         # replaces it (empty = cut). The rest of the block is never retyped.
         find = args.get("find")
         if not isinstance(find, str):
-            return "error: patch needs `find` — the exact text to replace or cut", None
+            return None, "error: patch needs `find` — the exact text to replace or cut"
         content, err = patch_block_text(block["content"] or "", find, content)
         if err:
-            return err, None
+            return None, err
     elif mode == "selection":
         # Exactly the range the user selected; the rest is never retyped.
-        replacement = content
-        content, start = replace_selection_text(block["content"] or "", sel, replacement)
+        content, start = replace_selection_text(block["content"] or "", sel, content)
         if content is None:
-            return start, None
-        # A second edit this turn rewrites what the first one left there.
-        sel.update({"from": start, "to": start + len(replacement), "text": replacement})
+            return None, start
     elif mode != "replace":
         # Append/prepend never retype the existing text: the model sends only
         # the addition, joined on its own line(s). A blank line keeps a new
         # paragraph/heading/list/fence from gluing onto the existing text.
         if not content.strip():
-            return "error: nothing to add — content is empty", None
+            return None, "error: nothing to add — content is empty"
         content = join_block_text(block["content"] or "", content, mode)
     if len(content) > _BLOCK_CONTENT_MAX:
-        return f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)", None
+        return None, f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)"
     if content == block["content"]:
-        return "ok — the block already says that", None
+        return None, "ok — the block already says that"
+    return {"block": block, "page_id": page_id, "title": page_title, "mode": mode,
+            "text": content, "base": base, "sel": sel, "start": start}, None
+
+
+def _preview_edit_block(conn, scope: dict, args: dict):
+    plan, answer = _plan_edit_block(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"page_id": plan["page_id"], "title": plan["title"], "block_id": plan["block"]["id"],
+            "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"])}, None
+
+
+# What an approval card shows of a text change. Words (and each CJK
+# character, which has no spaces around it) are compared, so a one-word fix
+# in a long note shows as that word; unchanged stretches keep this much
+# text on each side of a change, and the card holds at most the limit.
+_DIFF_TOKEN = re.compile(r"\s+|[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]"
+                         r"|[^\s\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]+")
+_DIFF_CONTEXT = 120
+_DIFF_LIMIT = 6000
+_DIFF_COMPARE_MAX = 40_000  # longer texts show whole, old then new
+
+
+def text_diff(old: str, new: str) -> list:
+    """``[[kind, text], …]`` from ``old`` to ``new``, kind "ctx" (kept),
+    "del" (removed) or "ins" (added). Long kept stretches are cut to their
+    ends around "…", and the whole list to :data:`_DIFF_LIMIT` chars."""
+    if len(old) + len(new) > _DIFF_COMPARE_MAX:
+        parts = [["del", old], ["ins", new]]
+    else:
+        a, b = _DIFF_TOKEN.findall(old), _DIFF_TOKEN.findall(new)
+        parts = []
+        for op, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            if op == "equal":
+                parts.append(["ctx", "".join(a[i1:i2])])
+                continue
+            if i2 > i1:
+                parts.append(["del", "".join(a[i1:i2])])
+            if j2 > j1:
+                parts.append(["ins", "".join(b[j1:j2])])
+    parts = [p for p in parts if p[1]]
+    out, used = [], 0
+    for n, (kind, text) in enumerate(parts):
+        if kind == "ctx":
+            first, last = n == 0, n == len(parts) - 1
+            if first and len(text) > _DIFF_CONTEXT:
+                text = "…" + text[-_DIFF_CONTEXT:]
+            elif last and len(text) > _DIFF_CONTEXT:
+                text = text[:_DIFF_CONTEXT] + "…"
+            elif len(text) > 2 * _DIFF_CONTEXT + 3:
+                text = text[:_DIFF_CONTEXT] + " … " + text[-_DIFF_CONTEXT:]
+        if used + len(text) > _DIFF_LIMIT:
+            out.append([kind, text[:max(0, _DIFF_LIMIT - used)] + "…"])
+            break
+        out.append([kind, text])
+        used += len(text)
+    return out
+
+
+def _excerpt(text: str, limit: int = 80) -> str:
+    """The start of a block's text on one line, for the approval card."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def _run_edit_block(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_edit_block(conn, scope, args)
+    if not plan:
+        return answer, None
+    block, page_id, page_title, mode, content = (plan["block"], plan["page_id"], plan["title"],
+                                                 plan["mode"], plan["text"])
     # `base`: the text the agent edited from — for a replace the text it
     # read, for the other modes the text they were applied to — so a person
     # typing in the same block meanwhile keeps their keystrokes (three-way
     # merge in ops.py).
     after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "set", "id": block["id"], "content": content, "base": base or ""}],
+        conn, page_id, [{"op": "set", "id": block["id"], "content": content, "base": plan["base"] or ""}],
         actor=scope.get("actor", ""), client="ai"))
     # What the model now knows the block says: its own replace. After the
     # other modes it holds only part of the text — a later replace reads again.
+    seen = notes_seen(scope)
     if mode == "replace":
         seen[block["id"]] = content
     else:
         seen.pop(block["id"], None)
+    if mode == "selection":
+        # A second edit this turn rewrites what the first one left there.
+        replacement = args["content"]
+        plan["sel"].update({"from": plan["start"], "to": plan["start"] + len(replacement),
+                            "text": replacement})
     verb = {"replace": "Edited", "append": "Appended to", "prepend": "Prepended to",
             "patch": "Edited part of", "selection": "Edited the selection in"}[mode]
     return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
@@ -899,17 +983,37 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
              "title": page_title, "summary": f"{verb} a note in “{page_title[:60]}”"})
 
 
-def _run_create_block(conn, ws: str, scope: dict, args: dict):
+def _plan_create_block(conn, scope: dict, args: dict):
+    """``((parent, page_id, page_title, content, position), None)``, or
+    ``(None, answer)`` for a call that cannot add the block."""
     loaded, error = _load_scoped_block(conn, scope, args.get("parent_id"))
     if error:
-        return error.replace("no such block", "no such parent block"), None
+        return None, error.replace("no such block", "no such parent block")
     parent, page_id, page_title = loaded
     content = str(args.get("content") or "")
     if len(content) > _BLOCK_CONTENT_MAX:
-        return f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)", None
+        return None, f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)"
     position, error = _sibling_position(conn, parent["id"], args.get("after_id"))
     if error:
-        return error, None
+        return None, error
+    return (parent, page_id, page_title, content, position), None
+
+
+def _preview_create_block(conn, scope: dict, args: dict):
+    plan, answer = _plan_create_block(conn, scope, args)
+    if not plan:
+        return None, answer
+    parent, page_id, page_title, content, _ = plan
+    return {"page_id": page_id, "title": page_title,
+            "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
+            "diff": text_diff("", content)}, None
+
+
+def _run_create_block(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_create_block(conn, scope, args)
+    if not plan:
+        return answer, None
+    parent, page_id, page_title, content, position = plan
     block_id = secrets.token_urlsafe(9)
     after_commit(ws, conn, apply_ops(
         conn, page_id, [{"op": "insert", "id": block_id, "parent": parent["id"],
@@ -921,34 +1025,62 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
              "title": page_title, "summary": f"Added a note in “{page_title[:60]}”"})
 
 
-def _run_move_block(conn, ws: str, scope: dict, args: dict):
+def _plan_move_block(conn, scope: dict, args: dict):
+    """``(plan, None)``: the ``block`` from its page (``src_page_id``,
+    ``src_title``), the new ``parent`` on its page (``page_id``,
+    ``page_title``) and the ``position`` there. ``(None, answer)`` for a
+    call that cannot move the block, or leaves it where it is."""
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
-        return error, None
+        return None, error
     block, src_page_id, src_title = loaded
     if block["parent_id"] == "root":
-        return "error: that id is a page — pages move between folders via move_page", None
+        return None, "error: that id is a page — pages move between folders via move_page"
     loaded, error = _load_scoped_block(conn, scope, args.get("parent_id"))
     if error:
-        return error.replace("no such block", "no such parent block"), None
+        return None, error.replace("no such block", "no such parent block")
     parent, page_id, page_title = loaded
     subtree_ids = {row[0] for row in fetch_subtree(conn, block["id"])}
     if parent["id"] in subtree_ids:
-        return "error: cannot move a block into itself or its own children", None
+        return None, "error: cannot move a block into itself or its own children"
     if page_id != src_page_id:
         # Highlight blocks anchor to a PDF region of their own paper; on
         # another page that anchor points into the wrong document.
         rows = fetch_subtree(conn, block["id"])
         if any("highlight_id" in (row[4] or "") for row in rows):
-            return ("error: highlight blocks are anchored to their paper — "
-                    "they can only move within the same page"), None
+            return None, ("error: highlight blocks are anchored to their paper — "
+                          "they can only move within the same page")
     position, error = _sibling_position(conn, parent["id"], args.get("after_id"),
                                         block["id"])
     if error:
-        return error, None
+        return None, error
     if parent["id"] == block["parent_id"] and args.get("after_id") in (block["id"], None) \
             and position == block["position"]:
-        return "ok — the block is already there", None
+        return None, "ok — the block is already there"
+    return {"block": block, "src_page_id": src_page_id, "src_title": src_title, "parent": parent,
+            "page_id": page_id, "page_title": page_title, "position": position}, None
+
+
+def _preview_move_block(conn, scope: dict, args: dict):
+    plan, answer = _plan_move_block(conn, scope, args)
+    if not plan:
+        return None, answer
+    parent, page_id = plan["parent"], plan["page_id"]
+    preview = {"page_id": page_id, "title": plan["page_title"], "block_id": plan["block"]["id"],
+               "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
+               "diff": [["ctx", _excerpt(plan["block"]["content"], 600)]]}
+    if plan["src_page_id"] != page_id:
+        preview.update(src_page_id=plan["src_page_id"], src_title=plan["src_title"])
+    return preview, None
+
+
+def _run_move_block(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_move_block(conn, scope, args)
+    if not plan:
+        return answer, None
+    block, src_page_id, src_title, parent, page_id, page_title, position = (
+        plan["block"], plan["src_page_id"], plan["src_title"], plan["parent"],
+        plan["page_id"], plan["page_title"], plan["position"])
     if page_id == src_page_id:
         after_commit(ws, conn, apply_ops(
             conn, page_id, [{"op": "move", "id": block["id"], "parent": parent["id"],
@@ -1356,16 +1488,42 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     return out, action
 
 
-def _run_rename_page(conn, ws: str, scope: dict, args: dict):
+# The page and note changers come in three parts: a _plan_* function checks
+# a call against the library and works out the change without making it,
+# the _run_* executor applies what the plan found, and the _preview_*
+# function tells the approval card what the plan would change. Sharing the
+# plan keeps the card and the change the same, and a call that cannot change
+# anything (a wrong id, a page out of scope, a title it already has) is
+# answered without asking the user: the plan's answer goes to the model.
+
+def _plan_rename_page(conn, scope: dict, args: dict):
+    """``((page_id, title, new), None)``, or ``(None, answer)`` for a call
+    that changes nothing."""
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
-        return error, None
+        return None, error
     page_id, title, _, _ = loaded
     new = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:_TITLE_MAX]
     if not new:
-        return "error: empty title", None
+        return None, "error: empty title"
     if new == title:
-        return "ok — title already is that", None
+        return None, "ok — title already is that"
+    return (page_id, title, new), None
+
+
+def _preview_rename_page(conn, scope: dict, args: dict):
+    plan, answer = _plan_rename_page(conn, scope, args)
+    if not plan:
+        return None, answer
+    page_id, title, new = plan
+    return {"page_id": page_id, "title": title, "diff": text_diff(title, new)}, None
+
+
+def _run_rename_page(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_rename_page(conn, scope, args)
+    if not plan:
+        return answer, None
+    page_id, title, new = plan
     after_commit(ws, conn, apply_ops(
         conn, page_id, [{"op": "set", "id": page_id, "content": new}], actor=scope.get("actor", ""), client="ai"))
     return (f'ok — renamed to "{new}"',
@@ -1373,20 +1531,39 @@ def _run_rename_page(conn, ws: str, scope: dict, args: dict):
              "summary": f"Renamed “{title}” → “{new}”"})
 
 
-def _run_move_page(conn, ws: str, scope: dict, args: dict):
+def _plan_move_page(conn, scope: dict, args: dict):
+    """``((page_id, title, tags, target, new_tags), None)``: the page's
+    folder paths now, the folder it goes to (``""`` = the library root) and
+    the paths it ends with. ``(None, answer)`` for a call that changes
+    nothing."""
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
-        return error, None
-    page_id, title, props, tags = loaded
+        return None, error
+    page_id, title, _, tags = loaded
     path = _scope_folder(scope)
     target = _in_scope_folder(scope, args.get("folder"))  # relative paths land inside the scope
     kept = [t for t in tags if path and not path_within(t, path)]
     new_tags = add_tag(kept, target) if target else kept
     if new_tags == tags:
-        return "ok — page is already there", None
-    props["folder"] = ", ".join(new_tags)
+        return None, "ok — page is already there"
+    return (page_id, title, tags, target, new_tags), None
+
+
+def _preview_move_page(conn, scope: dict, args: dict):
+    plan, answer = _plan_move_page(conn, scope, args)
+    if not plan:
+        return None, answer
+    page_id, title, tags, target, _ = plan
+    return {"page_id": page_id, "title": title, "from": ", ".join(tags), "to": target}, None
+
+
+def _run_move_page(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_move_page(conn, scope, args)
+    if not plan:
+        return answer, None
+    page_id, title, tags, target, new_tags = plan
     after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "set", "id": page_id, "props": {"folder": props["folder"]}}],
+        conn, page_id, [{"op": "set", "id": page_id, "props": {"folder": ", ".join(new_tags)}}],
         actor=scope.get("actor", ""), client="ai"))
     where = target or "the library root"
     return (f'ok — moved to "{where}"',
@@ -1398,7 +1575,8 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
 # --- registry ------------------------------------------------------------------
 # One entry per tool: wire spec, Settings permission key, the action kind its
 # chip carries, the scopes the tool exists in, whether it mutates the library,
-# and its executor.
+# its executor and, for a tool that changes something, the preview its
+# approval card shows (approval_preview).
 
 _PAGE_ID_ARG = {"page_id": {"type": "string"}}
 
@@ -1697,6 +1875,7 @@ TOOLS = [
     },
     {
         "perm": "rename", "kind": "rename", "scopes": ("folder",), "mutating": True, "run": _run_rename_page,
+        "preview": _preview_rename_page,
         "spec": {
             "name": "rename_page",
             "description": "Set a page's title. Use exact page ids from list_pages.",
@@ -1710,6 +1889,7 @@ TOOLS = [
     },
     {
         "perm": "move", "kind": "move", "scopes": ("folder",), "mutating": True, "run": _run_move_page,
+        "preview": _preview_move_page,
         "spec": {
             "name": "move_page",
             "description": (
@@ -1728,6 +1908,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "edit", "scopes": ("folder", "page"), "mutating": True, "run": _run_edit_block,
+        "preview": _preview_edit_block,
         "spec": {
             "name": "edit_block",
             "description": (
@@ -1774,6 +1955,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "create", "scopes": ("folder", "page"), "mutating": True, "run": _run_create_block,
+        "preview": _preview_create_block,
         "spec": {
             "name": "create_block",
             "description": (
@@ -1792,6 +1974,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "move", "scopes": ("folder", "page"), "mutating": True, "run": _run_move_block,
+        "preview": _preview_move_block,
         "spec": {
             "name": "move_block",
             "description": (
@@ -1825,20 +2008,52 @@ def available(scope: dict) -> frozenset:
     return frozenset({"web_engine"} if scope.get("web_engine") else ())
 
 
+def tool_permission(name: str) -> str:
+    """The permission a tool (or a deprecated name of it) belongs to; "" when
+    there is no such tool."""
+    tool = _BY_NAME.get(canonical_tool(name))
+    return tool["perm"] if tool else ""
+
+
+def _state_of(perms, tool: dict) -> str:
+    """A tool's state in a request's permission map: its permission's value,
+    else the default for a reading or a changing tool."""
+    return permission_state(perms, tool["perm"], tool["mutating"])
+
+
+def tool_states(perms, *, granted=(), can_ask: bool = True) -> dict:
+    """``{permission: "allow" | "ask" | "off"}`` for every permission of the
+    registry, read from a request's map (ai_permissions.permission_state:
+    a permission left out allows reading and asks before a change). The
+    permissions in ``granted`` (the conversation's "Allow in this chat") are
+    allowed, and a request that cannot ask (``can_ask`` false: no stream to
+    show the card on) arms none of its asking tools."""
+    states = {}
+    for t in TOOLS:
+        state = _state_of(perms, t)
+        if state == "ask" and t["perm"] in granted:
+            state = "allow"
+        if state == "ask" and not can_ask:
+            state = "off"
+        states[t["perm"]] = state
+    return states
+
+
 def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
                 *, allowed_tools=None, can_write: bool = True, has: frozenset = frozenset()) -> list:
-    """The armed tool specs for a chat scope and the user's per-tool permission
-    map (missing key = allowed, so new tools default on). [] = plain chat.
+    """The armed tool specs for a chat scope and the user's permission map
+    (``tool_states``, or a request's raw map read the same way): every tool
+    that is not off, the asking ones included, since the chat asks the user
+    before they run. [] = plain chat.
     read_chars is the request's read-window preference — the specs that name
     the cap are formatted with the effective value so the model knows what it
     may ask for (the registry's stored specs are never mutated). A tool
     that ``needs`` something (a web engine) is armed only when ``has`` it
     (``available(scope)``)."""
-    perms = perms if isinstance(perms, dict) else {}
     cap = _read_cap(read_chars)
     specs = []
     for t in TOOLS:
-        if scope_type not in t["scopes"] or not perms.get(t["perm"], True):
+        if scope_type not in t["scopes"] or _state_of(perms, t) == "off":
             continue
         if t.get("needs") and t["needs"] not in has:
             continue
@@ -1920,6 +2135,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                  + ". A request to change/rewrite/expand them means those ids.\n")
     text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
+    asking = [t["spec"]["name"] for t in TOOLS if t["spec"]["name"] in names
+              and _state_of(perms, t) == "ask"]
+    if asking:
+        text += (
+            "\nThe user approves each call of " + ", ".join(asking) + " before it runs: the chat "
+            "shows them exactly what the call will do and waits for their answer. Call these tools "
+            "directly when the task needs them, never ask for permission in your reply first. A "
+            "call the user declined was not made: do not repeat it or make the same change another "
+            "way; carry on without it, and say what you would have changed.")
     if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
         # The chat renders /?page=<id> links as open-in-place; the ids come
         # from the tool results (list_pages, search hits, read_* headers).
@@ -2032,6 +2256,38 @@ def tool_action(kind: str, summary: str, name: str, args: dict, result: str,
     return {**out, **extra}
 
 
+def settled_action(name: str, args: dict, result: str) -> dict:
+    """The chip of a call that ended without an action of its executor's:
+    a failure (``error``), or a change tool's call that had nothing to
+    change (``noop``, so no list counts it as a change)."""
+    tool = _BY_NAME.get(canonical_tool(name))
+    failed = result.startswith("error")
+    return tool_action("error" if failed or not tool else tool["kind"], result.split("\n")[0][:200],
+                       canonical_tool(name), args, result, error=failed,
+                       **({"noop": True} if tool and tool["mutating"] and not failed else {}))
+
+
+def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
+    """What the approval card shows for a call the user must approve first:
+    ``(preview, None)``, or ``(None, answer)`` when the call cannot change
+    anything (a wrong id, a page out of scope, nothing to do): the model
+    gets that answer and the user is not asked. A tool without a preview of
+    its own (a reading tool the user set to ask) previews as ``{}``, and the
+    card names its arguments. Nothing is changed here."""
+    tool = _BY_NAME.get(canonical_tool(name))
+    if not tool or not tool.get("preview"):
+        return {}, None
+    args = args if isinstance(args, dict) else {}
+    # The scope run_agent_tool gives a change: attachments never widen it.
+    scope = {**scope, "context_pages": []}
+    try:
+        with connect_pages_db(ws) as conn:
+            return tool["preview"](conn, scope, args)
+    except Exception as e:  # the chat stream goes on, and the call is not made
+        log.warning(f"[ai_tools] {name} preview failed: {e}")
+        return None, f"error: {e}"
+
+
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
                    *, allowed_tools=None) -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
@@ -2074,13 +2330,9 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         log.warning(f"[ai_tools] {name} failed: {e}")
         result, action = f"error: {e}", None
     if action is None:
-        # No-op or refused call (empty title, page out of scope, …): still show
-        # it, tagged as an error only when the tool actually failed; a change
-        # tool that changed nothing says so (`noop`), so no list counts it.
-        failed = result.startswith("error")
-        action = {"kind": "error" if failed else tool["kind"],
-                  "summary": result.split("\n")[0][:200], "error": failed,
-                  **({"noop": True} if tool["mutating"] and not failed else {})}
+        # No-op or refused call (empty title, page out of scope, …): still
+        # show it (settled_action).
+        return result, settled_action(name, args, result)
     images = action.pop("images", None)
     chip = tool_action(action["kind"], action["summary"], name, args, result,
                        error=bool(action.get("error")),

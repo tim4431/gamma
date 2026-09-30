@@ -15,6 +15,7 @@
 // A codec clamps a stored string back into range (parse returns undefined
 // to fall back to the default), so a stale or hand-edited value never
 // breaks the app. Plain strings need no codec.
+import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
@@ -92,24 +93,23 @@ export function translateModelFor(pick, engines, models) {
   return "";
 }
 
-// Agent per-tool permissions (Settings → AI → Chat › Tools),
-// one map per chat KIND: "folder" (the home/folder chat), "pdf" (a page with
-// a PDF attached) and "notes" (a page without one). The chat picks its
-// kind's map (chat/ChatDock.jsx) and sends it as the request's `permissions`.
-// Missing keys mean allowed, so new tools default on for existing users;
-// a pre-kind flat map ({list, read, …}) is applied to every kind.
+// Agent tool permissions (Settings → AI → Chat › Tools), one map per chat
+// KIND: "folder" (the home/folder chat), "pdf" (a page with a PDF attached)
+// and "notes" (a page without one), each holding a state per permission
+// ("allow" / "ask" / "off", chat/chatSettings.js). The chat picks its kind's
+// map (chat/ChatDock.jsx) and sends it as the request's `permissions`.
+// A permission left out takes its default (reading allowed, changes ask),
+// a stored boolean is read as chatSettings.normalizePerm says, and a
+// pre-kind flat map ({list, read, …}) is applied to every kind.
 export const CHAT_KINDS = ["folder", "pdf", "notes"];
-const TOOL_PERMS_DEFAULT = {
-  list: true, read: true, block_read: true, view: true, search: true,
-  web_search: true, web_read: true, publisher_cookies: true,
-  rename: true, move: true, block_edit: true,
-};
+const TOOL_PERMS_DEFAULT = Object.fromEntries(PERMISSION_KEYS.map((key) => [key, defaultPerm(key)]));
 const AGENT_PERMS = json((value) => {
   if (!value || typeof value !== "object") return undefined;
   const perKind = CHAT_KINDS.some((k) => value[k] && typeof value[k] === "object");
-  return Object.fromEntries(CHAT_KINDS.map((k) => [
-    k, { ...TOOL_PERMS_DEFAULT, ...(perKind ? value[k] || {} : value) },
-  ]));
+  return Object.fromEntries(CHAT_KINDS.map((k) => {
+    const stored = (perKind ? value[k] : value) || {};
+    return [k, Object.fromEntries(PERMISSION_KEYS.map((key) => [key, normalizePerm(key, stored[key])]))];
+  }));
 });
 
 export const THEMES = ["system", "light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"];

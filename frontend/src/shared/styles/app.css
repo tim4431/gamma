@@ -3416,6 +3416,68 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
+/* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
+   would do, the change as a word diff, the four answers. It looks like a
+   fetch handoff's card, the other place the chat waits for the user. */
+.chatApproval {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-bg-light);
+  color: var(--text-primary);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatApprovalCaption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  font-weight: 600;
+}
+.chatApprovalCaption svg { flex: none; color: var(--accent); }
+.chatApprovalHead { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-weight: 600; }
+.chatApprovalHead svg { flex: none; margin-top: 0.2em; color: var(--accent); }
+.chatApprovalHead span { min-width: 0; overflow-wrap: anywhere; }
+.chatApprovalDiff {
+  margin-top: 8px;
+  max-height: 14em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chatApprovalDiff :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
+.chatApprovalDiff del {
+  background: var(--danger-bg);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.chatApprovalDiff ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
+.chatApprovalArg { color: var(--text-muted); }
+.chatApprovalActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.chatApprovalSpacer { flex: 1; }
+.chatApprovalStatus { margin-top: 8px; color: var(--text-secondary); }
+.chatApproval.sent { border-color: var(--border-subtle); background: transparent; }
+.chatApprovalError { margin-top: 6px; color: var(--danger); }
+.chatApprovalDecline .aiKeyInput {
+  margin: 10px 0 0;
+  padding: 6px 9px;
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+}
+.chatApprovalDecline .chatApprovalActions { margin-top: 8px; }
+/* "Allowed in this chat" in the composer's toolbar: click to ask again. */
+.chatGrantChip { padding: 2px 6px; cursor: pointer; }
+.chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
@@ -4585,7 +4647,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
 .chatSteps { align-self: flex-start; }
 .chatStepsFailed { flex: none; color: var(--danger); }
-.chatStepsFailed::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
+.chatStepsDeclined { flex: none; color: var(--text-secondary); }
+:is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
 .chatSteps .transferSpin.inline { flex: none; }
 .chatChanges {
   display: flex;
