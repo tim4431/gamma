@@ -64,7 +64,7 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     await addNote(host, paperId, { content: "written on the iPad", id: "rpNote2" });
     bookId = await createNotebook(host, { title: "Train notebook" });
     const view = pageView(await local(bookId), bookId);
-    const sheet = view.notebook.sheets[0].id;
+    const sheet = view.sheets[0].id;
     await saveInk(host, bookId, { blockId: "rpBookInk", ink: { format: "gamma-ink", version: 1,
       space: { kind: "canvas", width: 595.28, height: 841.89 }, strokes: [stroke("n1", 60)] }, parent: sheet });
     const second = await addSheet(host, bookId);
@@ -74,7 +74,7 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     assertEq(kid(paper, "rpNote2").content, "written on the iPad", "the new note arrived");
     const book = await there(bookId);
     assertEq(book.content, "Train notebook", "the notebook arrived under its id");
-    assert(book.properties.notebook?.sheet, "with its paper");
+    assert(kid(book, sheet)?.properties.sheet?.width > 0, "its first sheet, with its paper");
     assertEq(book.children.map((c) => c.id).join(","), `${sheet},${second}`, "its two sheets, in order");
     const group = kid(book, "rpBookInk");
     assert(group && group.properties.ink_strokes === 1 && !("pdf_page" in group.properties), "the drawing, under its sheet");

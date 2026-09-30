@@ -27,6 +27,14 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
+def _quick_approvals(monkeypatch):
+    """A chat test whose tool call waits on an approval nobody answers gives
+    up in seconds, not the ten minutes a person gets (gamma/ai_permissions.py)."""
+    from gamma import ai_permissions
+    monkeypatch.setattr(ai_permissions, "APPROVAL_TIMEOUT", 3.0)
+
+
+@pytest.fixture(autouse=True)
 def _reset_ratelimit():
     """The whole suite shares one TestClient source IP, so the per-IP login
     throttle would trip mid-run. Clear counters before each test — production

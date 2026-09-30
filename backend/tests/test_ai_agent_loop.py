@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from ai_fixtures import ALL_PERMS, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
+from ai_fixtures import ALL_PERMS, ALLOW_ALL, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -54,7 +54,7 @@ def test_chat_agent_loop_streams_actions(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={
         "prompt": "rename the cavity paper to Ada2019 cavity",
-        "agent_scope": "folder", "folder": "readout", "stream": True,
+        "agent_scope": "folder", "folder": "readout", "stream": True, "permissions": ALLOW_ALL,
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]

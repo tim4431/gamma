@@ -1,15 +1,16 @@
-// Notebooks: a page written on sheets of paper instead of a PDF
-// (docs/dev/notebooks.md). The client half of gamma/notebook.py; pure, so
-// it runs under node --test and in the iPad's JavaScriptCore.
+// Sheets of paper to write on (docs/dev/notebooks.md). The client half of
+// gamma/notebook.py; pure, so it runs under node --test and in the iPad's
+// JavaScriptCore.
 //
-// A notebook is a page whose root carries `notebook: {sheet: <paper>}`,
-// the paper new sheets get. Its sheets are the root's direct children
-// that carry `sheet: <paper>`, in block order; adding a page is inserting
-// a block, so sheets two devices add while apart both survive a merge. A
-// sheet's handwriting is the ink groups under it (blocks with `ink_url`,
-// their file on a `canvas` space the sheet's size); other blocks under a
-// sheet are notes about that page. Stored papers are read through
-// normalizePaper, never trusted.
+// A sheet is a block carrying `sheet: <paper>`, anywhere among a page's
+// blocks; nothing else marks a page as a notebook — the notebook view is a
+// way of showing the sheets it has. A page's sheets are those blocks in
+// document order, at any depth; adding a page is inserting a block, so
+// sheets two devices add while apart both survive a merge. A sheet's
+// handwriting is the ink groups under it that no nearer sheet holds (blocks
+// with `ink_url`, their file on a `canvas` space the sheet's size); other
+// blocks under a sheet are notes about that page. Stored papers are read
+// through normalizePaper, never trusted.
 
 export const DEFAULT_PAPER = Object.freeze({ width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank",
   spacing: 24, line: "#c8d1dc" });
@@ -80,54 +81,73 @@ export function paperSizeKey(paper) {
   return hit ? hit.key : "";
 }
 
-// --- the notebook in a page's tree -------------------------------------------
+// --- the sheets in a page's tree ---------------------------------------------
 
-// {paper: the paper new sheets get} for a notebook page's root, else null.
-export function pageNotebook(root) {
-  const nb = root?.properties?.notebook;
-  if (!nb || typeof nb !== "object" || Array.isArray(nb)) return null;
-  return { paper: normalizePaper(nb.sheet) };
-}
 export const isSheet = (block) => {
   const s = block?.properties?.sheet;
   return !!s && typeof s === "object" && !Array.isArray(s);
 };
 
-// The sheets of a notebook's tree (the page's top-level blocks, nested
-// `children`), in order: [{id, index (0-based), paper, block}]. A sheet's
-// missing paper keys come from the notebook's.
-export function sheetsOf(tree, notebookPaper = DEFAULT_PAPER) {
+// The sheets of a page's tree (the page's blocks, nested `children`), in
+// document order at any depth: [{id, index (0-based), paper, block}].
+export function sheetsOf(tree) {
   const out = [];
-  for (const b of tree || []) {
-    if (!isSheet(b)) continue;
-    out.push({ id: b.id, index: out.length, paper: normalizePaper(b.properties.sheet, notebookPaper), block: b });
-  }
+  const walk = (list) => {
+    for (const b of list || []) {
+      if (isSheet(b)) out.push({ id: b.id, index: out.length, paper: normalizePaper(b.properties.sheet), block: b });
+      walk(b.children);
+    }
+  };
+  walk(tree);
   return out;
 }
 
-// Map sheet id → the ink blocks under that sheet (at any depth), in tree
-// order — what each sheet draws.
+// Map sheet id → the ink blocks it draws, in tree order: those under it,
+// at any depth, that no nearer sheet holds.
 export function inkBySheet(tree) {
   const out = new Map();
   const walk = (list, sheet) => {
     for (const b of list || []) {
-      if (sheet && b.properties?.ink_url !== undefined) out.get(sheet).push({ id: b.id, properties: b.properties });
-      walk(b.children, sheet);
+      const here = isSheet(b) ? b.id : sheet;
+      if (isSheet(b)) out.set(b.id, []);
+      else if (here && b.properties?.ink_url !== undefined) out.get(here).push({ id: b.id, properties: b.properties });
+      walk(b.children, here);
     }
   };
-  for (const b of tree || []) {
-    if (!isSheet(b)) continue;
-    out.set(b.id, []);
-    walk(b.children, b.id);
-  }
+  walk(tree, null);
   return out;
 }
 
-// The sheet a block of the tree is on (its top-level sheet ancestor), or null.
+// The sheet a block of the tree is on (itself, or its nearest sheet
+// ancestor), or null.
 export function sheetOfBlock(tree, id) {
-  const has = (list) => (list || []).some((b) => b.id === id || has(b.children));
-  for (const b of tree || []) if (isSheet(b) && (b.id === id || has(b.children))) return b.id;
-  return null;
+  const walk = (list, sheet) => {
+    for (const b of list || []) {
+      const here = isSheet(b) ? b.id : sheet;
+      if (b.id === id) return here || null;
+      const found = walk(b.children, here);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  return walk(tree, null) ?? null;
+}
+
+// The paper a sheet added right after block `id` gets: that of the sheet
+// nearest before it in document order (itself, when it is one), else the
+// default.
+export function paperBefore(tree, id) {
+  let paper = DEFAULT_PAPER, found = false;
+  const walk = (list) => {
+    for (const b of list || []) {
+      if (found) return;
+      if (isSheet(b)) paper = normalizePaper(b.properties.sheet);
+      if (b.id === id) { found = true; return; }
+      walk(b.children);
+    }
+  };
+  walk(tree);
+  return paper;
 }
 
 // --- ids ---------------------------------------------------------------------
@@ -143,10 +163,12 @@ export function stableId(prefix, ...parts) {
   }
   return prefix + h.toString(16).padStart(16, "0");
 }
-// The first sheet of a notebook page, and the sheet that follows `sheetId`.
+// A new notebook's first sheet, and the sheet that follows `sheetId`.
 export const firstSheetId = (pageId) => stableId("s", "first-sheet", pageId);
 export const sheetIdAfter = (sheetId) => stableId("s", "sheet-after", sheetId);
 
+// A new sheet block, folded: its handwriting groups are its children, and
+// the sheet itself shows them.
 export function newSheet(id, paper) {
-  return { id, content: "", properties: { sheet: normalizePaper(paper) }, children: [] };
+  return { id, content: "", properties: { sheet: normalizePaper(paper), collapsed: true }, children: [] };
 }

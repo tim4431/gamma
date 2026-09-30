@@ -9,7 +9,7 @@ import { t, T } from "../shared/i18n/i18n.js";
 
 // Every command edits through ctx:
 //   { value, start, cursor, setText(newVal, selStart, selEnd),
-//     openRefPopup(), pickImage() }
+//     openRefPopup(), pickImage(), insertPage() }
 // start = index of the "/", cursor = caret (end of the typed query); commands
 // replace that range with their insertion.
 
@@ -110,6 +110,11 @@ export const SLASH_COMMANDS = [
     run: (ctx) => { replaceRange(ctx, ""); ctx.pickImage(); },
   },
   {
+    name: "page", label: T("Page to write on"), glyph: "▯", hint: T("a sheet of paper for handwriting"),
+    keywords: ["paper", "sheet", "handwriting", "draw", "notebook", "ink", "pen"],
+    run: (ctx) => { replaceRange(ctx, ""); ctx.insertPage?.(); },
+  },
+  {
     name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"],
     run: (ctx) => replaceRange(ctx, new Date().toISOString().slice(0, 10)),
   },
@@ -136,7 +141,7 @@ export const SLASH_COMMANDS = [
 const SLASH_GROUPS = [
   { label: T("Text"), names: ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider"] },
   { label: T("Math"), names: ["math", "equation"] },
-  { label: T("Insert"), names: ["table", "code", "mermaid", "image", "date"] },
+  { label: T("Insert"), names: ["table", "code", "mermaid", "image", "page", "date"] },
   { label: T("Link"), names: ["link", "embed"] },
   { label: T("Style"), names: ["highlight"] },
 ];
@@ -148,8 +153,10 @@ export function filterSlashCommands(query) {
   const scored = [];
   for (const c of SLASH_COMMANDS) {
     const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/), ...t(c.label).toLowerCase().split(/\s+/)];
-    const tier = names.some((n) => n.startsWith(q)) ? 0
-      : names.some((n) => n.includes(q)) ? 1 : -1;
+    // a command's own name first ("/page" is the page, not the link that
+    // lists "page" among its words), then any word starting with the query
+    const tier = c.name === q ? 0 : names.some((n) => n.startsWith(q)) ? 1
+      : names.some((n) => n.includes(q)) ? 2 : -1;
     if (tier >= 0) scored.push([tier, scored.length, c]);
   }
   scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]);

@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  DEFAULT_PAPER, firstSheetId, inkBySheet, newSheet, normalizePaper, pageNotebook, paperLines, paperSizeKey,
+  DEFAULT_PAPER, firstSheetId, inkBySheet, newSheet, normalizePaper, paperBefore, paperLines, paperSizeKey,
   sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper,
 } from "../src/notebook/notebook.js";
+import { treeOf } from "../src/replica/tree.js";
 
 // tests/shared/paper.json: the same cases gamma/notebook.py passes
 // (backend/tests/test_shared_fixtures.py).
@@ -15,6 +16,13 @@ for (const c of PAPER.normalize) {
 }
 for (const c of PAPER.lines) {
   test(`paper lines: ${c.note}`, () => assert.deepEqual(paperLines(normalizePaper(c.paper)), { lines: c.lines, dots: c.dots }));
+}
+for (const c of PAPER.sheets) {
+  test(`page sheets: ${c.note}`, () => {
+    const tree = treeOf(c.blocks, c.page);
+    const ink = inkBySheet(tree);
+    assert.deepEqual(sheetsOf(tree).map((s) => ({ id: s.id, paper: s.paper, ink: ink.get(s.id).map((b) => b.id) })), c.sheets);
+  });
 }
 
 const tree = [
@@ -26,14 +34,11 @@ const tree = [
   { id: "s2", content: "", properties: { sheet: { width: 612 } }, children: [] },
 ];
 
-test("a notebook's sheets, in order, take missing paper keys from the notebook's", () => {
-  const nb = pageNotebook({ properties: { notebook: { sheet: { height: 792, pattern: "dots" } } } });
-  assert.deepEqual(nb.paper, { ...DEFAULT_PAPER, height: 792, pattern: "dots" });
-  assert.equal(pageNotebook({ properties: {} }), null);
-  assert.equal(pageNotebook({ properties: { notebook: "yes" } }), null);
-  const sheets = sheetsOf(tree, nb.paper);
+test("a page's sheets, in order, take missing paper keys from the default paper", () => {
+  const sheets = sheetsOf(tree);
   assert.deepEqual(sheets.map((s) => [s.id, s.index, s.paper.pattern, s.paper.width, s.paper.height]),
-    [["s1", 0, "ruled", 595.28, 792], ["s2", 1, "dots", 612, 792]]);
+    [["s1", 0, "ruled", 595.28, 841.89], ["s2", 1, "blank", 612, 841.89]]);
+  assert.deepEqual(sheetsOf([]), []);
 });
 
 test("ink belongs to the sheet it is under, at any depth", () => {
@@ -44,6 +49,23 @@ test("ink belongs to the sheet it is under, at any depth", () => {
   assert.equal(sheetOfBlock(tree, "g2"), "s1");
   assert.equal(sheetOfBlock(tree, "s2"), "s2");
   assert.equal(sheetOfBlock(tree, "intro"), null);
+  assert.equal(sheetOfBlock(tree, "missing"), null);
+});
+
+test("a page among a note's blocks: the nearest sheet holds the ink, and a new one copies the paper before it", () => {
+  const note = [
+    { id: "a", content: "text", properties: {}, children: [] },
+    { id: "p1", content: "", properties: { sheet: { pattern: "grid" } }, children: [
+      { id: "p2", content: "", properties: { sheet: { pattern: "dots" } }, children: [
+        { id: "g", content: "", properties: { ink_url: "/api/uploads/g.ink" }, children: [] }] }] },
+    { id: "b", content: "more", properties: {}, children: [] },
+  ];
+  assert.equal(sheetOfBlock(note, "g"), "p2");
+  assert.deepEqual(inkBySheet(note).get("p1"), []);
+  assert.equal(paperBefore(note, "a").pattern, "blank");       // no page before: the default paper
+  assert.equal(paperBefore(note, "p1").pattern, "grid");       // a page: its own
+  assert.equal(paperBefore(note, "b").pattern, "dots");        // the last page before it in document order
+  assert.equal(paperBefore(note, "missing").pattern, "dots");
 });
 
 test("stable ids: the same parts give the same block id on every device", () => {
@@ -64,7 +86,7 @@ test("paper sizes are recognised either way round", () => {
   assert.equal(paperSizeKey(normalizePaper({ width: 700, height: 700 })), "");
 });
 
-test("a new sheet stores its whole paper", () => {
+test("a new sheet stores its whole paper and starts folded: it shows its drawings itself", () => {
   assert.deepEqual(newSheet("s9", { pattern: "grid" }),
-    { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" } }, children: [] });
+    { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" }, collapsed: true }, children: [] });
 });

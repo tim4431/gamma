@@ -688,8 +688,9 @@ class _AnnotatedPdfBuilder(_Builder):
     (``annotated_page_pdf``: what /pages/{id}/export-pdf downloads). One
     page: that PDF itself. A folder: a zip of them, ``<dir>/<Title>.pdf``,
     the directories mirroring the folder labels below the exported folder
-    (``obsidian_export.page_dir``). A notebook is exported as its sheets; a
-    page without a stored PDF is left out, and the result lists it."""
+    (``obsidian_export.page_dir``). A page with sheets of paper and no PDF
+    is exported as its sheets; a page with neither is left out, and the
+    result lists it."""
     suffix = "-annotated.zip"
 
     def __init__(self, ws, base, opts):
@@ -823,12 +824,14 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     among them) are already read — what a folder export feeds it."""
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
-    if not doc_id and notebook.page_notebook(root["properties"]):
-        # A notebook has no PDF to annotate: its sheets are the pages, the
-        # paper painted and the handwriting drawn on it (gamma/notebook.py).
+    page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
+    if page_sheets:
+        # A page without a PDF exports its sheets of paper: one PDF page
+        # each, the paper painted and the handwriting drawn on it
+        # (gamma/notebook.py).
         uploads = ws_uploads_dir(ws)
         sheets, groups = [], 0
-        for sheet in notebook.sheets_of(blocks, block_id):
+        for sheet in page_sheets:
             inks = [ink for b in sheet["blocks"] if (b["properties"] or {}).get("ink_url")
                     if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
             groups += len(inks)

@@ -37,16 +37,20 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
+- **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
 ### Notebooks
 
-**+ → New notebook** makes a page of blank paper to write on, like a Notability note. Write with the same pens and highlighters as on a PDF.
+A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
 
-- Writing near the bottom of the last page adds the next one, so there is always paper below. **Add page** at the end adds one too.
-- **Paper** sets the page's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background. *Use for new pages* makes it the paper new pages get.
-- The notes list the pages ("Page 1", or a title you type), with the handwriting of each under it. Notes you type under a page are about that page.
-- **Export → Annotated PDF** gives the notebook as a PDF of its pages.
+- **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
+- **Two views.** The notes view draws each sheet right among your notes, with its pen, its **Paper**, a replay of what's written on it, and **+** for another sheet after it under it. The **Notebook view** button in the page's title shows the sheets large in the viewer instead, with your notes beside them; press it again, or close the viewer, to go back. Each page remembers its view in this browser.
+- Writing near the bottom of the last sheet adds the next one, so there is always paper below. **Add page** at the end of the notebook view adds one too. A new sheet takes the paper of the sheet before it.
+- **Paper** sets a sheet's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background; *Apply to all pages* gives every sheet that paper.
+- The notes list the sheets ("Page 1", or a title you type). A sheet's handwriting is folded under it; unfold it to see the drawings as cards. Notes you type under a sheet are about that page.
+- **Export → Annotated PDF** gives the sheets as a PDF.
+- On the iPad a page with sheets opens in the notebook view, with the notes beside them.
 
 ### Links inside the PDF
 
@@ -108,11 +112,20 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, compare findings, rename pages, file them into folders — *"rename these to AuthorYear style"*, *"which of these measure T1?"*. It can also search the web for papers (Crossref, arXiv) and read a document by DOI, arXiv id or URL.
 
-In a paper or a notes page it can also edit your notes when you ask — rewrite a block, add one, append to it, move it — if the **Edit note blocks** permission is on.
+In a paper or a notes page it can also edit your notes when you ask: rewrite a block, add one, append to it or move it. The **Edit note blocks** permission controls this.
 
-**Settings → Chat → Tools** compares permissions for folder, PDF and notes chats. Start with **Read library**, **Read & search**, or **All tools**, then adjust individual switches. Online paper search, document fetching and **Use journal sign-ins** are separate choices. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+**Asking before a change.** By default the assistant reads freely but asks before it changes anything. When it wants to rename a page, file it into a folder or edit your notes, the reply shows a card with the change. Words it removes are struck through, and words it adds are highlighted. Pick one:
 
-While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+- **Allow once**: make this change.
+- **Allow in this chat**: make it, and don't ask again for this kind of change in this conversation. The composer shows **Allowed in this chat**; click it to be asked again. A new chat asks again.
+- **Always allow**: make it, and stop asking for this kind of change in every chat of this kind (it sets the permission to Allow in Settings).
+- **Don't allow**: nothing changes. You can add a line on what to do instead ("file it under Reviews"), and the assistant follows it; left empty, it carries on without the change.
+
+So you can ask it to read a folder of papers and write what it finds into your notes. You approve the edits one by one, or once for the whole conversation. A card left unanswered for ten minutes, or a reply you stop, makes no change.
+
+**Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+
+While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
 

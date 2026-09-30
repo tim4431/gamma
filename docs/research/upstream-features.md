@@ -38,6 +38,8 @@ Recording captures stroke and page events against the audio clock, letting nativ
 
 **Where:** [NoteReplayPlayer.jsx](https://github.com/amogadget/Gamma/blob/2dbde2d/frontend/src/NoteReplayPlayer.jsx), [ReplayInkLayer.jsx](https://github.com/amogadget/Gamma/blob/2dbde2d/frontend/src/ReplayInkLayer.jsx), [GammaReplay.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaReplay.swift), [browser replay design](https://github.com/amogadget/Gamma/blob/2dbde2d/docs/dev/note-replay.md).
 
+**Here (September 29):** a replay without audio. The vector strokes' own timing (`t0` and each sample's `t`) replays a group's writing in the notes and on the iPad's page ([handwriting.md](../dev/handwriting.md) "Replay"). There is no recording to drive it yet.
+
 ### 4. Persistent audio-recording blocks with recovery
 
 **Priority:** High–medium. **Implemented upstream:** September 10. Useful independently of replay; distinct from existing chat voice dictation.
@@ -110,7 +112,7 @@ A background worker detects large masks in mixed-raster-content scans and replac
 These are recommendations for future prioritization, not approved implementation tasks.
 
 - [ ] Evaluate automatic model-catalog refresh as a small addition, preserving explicit user model choices and current provider behavior.
-- [ ] Design audio blocks and synchronized replay around this fork's existing vector ink and block operations.
+- [ ] Design audio blocks around this fork's existing vector ink and block operations, and drive the replay (built, without audio) from them.
 - [ ] Scope durable offline storage and conflict UX separately from native iPad UI work.
 - [ ] Evaluate a native iPad client using current workspace identities, permissions, and synchronization APIs.
 - [ ] Revisit server previews only with a representative scan demonstrating a remaining first-paint bottleneck.

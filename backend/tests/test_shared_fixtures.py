@@ -81,6 +81,17 @@ def test_paper_lines(case):
     assert geo == {"lines": case["lines"], "dots": case["dots"]}
 
 
+@pytest.mark.parametrize("case", PAPER["sheets"], ids=[c["note"] for c in PAPER["sheets"]])
+def test_page_sheets(case):
+    from gamma.notebook import sheets_of
+    blocks = [{"id": bid, "parent_id": b["parent"], "position": b["position"], "properties": b["props"]}
+              for bid, b in case["blocks"].items()]
+    got = [{"id": s["id"], "paper": s["paper"],
+            "ink": [b["id"] for b in s["blocks"] if (b["properties"] or {}).get("ink_url")]}
+           for s in sheets_of(blocks, case["page"])]
+    assert got == case["sheets"]
+
+
 TEXTMERGE = _load("textmerge.json")
 
 

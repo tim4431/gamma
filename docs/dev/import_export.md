@@ -322,9 +322,9 @@ switch, its notes printed on the page (`annotated_page_pdf`, what
 `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 folder labels below the exported folder (`obsidian_export.page_dir`). A
-notebook is exported as its sheets. A page without a stored PDF is left
-out, and the finished export lists it; a folder with no PDF at all fails
-with the reason.
+page with sheets of paper and no PDF is exported as its sheets. A page with
+neither is left out, and the finished export lists it. A folder with no
+PDF at all fails with the reason.
 
 The single-page exports are also plain functions, for callers without a
 request: `page_builder` (one page through a mode's builder, what
@@ -441,9 +441,9 @@ materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
 `mode=annotated-pdf` (`/pages/{id}/export-pdf?highlights=&notes=` answers the
-same). "Annotated PDF" is the paper itself and is
-hidden on a note page; a notebook shows it too,
-and exports its sheets ([notebooks.md](notebooks.md)). An unsaved proxy PDF can
+same). "Annotated PDF" is the paper itself and is hidden when there is none
+(a note page); a page with sheets of paper shows it too, and exports them
+([notebooks.md](notebooks.md)). An unsaved proxy PDF can
 export only its original file, so it skips the options page and exports directly.
 "PDF" in the Notes row (`?mode=notes-pdf`) takes over as the fallback format, and its
 Bundle switch is hidden because a document always embeds its images. Two
@@ -592,8 +592,8 @@ drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
 
-A notebook page has no PDF to annotate: `annotated_pdf` writes
-`notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
+A page with sheets of paper and no PDF has none to annotate:
+`annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
 size, painted with the paper, with the ink groups under it drawn as
 vectors in the content (the page is the drawing, so no `/Ink` layer). The
 switches do not apply.

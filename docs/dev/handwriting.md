@@ -56,8 +56,10 @@ app ([ipad.md](ipad.md)).
   kind. Duplicate offsets fresh-id copies by 12 screen pixels and selects
   them; a full group refuses. One action across several blocks is one undo
   entry. The menu follows scrolling and resizing, flips above or below the
-  selection and hides while the selection is off-screen. A blank tap or
-  Escape dismisses it.
+  selection and hides while the selection is off-screen. It keeps inside
+  the scroller the ink is seen through: the PDF viewer, the notebook
+  view, or the notes for a sheet among them. A blank tap or Escape
+  dismisses it.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside it
   scroll). A pen with a writing tool clears the selection and writes. The
@@ -87,6 +89,16 @@ app ([ipad.md](ipad.md)).
   the PDF to the group and outlines it briefly; a click on ink selects it
   (Show note scrolls the notes to its block), and in read-only views jumps
   to the block directly.
+- **Replay.** The play button in the card's corner (on hover; always on a
+  touch screen) replays the group's writing in the card: the strokes
+  appear in the order they were written, each at the pace it was written.
+  Pauses shrink to 0.4 s, and a replay longer than 15 s plays faster. The
+  same button stops it. A sheet in the notes view has the button under
+  it, for all its handwriting ([notebooks.md](notebooks.md)); on the iPad
+  it is on a group's row in the notes and plays on the page
+  ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
+  strokes are gone, and the pieces the partial eraser left keep the time
+  they were written.
 - A group erased empty deletes its block, and undo brings it back. A
   group whose block holds a caption or notes keeps its block, with an
   empty drawing, so erasing strokes never deletes text.
@@ -140,7 +152,7 @@ Plain JSON (`application/json`), one per group:
   scale 1 (pdf.js viewport: points, origin top-left, y down, rotation
   applied) — the same frame highlight rects normalise to and the frame the
   PDF writers map to user space. `{kind: "canvas", width, height}` is a
-  notebook sheet: points from its top-left corner, the sheet's size when
+  sheet of paper: points from its top-left corner, the sheet's size when
   the group was drawn ([notebooks.md](notebooks.md)).
 - `ch` names the channels of each sample, InkML-style: `x` `y` always, then
   any of `p` pressure, `t` time, `a` altitude, `z` azimuth. `pts` is one
@@ -151,7 +163,8 @@ Plain JSON (`application/json`), one per group:
   real pressure, drawn even). `size` is the nominal diameter in pt; drawn
   width = `size × (1 + 0.5 × (p − 0.5))` for a real pen. `t0` is wall-clock
   ms of the first sample — a client without timing omits `t`/`t0` rather
-  than inventing them. It is an integer: the iPad rounds its clock.
+  than inventing them. It is an integer: the iPad rounds its clock. The
+  replay reads both (see Client).
 - Limits (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
   samples, 4 MB, finite numbers, unique stroke ids.
 
@@ -234,6 +247,20 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
   stroke wins ties); `restyleStrokes` changes selected color/width, returning
   the original object for a no-op; `duplicateStrokes` preserves original
   samples and channels while assigning unique IDs to translated copies.
+- The replay (`ink.js`, pure, so the iPad runs it too):
+  - `inkTimeline(ink)` puts the strokes in the order they were written.
+    A stroke starts at `t0` plus its first sample's `t`, and the file's
+    order breaks ties. A stroke with no timing counts as written right
+    after the stroke before it in the file, its samples spread over
+    300 ms. Each sample gets a replay time: gaps between strokes and
+    inside one are cut to `REPLAY_PAUSE` (400 ms), and the whole replay
+    is scaled down to `REPLAY_MAX` (15 s) when longer.
+  - `inkAtTime(ink, timeline, t)` is the drawing at replay time `t`: the
+    strokes begun, and the one being written cut short. A prefix of a
+    stroke's delta-coded `pts` is its first samples, so that is a slice.
+  - `InkLayer.jsx` `useInkReplay` plays it on animation frames and
+    `InkReplayButton` starts and stops it. A change to the drawing ends a
+    replay.
 - `ink/inkStore.js`: files by URL, and per-block **drafts** — the strokes as
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
@@ -363,8 +390,10 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import, *Transcribe with AI*,
-live co-drawing over presence, audio replay (the per-sample `t` and stroke
-ids are stored for it). Obsidian vault export writes an ink block's
+live co-drawing over presence, audio recording to go with the replay, a
+replay of erasures and edits (it shows the drawing as it is, in the order
+it was written), and a replay on the PDF page itself in the browser (the
+card plays it). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
 that returns to the last tool, the highlighter behind the ink, clipboard

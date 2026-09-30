@@ -9,7 +9,15 @@ key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
 in-scope check (`_load_scoped_page`/`_scope_pages`: folder = tag prefix match
 via `foldertags.path_within`, page = id equality) is shared by every
-executor. When the request names a cursor block (`focus_block_id`) or attached block
+executor. A mutating entry also has a `preview`: what its approval card
+shows when the user set its permission to Ask. Each changer has three
+parts: a `_plan_*` function checks a call and works out the change, the
+executor applies the plan, and the preview describes it. So the card and
+the change come from one place ("Asking before a call" in
+[ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
+reading or changing: its tools share the `mutating` flag, which also sets its
+default (reading allowed, changes ask; `ai_permissions.permission_state`).
+When the request names a cursor block (`focus_block_id`) or attached block
 chips (`context_blocks`), `agent_system` adds one line each so "this block" /
 "these" resolve to ids without a `read_block` round-trip — their text is
 already in the context (see "Pointing the chat at notes" in [ai.md](ai.md)).
@@ -658,8 +666,10 @@ Deliberately not offered under any permission:
 - Adding a fetched paper to the library — `fetch_paper` reads, it never
   creates a page; the user drops the PDF or uses the extension for that.
 
-Disarmed tools are not offered to the model, and the server additionally
-refuses to execute them if called. Output/argument sizes are capped
+Tools whose permission is Off are not offered to the model, and the server
+additionally refuses to execute them if called. A tool whose permission is
+Ask is offered, but each call waits on an approval card and runs only once
+the user allows it. Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —

@@ -68,7 +68,7 @@ These describe the implementation unless explicitly marked as plans.
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
-| Notebook pages, paper, and page-on-demand sheets | [Notebooks](notebooks.md) |
+| Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |

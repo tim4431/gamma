@@ -17,25 +17,77 @@ export function readSession(dir = process.cwd()) {
   return fs.readFileSync(path.join(dir, 'session.txt'), 'utf8').trim();
 }
 
-// Playwright videos have no pointer: draw a dot that follows the mouse and
-// darkens while a button is down. `zoom` is the CSS zoom the page applies to
-// <html> (the dot lives inside it, so its CSS px are zoom× the pointer's).
+// Retina capture. Playwright's recordVideo, and Chrome's screencast under
+// `deviceScaleFactor` emulation, deliver frames at the window's CSS size, and
+// CSS zoom misplaces the app's popups. A headless shell whose screen itself is
+// 2× with a 1440×900 window gives the page its normal viewport at
+// devicePixelRatio 2, and its screencast frames are 2880×1800.
+export const VIEW = { width: 1440, height: 900, scale: 2 };
+export function launchRetina(options = {}) {
+  return chromium.launch({ headless: true, ...options, args: [
+    `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${VIEW.height}`, ...(options.args || [])] });
+}
+// Context options for launchRetina: the window is the viewport; light English UI.
+export const RETINA = { viewport: null, colorScheme: 'light', locale: 'en-US' };
+
+// Save the page's screencast as JPEG frames plus frames.json (seconds since the
+// capture started). `clock()` reads the same timeline for a recorder's marks.
+export async function startCapture(page, dir, { quality = 90 } = {}) {
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const size = { width: VIEW.width * VIEW.scale, height: VIEW.height * VIEW.scale };
+  const frames = [], t0 = Date.now();
+  await page.screencast.start({ size, quality, onFrame: ({ data, timestamp }) => {
+    const file = `${String(frames.length).padStart(6, '0')}.jpg`;
+    fs.writeFileSync(path.join(dir, file), data);
+    frames.push({ t: (timestamp - t0) / 1000, file });
+  } });
+  return {
+    clock: () => (Date.now() - t0) / 1000,
+    async stop() {
+      await page.screencast.stop();
+      if (frames.length < 2) throw new Error('The screencast delivered no frames');
+      fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify({ ...size, scale: VIEW.scale, frames }));
+      return dir;
+    },
+  };
+}
+
+// Screencasts have no pointer: draw an arrow that follows the mouse, with a
+// ring on each press. `zoom` is the CSS zoom the page applies to <html> (the
+// arrow lives inside it, so its CSS px are zoom× the pointer's).
 export function addCursor(context, { zoom = 1 } = {}) {
   return context.addInitScript((zoom) => {
     window.addEventListener('DOMContentLoaded', () => {
       const c = document.createElement('div');
       c.id = '__fakecur';
-      c.style.cssText = 'position:fixed;z-index:2147483647;width:16px;height:16px;'
-        + 'border-radius:50%;background:rgba(20,20,20,.35);border:2px solid #fff;'
-        + 'box-shadow:0 1px 4px rgba(0,0,0,.4);pointer-events:none;left:0;top:0;'
-        + 'margin:-9px 0 0 -9px;transition:transform .05s linear';
+      c.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24"><path d="M4 2.5v16.2l4.3-3.9 2.9 6.4 3-1.3-2.8-6.3h5.9z" '
+        + 'fill="#16181d" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+      c.style.cssText = 'position:fixed;z-index:2147483647;left:0;top:0;width:24px;height:24px;margin:-2.5px 0 0 -4px;'
+        + 'pointer-events:none;opacity:0;filter:drop-shadow(0 1.5px 2px rgba(0,0,0,.35))';
+      const arrow = c.firstChild;
+      arrow.style.cssText = 'transform-origin:4px 2.5px;transition:transform .12s ease-out';
       document.body.appendChild(c);
       const z = Number(zoom) || 1;
-      document.addEventListener('mousemove', e => { c.style.transform = `translate(${e.clientX / z}px,${e.clientY / z}px)`; }, true);
-      const rest = () => { c.style.background = 'rgba(20,20,20,.35)'; };
-      // flash blue on click; an editor may swallow the mouseup, so also time out
-      document.addEventListener('mousedown', () => { c.style.background = 'rgba(60,120,255,.6)'; setTimeout(rest, 300); }, true);
+      let x = 0, y = 0;
+      document.addEventListener('mousemove', e => {
+        x = e.clientX / z; y = e.clientY / z;
+        c.style.opacity = '1';
+        c.style.transform = `translate(${x}px,${y}px)`;
+      }, true);
+      document.addEventListener('mousedown', () => {
+        arrow.style.transform = 'scale(.86)';
+        const ring = document.createElement('div');
+        ring.style.cssText = `position:fixed;z-index:2147483646;left:${x}px;top:${y}px;width:30px;height:30px;margin:-15px 0 0 -15px;`
+          + 'border-radius:50%;border:2px solid rgba(37,99,235,.55);background:rgba(37,99,235,.10);pointer-events:none';
+        document.body.appendChild(ring);
+        ring.animate([{ transform: 'scale(.35)', opacity: 1 }, { transform: 'scale(1.25)', opacity: 0 }],
+          { duration: 520, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = () => ring.remove();
+      }, true);
+      // An editor may swallow the mouseup, so the press also relaxes on its own.
+      const rest = () => { arrow.style.transform = ''; };
       document.addEventListener('mouseup', rest, true);
+      document.addEventListener('mousedown', () => setTimeout(rest, 320), true);
     });
   }, zoom);
 }

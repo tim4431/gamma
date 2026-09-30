@@ -63,12 +63,14 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
       onClose();
     }
     function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }
-    // Capture phase so we see the click before it lands on other handlers.
+    // Capture phase so we see the click before it lands on other handlers,
+    // and Escape before a dialog or popover around the menu does: it closes
+    // only the menu.
     document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("pointerdown", onDown, true);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose]);
 
@@ -242,9 +244,9 @@ function useDropdown(up = false) {
 // gives the main options a `heading` and lists the others as `sections`,
 // [{label, value, onChange, options}], each under its own heading — the chat
 // composer's model chip with its reasoning effort. `up` opens above the
-// trigger.
+// trigger. `disabled` greys the trigger out and keeps the menu shut.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
-  display, heading, sections = [], up = false }) {
+  display, heading, sections = [], up = false, disabled = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up);
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
@@ -260,7 +262,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   return (
     <>
       <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
-        aria-label={title} title={title} {...triggerProps}>
+        aria-label={title} title={title} disabled={disabled} {...triggerProps}>
         {TriggerIcon ? (
           <TriggerIcon size={16} />
         ) : (

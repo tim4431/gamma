@@ -3,7 +3,9 @@
 // and the calls that changed something are listed apart, grouped by where
 // the change landed — the library (renamed or filed pages) or the notes
 // (edited, added or moved blocks). While a reply streams, the {"step"} line
-// the server sends before each call names what is running now.
+// the server sends before each call names what is running now. A call the
+// user did not allow on its approval card (`declined`) counts on its own,
+// not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create"]);
@@ -25,7 +27,8 @@ export function changePlace(a) {
 export function splitActions(actions = []) {
   const library = [], notes = [];
   for (const a of actions) if (isChange(a)) (changePlace(a) === "library" ? library : notes).push(a);
-  return { library, notes, failed: actions.filter((a) => a.error).length };
+  return { library, notes, failed: actions.filter((a) => a.error && !a.declined).length,
+    declined: actions.filter((a) => a.declined).length };
 }
 
 // The pill's words for the reading steps, in the order they first ran.

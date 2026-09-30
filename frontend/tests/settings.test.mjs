@@ -1,29 +1,45 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
+import { normalizePerm, permStates, permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
 import { resolveSettingsPane, searchSettings } from "../src/settings/settingsNavigation.js";
 
-test("permission presets preserve explicit restrictions and the applicable tools for each chat kind", () => {
+test("permission presets cover each chat kind's tools, and changes ask unless told otherwise", () => {
   for (const kind of ["folder", "pdf", "notes"]) {
     const read = presetPermissions(kind, "read");
     assert.equal(permissionPreset(kind, read), "read");
-    assert.equal(read.block_edit, false);
-    assert.equal(read.read, true);
-    assert.equal(read.publisher_cookies, true);
-    assert.equal(permissionPreset(kind, { ...read, publisher_cookies: false }), "custom");
+    assert.equal(read.block_edit, "off");
+    assert.equal(read.read, "allow");
+    assert.equal(read.publisher_cookies, "allow");
+    assert.equal(permissionPreset(kind, { ...read, publisher_cookies: "off" }), "custom");
     const library = presetPermissions(kind, "library");
     assert.equal(permissionPreset(kind, library), "library");
-    assert.equal(library.read, true);
+    assert.equal(library.read, "allow");
     for (const key of ["web_search", "web_read", "publisher_cookies", "block_edit"]) {
-      assert.equal(library[key], false, `read-library disables ${key}`);
+      assert.equal(library[key], "off", `read-library turns ${key} off`);
     }
     assert.deepEqual(Object.keys(read), toolsForKind(kind));
-    assert.equal(permissionPreset(kind, { ...read, read: false }), "custom");
-    assert.equal(permissionPreset(kind, presetPermissions(kind, "edit")), "edit");
-    assert.equal(permissionPreset(kind, {}), "edit", "legacy omitted permissions remain allowed");
+    assert.equal(permissionPreset(kind, { ...read, read: "off" }), "custom");
+    const ask = presetPermissions(kind, "ask");
+    assert.equal(ask.block_edit, "ask");
+    assert.equal(ask.web_read, "allow");
+    assert.equal(permissionPreset(kind, ask), "ask");
+    assert.equal(permissionPreset(kind, presetPermissions(kind, "all")), "all");
+    assert.equal(permissionPreset(kind, {}), "ask", "left out, reading is allowed and changes ask");
   }
-  assert.equal(presetPermissions("folder", "read").rename, false);
-  assert.equal(presetPermissions("pdf", "edit").rename, undefined);
+  assert.equal(presetPermissions("folder", "read").rename, "off");
+  assert.equal(presetPermissions("pdf", "all").rename, undefined);
+});
+
+test("a stored permission reads as a state", () => {
+  assert.equal(normalizePerm("rename", true), "ask", "a change that was on asks now");
+  assert.equal(normalizePerm("read", true), "allow");
+  assert.equal(normalizePerm("read", false), "off");
+  assert.equal(normalizePerm("block_edit", "allow"), "allow");
+  assert.equal(normalizePerm("block_edit", undefined), "ask");
+  assert.equal(normalizePerm("web_read", "bogus"), "allow");
+  assert.equal(normalizePerm("publisher_cookies", "ask"), "allow", "journal sign-ins are on or off");
+  assert.deepEqual(permStates("publisher_cookies"), ["allow", "off"]);
+  assert.deepEqual(permStates("rename"), ["allow", "ask", "off"]);
 });
 
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
@@ -87,11 +103,14 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   for (const dropped of ["pdfDarkPage", "translateLang", "uiScale", "inkTools", "unknownPref"]) {
     assert.ok(!(dropped in read), `${dropped} dropped`);
   }
-  assert.equal(read.agentPerms.pdf.block_edit, false);
-  assert.equal(read.agentPerms.pdf.publisher_cookies, false);
-  assert.equal(read.agentPerms.folder.publisher_cookies, true, "existing accounts keep connected fetching enabled");
-  assert.equal(read.agentPerms.pdf.read, true, "missing tools stay allowed");
-  assert.equal(read.agentPerms.folder.rename, true);
+  assert.equal(read.agentPerms.pdf.block_edit, "off");
+  assert.equal(read.agentPerms.pdf.publisher_cookies, "off");
+  assert.equal(read.agentPerms.folder.publisher_cookies, "allow", "existing accounts keep connected fetching enabled");
+  assert.equal(read.agentPerms.pdf.read, "allow", "missing reading tools are allowed");
+  assert.equal(read.agentPerms.folder.rename, "ask", "a missing change asks");
+  const legacy = readProfile({ agentPerms: { folder: { rename: true, read: true, move: "allow" } } });
+  assert.deepEqual([legacy.agentPerms.folder.rename, legacy.agentPerms.folder.read, legacy.agentPerms.folder.move],
+    ["ask", "allow", "allow"], "a change stored as on from before Ask asks; an explicit Allow stays");
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");

@@ -10,8 +10,11 @@ import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavCo
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
+import ApprovalCard from "./ApprovalCard";
+import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, withGrant, withoutGrants,
+  writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
-import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
+import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
@@ -22,12 +25,12 @@ import { changePlace, isChange, noteChangeText, runningLabel, splitActions, step
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
-import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/AssistantTools";
+import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -142,16 +145,18 @@ function ChatErrorCard({ message, compact, actions }) {
 // under it the changes — renamed or filed pages, edited or added notes —
 // each old → new with a link to what changed. While the reply streams, the
 // pill names the step running now.
-function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
-  const { failed } = splitActions(actions);
+// `waiting`: the running call waits on its approval card, so nothing spins.
+function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, children }) {
+  const { failed, declined } = splitActions(actions);
   const live = !!running;
   return (
     <div className="chatStepsWrap">
       <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
-        {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatPillText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
+        <span className="chatPillText">{waiting ? t("Waiting for your approval") : live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
+        {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
       </button>
       {open ? children : null}
@@ -436,11 +441,31 @@ export default function ChatDock({
   // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
   const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
-  const chatKindLabel = CHAT_KIND_ROWS.find((r) => r[0] === chatKind)?.[2] || t("Chat");
+  const chatKindLabel = chatKindName(chatKind);
   // The chat settings shortcut edits the same global preferences as Settings.
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
-  const perm = (key) => chatToolPerms?.[key] !== false;
+  const perm = (key) => permState(chatToolPerms, key) !== "off";
+  // "Allow in this chat" (chat/approvals.js): the permissions this
+  // conversation stopped asking for, kept per account and conversation in
+  // this browser; another tab's change arrives as a storage event.
+  const [grantStore, setGrantStore] = useState(readGrants);
+  useEffect(() => {
+    const onStorage = (e) => { if (e.key === GRANTS_KEY) setGrantStore(readGrants()); };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  const activeUser = () => { try { return localStorage.getItem("gamma-active-user") || ""; } catch { return ""; } };
+  const grantedHere = grantsIn(grantStore, activeUser(), conversationId(chatMessages))
+    .filter((key) => permState(chatToolPerms, key) === "ask");
+  const updateGrants = (change) => setGrantStore((store) => {
+    const next = change(store);
+    writeGrants(next);
+    return next;
+  });
+  // Approvals answered here: the steps pill names the running call again
+  // while it runs, instead of waiting.
+  const [answeredApprovals, setAnsweredApprovals] = useState(() => new Set());
   const toggleTools = () => setAgentEnabled(!agentEnabled);
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
@@ -448,7 +473,7 @@ export default function ChatDock({
   // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
   // the folder's pages, page chats get the read + note-block tools for their
   // own page.
-  const agentPayload = () => {
+  const agentPayload = (prevMessages) => {
     if (!toolsEnabled) return {};
     const scope = organizeFolder != null && (agentReads || agentWrites)
       ? { agent_scope: "folder", folder: organizeFolder }
@@ -457,9 +482,21 @@ export default function ChatDock({
         : null;
     return scope
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
-          permissions: chatToolPerms, agent_system: agentSystem || "" }
+          permissions: chatToolPerms, agent_system: agentSystem || "",
+          granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)) }
       : {};
   };
+  // The user's answer on an approval card: the server runs the call or
+  // leaves it; "Allow in this chat" is kept for the conversation and
+  // "Always allow" sets the permission in Settings — once the server took it.
+  async function decideApproval(approval, decision, note = "") {
+    await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
+      method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
+    });
+    setAnsweredApprovals((done) => new Set(done).add(approval.id));
+    if (decision === "chat") updateGrants((store) => withGrant(store, activeUser(), conversationId(chatMessages), approval.perm));
+    if (decision === "always") changePermission(setAgentPerms, chatKind, approval.perm, "allow");
+  }
   // The block the user's cursor is on shows as a "Cursor" chip (like a PDF
   // selection) and rides with the message as focus_block_id; its × leaves it
   // out for that block until the cursor moves.
@@ -681,6 +718,7 @@ export default function ChatDock({
       return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
     },
   }), [homeBlocks, focusedBlockId, pageTitle]);
+  const pageTitleOf = (id) => citeTitles.titleOf(id)?.title || "";
   // Reserve the reply's bubble before the first stream event. This placeholder
   // is display-only; tool activity and answer text replace it in the same row.
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
@@ -915,7 +953,7 @@ export default function ChatDock({
       files: chatFiles,
       context_char_limit: chatContextChars,
       multi_context_char_limit: multiContextChars,
-      ...agentPayload(),
+      ...agentPayload(prevMessages),
     };
   }
 
@@ -1028,6 +1066,7 @@ export default function ChatDock({
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
+    let approval = null; // its approval card ({"approval"} line), while the user decides
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
@@ -1070,8 +1109,11 @@ export default function ChatDock({
           if (ev.error) throw chatFailure(ev.error, ev);
           if (ev.step) {
             running = ev.step;
+          } else if (ev.approval) {
+            approval = ev.approval;
           } else if (ev.action) {
             running = null;
+            approval = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit).
@@ -1102,7 +1144,8 @@ export default function ChatDock({
           }
         }
         if (acc || actions.length || usage || running) {
-          showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}) }));
+          showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}),
+            ...(approval ? { approval } : {}) }));
         }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
@@ -1659,8 +1702,9 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
+                        waiting={isResponding && !!m.approval && !answeredApprovals.has(m.approval.id)}
                         open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
-                        titleOf={(id) => citeTitles.titleOf(id)?.title || ""}>
+                        titleOf={pageTitleOf}>
                       <div className="chatToolActions">
                         {(m.actions || []).map((a, j) => {
                           const Icon = ACTION_ICONS[a.kind] || FolderIcon;
@@ -1676,7 +1720,7 @@ export default function ChatDock({
                                   onClick={() => toggleAction(key)}
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={14} />
-                                  <span>{a.summary}</span>
+                                  <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
                                 </button>
                               ) : (
@@ -1699,6 +1743,10 @@ export default function ChatDock({
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                    {isResponding && m.approval ? (
+                      <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
+                        titleOf={pageTitleOf} onDecide={decideApproval} />
+                    ) : null}
                     {!isUser && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
@@ -1932,6 +1980,15 @@ export default function ChatDock({
             </button>
           ) : null}
           <span className="chatComposerSpacer" />
+          {grantedHere.length && !aiOff ? (
+            <button type="button" className="chatAttachToggle chatGrantChip"
+              onClick={() => updateGrants((store) => withoutGrants(store, activeUser(), conversationId(chatMessages)))}
+              title={t("The assistant doesn't ask before these in this chat: {list}. Click to make it ask again.",
+                { list: grantedHere.map(permissionLabel).join(", ") })}
+              aria-label={t("Allowed in this chat: {list}. Ask again", { list: grantedHere.map(permissionLabel).join(", ") })}>
+              <ShieldIcon size={14} />{t("Allowed in this chat")}<XIcon size={12} />
+            </button>
+          ) : null}
           {!aiOff && headerModels.length ? (
             <span className="chatModelChip">
               <MenuSelect

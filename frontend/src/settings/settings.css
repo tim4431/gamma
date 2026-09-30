@@ -187,13 +187,21 @@
 .agentToolDescription > span { display: block; margin-left: var(--space-7); }
 .agentToolDescription .settingDesc, .agentToolIntro .settingDesc { display: block; margin-top: var(--space-1); }
 .agentToolTable td { text-align: center; }
-.agentToolTable .switch { vertical-align: middle; }
-.agentToolMatrix:disabled .switch, .agentToolPicker:disabled, .agentToolTable .switch:has(input:disabled) { opacity: 0.45; }
+/* A permission's state menu (Allow / Ask / Off): its icon says the state at
+   a glance, a green check, the accent's question mark or a muted ban. */
+.agentPermState { display: inline-flex; min-width: 0; max-width: 100%; vertical-align: middle; }
+.agentPermState .uiSelectBtn { min-width: 0; }
+.agentPermState.allow .uiSelectBtn > svg:first-child { color: var(--ok); }
+.agentPermState.ask .uiSelectBtn > svg:first-child { color: var(--accent); }
+.agentPermState.off .uiSelectBtn { color: var(--text-muted); }
+.agentToolPicker:disabled { opacity: 0.45; }
 .agentToolUnavailable { color: var(--text-dim); }
 .agentToolMobileLabel { display: none; }
 .agentToolNote { margin: var(--space-6) var(--space-4) 0; line-height: var(--lh-read); }
 .agentToolPicker .chatToolPermRow { min-height: 28px; }
-.agentToolPicker .chatToolPermRow:has(input:disabled) { opacity: 0.45; }
+.agentToolPicker .chatToolPermRow.select { cursor: default; }
+.agentToolPicker .chatToolPermRow.select:hover { background: none; }
+.chatToolPermLabel { flex: 1; min-width: 0; }
 @container (max-width: 560px) {
   .agentToolTable colgroup { display: none; }
   .agentToolTable, .agentToolTable thead, .agentToolTable tbody { display: block; }
@@ -204,6 +212,9 @@
   .agentToolTable td { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding-top: 0; padding-bottom: var(--space-5); }
   .agentToolMobileLabel { display: inline; font-size: var(--fs-xs); color: var(--text-muted); }
   .agentToolTable th, .agentToolTable td { min-width: 0; }
+  /* The column's name over its state menu, so the menu has the column's width. */
+  .agentToolTable td { flex-direction: column; gap: var(--space-1); }
+  .agentPermState .uiSelectChev { display: none; }
 }
 
 /* --- card: a full-width block that is a reading, not a control --- */
