@@ -1,14 +1,15 @@
-"""Notebooks: a page written on sheets of paper instead of a PDF
-(docs/dev/notebooks.md).
+"""Sheets of paper to write on (docs/dev/notebooks.md).
 
-A notebook is a page whose root carries ``notebook: {sheet: <paper>}``, the
-paper new sheets get. Its sheets are the root's direct children that carry
-``sheet: <paper>``, in block order: adding a page is inserting a block, so
-sheets two devices add while apart both survive a merge, and nothing counts
-pages. A sheet's handwriting is the ink groups under it — blocks with an
-``ink_url`` whose file (gamma/ink.py) is drawn on a ``canvas`` space the
-sheet's size, points from its top-left corner. Other blocks under a sheet
-are notes about that page.
+A sheet is a block carrying ``sheet: <paper>``. A page's sheets are those
+blocks in document order, at any depth: adding a page is inserting a
+block, so sheets two devices add while apart both survive a merge, and
+nothing counts pages. A notebook is a page whose root carries ``notebook:
+{sheet: <paper>}``, the paper new sheets get, and whose sheets are its
+pages; any other page can hold sheets among its notes. A sheet's
+handwriting is the ink groups under it that no nearer sheet holds — blocks
+with an ``ink_url`` whose file (gamma/ink.py) is drawn on a ``canvas``
+space the sheet's size, points from its top-left corner. Other blocks under
+a sheet are notes about that page.
 
 A paper is ``{width, height, color, pattern, spacing, line}``: the size in
 points, the background colour, ``blank`` / ``ruled`` / ``grid`` / ``dots``
@@ -162,8 +163,10 @@ def notebook_pdf(sheets: list[tuple[dict, list]]) -> bytes:
 
 
 def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
-    """The notebook page's sheets in order, from its flat block dicts
-    (``block_to_dict``): ``[{id, paper, blocks: [the blocks under it]}]``."""
+    """The page's sheets in document order, at any depth, from its flat
+    block dicts (``block_to_dict``): ``[{id, paper, blocks: [the blocks
+    under it that no nearer sheet holds]}]``. A notebook's paper fills a
+    sheet's missing keys."""
     kids: dict[str, list[dict]] = {}
     for b in blocks:
         kids.setdefault(b.get("parent_id"), []).append(b)
@@ -171,15 +174,16 @@ def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
         rows.sort(key=lambda b: (b.get("position") or "", b["id"]))
     root = next((b for b in blocks if b["id"] == page_id), None)
     default = normalize_paper((((root or {}).get("properties") or {}).get("notebook") or {}).get("sheet"))
-    out = []
-    for b in kids.get(page_id, []):
+    out, of = [], {}
+    stack = [(b, None) for b in kids.get(page_id, [])]
+    while stack:
+        b, sheet = stack.pop(0)
         props = b.get("properties") or {}
-        if not is_sheet(props):
-            continue
-        under, stack = [], list(kids.get(b["id"], []))
-        while stack:
-            n = stack.pop(0)
-            under.append(n)
-            stack[:0] = kids.get(n["id"], [])
-        out.append({"id": b["id"], "paper": normalize_paper(props["sheet"], default), "blocks": under})
+        if is_sheet(props):
+            of[b["id"]] = {"id": b["id"], "paper": normalize_paper(props["sheet"], default), "blocks": []}
+            out.append(of[b["id"]])
+            sheet = b["id"]
+        elif sheet:
+            of[sheet]["blocks"].append(b)
+        stack[:0] = [(c, sheet) for c in kids.get(b["id"], [])]
     return out

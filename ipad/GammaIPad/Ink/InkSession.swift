@@ -1,6 +1,9 @@
+import Combine
+import QuartzCore
 import SwiftUI
 
-/// Where a group of strokes is drawn: a PDF page (1-based) or a notebook sheet.
+/// Where a group of strokes is drawn: a PDF page (1-based) or a sheet (a
+/// notebook's page, or one among a note's blocks).
 enum InkKey: Hashable {
     case pdf(Int)
     case sheet(String)
@@ -47,9 +50,21 @@ final class InkSession: ObservableObject {
     /// Bumps whenever a group's strokes change: the readers redraw.
     @Published private(set) var changed = 0
     @Published private(set) var jumpTarget: JumpRequest?
-    /// The notebook's sheets (notebook views): [{id, number, paper}].
+    /// The page's sheets, in document order (a notebook's pages, or those
+    /// among a note's blocks): [{id, number, paper, ink}]. A notebook's
+    /// next page comes by writing low on its last one; its paper is the one
+    /// new pages get.
     @Published private(set) var sheets: [[String: Any]] = []
     @Published private(set) var notebookPaper: [String: Any] = [:]
+    @Published private(set) var isNotebook = false
+    /// The group whose writing is replaying, and a signal per frame of it
+    /// (not published: the SwiftUI views need not redraw 60 times a second)
+    /// on which the reader redraws the page the group is on (replayKey).
+    @Published private(set) var replaying: String?
+    let replayFrames = PassthroughSubject<Void, Never>()
+    private(set) var replayKey: InkKey?
+    private var replayFrame: [[String: Any]]?
+    private var replayTask: Task<Void, Never>?
 
     private(set) var replica: Replica?
     private(set) var pageId = ""
@@ -89,9 +104,9 @@ final class InkSession: ObservableObject {
             guard let n = Int(page) else { continue }
             for g in list as? [[String: Any]] ?? [] { found.append((g.string("id"), .pdf(n), g.string("url"))) }
         }
-        let nb = view.dict("notebook")
-        sheets = nb.array("sheets").compactMap { $0 as? [String: Any] }
-        notebookPaper = nb.dict("paper")
+        sheets = view.array("sheets").compactMap { $0 as? [String: Any] }
+        notebookPaper = view.dict("notebook").dict("paper")
+        isNotebook = view.string("kind") == "notebook"
         for sheet in sheets {
             for g in sheet.array("ink").compactMap({ $0 as? [String: Any] }) {
                 found.append((g.string("id"), .sheet(sheet.string("id")), g.string("url")))
@@ -108,13 +123,23 @@ final class InkSession: ObservableObject {
             next[id] = InkGroup(id: id, key: key, ink: ink, base: url, dirty: false, geometry: geometry(ink))
         }
         for (id, g) in groups where next[id] == nil && g.dirty { next[id] = g }
+        let replayed = replaying.flatMap { groups[$0]?.base }
         groups = next
         order = found.map { $0.0 } + next.keys.filter { id in !found.contains { $0.0 == id } }
+        // a drawing that changed under its replay ends the replay
+        if let id = replaying, groups[id]?.base != replayed { stopReplay() }
         changed += 1
     }
 
+    /// The groups drawn on `key` — the replaying one as it stood at that
+    /// moment of its replay.
     func groupList(on key: InkKey) -> [InkGroup] {
-        order.compactMap { groups[$0] }.filter { $0.key == key }
+        order.compactMap { groups[$0] }.filter { $0.key == key }.map { (g: InkGroup) -> InkGroup in
+            guard g.id == replaying, let frame = replayFrame else { return g }
+            var shown = g
+            shown.geometry = frame
+            return shown
+        }
     }
 
     private func geometry(_ ink: [String: Any]) -> [[String: Any]] {
@@ -175,7 +200,7 @@ final class InkSession: ObservableObject {
         }
         guard let after = (try? replica.pure("appendStroke", [before, stroke])) as? [String: Any] else { return }
         apply([Change(id: groupId, key: key, before: before, after: after)], record: true)
-        if case .sheet(let sheetId) = key, let last = sheets.last, last.string("id") == sheetId,
+        if isNotebook, case .sheet(let sheetId) = key, let last = sheets.last, last.string("id") == sheetId,
            let box = (try? replica.pure("strokeBounds", [stroke])) as? [Double], box.count == 4,
            box[3] > (last.dict("paper").double("height") ?? .infinity) * 0.75 {
             // writing into the last quarter of the last sheet adds the next one (Notability's continuous page)
@@ -215,6 +240,7 @@ final class InkSession: ObservableObject {
     }
 
     private func apply(_ changes: [Change], record: Bool) {
+        if let id = replaying, changes.contains(where: { $0.id == id }) { stopReplay() }
         for c in changes {
             let base = groups[c.id]?.base ?? ""
             groups[c.id] = InkGroup(id: c.id, key: c.key, ink: c.after, base: base, dirty: true, geometry: geometry(c.after))
@@ -276,21 +302,93 @@ final class InkSession: ObservableObject {
         }
     }
 
-    // --- notebooks ------------------------------------------------------------------------
+    // --- sheets ----------------------------------------------------------------------------
 
+    /// A notebook's next page (at its end), or on any other page a page right
+    /// after its last one (at the end when it has none): replica/edits.js
+    /// addSheet, the browser's rules.
     @discardableResult
     func addSheet() -> String? {
         guard let replica else { return nil }
-        let id = try? replica.edit("addSheet", [pageId]) as? String
+        var after: Any = NSNull()
+        if !isNotebook, let last = sheets.last?.string("id") { after = last }
+        let id = try? replica.edit("addSheet", [pageId, NSNull(), after]) as? String
         onSaved()
         return id
     }
 
     func setPaper(_ paper: [String: Any], sheet: String?, forNew: Bool) {
         guard let replica else { return }
-        if let sheet { try? replica.edit("setSheetPaper", [pageId, sheet, paper]) }
-        if forNew { try? replica.edit("setNotebookPaper", [pageId, paper]) }
+        if let sheet { _ = try? replica.edit("setSheetPaper", [pageId, sheet, paper]) }
+        if forNew { _ = try? replica.edit("setNotebookPaper", [pageId, paper]) }
         onSaved()
+    }
+
+    // --- replay ---------------------------------------------------------------------------
+
+    /// A group's writing, replayed on its page in the order and at the pace
+    /// it was written, pauses shortened (ink.js inkTimeline, the browser's
+    /// replay): the reader scrolls to it and draws it stroke by stroke. The
+    /// same group again while it plays stops it.
+    func replay(_ id: String) {
+        if replaying == id { stopReplay(); return }
+        stopReplay()
+        guard let replica, let g = groups[id],
+              let timeline = (try? replica.pure("inkTimeline", [g.ink])) as? [String: Any] else { return }
+        let items = timeline.array("strokes").compactMap { $0 as? [String: Any] }
+        let duration = timeline.double("duration") ?? 0
+        guard !items.isEmpty else { return }
+        var whole: [String: [String: Any]] = [:]
+        for item in g.geometry { whole[item.string("id")] = item }
+        let strokes = g.ink.array("strokes").compactMap { $0 as? [String: Any] }
+        jump(to: id)
+        replaying = id
+        replayKey = g.key
+        replayFrame = []
+        let start = CACurrentMediaTime()
+        replayTask = Task { @MainActor [weak self] in
+            while let session = self, !Task.isCancelled {
+                let t = (CACurrentMediaTime() - start) * 1000
+                if t >= duration { session.stopReplay(); return }
+                session.replayFrame = session.frame(items, strokes, whole, at: t)
+                session.replayFrames.send()
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+    }
+
+    func stopReplay() {
+        replayTask?.cancel()
+        replayTask = nil
+        guard replaying != nil else { return }
+        replaying = nil
+        replayKey = nil
+        replayFrame = nil
+        changed += 1
+    }
+
+    /// The group `t` ms into its replay: the strokes begun by then, whole, or
+    /// (the one being written) cut to the samples it had — a prefix of its
+    /// delta-coded pts is its first samples (ink.js inkAtTime).
+    private func frame(_ items: [[String: Any]], _ strokes: [[String: Any]], _ whole: [String: [String: Any]],
+                       at t: Double) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for item in items {
+            guard let start = item.double("start"), start <= t else { break }
+            guard let index = item.int("index"), index < strokes.count else { continue }
+            if t >= (item.double("end") ?? 0), let done = whole[item.string("id")] {
+                out.append(done)
+                continue
+            }
+            let times = item.array("times").compactMap { ($0 as? NSNumber)?.doubleValue }
+            var k = 1
+            while k < times.count && times[k] <= t { k += 1 }
+            var stroke = strokes[index]
+            let channels = stroke.string("ch").isEmpty ? 2 : stroke.string("ch").count
+            stroke["pts"] = Array(stroke.array("pts").prefix(k * channels))
+            if let part = (try? replica?.pure("strokeGeometry", [stroke])) as? [String: Any] { out.append(part) }
+        }
+        return out
     }
 
     // --- the notes' jump --------------------------------------------------------------------

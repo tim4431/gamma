@@ -562,10 +562,10 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
                 bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
                             "the limit on this page)")
         if props.get("ink_url"):
-            where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the notebook page above"
+            where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the page of paper above"
             bits.append(f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)")
         elif is_sheet(props):
-            bits.append("(a notebook page: the handwriting under it is written on it)")
+            bits.append("(a page of paper: the handwriting under it is written on it)")
         bits.append(text or "(empty)")
         pad = "  " * depth
         return pad + "- " + "\n".join(

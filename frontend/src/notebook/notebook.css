@@ -87,3 +87,23 @@
 
 /* The notes: a sheet's row reads as the page it stands for. */
 .blockSheetLabel { color: var(--text-tertiary); font-size: var(--fs-xs); }
+
+/* A page among a note's blocks (notebook/NoteSheet.jsx): the paper fitted
+   to the column, its tools under it, the paper menu in the flow. */
+.noteSheet { display: block; width: 100%; margin: 6px 0 2px; }
+.noteSheet .nbSheet { margin: 0 auto; }
+.noteSheet.inkArmed .nbSheet { cursor: crosshair; }
+.noteSheet.inkTouchDraw .nbSheet { touch-action: none; }
+.noteSheetBar { display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-top: 4px; }
+.noteSheetBar .inkReplayBtn {
+  position: static;
+  opacity: 1;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+}
+.noteSheetBar .inkReplayBtn:hover { color: var(--text-primary); background: var(--bg-active); }
+.noteSheet .nbPaperMenu { position: static; margin: 6px 0 0 auto; max-width: 100%; }

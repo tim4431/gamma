@@ -1,14 +1,16 @@
 // What a native reader draws from a page of the replica (the iPad app,
-// docs/dev/ipad.md): the page's kind, its PDF, its notebook sheets, its ink
-// groups per PDF page or sheet, and its notes as a tree. Pure: the same
-// readings the web app makes (library/libraryUtils.js pageAttachment,
-// notebook/notebook.js), from a replica snapshot (replica/tree.js).
+// docs/dev/ipad.md): the page's kind, its PDF, its sheets (a notebook's
+// pages, or those among a note's blocks), its ink groups per PDF page or
+// sheet, and its notes as a tree. Pure: the same readings the web app makes
+// (library/libraryUtils.js pageAttachment, notebook/notebook.js), from a
+// replica snapshot (replica/tree.js).
 import { inkBySheet, pageNotebook, sheetsOf } from "../notebook/notebook.js";
 import { treeOf } from "./tree.js";
 
 // {id, title, folder, kind: "pdf" | "notebook" | "page", pdf: {docId, url,
-// name} | null, notebook: {paper, sheets: [{id, number, paper, ink: [{id,
-// url}]}]} | null, pdfInk: {pageNo: [{id, url}]}, tree}
+// name} | null, notebook: {paper} | null, sheets: [{id, number, paper, ink:
+// [{id, url}]}] (in document order; none on a PDF's page, whose reader is
+// the PDF), pdfInk: {pageNo: [{id, url}]}, tree}
 export function pageView(snapshot, pageId) {
   const root = snapshot?.[pageId];
   if (!root) return null;
@@ -19,13 +21,13 @@ export function pageView(snapshot, pageId) {
     ? { docId, url: props.source_url || (docId ? `/api/uploads/${docId}.pdf` : ""), name: props.original_filename || "" }
     : null;
   const nb = pdf ? null : pageNotebook({ properties: props });
-  let notebook = null;
-  if (nb) {
+  let sheets = [];
+  if (!pdf) {
     const inks = inkBySheet(tree);
-    notebook = { paper: nb.paper, sheets: sheetsOf(tree, nb.paper).map((s) => ({
+    sheets = sheetsOf(tree, nb?.paper).map((s) => ({
       id: s.id, number: s.index + 1, paper: s.paper,
       ink: (inks.get(s.id) || []).filter((b) => b.properties.ink_url).map((b) => ({ id: b.id, url: b.properties.ink_url })),
-    })) };
+    }));
   }
   const pdfInk = {};
   if (pdf) {
@@ -35,8 +37,8 @@ export function pageView(snapshot, pageId) {
       (pdfInk[page] ||= []).push({ id: bid, url: b.props.ink_url });
     }
   }
-  return { id: pageId, title: root.content || "", folder: props.folder || "", kind: pdf ? "pdf" : notebook ? "notebook" : "page",
-    pdf, notebook, pdfInk, tree };
+  return { id: pageId, title: root.content || "", folder: props.folder || "", kind: pdf ? "pdf" : nb ? "notebook" : "page",
+    pdf, notebook: nb ? { paper: nb.paper } : null, sheets, pdfInk, tree };
 }
 
 // The library's rows from page roots [{id, content, props, position}],

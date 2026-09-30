@@ -380,6 +380,9 @@ export const SparklesIcon = ({ size = 16, ...rest }) => (
 export const StopIcon = ({ size = 16, ...rest }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
 );
+export const PlayIcon = ({ size = 16, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" /></svg>
+);
 
 // Pin glyph — outline when unpinned, filled when pinned. Shared by the list
 // rows, grid tiles, and the pinned strip so the affordance is identical.

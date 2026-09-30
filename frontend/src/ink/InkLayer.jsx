@@ -4,20 +4,21 @@
 // lasso) being drawn, and the pointer handling that turns a pen (or, with
 // a tool armed, any pointer) into samples, erasures, a lasso selection or
 // a move of that selection. InkCard is the same strokes as a picture in
-// the notes; InkToolbar the tool strip. Strokes come from inkStore (drafts
-// ahead of uploads, files behind block URLs); App owns the tool state,
-// the selection, the stroke history and the commits.
+// the notes, with a replay of their writing (useInkReplay); InkToolbar
+// the tool strip. Strokes come from inkStore (drafts ahead of uploads,
+// files behind block URLs); App owns the tool state, the selection, the
+// stroke history and the commits.
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ContextMenu } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
 import {
   CopyIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, HandIcon, HighlightIcon, LassoIcon, PenIcon,
-  FileTextIcon, LineWidthIcon, PaletteIcon, RectSelectIcon, RedoIcon, ResizeIcon, TrashIcon, UndoIcon, XIcon,
+  FileTextIcon, LineWidthIcon, PaletteIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, StopIcon, TrashIcon, UndoIcon, XIcon,
 } from "../shared/ui/Icons";
 import {
   HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_STROKE_SIZE, MAX_TOOLS, PEN_COLORS, boundsOf, encodeStroke, hitStrokes,
-  inkBounds, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
+  inkAtTime, inkBounds, inkTimeline, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
   transformPoint, unionBox,
 } from "./ink";
 import * as inkStore from "./inkStore";
@@ -39,7 +40,7 @@ const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Cust
 const inkKindName = (kind) => (kind === "highlighter" ? t("Highlighter") : t("Pen"));
 
 // Re-render when any draft or file changes.
-function useInkVersion() {
+export function useInkVersion() {
   const [v, setV] = useState(inkStore.currentVersion());
   useEffect(() => inkStore.subscribe(setV), []);
   return v;
@@ -49,7 +50,7 @@ function useInkVersion() {
 export const ERASER_SIZES = [5, 9, 16];
 const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 
-function Strokes({ ink, onClick, hide }) {
+export function Strokes({ ink, onClick, hide }) {
   return ink.strokes.map((s) => {
     if (hide?.has(s.id)) return null;
     const p = strokePath(s);
@@ -609,6 +610,18 @@ function InkTooltips({ children, contentRef, ...props }) {
       transform: tip.above ? "translateY(-100%)" : undefined }}>{tip.text}</div>, document.body) : null}</>;
 }
 
+// The box an ink layer is seen through: a PDF's viewer, else the nearest
+// ancestor that scrolls (a notebook's viewer, the notes), else the window.
+function viewportOf(el) {
+  const pdf = el.closest(".pdfViewer");
+  if (pdf) return pdf;
+  for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+    const { overflowY } = getComputedStyle(n);
+    if (overflowY === "auto" || overflowY === "scroll") return n;
+  }
+  return null;
+}
+
 function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   const [anchor, setAnchor] = useState(null);
   const [options, setOptions] = useState(null);
@@ -625,8 +638,11 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   useLayoutEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
+    const view = viewportOf(el);
     const update = () => {
-      const rect = el.getBoundingClientRect(), viewport = el.closest(".pdfViewer").getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      const viewport = view ? view.getBoundingClientRect()
+        : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
       const k = rect.width / width;
       const left = rect.left + x0 * k, top = rect.top + y0 * k, bottom = rect.top + y1 * k;
       const y = top - menuHeight - 40 >= viewport.top + 8 ? top - menuHeight - 40
@@ -672,11 +688,49 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   </ContextMenu>;
 }
 
+// A replay of a drawing's writing (ink.js inkTimeline): while it plays,
+// `frame` is the drawing as it stood at that moment, else null. A change
+// to the drawing ends it (callers keep `ink` the same object meanwhile).
+export function useInkReplay(ink) {
+  const [state, setState] = useState(null); // {timeline, t}
+  const raf = useRef(0);
+  const stop = () => { cancelAnimationFrame(raf.current); raf.current = 0; setState(null); };
+  const play = () => {
+    cancelAnimationFrame(raf.current);
+    if (!ink?.strokes?.length) return;
+    const timeline = inkTimeline(ink);
+    const begin = performance.now();
+    const tick = (now) => {
+      const at = now - begin;
+      if (at >= timeline.duration) { raf.current = 0; setState(null); return; }
+      setState({ timeline, t: at });
+      raf.current = requestAnimationFrame(tick);
+    };
+    setState({ timeline, t: 0 });
+    raf.current = requestAnimationFrame(tick);
+  };
+  useEffect(() => stop, [ink]);
+  return { playing: !!state, frame: state ? inkAtTime(ink, state.timeline, state.t) : null, play, stop };
+}
+
+// The replay's play / stop button.
+export function InkReplayButton({ replay, className = "" }) {
+  const label = replay.playing ? t("Stop replay") : t("Replay handwriting");
+  return (
+    <button type="button" className={"inkReplayBtn " + className} aria-label={label} aria-pressed={replay.playing}
+      title={replay.playing ? t("Stop the replay") : t("Replay: watch the handwriting being written, stroke by stroke")}
+      onClick={(e) => { e.stopPropagation(); if (replay.playing) replay.stop(); else replay.play(); }}>
+      {replay.playing ? <StopIcon size={12} /> : <PlayIcon size={12} />}
+    </button>
+  );
+}
+
 // The group as a picture in the notes tree (same strokes, cropped to its
-// box). Click: jump to it on the page.
+// box), its replay button in the corner. Click: jump to it on the page.
 export function InkCard({ block, onJump }) {
   useInkVersion();
   const ink = inkStore.inkFor(block);
+  const replay = useInkReplay(ink);
   const b = ink ? inkBounds(ink) : null;
   if (!ink) {
     return <div className="blockInkCard blockInkPending" title={t("Loading handwriting…")} />;
@@ -685,11 +739,14 @@ export function InkCard({ block, onJump }) {
   const pad = 6;
   const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   return (
-    <svg className="blockInkCard" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
-      role="img" aria-label={t("Handwriting")}
-      onClick={onJump ? (e) => { e.stopPropagation(); onJump(block.id); } : undefined}>
-      <Strokes ink={ink} />
-    </svg>
+    <span className="blockInkCardWrap">
+      <svg className="blockInkCard" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
+        role="img" aria-label={t("Handwriting")}
+        onClick={onJump ? (e) => { e.stopPropagation(); onJump(block.id); } : undefined}>
+        <Strokes ink={replay.frame || ink} />
+      </svg>
+      <InkReplayButton replay={replay} />
+    </span>
   );
 }
 

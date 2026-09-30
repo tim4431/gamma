@@ -37,6 +37,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
+- **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
 ### Notebooks
@@ -47,6 +48,8 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - **Paper** sets the page's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background. *Use for new pages* makes it the paper new pages get.
 - The notes list the pages ("Page 1", or a title you type), with the handwriting of each under it. Notes you type under a page are about that page.
 - **Export → Annotated PDF** gives the notebook as a PDF of its pages.
+
+**A page in your notes.** Any page's notes can hold a page to write on between their blocks: type **/page** in a block (an empty block becomes the page; otherwise the page goes right after it), or choose **Add page below** from a block's handle menu. The page is drawn right there in the notes. Under it are its pen (the tool strip), its **Paper**, a replay of what's written on it, and **+** for another page after it. Its handwriting is folded under it in the notes; unfold the page to see the drawings as cards. On the iPad, a note with such pages opens as its pages, with the notes beside them.
 
 ### Links inside the PDF
 

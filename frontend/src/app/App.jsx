@@ -95,7 +95,10 @@ import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
-import { firstSheetId, inkBySheet, isSheet, newSheet, normalizePaper, pageNotebook, sheetIdAfter, sheetOfBlock, sheetsOf } from "../notebook/notebook";
+import { NoteSheetContext } from "../notebook/NoteSheet";
+import {
+  firstSheetId, inkBySheet, isSheet, newSheet, normalizePaper, pageNotebook, paperBefore, sheetIdAfter, sheetOfBlock, sheetsOf,
+} from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
@@ -3692,8 +3695,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const inkActiveRef = useRef(null);
   const inkTimerRef = useRef(0);
   const prevInkRef = useRef({ json: "", value: [] });
-  // Notebooks: the open notebook's sheets (for handlers that run after an
-  // await), the sheet under the middle of the view, the viewer's scroller.
+  // Sheets: the open page's (for handlers that run after an await); a
+  // notebook's sheet under the middle of the view, its viewer's scroller.
   const nbSheetsRef = useRef([]);
   const nbScrollRef = useRef(null);
   const [nbCurrent, setNbCurrent] = useState("");
@@ -6340,9 +6343,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const before = inkStore.draft(id)?.ink || loaded
       || (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
-    if (onSheet) {
-      // Writing into the last quarter of the last sheet adds the next one,
-      // so there is always paper below (Notability's continuous page).
+    if (onSheet && notebook) {
+      // Writing into the last quarter of a notebook's last sheet adds the
+      // next one, so there is always paper below (Notability's continuous
+      // page). A page among notes grows only when asked (addSheetAfter).
       const last = nbSheetsRef.current.at(-1), box = strokeBounds(stroke);
       if (last?.id === page && box && box[3] > last.paper.height * 0.75) addSheet();
     }
@@ -6430,12 +6434,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showInkOnPage(id) {
     const b = flattenBlocks(blocksRef.current).find((x) => x.id === id);
     if (!b) return;
-    const sheetId = notebook ? sheetOfBlock(blocksRef.current, id) : null;
-    if (sheetId) {
+    const sheetId = sheetOfBlock(blocksRef.current, id);
+    if (sheetId && notebook) {
       const hidden = pdfHidden;
       if (hidden) setPdfHidden(false);
       const box = inkBounds(inkOf(id));
       setTimeout(() => nbScrollRef.current?.(sheetId, box), hidden ? 300 : 0);
+      setInkFlash({ id, nonce: Date.now() });
+      return;
+    }
+    if (sheetId) {
+      // A page among the notes: unfold what hides it, then its drawing into view.
+      reveal(sheetId);
+      const box = inkBounds(inkOf(id));
+      requestAnimationFrame(() => {
+        const node = document.querySelector(`.noteSheet[data-sheet-id="${CSS.escape(sheetId)}"] .nbSheet`);
+        const scroller = node?.closest(".blockList");
+        if (!node || !scroller) return;
+        const r = node.getBoundingClientRect(), k = r.width / normalizePaper(findBlock(blocksRef.current, sheetId)?.properties?.sheet).width;
+        const y = r.top - scroller.getBoundingClientRect().top + (box ? box[1] * k : 0) - 120;
+        scroller.scrollBy({ top: y, behavior: "smooth" });
+      });
       setInkFlash({ id, nonce: Date.now() });
       return;
     }
@@ -6450,11 +6469,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     reveal(id);
   }
 
-  // --- Notebooks (docs/dev/notebooks.md) ----------------------------------------
-  // A sheet is a top-level block carrying `sheet` (its paper): adding one is
-  // a tree insert like any block's, so it syncs, merges and undoes like one.
-  // Its id follows from the sheet before it (sheetIdAfter), so two devices
-  // adding "the next page" at the same time add one page.
+  // --- Sheets (docs/dev/notebooks.md) ---------------------------------------------
+  // A sheet is a block carrying `sheet` (its paper): adding one is a tree
+  // insert like any block's, so it syncs, merges and undoes like one. A
+  // notebook's next page goes at the end; its id follows from the sheet
+  // before it (sheetIdAfter), so two devices adding "the next page" at the
+  // same time add one page.
   function addSheet() {
     if (readOnly || !notebook) return "";
     const last = nbSheetsRef.current.at(-1)?.id;
@@ -6463,6 +6483,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // (two strokes low on the last sheet before the first one's sheet lands add it once)
     setBlocks((prev) => (findBlock(prev, id) ? prev : [...prev, newSheet(id, notebook.paper)]));
     return id;
+  }
+  // A page right after block `afterId`, at its depth: the notebook's paper
+  // in a notebook, else that of the page nearest before it. After a sheet
+  // its id follows from that sheet's, like the notebook's next page. Among
+  // a note's blocks it starts folded: the page itself shows its drawings.
+  function addSheetAfter(afterId) {
+    if (readOnly || !focusedBlockId) return "";
+    const tree = blocksRef.current;
+    const after = findBlock(tree, afterId);
+    if (!after) return "";
+    let id = isSheet(after) ? sheetIdAfter(afterId) : makeId();
+    if (findBlock(tree, id)) id = makeId();
+    const sheet = newSheet(id, notebook ? notebook.paper : paperBefore(tree, afterId), { folded: !notebook });
+    setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
+    return id;
+  }
+  // "/page" in a block's editor (`rest`: its text without the command): the
+  // block becomes the page when nothing else is in it, else a page goes in
+  // after it.
+  function insertSheetAt(blockId, rest) {
+    if (readOnly) return;
+    if ((rest || "").trim()) { addSheetAfter(blockId); return; }
+    const tree = blocksRef.current;
+    const block = findBlock(tree, blockId);
+    if (!block) return;
+    const sheet = normalizePaper(notebook ? notebook.paper : paperBefore(tree, blockId));
+    const fold = !notebook && !block.children?.length;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
+      properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    saveNowRef.current = true;
+    setView((v) => closeEditing(v, blockId));
   }
   function setSheetPaper(sheetId, paper) {
     if (readOnly) return;
@@ -6480,11 +6531,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Paper not saved: {err}", { err: err.message || err }));
     }
   }
+  // Every sheet of the page gets `paper`; a notebook's new pages too.
   function applyPaperToAll(paper) {
     if (readOnly) return;
     const sheet = normalizePaper(paper);
-    setBlocks((prev) => prev.map((b) => (isSheet(b) ? { ...b, properties: { ...b.properties, sheet } } : b)));
-    setNotebookPaper(sheet);
+    const each = (list) => {
+      let changed = false;
+      const out = list.map((b) => {
+        const kids = b.children?.length ? each(b.children) : b.children;
+        const next = isSheet(b) ? { ...b, properties: { ...b.properties, sheet }, children: kids }
+          : kids !== b.children ? { ...b, children: kids } : b;
+        if (next !== b) changed = true;
+        return next;
+      });
+      return changed ? out : list;
+    };
+    setBlocks((prev) => each(prev));
+    if (notebook) setNotebookPaper(sheet);
   }
   // Leaving a notebook closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
@@ -6700,8 +6763,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A notebook page: its sheets of paper take the viewer's place, with the
   // same ink tools (notebook/notebook.js, docs/dev/notebooks.md).
   const notebook = useMemo(() => (pageAttach ? null : pageNotebook(focusedBlock)), [focusedBlock, pageAttach]);
-  const nbSheets = useMemo(() => (notebook ? sheetsOf(blocks, notebook.paper) : []), [notebook, blocks]);
-  const nbInk = useMemo(() => (notebook ? inkBySheet(blocks) : new Map()), [notebook, blocks]);
+  // Any other page's sheets stand among its notes (notebook/NoteSheet.jsx).
+  const nbSheets = useMemo(() => (focusedBlockId ? sheetsOf(blocks, notebook?.paper) : []), [focusedBlockId, notebook, blocks]);
+  const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
+  const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
   nbSheetsRef.current = nbSheets;
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
@@ -7681,6 +7746,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
+  // The pages among the notes (notebook/NoteSheet.jsx): the ink state and
+  // handlers a notebook's viewer gets, and the strip over the notes when no
+  // viewer is there to hold it.
+  const viewerInk = (!!pdfUrl || !!notebook) && !pdfHidden;
+  const openInkTools = () => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip());
+  const noteSheetCtx = notebook ? null : {
+    readOnly, inkBySheet: nbInk, tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure,
+    eraserMode: inkEraserMode, eraserSize: inkEraserSize, lassoMode: inkLassoMode, selection: inkSelection, flash: inkFlash,
+    inkOpen: inkUi.open,
+    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
+    onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInkInNotes,
+    onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
+  };
+  const inkToolbar = (
+    <InkToolbar
+      tools={inkTools} active={inkUi.tool} options={inkUi.options}
+      eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
+      onPick={pickInkTool}
+      onUndo={() => inkUndo(false)} onRedo={() => inkUndo(true)}
+      canUndo={inkHistoryState.undo > 0} canRedo={inkHistoryState.redo > 0}
+      onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
+      onChangeTools={setInkTools}
+      onEraser={(patch) => {
+        if ("mode" in patch) setInkEraserMode(patch.mode);
+        if ("size" in patch) setInkEraserSize(patch.size);
+      }}
+      onLasso={setInkLassoMode}
+      onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
+    />
+  );
+  const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
+    ? <div className="notesInkDock">{inkToolbar}</div> : null;
+
   const notesWindow = notesVisible ? (
     <div className="sidebar" data-guide="dock.notes">
           {!homeMode && <div className="pageTitleRow">
@@ -8672,6 +8770,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   pages: pageBlocks, // the [[ link picker's page list
                   onJump: jumpToHighlightId,
                   onInkJump: showInkOnPage,
+                  // Sheets: numbered as pages; drawn in place unless a notebook's viewer draws them.
+                  sheetNumbers,
+                  inlineSheets: !notebook,
+                  onInsertSheet: readOnly ? undefined : insertSheetAt,
+                  onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
                   onOpenLinkTarget: (b) => {
@@ -8979,8 +9082,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 rowPropsRef.current = rowProps;
                 return (
                   <>
+                    {notesInkStrip}
                     <FileChipContext.Provider value={fileChipCtx}>
-                      <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                      <NoteSheetContext.Provider value={noteSheetCtx}>
+                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                      </NoteSheetContext.Provider>
                     </FileChipContext.Provider>
                     {backlinksPanel}
                     {notesTail}
@@ -9879,7 +9985,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   className={inkUi.open ? "modeActive" : ""}
                   data-guide="pdf.inkButton"
-                  onClick={() => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip())}
+                  onClick={openInkTools}
                   title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
                   aria-label={t("Handwriting tools")}
                 >
@@ -9891,7 +9997,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   className={paperMenu ? "modeActive" : ""}
                   onClick={() => setPaperMenu((v) => !v)}
                   title={t("Paper: size, pattern and colour of this page")}
-                  aria-label={t("Paper")}
+                  aria-label={t("Paper of this page")}
                   aria-expanded={paperMenu}
                 >
                   <SheetIcon size={16} />
@@ -9921,23 +10027,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onClose={() => setPaperMenu(false)} />
             );
           })() : null}
-          {(pdfUrl || notebook) && !pdfHidden && inkUi.open && !readOnly ? (
-            <InkToolbar
-              tools={inkTools} active={inkUi.tool} options={inkUi.options}
-              eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
-              onPick={pickInkTool}
-              onUndo={() => inkUndo(false)} onRedo={() => inkUndo(true)}
-              canUndo={inkHistoryState.undo > 0} canRedo={inkHistoryState.redo > 0}
-              onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
-              onChangeTools={setInkTools}
-              onEraser={(patch) => {
-                if ("mode" in patch) setInkEraserMode(patch.mode);
-                if ("size" in patch) setInkEraserSize(patch.size);
-              }}
-              onLasso={setInkLassoMode}
-              onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
-            />
-          ) : null}
+          {viewerInk && inkUi.open && !readOnly ? inkToolbar : null}
           {(pdfUrl || notebook) && !pdfHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox">
               <button

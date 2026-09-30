@@ -492,6 +492,78 @@ export function boundsOf(ink, ids) {
   return out;
 }
 
+// --- replay ----------------------------------------------------------------
+// A drawing as it was written. A stroke starts at its wall-clock `t0` plus
+// its first sample's `t` (a run the partial eraser cut out of a longer
+// stroke keeps the times it had), and its samples follow their `t`. Pauses,
+// between strokes and inside one, shrink to `pause`, and a replay longer
+// than `max` plays faster, so a page written over an hour replays in
+// seconds. Strokes play in the order they were drawn: by that start, the
+// file's order breaking ties; a stroke without timing counts as drawn right
+// after the stroke before it in the file, its samples spread over UNTIMED_MS.
+export const REPLAY_PAUSE = 400;
+export const REPLAY_MAX = 15000;
+const UNTIMED_MS = 300;
+
+// → {duration, strokes: [{id, index, start, end, times}]} in ms from the
+// replay's start, in drawing order: `index` is the stroke's place in the
+// file, `times` each sample's time.
+export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}) {
+  let before = -Infinity;
+  const order = (ink?.strokes || []).map((stroke, index) => {
+    const samples = decodeStroke(stroke);
+    const timed = samples.length > 0 && samples.every((p) => p.t != null);
+    const wallStart = Number.isFinite(stroke.t0) ? stroke.t0 + (timed ? samples[0].t : 0) : null;
+    before = wallStart ?? before;
+    return { stroke, index, samples, timed, wallStart, key: before };
+  }).sort((a, b) => a.key - b.key || a.index - b.index);
+  const clamp = (v) => Math.max(0, Math.min(pause, v));
+  const strokes = [];
+  let clock = 0, lastEnd = null;   // lastEnd: the wall-clock end of the stroke before
+  for (const { stroke, index, samples, timed, wallStart } of order) {
+    if (!samples.length) continue;
+    const offsets = [0];
+    for (let i = 1; i < samples.length; i++) {
+      offsets.push(offsets[i - 1] + (timed ? clamp(samples[i].t - samples[i - 1].t) : UNTIMED_MS / (samples.length - 1)));
+    }
+    const gap = !strokes.length ? 0 : wallStart != null && lastEnd != null ? clamp(wallStart - lastEnd) : pause / 2;
+    const start = clock + gap;
+    const times = offsets.map((o) => start + o);
+    strokes.push({ id: stroke.id, index, start, end: times[times.length - 1], times });
+    clock = times[times.length - 1];
+    lastEnd = wallStart == null ? null : wallStart + (timed ? samples[samples.length - 1].t - samples[0].t : 0);
+  }
+  if (clock > max) {
+    const f = max / clock;
+    for (const item of strokes) {
+      item.start *= f;
+      item.end *= f;
+      item.times = item.times.map((v) => v * f);
+    }
+    clock = max;
+  }
+  return { duration: clock, strokes };
+}
+
+// The drawing at replay time `t` (ms): the strokes begun by then, in the
+// order they were drawn, the one being written cut to the samples it had
+// (a prefix of its delta-coded `pts` is its first samples). The file itself
+// once the replay has ended.
+export function inkAtTime(ink, timeline, t) {
+  if (!ink || t >= timeline.duration) return ink;
+  const strokes = [];
+  for (const item of timeline.strokes) {
+    if (item.start > t) break;
+    const stroke = ink.strokes[item.index];
+    if (!stroke) continue;
+    if (t >= item.end) { strokes.push(stroke); continue; }
+    let k = 1;
+    while (k < item.times.length && item.times[k] <= t) k++;
+    strokes.push({ ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) });
+  }
+  return { ...ink, strokes };
+}
+
 // --- rendering -------------------------------------------------------------
 
 const avg = (a, b) => (a + b) / 2;

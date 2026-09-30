@@ -2,13 +2,17 @@ import SwiftUI
 
 /// A page's notes as an outline: each block's text, editable here (sent as
 /// an edit from the text it was edited from, so a text changed meanwhile
-/// merges), handwriting groups and notebook pages as labelled rows (a tap
-/// shows the drawing), and a note added at the end.
+/// merges), handwriting groups and pages to write on as labelled rows (a tap
+/// shows the drawing or the page; a group's play button replays its
+/// writing), and a note or a page added at the end.
 struct NotesView: View {
     @EnvironmentObject private var model: AppModel
     let pageId: String
     var onEdit: () -> Void
     var onJump: ((String) -> Void)? = nil
+    var onReplay: ((String) -> Void)? = nil
+    var replaying: String? = nil
+    var onAddPage: (() -> Void)? = nil
     @State private var rows: [Row] = []
     @State private var drafts: [String: String] = [:]
     @State private var bases: [String: String] = [:]
@@ -29,8 +33,19 @@ struct NotesView: View {
                     Image(systemName: icon(row.kind)).foregroundStyle(.secondary).frame(width: 18)
                     VStack(alignment: .leading, spacing: 2) {
                         if row.kind != "note" {
-                            Button(row.label) { onJump?(row.id) }
-                                .font(.caption).foregroundStyle(.secondary).buttonStyle(.plain)
+                            HStack(spacing: 8) {
+                                Button(row.label) { onJump?(row.id) }
+                                    .font(.caption).foregroundStyle(.secondary).buttonStyle(.plain)
+                                if row.kind == "ink", let onReplay {
+                                    let playing = replaying == row.id
+                                    Button { onReplay(row.id) } label: {
+                                        Image(systemName: playing ? "stop.circle" : "play.circle")
+                                    }
+                                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                                    .help(playing ? "Stop the replay" : "Replay: watch the handwriting being written, stroke by stroke")
+                                    .accessibilityLabel(playing ? "Stop replay" : "Replay handwriting")
+                                }
+                            }
                         }
                         TextField(row.kind == "note" ? "Note" : "Caption", text: binding(row), axis: .vertical)
                             .focused($focused, equals: row.id)
@@ -45,6 +60,9 @@ struct NotesView: View {
                 }
             }
             Button { add() } label: { Label("Add a note", systemImage: "plus") }
+            if let onAddPage {
+                Button { onAddPage() } label: { Label("Add a page to write on", systemImage: "doc.badge.plus") }
+            }
         }
         .listStyle(.plain)
         .onChange(of: focused) { old, _ in if let old { commit(old) } }
@@ -75,7 +93,8 @@ struct NotesView: View {
                 let id = node.string("id")
                 let kind: String
                 var label = ""
-                if !props.dict("sheet").isEmpty && depth == 0 {
+                if !props.dict("sheet").isEmpty {
+                    // a page, at any depth, numbered in document order (notebook.js sheetsOf)
                     sheets += 1
                     kind = "sheet"
                     label = "Page \(sheets)"

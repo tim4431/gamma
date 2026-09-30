@@ -189,8 +189,8 @@ const LINE_FOR = { "#2b2d31": "#51555c" };
 
 // The paper of one sheet: size and orientation, pattern and spacing,
 // background. Every choice applies to that sheet at once; "Use for new
-// pages" makes it the notebook's paper, "Apply to all pages" gives every
-// sheet this paper.
+// pages" (a notebook's, when onUseForNew is given) makes it the notebook's
+// paper, "Apply to all pages" gives every sheet of the page this paper.
 export function PaperMenu({ paper, number, onChange, onUseForNew, onApplyAll, isDefault, onClose }) {
   const size = paperSizeKey(paper);
   const set = (patch) => onChange({ ...paper, ...patch });
@@ -237,9 +237,11 @@ export function PaperMenu({ paper, number, onChange, onUseForNew, onApplyAll, is
         </span>
       </div>
       <div className="nbPaperActions">
-        <button type="button" className="uiBtn sm" disabled={isDefault} onClick={onUseForNew}
-          title={t("New pages get this paper")}>{isDefault ? t("Used for new pages") : t("Use for new pages")}</button>
-        <button type="button" className="uiBtn sm" onClick={onApplyAll} title={t("Give every page of the notebook this paper")}>
+        {onUseForNew ? (
+          <button type="button" className="uiBtn sm" disabled={isDefault} onClick={onUseForNew}
+            title={t("New pages get this paper")}>{isDefault ? t("Used for new pages") : t("Use for new pages")}</button>
+        ) : null}
+        <button type="button" className="uiBtn sm" onClick={onApplyAll} title={t("Give every page here this paper")}>
           {t("Apply to all pages")}
         </button>
       </div>

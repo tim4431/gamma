@@ -99,6 +99,17 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual((vp?["transform"] as? [NSNumber])?.map(\.doubleValue), [1, 0, 0, -1, 0, 792])
         let lines = try core.pure("paperLines", [["width": 200, "height": 150, "pattern": "ruled", "spacing": 50]]) as? [String: Any]
         XCTAssertEqual((lines?["lines"] as? [Any])?.count, 2)
+        // the replay's timeline: strokes in the order they were written, each sample's time
+        let first = try XCTUnwrap(stroke)
+        let later = try XCTUnwrap(try core.pure("encodeStroke", [["id": "b", "ch": "xyt", "t0": 900,
+            "samples": [["x": 0, "y": 0, "t": 0], ["x": 5, "y": 0, "t": 40]]]]) as? [String: Any])
+        let canvas = try XCTUnwrap(try core.pure("newCanvasInk", [100, 100]) as? [String: Any])
+        let file = try XCTUnwrap(try core.pure("appendStroke", [canvas, later]) as? [String: Any])
+        let both = try XCTUnwrap(try core.pure("appendStroke", [file, first]) as? [String: Any])
+        let timeline = try XCTUnwrap(try core.pure("inkTimeline", [both]) as? [String: Any])
+        let order = timeline.array("strokes").compactMap { ($0 as? [String: Any])?.string("id") }
+        XCTAssertEqual(order, ["s1", "b"], "s1 (t0 5) was written before b (t0 900), whatever the file's order")
+        XCTAssertGreaterThan(timeline.double("duration") ?? 0, 0)
     }
 
     func testEditsRunThroughTheHostAndLandInTheStore() throws {
@@ -110,7 +121,7 @@ final class CoreTests: XCTestCase {
         let sheet = try XCTUnwrap(try replica.edit("addSheet", [book]) as? String)
         let view = try XCTUnwrap(replica.view(of: book))
         XCTAssertEqual(view.string("kind"), "notebook")
-        XCTAssertEqual(view.dict("notebook").array("sheets").count, 2)
+        XCTAssertEqual(view.array("sheets").count, 2)
         let file = try replica.pure("newCanvasInk", [595.28, 841.89])
         let stroke = try replica.pure("encodeStroke", [["id": "k1", "samples": [["x": 5, "y": 5], ["x": 9, "y": 9]]]])
         let ink = try replica.pure("appendStroke", [file, stroke])
@@ -118,5 +129,22 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(url.hasPrefix("/api/uploads/") && url.hasSuffix(".ink"))
         XCTAssertEqual(replica.inkFile(url)?.array("strokes").count, 1)
         XCTAssertEqual(try replica.store.localChanges()["pages"] as? [String], [book], "an edit made here waits for a round")
+    }
+
+    func testAPageAmongANotesBlocksIsReadLikeANotebooksPage() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let connection = Connection(id: "t", server: URL(string: "https://example.invalid")!, user: "u", workspace: "w", workspaceName: "W")
+        let replica = try Replica(connection: connection, token: "gamma_test", directory: dir)
+        let note = try XCTUnwrap(try replica.edit("createPage", [["title": "Notes"]]) as? String)
+        let text = try XCTUnwrap(try replica.edit("addNote", [note, ["content": "first"]]) as? String)
+        let page = try XCTUnwrap(try replica.edit("addSheet", [note, NSNull(), text]) as? String)
+        let view = try XCTUnwrap(replica.view(of: note))
+        XCTAssertEqual(view.string("kind"), "page")
+        XCTAssertEqual(view.array("sheets").compactMap { ($0 as? [String: Any])?.string("id") }, [page])
+        let snapshot = try XCTUnwrap(replica.store.snapshot(note))
+        let tree = try XCTUnwrap(try replica.pure("tree", [snapshot, note]) as? [[String: Any]])
+        XCTAssertEqual(tree.map { $0.string("id") }, [text, page], "right after the note")
+        XCTAssertEqual(tree.last?.dict("properties")["collapsed"] as? Bool, true, "folded: the page shows its drawings")
     }
 }

@@ -64,7 +64,7 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     await addNote(host, paperId, { content: "written on the iPad", id: "rpNote2" });
     bookId = await createNotebook(host, { title: "Train notebook" });
     const view = pageView(await local(bookId), bookId);
-    const sheet = view.notebook.sheets[0].id;
+    const sheet = view.sheets[0].id;
     await saveInk(host, bookId, { blockId: "rpBookInk", ink: { format: "gamma-ink", version: 1,
       space: { kind: "canvas", width: 595.28, height: 841.89 }, strokes: [stroke("n1", 60)] }, parent: sheet });
     const second = await addSheet(host, bookId);

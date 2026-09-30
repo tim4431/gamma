@@ -1,11 +1,12 @@
 import Combine
 import SwiftUI
 
-/// A notebook: its sheets one under the other, each its paper (background
-/// and pattern from the core's paperLines, the web's notebook.js) with its
-/// handwriting over it, written on with the Pencil like a PDF page. Writing
-/// low on the last sheet adds the next; "Add page" adds one too. The paper
-/// menu sets a sheet's paper, or the paper new sheets get
+/// A page's sheets — a notebook's pages, or those among a note's blocks —
+/// one under the other, each its paper (background and pattern from the
+/// core's paperLines, the web's notebook.js) with its handwriting over it,
+/// written on with the Pencil like a PDF page. In a notebook, writing low on
+/// the last sheet adds the next; "Add page" adds one after the last. The
+/// paper menu sets a sheet's paper, or a notebook's paper for new sheets
 /// (docs/dev/notebooks.md).
 struct NotebookReader: View {
     @ObservedObject var ink: InkSession
@@ -167,6 +168,7 @@ final class NotebookController: UIViewController, UIScrollViewDelegate, UIPencil
 
         ink.$sheets.receive(on: RunLoop.main).sink { [weak self] _ in self?.rebuild() }.store(in: &bag)
         ink.$changed.receive(on: RunLoop.main).sink { [weak self] _ in self?.redraw() }.store(in: &bag)
+        ink.replayFrames.receive(on: RunLoop.main).sink { [weak self] _ in self?.redrawReplay() }.store(in: &bag)
         ink.$tool.receive(on: RunLoop.main).sink { [weak self] tool in
             guard let self else { return }
             let pencilType = NSNumber(value: UITouch.TouchType.pencil.rawValue)
@@ -242,6 +244,12 @@ final class NotebookController: UIViewController, UIScrollViewDelegate, UIPencil
         for (id, view) in sheetViews { view.ink.show(ink.groupList(on: .sheet(id))) }
     }
 
+    /// A frame of a replay: only the sheet it plays on.
+    private func redrawReplay() {
+        guard case .sheet(let id)? = ink.replayKey, let view = sheetViews[id] else { return }
+        view.ink.show(ink.groupList(on: .sheet(id)))
+    }
+
     private func reportCurrent() {
         let mid = CGPoint(x: scroll.bounds.midX, y: scroll.bounds.midY)
         var best = "", distance = CGFloat.infinity
@@ -311,6 +319,13 @@ final class NotebookController: UIViewController, UIScrollViewDelegate, UIPencil
     }
 
     private func jump(to id: String) {
+        if let page = sheetViews[id] {
+            // a page's own row in the notes: its top into view
+            let top = scroll.convert(CGPoint.zero, from: page).y - 12
+            let lowest = max(0, scroll.contentSize.height - scroll.bounds.height)
+            scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: min(max(0, top), lowest)), animated: true)
+            return
+        }
         guard case .sheet(let sheetId)? = ink.key(of: id), let v = sheetViews[sheetId] else { return }
         var box = v.bounds
         if let g = ink.groups[id], let b = (try? ink.replica?.pure("inkBounds", [g.ink])) as? [Double], b.count == 4 {
@@ -371,8 +386,10 @@ struct PaperMenu: View {
                     ForEach(Self.colors, id: \.1) { item in swatch(name: item.0, hex: item.1) }
                 }
             }
-            Section {
-                Button("Use for new pages") { ink.setPaper(paper, sheet: nil, forNew: true) }
+            if ink.isNotebook {
+                Section {
+                    Button("Use for new pages") { ink.setPaper(paper, sheet: nil, forNew: true) }
+                }
             }
         }
     }

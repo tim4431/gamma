@@ -78,6 +78,7 @@ final class PDFReaderController: UIViewController, PDFPageOverlayViewProvider, U
         view.addInteraction(interaction)
 
         ink.$changed.receive(on: RunLoop.main).sink { [weak self] _ in self?.redraw() }.store(in: &bag)
+        ink.replayFrames.receive(on: RunLoop.main).sink { [weak self] _ in self?.redrawReplay() }.store(in: &bag)
         ink.$tool.receive(on: RunLoop.main).sink { [weak self] _ in self?.touchTypes() }.store(in: &bag)
         ink.$jumpTarget.compactMap { $0 }.receive(on: RunLoop.main).sink { [weak self] j in self?.jump(to: j.id) }.store(in: &bag)
     }
@@ -146,6 +147,12 @@ final class PDFReaderController: UIViewController, PDFPageOverlayViewProvider, U
 
     func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
         if let index = pdfView.document?.index(for: page) { overlays[index] = nil }
+    }
+
+    /// A frame of a replay: only the page it plays on.
+    private func redrawReplay() {
+        guard case .pdf(let n)? = ink.replayKey, let overlay = overlays[n - 1] else { return }
+        overlay.show(ink.groupList(on: .pdf(n)))
     }
 
     private func redraw() {

@@ -5928,6 +5928,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 [data-scheme="light"] .pdfInkBar {
   box-shadow: var(--shadow-2);
 }
+/* The same strip over a page's notes, when no viewer is there to hold it
+   (pages among the notes, notebook/NoteSheet.jsx): stuck to the list's top. */
+.notesInkDock {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 6px 0;
+  pointer-events: none;
+}
+.notesInkDock .pdfInkBar { position: relative; top: auto; left: auto; transform: none; max-width: 100%; pointer-events: auto; }
 .pdfInkRow, .pdfInkSub {
   display: flex;
   align-items: center;
@@ -5990,6 +6002,30 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .blockInkPending { min-height: 28px; width: 100%; opacity: 0.5; }
+/* The card's replay button: in its corner, shown on hover (always on a
+   touch screen, and while a replay plays). */
+.blockInkCardWrap { position: relative; display: block; width: fit-content; max-width: 100%; }
+.inkReplayBtn {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.inkReplayBtn:hover { color: var(--text-primary); }
+.blockInkCardWrap:hover .inkReplayBtn, .inkReplayBtn:focus-visible, .inkReplayBtn[aria-pressed="true"] { opacity: 1; }
+@media (hover: none) { .inkReplayBtn { opacity: 1; } }
 /* The lasso selection: a dashed box the pointer drags to move. */
 .inkSelRect {
   fill: rgba(80, 140, 255, 0.06);

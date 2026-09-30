@@ -135,5 +135,5 @@ def test_the_agent_reads_a_notebook_page_as_one(guest):
     ws = default_workspace(guest_name())
     with connect_pages_db(ws) as conn:
         text, _ = ai_tools._run_read_block(conn, ws, {"pages": None}, {"block_id": page})
-    assert "(a notebook page: the handwriting under it is written on it)" in text
-    assert "(handwriting on the notebook page above, 1 strokes" in text
+    assert "(a page of paper: the handwriting under it is written on it)" in text
+    assert "(handwriting on the page of paper above, 1 strokes" in text

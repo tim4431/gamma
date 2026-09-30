@@ -27,12 +27,17 @@ in a web view for everything it does not do itself.
    "Open on the web".
 3. The first sync brings the workspace over, files included. The library
    lists its pages by folder. A PDF page opens in PDFKit, a notebook as
-   its sheets, and a page of notes as its outline. The notes open beside
-   a PDF or a notebook.
+   its sheets, and a page of notes as its outline. A page of notes with
+   pages to write on among its blocks ([notebooks.md](notebooks.md)
+   "Pages in notes") opens as those pages, like a notebook: the browser
+   draws them in place, and here they stand one under the other. The
+   notes open beside a PDF or pages. "Add a page to write on" at the end
+   of the notes adds one after the last.
 4. The Pencil writes. Fingers scroll, zoom and select. The tool strip has
    the pen and highlighter presets, the eraser, the hand (the Pencil
    scrolls), a new group, undo and redo. The Pencil's double tap switches
-   to the eraser and back.
+   to the eraser and back. A handwriting group's row in the notes has a
+   play button: the page scrolls to the group and replays its writing.
 5. Rounds run every 30 seconds while the app is in front, when it comes
    back, two seconds after an edit, and on request. The sync button shows
    a round running, edits not sent yet, or a problem. "Sync decisions"
@@ -131,6 +136,21 @@ stores.
   and multiplied. The live stroke is a plain line at the tool's width
   until the outline replaces it.
 - **Undo and redo** rebase by stroke id (`mergeInk`), like the browser's.
+- **Replay** runs on the core's `inkTimeline`, the browser's
+  ([handwriting.md](handwriting.md) "Replay"). `InkSession.replay` takes
+  the timeline once. On each frame (a main-actor task, about 60 a second)
+  it rebuilds the group's geometry: the strokes finished keep their
+  geometry, and the one being written is cut to its first samples (a
+  prefix of its `pts`) and passed to `strokeGeometry`. The frames go out
+  on `replayFrames`, a Combine subject rather than a published value, so
+  only the page the group is on redraws and SwiftUI does not. An edit to
+  the group, or the store changing it, ends the replay.
+- **Pages.** `pageView` lists every page's sheets (`sheets`), not only a
+  notebook's. Writing low on the last one adds the next only in a
+  notebook. "Add page" in the reader adds one after the last (edits.js
+  `addSheet` with `after`, as the browser's `addSheetAfter` does), folded,
+  with the paper of the page before it. The paper menu offers "Use for
+  new pages" only in a notebook.
 
 Why not PencilKit: its `PKDrawing` is an opaque format no server or
 browser reads ([research/handwriting.md](../research/handwriting.md)).
@@ -141,8 +161,9 @@ Raw touches carry everything `gamma-ink` stores.
 
 - `ipad/scripts/core.test.mjs` runs the bundle in a bare context with no
   browser or Node globals. It covers ink, paper, the viewport transform,
-  and a notebook made through a synchronous host. It runs in `check.yml`
-  and `ipad.yml`.
+  a notebook made through a synchronous host, the replay's timeline, and
+  a page placed among a note's blocks. It runs in `check.yml` and
+  `ipad.yml`.
 - `frontend/tests/replica.test.mjs` covers the tree rules against the
   shared fixtures, the local merges, edit-beats-delete and the page views.
 - The browser suite's `replica` group (`frontend/tests/e2e/scenarios/replica.mjs`,
@@ -152,12 +173,16 @@ Raw touches carry everything `gamma-ink` stores.
   and receive-only.
 - `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`) covers the
   store's version, edit-mark and tombstone semantics, file names, and the
-  bundled core through the Swift host.
+  bundled core through the Swift host (the replay's order, a page among a
+  note's blocks).
 
 ### Not built yet
 
 - A highlight from a text selection. PDFKit selects, and the web view
   highlights.
+- Pages among a note's blocks drawn in place in its outline, as the
+  browser draws them (they open as the page's reader instead), and pages
+  among a PDF page's notes (the PDF is that page's reader).
 - The lasso, the partial eraser, moving and restyling strokes, and
   editing presets beyond colour and width.
 - A per-page choice of what to keep offline: every file comes over, like
