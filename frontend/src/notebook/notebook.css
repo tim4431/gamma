@@ -19,7 +19,7 @@
   box-sizing: border-box;
   /* The pinch preview's transform target. Origin 0 0 = the column's top-left,
      which sits at content (0,0) as the scroller's only child — what the
-     gesture math in shared/lib/pinchZoom.js assumes. */
+     gesture math in shared/lib/viewerZoom.js assumes. */
   transform-origin: 0 0;
 }
 .nbSheet {

@@ -112,9 +112,9 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assertEq(await page.evaluate(() => scrollCorrections.length), 0, "diagonal pan is not pulled back");
     assertNoProblems(page);
   });
-  // The other half of shared/lib/pinchZoom.js: the notebook's side of it is
+  // The other half of shared/lib/viewerZoom.js: the notebook's side of it is
   // tests/e2e/scenarios/notebooks.mjs.
-  if (browser.browserType().name() === "chromium") await step("pdf touch: two fingers pinch-zoom the pages and hold the point under them, and pan", async () => {
+  if (browser.browserType().name() === "chromium") await step("pdf touch: two fingers pinch-zoom the pages and pan; Ctrl+wheel zooms; both hold the point under them", async () => {
     const cdp = await ctx.newCDPSession(page);
     await page.getByRole("button", { name: "Fit to width", exact: true }).click();
     await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 612) > 1,
@@ -172,6 +172,35 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assert(Math.abs(to.left - want[0]) < 3 && Math.abs(to.top - want[1]) < 3,
       `a two-finger drag pans by what the fingers travelled: ${[from.left, from.top]} -> ${[to.left, to.top]}, wanted ${want}`);
     assertEq(await pageWidth(), zoomed, "and does not change the zoom");
+
+    // Ctrl+wheel, off the same reader: one notch is the shared rate and the
+    // point under the cursor is held.
+    await page.getByRole("button", { name: "Fit to width", exact: true }).click();
+    await sleep(400);
+    const off = [Math.round(box.x + box.width * 0.32), Math.round(box.y + box.height * 0.28)];
+    const under = await pointAt(...off);
+    const before = await pageWidth();
+    // Against the delta the browser actually delivered, not the one asked
+    // for: an emulated device may scale it.
+    await page.locator(".pdfViewer").evaluate((el) => {
+      window.wheelDy = 0;
+      el.addEventListener("wheel", (e) => { window.wheelDy += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; }, true);
+    });
+    await page.mouse.move(...off);
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -120);
+    await page.keyboard.up("Control");
+    const after = await until(async () => {
+      const w = await pageWidth();
+      return Math.abs(w - before) > 0.5 ? w : false;
+    }, { what: "Ctrl+wheel zooms the pages" });
+    const dy = await page.evaluate(() => window.wheelDy);
+    const rate = Math.exp(-dy * 0.0015); // WHEEL_RATE in shared/lib/viewerZoom.js
+    assert(Math.abs(after / before - rate) < 0.005,
+      `the wheel zooms at the shared rate: ${(after / before).toFixed(4)} vs ${rate.toFixed(4)} for ${dy}px`);
+    const stillUnder = await pointAt(...off);
+    assert(stillUnder && stillUnder.page === under.page && Math.abs(stillUnder.fy - under.fy) < 0.03,
+      `the point under the cursor is held: ${under.fy.toFixed(3)} -> ${stillUnder?.fy.toFixed(3)}`);
     assertNoProblems(page);
   });
 

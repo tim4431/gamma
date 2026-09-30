@@ -446,18 +446,15 @@ export async function triggeredGuideScenarios(env) {
       // Nothing is suggested until the account's synced profile has loaded,
       // so an Add opened in that first moment is not offered anything —
       // closing and opening it again emits `popover.opened` afresh.
-      for (let tries = 0; ; tries++) {
+      let offered = false;
+      for (let tries = 0; tries < 5 && !offered; tries++) {
         await page.click('[data-guide="header.add"]');
         await page.waitForSelector(".addPopover");
-        if (await page.locator('[data-guide-offer="add-paper"] .guideCard').count()) break;
-        try {
-          await page.waitForSelector('[data-guide-offer="add-paper"] .guideCard', { timeout: 3000 });
-          break;
-        } catch (err) {
-          assert(tries < 4, "the Add tour was never offered");
-          await page.click('[data-guide="header.add"]'); // close, then round again
-        }
+        offered = await page.locator('[data-guide-offer="add-paper"] .guideCard')
+          .waitFor({ timeout: 3000 }).then(() => true, () => false);
+        if (!offered) await page.click('[data-guide="header.add"]'); // close, then round again
       }
+      assert(offered, "the Add tour was never offered");
       assertEq(await page.locator(".guideDim").count(), 0, "an offer never dims the app");
       assertEq(await page.locator(".addPopover").count(), 1, "the offer does not close the popover it points into");
       await page.getByRole("button", { name: "Show me" }).click();

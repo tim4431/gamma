@@ -169,7 +169,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
   // A tablet's only zoom gesture: the viewport meta turns the browser's own
   // off (docs/dev/ipad.md), so the notebook view has to run the pinch itself.
   // CDP supplies native Chromium touch gestures.
-  if (browser.browserType().name() === "chromium") await step("notebook: two fingers pinch-zoom the pages, hold the paper under them, and pan", async () => {
+  if (browser.browserType().name() === "chromium") await step("notebook: two fingers pinch-zoom the pages and pan; Ctrl+wheel zooms; both hold the paper under them", async () => {
     const touch = await account.context(browser, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } });
     try {
       const tab = await openPage(touch, `${server.base}/?page=${pageId}&ws=${account.ws}`);
@@ -246,6 +246,35 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
       assert(Math.abs(to.left - want[0]) < 3 && Math.abs(to.top - want[1]) < 3,
         `a two-finger drag pans by what the fingers travelled: ${[from.left, from.top]} -> ${[to.left, to.top]}, wanted ${want}`);
       assertEq(await scale(), zoomed, "and does not change the zoom");
+
+      // Ctrl+wheel: the same rate as the PDF viewer, holding the paper under
+      // the cursor rather than the middle of the view.
+      await tab.getByRole("button", { name: "Fit to width", exact: true }).click();
+      await sleep(300);
+      const off = [Math.round(box.x + box.width * 0.32), Math.round(box.y + box.height * 0.28)];
+      const under = await paperAt(...off);
+      const fitScale = await scale();
+      // Against the delta the browser actually delivered, not the one asked
+      // for: an emulated device may scale it.
+      await tab.locator(".nbViewer").evaluate((el) => {
+        window.wheelDy = 0;
+        el.addEventListener("wheel", (e) => { window.wheelDy += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; }, true);
+      });
+      await tab.mouse.move(...off);
+      await tab.keyboard.down("Control");
+      await tab.mouse.wheel(0, -120);
+      await tab.keyboard.up("Control");
+      const notched = await until(async () => {
+        const v = await scale();
+        return Math.abs(v - fitScale) > 1e-4 ? v : false;
+      }, { what: "Ctrl+wheel zooms the sheets" });
+      const dy = await tab.evaluate(() => window.wheelDy);
+      const rate = Math.exp(-dy * 0.0015); // WHEEL_RATE in shared/lib/viewerZoom.js
+      assert(Math.abs(notched / fitScale - rate) < 0.005,
+        `the wheel zooms at the shared rate: ${(notched / fitScale).toFixed(4)} vs ${rate.toFixed(4)} for ${dy}px`);
+      const stillUnder = await paperAt(...off);
+      assert(stillUnder && stillUnder.id === under.id && Math.abs(stillUnder.fy - under.fy) < 0.01,
+        `the paper under the cursor is held: ${under.fy.toFixed(3)} -> ${stillUnder?.fy.toFixed(3)}`);
 
       // One finger still scrolls: only the two-finger move is taken.
       const before = await tab.locator(".nbViewer").evaluate((el) => el.scrollTop);

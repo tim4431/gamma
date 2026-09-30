@@ -155,13 +155,13 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 | Guide | Offered when | Points at |
 |---|---|---|
-| Adding to your library | Add is opened (`popover.opened {name: "add"}`) — the one guide that comes *with* its control rather than after it, because opening Add is already the intent and the rows it explains are on screen only while the popover is | the address box (a drawing of the fetch), Upload files, New page, New notebook (a drawing of the one page behind both views) |
+| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | the address box (a drawing of the fetch), Upload files, New page, New notebook (a drawing of the one page behind both views) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: double-click to collapse and expand, drag to dock; Notes' title when docked; View to reopen closed windows |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
-| Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet) and the page is in the notes view (`notebookView: false` — in the notebook view none of the steps' anchors is up, and a withdrawn offer is spent for good) | (make one,) the sheet (a drawing of the next page arriving), its pen, the paper menu (a drawing of the paper changing), the notebook view |
+| Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a drawing of the next page arriving), its pen, the paper menu (a drawing of the paper changing), the notebook view |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button, with a drawing of the job outliving the window; a task's row; Clear finished. The last two are `optional`: a tour started from the menu may find no rows |
 | Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (its menu), the label chips with a drawing of one paper in several folders, the pinned strip, Recently viewed, Recently deleted; everything but the first step is `optional`, so a library with nothing pinned passes over it |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
@@ -363,13 +363,12 @@ same contract as an anchor — a tour names an illustration and never a path,
 and `npm test` fails on an id with no file, a file no step shows, and a file
 the registry does not know.
 
-**What a drawing is for.** The guide points at the real UI; a drawing is for
-what the real UI cannot show while standing still — a sequence (an address
-becoming a saved paper), a before and after (the paper of a page changing),
-or a relationship between things (one paper in several folders; the one page
-behind the notes and notebook views). It never replaces the spotlight: the
-step still points at the real control. A step whose picture would just be a
-portrait of the control it points at does not get one.
+**What a drawing is for.** The guide points at the real UI. A drawing is for
+what the still UI cannot show: a sequence (an address becoming a saved
+paper), a before and after (the paper of a page changing), or a relationship
+(one paper in several folders; the one page behind both views). It never
+replaces the spotlight, so a step whose picture would only be a portrait of
+the control it already points at does not get one.
 
 **Why it is inlined.** `GuideOverlay` puts the file's markup straight into
 the card rather than loading it as an `<img>`, so it paints from the theme's
@@ -400,12 +399,6 @@ nothing a user supplies is ever inlined.
 
 A drawing goes on a step of a running tour only. An offer and a hint stay a
 card of words: they interrupt, so they stay small.
-
-The six drawings today: `add-paper` (a pasted address becoming a paper),
-`page-notebook` (one page, both views), `labels-folders` (one paper, several
-folders, its labels beside it), `notebook-pages` (writing low, and the next
-page is there), `notebook-paper` (the paper changing) and
-`tasks-keep-going` (the window closes, the job does not).
 
 ## Goals
 

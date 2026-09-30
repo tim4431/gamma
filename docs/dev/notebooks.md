@@ -35,9 +35,10 @@ the shared cases in `tests/shared/paper.json`, and e2e
   - The **notebook view** puts the sheets in the viewer's place, one under
     the other, fitted to the width, with the zoom buttons, the pen button
     and the ink strip a PDF has, **Add page** at the end, and the paper
-    button for the sheet in the middle of the view. Two fingers pinch to
-    zoom and drag to pan, off the same gesture reader as the PDF viewer —
-    the only zoom gesture a tablet has, since the app turns the browser's
+    button for the sheet in the middle of the view. It zooms off the same
+    gesture reader as the PDF viewer, at the same rate: Ctrl/⌘ + wheel
+    around the cursor, and two fingers pinching to zoom or dragging to pan
+    — the only zoom gesture a tablet has, since the app turns the browser's
     own off ([ipad.md](ipad.md)). The notes beside them list each sheet
     as a row.
 - **Switching.** A sheet's **Notebook view** button (under it in the notes
@@ -165,13 +166,15 @@ No schema change: sheets are blocks and properties.
   sheet re-renders only for its own ink. It sizes to fit the widest sheet
   at `page-width`, else follows the viewer's zoom (`pdfScale`, from the
   buttons, Ctrl+wheel or a two-finger pinch), and keeps a point of the
-  paper still across a zoom: the point the fingers pinched, else the one
-  at the top of the view. The pinch itself is
-  `shared/lib/pinchZoom.js`; what is here is the commit it hands back.
-  `holdAt`/`applyHold` keep the held point as a sheet and a fraction of
-  its box, since neither the column's padding nor the gaps between sheets
-  scale with the zoom — a hold kept as a ratio of scroll offsets drifts
-  by them. Two fingers that only travelled pan instead. It
+  paper still across a zoom: the point under the cursor or the fingers,
+  else the one at the top of the view (the buttons and fit-width). The
+  gestures themselves are `shared/lib/viewerZoom.js`
+  ([ui-design.md](ui-design.md#zoom-gestures-in-a-viewer)); what is here
+  are the commits it hands back. `holdAt`/`applyHold` keep the held point
+  as a sheet and a fraction of its box, since neither the column's padding
+  nor the gaps between sheets scale with the zoom — a hold kept as a ratio
+  of scroll offsets drifts by them. Two fingers that only travelled pan
+  instead. It
   reports the sheet under the middle of the view and scrolls to a sheet
   and box on request. `PaperMenu` is the paper panel.
 - `notebook/NoteSheet.jsx`: `NoteSheet`, a sheet in the notes view, and

@@ -307,25 +307,42 @@ pill (the panel's first child, sticky, zero height) reads out the
 percentage. Nothing is stored: reload resets it. On the home library the
 gesture is left to the browser.
 
-### Pinch zoom in a viewer
+### Zoom gestures in a viewer
 
-The viewport meta turns the browser's own zoom off, so every viewer that
-zooms reads the two-finger gesture itself, from one place:
-`shared/lib/pinchZoom.js`. It tracks the fingers' distance and midpoint and
-previews the zoom as a CSS transform on the content layer — compositing
-only, because committing a real zoom per move event re-lays-out and
-re-renders every page, which no tablet can keep up with. The real zoom is
-committed once, on finger-lift. The layer must be the scroller's first
-in-flow child with `transform-origin: 0 0`, which is what the math assumes.
+The viewport meta turns the browser's own zoom off, so a viewer that zooms
+reads the gestures itself. Both of them come from one place,
+`shared/lib/viewerZoom.js`, so the PDF's pages and the notebook's sheets
+cannot drift apart in how zooming feels. A native non-passive `wheel`
+listener, because React's root listener is passive and `preventDefault` —
+which is what stops the browser zooming the page — would not work from an
+`onWheel` prop.
 
-`preventDefault` on the two-finger move blocks native scrolling along with
-the browser's zoom, so panning is the caller's job too: two fingers held
-the same distance apart are a drag, and the commit gets the midpoint's
-travel to move the view by. Each viewer supplies only that commit, since
-anchoring is the part that knows its own layout — the PDF's re-bases scroll
-and lets its zoom-anchor effect re-place the point
-(`pdf/PdfViewer.jsx`), the notebook's names the sheet and the fraction of
-it to hold ([notebooks.md](notebooks.md)).
+**Ctrl/⌘ + wheel** (which is also what a trackpad pinch reports) zooms by
+`e^(-deltaY · 0.0015)` per event, so a notch is a fixed ratio whatever the
+device reports in pixels; Firefox's line-mode deltas are converted first.
+Two details keep a fast train honest: the scale compounds on the module's
+own `live` value rather than on the committed scale, which is a frame or
+two behind, and the dispatch is coalesced to one per frame, because every
+commit re-renders every page. A viewer pushes its committed scale back in
+with `sync()` — ignored while a dispatch is in flight, or the events that
+arrived since would be dropped (measurably: a 6-notch train zoomed about 3
+notches' worth).
+
+**Two fingers** pinch to zoom and drag to pan. The pinch does not commit
+while they are down: it previews as a CSS transform on the content layer,
+compositing only, since a commit per move event is more re-layout than any
+tablet can keep up with — so it is blurry until they lift, like every
+native PDF app. The layer must be the scroller's first in-flow child with
+`transform-origin: 0 0`, which is what the math assumes. `preventDefault`
+on the two-finger move blocks native scrolling along with the browser's
+zoom, which is why panning is the caller's job too: fingers held the same
+distance apart are a drag, and the commit gets the midpoint's travel to
+move the view by.
+
+Each viewer supplies only the two commits, since anchoring is the part that
+knows its own layout — the PDF's re-bases scroll and lets its zoom-anchor
+effect re-place the point (`pdf/PdfViewer.jsx`), the notebook's names the
+sheet and the fraction of it to hold ([notebooks.md](notebooks.md)).
 
 ### Fullscreen on touch devices
 
@@ -503,7 +520,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation) classified once and drawn as one card in the chat and in notes; a citation in a chat answer is a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
 | `shared/lib/canvasSize.js`, `pdf/verticalScrollSnap.js` | the canvas backing-store cap and the one-finger vertical scroll alignment ([pdf_loading.md](pdf_loading.md)) |
-| `shared/lib/pinchZoom.js`, `shared/model/zoom.js` | the two-finger pinch/pan gesture both zooming viewers read, and the zoom limits every entry point clamps to (above) |
+| `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
 | `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour rides in `--hl`; a palette colour is also tagged with its `COLORS` index (`paletteIndex` in `shared/model/highlightColors.js`, `data-hl-color`), so on a dark page — Flip page colors or Gamma Dark — app.css draws a dark-tuned set with normal blending in place of the screened pastels, while colours from other apps keep the screen blend. A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
 | `ink/ink.js`, `ink/inkStore.js`, `ink/inkInput.js`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the files/drafts store, pointer sampling, and the page layer + selection menu + notes card + tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches) |

@@ -10,7 +10,7 @@ import { InkLayer } from "../ink/InkLayer";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { Segmented } from "../settings/SettingsKit";
 import { t, T } from "../shared/i18n/i18n.js";
-import { installPinchZoom } from "../shared/lib/pinchZoom.js";
+import { installViewerZoom } from "../shared/lib/viewerZoom.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import {
   DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperLines, paperSizeKey, turnPaper,
@@ -117,9 +117,9 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
   const scale = scaleValue === "page-width" || !Number(scaleValue) ? fit : Number(scaleValue);
 
   // A zoom keeps the point at the top of the view where it was, unless it
-  // named a point to hold instead (holdRef, which a pinch fills in with what
-  // its fingers were on). The hold is read before the re-render and spent
-  // here, after the sheets have taken their new size.
+  // named a point to hold instead (holdRef, which the gestures below fill in
+  // with the paper under the cursor or the fingers). The hold is read before
+  // the re-render and spent here, once the sheets have their new size.
   const prevScale = useRef(scale);
   const holdRef = useRef(null); // { id, fx, fy, vx, vy } from holdAt, plus the view point to put it at
   useLayoutEffect(() => {
@@ -130,37 +130,32 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
     if (el && was && was !== scale && !(hold && applyHold(el, hold))) {
       el.scrollTop = el.scrollTop * (scale / was);
     }
+    // A zoom from elsewhere (the buttons, fit-width, a resize) is what the
+    // next gesture compounds on.
+    viewerZoomRef.current?.sync(scale);
     onEffectiveScale?.(scale);
   }, [scale]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Ctrl + wheel (and a trackpad pinch, which arrives as one) zooms.
-  const zoomRef = useRef(null);
-  zoomRef.current = { scale, onZoomTo };
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return undefined;
-    const onWheel = (e) => {
-      if (!e.ctrlKey || !zoomRef.current.onZoomTo) return;
-      e.preventDefault();
-      zoomRef.current.onZoomTo(zoomRef.current.scale * Math.exp(-e.deltaY / 300));
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  // Two fingers zoom and pan the sheets, the only zoom gesture a tablet has
-  // (the viewport meta turns the browser's own off — docs/dev/ipad.md). The
-  // gesture itself is shared/lib/pinchZoom.js, the same reader the PDF viewer
-  // uses; only the commit below is the notebook's own.
+  // Ctrl/⌘ + wheel and two fingers (pinch to zoom, drag to pan) are read by
+  // shared/lib/viewerZoom.js, the same reader the PDF viewer uses; what is
+  // here is the commit, which holds a point of the paper still.
+  const onZoomToRef = useRef(null);
+  onZoomToRef.current = onZoomTo;
   const columnRef = useRef(null);
+  const viewerZoomRef = useRef(null);
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return undefined;
-    return installPinchZoom(el, {
+    const zoom = installViewerZoom(el, {
       layer: () => columnRef.current,
-      scale: () => zoomRef.current.scale,
       clamp: clampZoom,
-      onCommit: (next, g) => {
+      // The paper under the cursor stays under it.
+      onWheelZoom: (next, at) => {
+        const hold = holdAt(el, el.scrollLeft + at.x, el.scrollTop + at.y);
+        if (hold) holdRef.current = { ...hold, vx: at.x, vy: at.y };
+        onZoomToRef.current?.(next);
+      },
+      onPinchZoom: (next, g) => {
         // A zoom re-lays-out the sheets, so the paper the fingers started over
         // is handed to the hold, which puts it back under them afterwards —
         // that carries the pan too, since it aims at the final midpoint. A
@@ -169,7 +164,7 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
         const hold = Math.abs(next - g.scale) > 1e-3 ? holdAt(el, g.sl + g.mx, g.st + g.my) : null;
         if (hold) {
           holdRef.current = { ...hold, vx: g.vx, vy: g.vy };
-          zoomRef.current.onZoomTo?.(next);
+          onZoomToRef.current?.(next);
         } else {
           holdRef.current = null;
           el.scrollLeft = g.sl + g.mx - g.vx;
@@ -177,6 +172,11 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
         }
       },
     });
+    viewerZoomRef.current = zoom;
+    // The scale it mounted at: the effect that syncs later ones is a layout
+    // effect, so it has already run and found no gesture to tell.
+    zoom.sync(prevScale.current);
+    return () => { viewerZoomRef.current = null; zoom.dispose(); };
   }, []);
 
   // The sheet under the middle of the view, for the paper menu.
