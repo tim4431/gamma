@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
 
 from .. import ink as inkmod
+from .. import notebook
 from ..auth import resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, TRASH, assert_block_in_scope, block_to_dict, fetch_subtree, page_root_id)
@@ -736,6 +737,17 @@ def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, autho
     blocks = [block_to_dict(r) for r in rows]
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
+    if not doc_id and notebook.page_notebook(root["properties"]):
+        # A notebook has no PDF to annotate: its sheets are the pages, the
+        # paper painted and the handwriting drawn on it (gamma/notebook.py).
+        uploads = ws_uploads_dir(ws)
+        sheets, groups = [], 0
+        for sheet in notebook.sheets_of(blocks, block_id):
+            inks = [ink for b in sheet["blocks"] if (b["properties"] or {}).get("ink_url")
+                    if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
+            groups += len(inks)
+            sheets.append((sheet["paper"], inks))
+        return notebook.notebook_pdf(sheets), f"{slugify(root.get('content'), block_id)}.pdf", groups, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
     try:

@@ -67,6 +67,14 @@ export const MarkdownIcon = (p) => (
 export const PaperIcon = (p) => (
   <Icon {...p}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" /><path d="M15 2v5h5" /></Icon>
 );
+// A ring-bound notebook — a page written on sheets (notebook/notebook.js).
+export const NotebookIcon = (p) => (
+  <Icon {...p}><path d="M2 6h4" /><path d="M2 10h4" /><path d="M2 14h4" /><path d="M2 18h4" /><rect width="16" height="20" x="4" y="2" rx="2" /><path d="M16 2v20" /></Icon>
+);
+// A ruled sheet — a notebook page's paper.
+export const SheetIcon = (p) => (
+  <Icon {...p}><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8" /><path d="M8 12h8" /><path d="M8 16h8" /></Icon>
+);
 export const LabelIcon = (p) => (
   <Icon {...p}><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /><circle cx="7.5" cy="7.5" r=".5" fill="currentColor" /></Icon>
 );

@@ -110,7 +110,10 @@ function context(p) {
 function* files(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
-    if (e.isDirectory()) { if (e.name !== "i18n") yield* files(full); }
+    // replica/ is the iPad's sync core, never loaded by the web app: its
+    // texts are sync records (conflicts, the log), English like the Python
+    // engine's, not interface text
+    if (e.isDirectory()) { if (e.name !== "i18n" && e.name !== "replica") yield* files(full); }
     else if (/\.(jsx|js)$/.test(e.name)) yield full;
   }
 }

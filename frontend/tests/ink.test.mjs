@@ -1,11 +1,12 @@
 // node --test tests/  (from frontend/) — the pure stroke module.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
   inkBounds, newInk, normalizeTools, pdfPositionOf, removeStrokes, strokePath, strokeWidth, strokesInLasso, toolStyle,
   translateStrokes, transformStrokes, nearestInkStroke, restyleStrokes, duplicateStrokes, MAX_STROKES,
-  nearestInkColor, PEN_COLORS, HIGHLIGHTER_COLORS,
+  nearestInkColor, PEN_COLORS, HIGHLIGHTER_COLORS, mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
 } from "../src/ink/ink.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
@@ -224,4 +225,47 @@ test("a custom colour takes the nearest palette colour's name; palette colours a
   assert.equal(nearestInkColor("#fef08a"), "#fde047");  // a paler yellow
   assert.equal(nearestInkColor("rgb(1, 2, 3)"), null);
   assert.equal(nearestInkColor(""), null);
+});
+
+// tests/shared/inkmerge.json: the same cases gamma/ink.py merge_ink passes
+// (backend/tests/test_shared_fixtures.py).
+const MERGE = JSON.parse(readFileSync(new URL("../../tests/shared/inkmerge.json", import.meta.url), "utf8"));
+const mergeFile = (strokes) => strokes === null ? null : { ...newInk(1, 612, 792),
+  strokes: strokes.map(([id, v]) => ({ id, tool: "pen", color: "#1f1f1f", size: 1.6, opacity: 1, pen: true, ch: "xy", pts: [100 + 100 * v, 100] })) };
+for (const c of MERGE.cases) {
+  test(`ink merge: ${c.note}`, () => {
+    const { ink, clean } = mergeInk(mergeFile(c.base), mergeFile(c.ours), mergeFile(c.theirs));
+    assert.deepEqual(ink.strokes.map((s) => [s.id, (s.pts[0] - 100) / 100]), c.result);
+    assert.equal(clean, c.clean);
+  });
+}
+
+test("the merged file keeps theirs' space and a stroke equals its copy", () => {
+  const a = encodeStroke({ id: "a", samples: samples() });
+  const theirs = { ...newInk(2, 500, 700), strokes: [a] };
+  const ours = { ...newInk(2, 612, 792), strokes: [a, encodeStroke({ id: "b", samples: samples(3) })] };
+  const { ink } = mergeInk({ ...newInk(2, 612, 792), strokes: [] }, ours, theirs);
+  assert.deepEqual(ink.space, theirs.space);
+  assert.ok(sameStroke(a, { ...a, pts: [...a.pts] }));
+  assert.ok(!sameStroke(a, { ...a, color: "#dc2626" }));
+  assert.ok(sameStroke({ ...a, t0: null }, { ...a, t0: undefined }));
+});
+
+test("serializeInk sorts keys at every level and drops empty ones, so equal strokes are equal bytes", () => {
+  const a = encodeStroke({ id: "a", samples: samples(2), t0: 5 });
+  const one = serializeInk({ ...newInk(1, 612, 792), strokes: [a] });
+  const shuffled = { strokes: [Object.fromEntries(Object.entries(a).reverse())], space: { height: 792, width: 612, page: 1, kind: "pdf-page" },
+    version: 1, format: "gamma-ink" };
+  assert.equal(serializeInk(shuffled), one);
+  assert.ok(one.startsWith('{"format":"gamma-ink","space":{"height":792,"kind":"pdf-page","page":1,"width":612},"strokes":[{"ch":"xyp",'));
+  assert.ok(!serializeInk({ ...newInk(1, 612, 792), strokes: [{ ...a, brush: undefined, t0: null }] }).includes("t0"));
+});
+
+test("inkProps derives what a group's block carries from its file", () => {
+  const ink = { ...newInk(3, 612, 792), strokes: [encodeStroke({ id: "a", samples: samples() })] };
+  assert.deepEqual(inkProps(ink, "/api/uploads/x.ink"), {
+    ink_url: "/api/uploads/x.ink", ink_strokes: 1, pdf_page: 3, pdf_position: pdfPositionOf(ink) });
+  const sheet = { ...newCanvasInk(595.28, 841.89), strokes: [encodeStroke({ id: "a", samples: samples() })] };
+  assert.deepEqual(sheet.space, { kind: "canvas", width: 595.28, height: 841.89 });
+  assert.deepEqual(inkProps(sheet, "/api/uploads/y.ink"), { ink_url: "/api/uploads/y.ink", ink_strokes: 1, pdf_page: null, pdf_position: null });
 });

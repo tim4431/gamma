@@ -48,7 +48,7 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["frontend/src/guide/useGuide.js"]).sort(), ["contextual-guide", "guide", "triggered-guide"]);
   assert.deepEqual(pick(["docs/dev/debugging.md", "desktop/main.js", "backend/tests/test_ink.py"]), []);
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
-  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "triggered-guide"]);
+  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "notebooks", "triggered-guide"]);
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
   for (const id of ["notes-pdf-share", "collab", "files", "mermaid"]) assert.ok(notes.includes(id), id);

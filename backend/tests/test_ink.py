@@ -133,20 +133,38 @@ def test_svg_and_pdf_ops_render_every_stroke():
 
 # --- upload endpoint ----------------------------------------------------------------
 
-def test_upload_ink_stores_canonically_and_serves(guest):
-    data = _ink()
-    r = guest.post("/api/upload-ink", json=data)
+def _bytes(data):
+    """The upload bytes the clients send (ink.js serializeInk: sorted keys, no whitespace)."""
+    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+
+
+def test_upload_ink_stores_the_bytes_as_sent_and_serves(guest):
+    from gamma.storage import content_digest
+    body = _bytes(_ink())
+    r = guest.post("/api/upload-ink", content=body, headers={"Content-Type": "application/json"})
     assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["url"].endswith(".ink") and body["strokes"] == 1 and body["already_existed"] is False
-    assert body["pdf_position"]["pageNumber"] == 1
-    # same strokes, other key order → same file
-    again = guest.post("/api/upload-ink", json=json.loads(json.dumps(data))).json()
-    assert again["url"] == body["url"] and again["already_existed"] is True
-    served = guest.get(body["url"])
-    assert served.status_code == 200
+    out = r.json()
+    # named by the hash of what was sent, so a client can name it offline
+    assert out["url"] == f"/api/uploads/{content_digest(body)}.ink"
+    assert out["strokes"] == 1 and out["already_existed"] is False and out["size"] == len(body)
+    assert out["pdf_position"]["pageNumber"] == 1
+    again = guest.post("/api/upload-ink", content=body, headers={"Content-Type": "application/json"}).json()
+    assert again["url"] == out["url"] and again["already_existed"] is True
+    served = guest.get(out["url"])
+    assert served.status_code == 200 and served.content == body
     assert served.headers["content-type"].startswith("application/json")
     assert inkmod.parse_ink(served.content).strokes[0].id == "s1"
+
+
+def test_generic_upload_stores_only_valid_ink(guest):
+    """The route a mirror pushes files by: an .ink must be a drawing."""
+    from gamma.storage import content_digest
+    good = _bytes(_ink())
+    r = guest.post("/api/upload-file", files={"file": ("x.ink", good, "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    assert r.json()["url"] == f"/api/uploads/{content_digest(good)}.ink"
+    bad = guest.post("/api/upload-file", files={"file": ("x.ink", b'{"format": "gamma-ink"}', "application/octet-stream")})
+    assert bad.status_code == 400 and "invalid ink" in bad.json()["detail"]
 
 
 def test_upload_ink_rejects_bad_files(guest):
@@ -192,6 +210,90 @@ def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
     with closing(connect_pages_db(ws)) as conn:
         assert not conn.execute("SELECT 1 FROM upload_orphans WHERE name = ?", (name,)).fetchone()
     assert guest.get(url).status_code == 200
+
+
+# --- two writers, one group ------------------------------------------------------------
+
+def _stroke(sid, x=100.0, color="#1f1f1f"):
+    return {"id": sid, "tool": "pen", "color": color, "size": 2, "opacity": 1, "pen": True, "ch": "xy",
+            "pts": inkmod.encode_points([{"x": x, "y": 200.0}, {"x": x + 20, "y": 210.0}], "xy")}
+
+
+def _upload(client, strokes):
+    r = client.post("/api/upload-ink", content=_bytes(_ink(strokes=strokes)), headers={"Content-Type": "application/json"})
+    assert r.status_code == 200, r.text
+    return r.json()["url"]
+
+
+def _group(client, strokes, bid):
+    """A page with one ink group block holding ``strokes``: (page id, the file's url)."""
+    page = make_page(client, f"Merge {bid}")
+    url = _upload(client, strokes)
+    r = client.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": bid, "parent": page["id"], "content": "",
+         "props": {"ink_url": url, "pdf_page": 1, "ink_strokes": len(strokes)}}]})
+    assert r.status_code == 200, r.text
+    return page["id"], url
+
+
+def _stored(client, bid):
+    block = client.get(f"/api/blocks/{bid}").json()
+    return block["properties"], inkmod.parse_ink(client.get(block["properties"]["ink_url"]).content)
+
+
+def test_two_writers_drawing_in_one_group_both_keep_their_strokes(guest):
+    """A set whose base_props ink_url is not the stored one is merged by
+    stroke (ops.py merge_ink), not replaced: the applied op names the merged
+    file with its count and box."""
+    page, u0 = _group(guest, [_stroke("a")], "mg1")
+    theirs = _upload(guest, [_stroke("a"), _stroke("x", 300)])
+    ours = _upload(guest, [_stroke("a", color="#dc2626"), _stroke("b", 400)])
+    r = guest.post(f"/api/pages/{page}/ops", json={"client": "one", "ops": [
+        {"op": "set", "id": "mg1", "props": {"ink_url": theirs, "ink_strokes": 2}, "base_props": {"ink_url": u0}}]})
+    assert r.json()["ops"][0]["props"]["ink_url"] == theirs  # its base was current: as sent
+    r = guest.post(f"/api/pages/{page}/ops", json={"client": "two", "ops": [
+        {"op": "set", "id": "mg1", "props": {"ink_url": ours, "ink_strokes": 2, "pdf_position": None, "pdf_page": 1},
+         "base_props": {"ink_url": u0}}]})
+    assert r.status_code == 200, r.text
+    applied = r.json()["ops"][0]["props"]
+    assert applied["ink_url"] not in (u0, ours, theirs) and applied["ink_strokes"] == 3
+    assert applied["pdf_position"]["pageNumber"] == 1 and applied["pdf_page"] == 1
+    props, ink = _stored(guest, "mg1")
+    assert props["ink_url"] == applied["ink_url"]
+    assert [(s.id, s.color) for s in ink.strokes] == [("a", "#dc2626"), ("x", "#1f1f1f"), ("b", "#1f1f1f")]
+    # the same change sent again merges to the same drawing (a mirror's resend)
+    again = guest.post(f"/api/pages/{page}/ops", json={"client": "two", "ops": [
+        {"op": "set", "id": "mg1", "props": {"ink_url": ours, "ink_strokes": 2}, "base_props": {"ink_url": u0}}]})
+    assert again.json()["ops"][0]["props"]["ink_url"] == applied["ink_url"]
+
+
+def test_ink_without_a_base_or_a_readable_file_is_last_writer_wins(guest):
+    page, u0 = _group(guest, [_stroke("a")], "mg2")
+    theirs = _upload(guest, [_stroke("a"), _stroke("x", 300)])
+    guest.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [{"op": "set", "id": "mg2", "props": {"ink_url": theirs}}]})
+    ours = _upload(guest, [_stroke("b", 400)])
+    r = guest.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [{"op": "set", "id": "mg2", "props": {"ink_url": ours}}]})
+    assert r.json()["ops"][0]["props"]["ink_url"] == ours  # no base_props: replaced, as before
+    missing = "/api/uploads/" + "0" * 24 + ".ink"
+    r = guest.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
+        {"op": "set", "id": "mg2", "props": {"ink_url": missing}, "base_props": {"ink_url": u0}}]})
+    assert r.json()["ops"][0]["props"]["ink_url"] == missing  # nothing to read: as sent
+
+
+def test_block_update_merges_ink_and_answers_what_it_stored(guest):
+    """PUT /blocks/{id}, the browser's ink flush: base_properties, and the
+    applied properties in the answer."""
+    page, u0 = _group(guest, [_stroke("a")], "mg3")
+    theirs = _upload(guest, [_stroke("a"), _stroke("x", 300)])
+    guest.put("/api/blocks/mg3", json={"properties": {"ink_url": theirs}, "base_properties": {"ink_url": u0}})
+    ours = _upload(guest, [_stroke("b", 400)])  # a erased here, b drawn
+    r = guest.put("/api/blocks/mg3", json={"properties": {"ink_url": ours, "ink_strokes": 1},
+                                            "base_properties": {"ink_url": u0}})
+    assert r.status_code == 200, r.text
+    stored = r.json()["properties"]
+    props, ink = _stored(guest, "mg3")
+    assert stored["ink_url"] == props["ink_url"] and stored["ink_strokes"] == 2
+    assert [s.id for s in ink.strokes] == ["x", "b"]
 
 
 # --- PDF interchange ------------------------------------------------------------------

@@ -1,0 +1,1604 @@
+{
+ "about": "The mirror's pure tree rules: gamma/sync_tree.py (diff, apply, moved) with gamma/sync_engine.py _unlanded, and frontend/src/replica/tree.js + reconcile.js read these cases (outputs from the Python reference). The page is `pg`.",
+ "page": "pg",
+ "diff": [
+  {
+   "note": "nothing changed",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "ops": [],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "moved": []
+  },
+  {
+   "note": "a text edit carries its base",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one!",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "set",
+     "id": "n1",
+     "content": "one!",
+     "base": "one"
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one!",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "moved": []
+  },
+  {
+   "note": "a new block, a deleted subtree",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    },
+    "n3": {
+     "parent": "pg",
+     "position": "a3",
+     "content": "three",
+     "props": {}
+    }
+   },
+   "ops": [
+    {
+     "op": "insert",
+     "id": "n3",
+     "parent": "pg",
+     "position": "a3",
+     "content": "three",
+     "props": {}
+    },
+    {
+     "op": "delete",
+     "id": "n2"
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    },
+    "n3": {
+     "parent": "pg",
+     "position": "a3",
+     "content": "three",
+     "props": {}
+    }
+   },
+   "moved": []
+  },
+  {
+   "note": "a move and a property",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a4",
+     "content": "one",
+     "props": {
+      "done": true
+     }
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "move",
+     "id": "n1",
+     "parent": "pg",
+     "position": "a4"
+    },
+    {
+     "op": "set",
+     "id": "n1",
+     "props": {
+      "done": true
+     }
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a4",
+     "content": "one",
+     "props": {
+      "done": true
+     }
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "moved": [
+    "n1"
+   ]
+  },
+  {
+   "note": "a redrawn group carries the drawing it was edited from",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "pdf_page": 1,
+      "ink_strokes": 2
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "set",
+     "id": "g1",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "ink_strokes": 2
+     },
+     "base_props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink"
+     }
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "pdf_page": 1,
+      "ink_strokes": 2
+     }
+    }
+   },
+   "moved": []
+  },
+  {
+   "note": "a title edit drops the automatic marker unless the target keeps it",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {
+      "auto_title": true
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Renamed",
+     "props": {
+      "auto_title": true
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "set",
+     "id": "pg",
+     "content": "Renamed",
+     "base": "Page",
+     "props": {
+      "auto_title": true
+     }
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Renamed",
+     "props": {
+      "auto_title": true
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "moved": []
+  },
+  {
+   "note": "a child moved up, its parent deleted",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "c1": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "move",
+     "id": "c1",
+     "parent": "pg",
+     "position": "a1"
+    },
+    {
+     "op": "delete",
+     "id": "n2"
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "c1": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "moved": [
+    "c1"
+   ]
+  }
+ ],
+ "unlanded": [
+  {
+   "note": "an insert the remote holds landed",
+   "op": {
+    "op": "insert",
+    "id": "n3",
+    "parent": "pg",
+    "position": "a3",
+    "content": "x",
+    "props": {}
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    },
+    "n3": {
+     "parent": "pg",
+     "position": "a3",
+     "content": "x",
+     "props": {}
+    }
+   },
+   "result": [
+    {
+     "op": "insert",
+     "id": "n3",
+     "parent": "pg",
+     "position": "a3",
+     "content": "x",
+     "props": {}
+    },
+    null
+   ]
+  },
+  {
+   "note": "an insert it lacks goes again",
+   "op": {
+    "op": "insert",
+    "id": "n3",
+    "parent": "pg",
+    "position": "a3",
+    "content": "x",
+    "props": {}
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "result": [
+    null,
+    {
+     "op": "insert",
+     "id": "n3",
+     "parent": "pg",
+     "position": "a3",
+     "content": "x",
+     "props": {}
+    }
+   ]
+  },
+  {
+   "note": "a text the remote holds landed",
+   "op": {
+    "op": "set",
+    "id": "n1",
+    "content": "one!",
+    "base": "one"
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one! more",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "result": [
+    {
+     "op": "set",
+     "id": "n1",
+     "content": "one!",
+     "base": "one"
+    },
+    null
+   ]
+  },
+  {
+   "note": "a text it lacks goes again",
+   "op": {
+    "op": "set",
+    "id": "n1",
+    "content": "one!",
+    "base": "one"
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "result": [
+    null,
+    {
+     "op": "set",
+     "id": "n1",
+     "content": "one!",
+     "base": "one"
+    }
+   ]
+  },
+  {
+   "note": "a drawing it shows landed",
+   "op": {
+    "op": "set",
+    "id": "g1",
+    "props": {
+     "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+     "ink_strokes": 2
+    },
+    "base_props": {
+     "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink"
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "pdf_page": 1,
+      "ink_strokes": 2
+     }
+    }
+   },
+   "result": [
+    {
+     "op": "set",
+     "id": "g1",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "ink_strokes": 2
+     }
+    },
+    null
+   ]
+  },
+  {
+   "note": "a drawing redrawn there since goes again, with its base",
+   "op": {
+    "op": "set",
+    "id": "g1",
+    "props": {
+     "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+     "ink_strokes": 2
+    },
+    "base_props": {
+     "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink"
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/cccccccccccccccccccccccc.ink",
+      "pdf_page": 1,
+      "ink_strokes": 2
+     }
+    }
+   },
+   "result": [
+    null,
+    {
+     "op": "set",
+     "id": "g1",
+     "props": {
+      "ink_url": "/api/uploads/bbbbbbbbbbbbbbbbbbbbbbbb.ink",
+      "ink_strokes": 2
+     },
+     "base_props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink"
+     }
+    }
+   ]
+  },
+  {
+   "note": "a property set there since counts as overridden",
+   "op": {
+    "op": "set",
+    "id": "n1",
+    "props": {
+     "done": true
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {
+      "done": false
+     }
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "result": [
+    {
+     "op": "set",
+     "id": "n1",
+     "props": {
+      "done": true
+     }
+    },
+    null
+   ]
+  },
+  {
+   "note": "a delete of a subtree changed there waits for the merge",
+   "op": {
+    "op": "delete",
+    "id": "n2"
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "one",
+     "props": {}
+    },
+    "n2": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "two",
+     "props": {}
+    },
+    "c1": {
+     "parent": "n2",
+     "position": "a0",
+     "content": "child edited",
+     "props": {}
+    },
+    "g1": {
+     "parent": "pg",
+     "position": "a2",
+     "content": "",
+     "props": {
+      "ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink",
+      "pdf_page": 1,
+      "ink_strokes": 1
+     }
+    }
+   },
+   "result": [
+    null,
+    null
+   ]
+  }
+ ]
+}

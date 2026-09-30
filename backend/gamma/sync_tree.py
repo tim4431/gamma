@@ -6,8 +6,10 @@ page root and everything under it. ``diff(base, target, page_id)`` is the
 Python twin of the frontend's ``diffTrees`` (src/shared/model/blockOps.js):
 inserts for ids only ``target`` has, moves for a changed parent or key,
 sets for changed content (carrying ``base``, the text it was edited from —
-the server's three-way merge reads it) or a properties patch, and deletes
-of the top-most removed subtrees last. Inserts and moves come in tree
+the server's three-way merge reads it) or a properties patch (carrying
+``base_props`` with the ``ink_url`` a changed drawing was edited from, so
+the server merges it by stroke), and deletes of the top-most removed
+subtrees last. Inserts and moves come in tree
 order, so a parent always exists before its children arrive.
 ``apply(snapshot, ops)`` is the other way round: what a server holds after
 ops, keys taken as sent. ``moved(base, target)`` names the blocks a
@@ -100,6 +102,10 @@ def _set_op(bid: str, b: dict | None, t: dict, with_base: bool) -> dict | None:
         patch["auto_title"] = t["props"]["auto_title"]
     if patch:
         op["props"] = patch
+        if with_base and b is not None and "ink_url" in patch:
+            # the drawing this one was edited from: a server whose drawing
+            # moved on meanwhile merges the two by stroke (ops.py merge_ink)
+            op["base_props"] = {"ink_url": b["props"].get("ink_url") or ""}
     return op if len(op) > 2 else None
 
 

@@ -1,0 +1,89 @@
+/* --- Notebooks (notebook/NotebookViewer.jsx, docs/dev/notebooks.md) --------- */
+/* The sheets sit on the viewer's surface like PDF pages; the paper is the
+   sheet's own colour whatever the theme (it is part of the document). */
+.nbViewer {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg-input);
+  overscroll-behavior: contain;
+}
+[data-theme="gamma-dark"] .nbViewer { background: var(--bg-deeper); }
+.nbColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+.nbSheet {
+  position: relative;
+  flex: none;
+  box-shadow: var(--shadow-2);
+  border-radius: 2px;
+  touch-action: manipulation;
+}
+.nbViewer.inkArmed .nbSheet { cursor: crosshair; }
+.nbViewer.inkTouchDraw .nbSheet { touch-action: none; }
+.nbSheet.inkHovering { cursor: none; }
+.nbPaper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+}
+.nbSheetNo {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  font-size: var(--fs-2xs);
+  color: #8a8f98; /* ds-allow: on the paper, which keeps its own colour in every theme */
+  pointer-events: none;
+}
+.nbAddSheet {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 56px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.nbAddSheet:hover { border-color: var(--accent); color: var(--text-primary); }
+
+/* The paper menu: under the viewer's control column, like the ink strip. */
+.nbPaperMenu {
+  position: absolute;
+  z-index: calc(var(--z-dock) + 1);
+  top: 8px;
+  right: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  width: max-content;
+  max-width: calc(100% - 80px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+}
+[data-scheme="light"] .nbPaperMenu { box-shadow: var(--shadow-2); }
+.nbPaperHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; }
+.nbPaperRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nbPaperLabel { min-width: 76px; color: var(--text-secondary); }
+.nbPaperColors { display: inline-flex; gap: 6px; }
+.nbPaperSwatch { width: 22px; height: 22px; border: 1px solid var(--border); }
+.nbPaperActions { display: flex; gap: 6px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--border-subtle); }
+
+/* The notes: a sheet's row reads as the page it stands for. */
+.blockSheetLabel { color: var(--text-tertiary); font-size: var(--fs-xs); }

@@ -24,6 +24,7 @@ export const GROUPS = [
   { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
   { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
   { id: "ink", files: ["ink.mjs"] }, // ~19
+  { id: "notebooks", files: ["notebooks.mjs"] }, // ~15
   { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
   { id: "publish", files: ["publish.mjs"] }, // ~15
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
@@ -40,6 +41,7 @@ export const GROUPS = [
   { id: "quick-open", files: ["quickOpen.mjs"] },
   { id: "trash", files: ["trash.mjs"] },
   { id: "ipad", files: ["ipad.mjs"] },
+  { id: "replica", files: ["replica.mjs"] },
 ];
 
 const ALL = "all";
@@ -61,6 +63,7 @@ export const RULES = [
   ["frontend/tests/e2e/harness.mjs", ALL],
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
+  ["frontend/tests/replica/**", ["replica"]], // the replica's in-memory host
   ["frontend/tests/**", []],
   ["frontend/tools/**", []],
 
@@ -70,7 +73,9 @@ export const RULES = [
   ["frontend/src/app/**", ALL],
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide"]],
+  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks"]],
+  ["frontend/src/notebook/**", ["notebooks", "replica"]],
+  ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide"]],
   ["frontend/src/chat/**", CHAT],
@@ -101,16 +106,17 @@ export const RULES = [
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
-  ["backend/gamma/sync_*.py", ["mirror", "publish"]],
-  ["backend/gamma/textmerge.py", ["mirror"]],
-  ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
+  ["backend/gamma/sync_*.py", ["mirror", "publish", "replica"]],
+  ["backend/gamma/textmerge.py", ["mirror", "replica"]],
+  ["backend/gamma/routers/sync.py", ["mirror", "publish", "replica"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
-  ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide"]],
-  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide"]],
+  ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
+  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
+  ["backend/gamma/notebook.py", ["notebooks"]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
   ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],

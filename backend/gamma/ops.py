@@ -4,13 +4,18 @@ A page's notes change through small, typed operations rather than a whole-
 tree replace, so several clients (two browsers of one account, share editors)
 can edit one page at once and only the touched rows move:
 
-- ``set {id, content?, base?, props?}`` — ``content`` replaces the text;
-  with ``base`` (the text the client's change was computed from) it is
-  applied as a patch when the block changed meanwhile, so two people
-  editing different spans of one block both keep their edit
-  (gamma/textmerge.py; the applied op carries the merged text). ``props``
-  is a PATCH (``{key: value | null}``, null deletes), so unrelated
-  properties never conflict (Figma's property-level rule).
+- ``set {id, content?, base?, props?, base_props?}`` — ``content``
+  replaces the text; with ``base`` (the text the client's change was
+  computed from) it is applied as a patch when the block changed
+  meanwhile, so two people editing different spans of one block both keep
+  their edit (gamma/textmerge.py; the applied op carries the merged text).
+  ``props`` is a PATCH (``{key: value | null}``, null deletes), so
+  unrelated properties never conflict (Figma's property-level rule).
+  ``base_props`` holds the values the patch was computed from; an ink
+  group's new ``ink_url`` whose base is not the stored one is merged into
+  the stored drawing by stroke (``gamma/ink.py`` ``merge_ink``, the applied
+  op names the merged file), so two people drawing in one group both keep
+  their strokes. Other keys stay last-writer-wins.
 - ``insert {id, parent, position?, content, props}`` — the client mints the
   id and the fractional position; a position that collides with a sibling is
   re-keyed here and the applied op carries the final value. Re-inserting a
@@ -55,12 +60,13 @@ from fractional_indexing import FIError, generate_key_between, validate_order_ke
 from pydantic import BaseModel, Field, model_validator
 
 from . import block_index, collab, textmerge, upload_gc
+from . import ink as inkmod
 from .blocks_store import (
     BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, free_position,
     last_child_position, subtree_refs, trashed_page, valid_block_id, write_lock)
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
-from .storage import upload_refs
+from .storage import content_digest, store_file, upload_refs
 
 MAX_OPS = 500
 MAX_CONTENT = 200_000
@@ -135,6 +141,7 @@ class SetOp(BaseModel):
     content: str | None = None
     base: str | None = None  # the text `content` was edited from (three-way merge)
     props: dict | None = None
+    base_props: dict | None = None  # the values `props` was computed from (an ink group's merge)
 
 
 class InsertOp(BaseModel):
@@ -191,6 +198,7 @@ class _Batch:
 
     def __init__(self, conn, page_id: str, now: str, share_scoped: bool, cursor: dict | None = None):
         self.conn = conn
+        self.ws = getattr(conn, "ws", "")  # the workspace whose files an ink merge reads
         self.page_id = page_id
         self.now = now
         self.share_scoped = share_scoped
@@ -285,6 +293,8 @@ class _Batch:
                 cur["head"] = textmerge.map_offset(content, merged, cur.get("head", -1)) if cur.get("head", -1) >= 0 else -1
             content = merged
         props = json.loads(row[1] or "{}")
+        if patch and op.get("base_props"):
+            patch = self.merge_ink(props, patch, op["base_props"])
         echo = {"op": "set", "id": block_id}
         sets, values = ["updated_at = ?"], [self.now]
         if content is not None:
@@ -310,6 +320,54 @@ class _Batch:
         new_props = (row[1] or "{}") if patch is None else props
         self.refs_changed(upload_refs(row[0] or "", row[1] or "{}"), upload_refs(new_content, new_props))
         self.applied.append(echo)
+
+    def merge_ink(self, props: dict, patch: dict, base_props: dict) -> dict:
+        """``patch`` for an ink group whose drawing changed since the writer
+        read it (its base ``ink_url`` is not the stored one): the writer's
+        file merged into the stored one stroke by stroke (gamma/ink.py
+        ``merge_ink``), and the patch naming the result with its stroke
+        count and box. As sent when there is nothing to merge, a file
+        cannot be read or the result is over the file budgets.
+
+        A merged file is written only when it is new. One that is stored
+        already stays: the purge deletes only under the write lock this
+        batch holds, so it is still there when the batch commits the
+        reference."""
+        new, base, now = patch.get("ink_url"), base_props.get("ink_url"), props.get("ink_url") or ""
+        if not (isinstance(new, str) and new and isinstance(base, str)) or now in (base, new) or not self.ws:
+            return patch
+        uploads = ws_uploads_dir(self.ws)
+        ours = inkmod.read_upload(uploads, new)
+        theirs = inkmod.read_upload(uploads, now) if now else None
+        if ours is None or (now and theirs is None):
+            return patch
+
+        def empty():
+            return inkmod.InkFile(format=inkmod.FORMAT, version=inkmod.VERSION, space=ours.space, strokes=[])
+
+        try:
+            merged, _clean = inkmod.merge_ink(inkmod.read_upload(uploads, base) if base else empty(),
+                                              ours, theirs or empty())
+        except ValueError:
+            return patch
+        if merged is ours:
+            url = new
+        elif merged is theirs:
+            url = now
+        else:
+            data = inkmod.dumps(merged)
+            name = f"{content_digest(data)}.ink"
+            if not (uploads / name).is_file():
+                try:
+                    store_file(self.ws, data, ".ink")
+                except Exception as e:  # noqa: BLE001 — storage full: the writer's file as sent
+                    log.warning(f"[ops] ink merge in {self.page_id} not stored: {e}")
+                    return patch
+            url = f"/api/uploads/{name}"
+        out = {**patch, "ink_url": url, "ink_strokes": len(merged.strokes)}
+        if "pdf_position" in patch:
+            out["pdf_position"] = inkmod.pdf_position(merged)
+        return out
 
     def insert(self, op: dict) -> None:
         block_id, parent = op["id"], op["parent"]

@@ -1146,10 +1146,27 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
         shows = now["content"] == op["content"] or textmerge.contains(before, op["content"], now["content"])
         part = {"content": op["content"], **({"base": op["base"]} if "base" in op else {})}
         (landed if shows else rest).update(part)
-    for k, v in (op.get("props") or {}).items():
+    props = op.get("props") or {}
+    # A drawing merged by stroke goes again unless the remote shows it as
+    # sent: merging a change that already landed adds nothing (ops.py
+    # merge_ink), and a remote that drew on since would otherwise keep only
+    # its own strokes. Its derived keys (count, box) travel with it.
+    ink = "ink_url" in props and "ink_url" in (op.get("base_props") or {}) \
+        and now["props"].get("ink_url") != props["ink_url"]
+    for k, v in props.items():
+        if ink and k in INK_KEYS:
+            rest.setdefault("props", {})[k] = v
+            continue
         unchanged = now["props"].get(k) == (was.get("props") or {}).get(k) and now["props"].get(k) != v
         (rest if unchanged else landed).setdefault("props", {})[k] = v
-    return (landed if len(landed) > 2 else None), (rest if len(rest) > 2 else None)
+    if ink:
+        rest["base_props"] = op["base_props"]
+    return (landed if len(landed) > 2 else None), (rest if len(rest) > 2 + ("base_props" in rest) else None)
+
+
+# An ink group's drawing and what is derived from it (gamma/ink.py): they
+# change together, so a resend sends them together.
+INK_KEYS = ("ink_url", "ink_strokes", "pdf_position", "pdf_page")
 
 
 def _confirm_push(ws: str, remote: Remote, page_id: str, state: dict, *, resend: bool, report: dict) -> dict:
@@ -1367,8 +1384,8 @@ def _split(ops: list[dict], edits: dict, touched: set | None) -> list[dict]:
                 out.append(op)
         else:
             part = {k: v for k, v in op.items() if k in ("op", "id") or (k in ("content", "base") and "content" in mine)
-                    or (k == "props" and "props" in mine)}
-            if len(part) > 2:
+                    or (k in ("props", "base_props") and "props" in mine)}
+            if len(part) > 2 + ("base_props" in part):
                 out.append(part)
     return out
 
@@ -1396,8 +1413,8 @@ def _strays(back: list[dict], local: dict, edits: dict, touched: set, elsewhere:
                 here.add(bid)
         elif kind == "set" and bid in local:
             part = {k: v for k, v in op.items() if k in ("op", "id") or (k in ("content", "base") and "content" not in mine)
-                    or (k == "props" and "props" not in mine)}
-            if len(part) > 2:
+                    or (k in ("props", "base_props") and "props" not in mine)}
+            if len(part) > 2 + ("base_props" in part):
                 out.append(part)
     moving = {op["id"] for op in out if op["op"] == "move"}
     held = {(b["parent"], b["position"]): h for h, b in local.items()}

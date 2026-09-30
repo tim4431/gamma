@@ -359,7 +359,74 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
 
 
 def dumps(ink: InkFile | dict) -> bytes:
-    """Canonical bytes for storage (sorted keys, no whitespace) — the same
-    strokes always hash to the same upload name."""
+    """Canonical bytes for a file the server writes itself (a merge, an
+    import): sorted keys, no whitespace. Uploads are stored as they came."""
     data = ink.model_dump(exclude_none=True) if isinstance(ink, InkFile) else ink
     return json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+# --- three-way merge -------------------------------------------------------------
+
+def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile) -> tuple[InkFile, bool]:
+    """Apply the change ``base → ours`` to ``theirs`` (the group as stored
+    now), stroke by stroke: stroke ids survive every edit, so they play the
+    part text offsets play in gamma/textmerge.py. Returns ``(ink, clean)``.
+
+    Where theirs left a stroke as the base had it, ours' change to it (a
+    restyle, a move, an erasure) applies in place. A stroke ours added goes
+    after the stroke before it in ours that the result keeps, behind any
+    strokes theirs added there (theirs comes first, as with text). A stroke
+    both changed keeps theirs' version, and a stroke one side changed
+    survives the other's erasure (an edit beats a delete); either makes the
+    merge unclean. ``base`` None (the file is gone) merges as a union by
+    stroke id. frontend/src/ink/ink.js ``mergeInk`` is the same rule;
+    tests/shared/inkmerge.json pins both."""
+    b_strokes = base.strokes if base is not None else []
+    if base is not None and theirs.strokes == b_strokes:
+        return ours, True
+    if ours.strokes == b_strokes or ours.strokes == theirs.strokes:
+        return theirs, True
+    b = {s.id: s for s in b_strokes}
+    o = {s.id: s for s in ours.strokes}
+    clean = True
+    out: list[Stroke] = []
+    for t in theirs.strokes:
+        was, mine = b.get(t.id), o.get(t.id)
+        if was is None:                  # theirs added it
+            if mine is not None and mine != t:
+                clean = False
+            out.append(t)
+        elif mine is None:               # ours erased it
+            if t != was:
+                clean = False            # theirs changed it: it stays
+                out.append(t)
+        elif mine == was or t == mine:
+            out.append(t)
+        elif t == was:
+            out.append(mine)             # only ours changed it
+        else:
+            clean = False                # both changed it: theirs stands
+            out.append(t)
+    present = {s.id for s in out}
+    anchor = None
+    for s in ours.strokes:
+        if s.id in present:
+            anchor = s.id
+            continue
+        was = b.get(s.id)
+        if was is not None:
+            if s == was:
+                continue                 # theirs erased a stroke ours kept as it was
+            clean = False                # ours changed what theirs erased: it comes back
+        at = next(i for i, x in enumerate(out) if x.id == anchor) + 1 if anchor else 0
+        while at < len(out) and out[at].id not in b and out[at].id not in o:
+            at += 1                      # theirs' own additions there come first
+        out.insert(at, s)
+        present.add(s.id)
+        anchor = s.id
+    # a merge that changes nothing is that file itself (a change sent again)
+    if out == theirs.strokes:
+        return theirs, clean
+    if out == ours.strokes and ours.space == theirs.space:
+        return ours, clean
+    return InkFile(format=FORMAT, version=VERSION, space=theirs.space, strokes=out), clean

@@ -1,15 +1,181 @@
 # Gamma on the iPad (and other tablets)
 
-The iPad app is the web app installed to the home screen. There is no
-Swift client: the browser ink layer already gives Apple Pencil pressure,
-tilt, hover, palm rejection and Safari's touch-gesture handling
-([handwriting.md](handwriting.md)), and every other feature — the block
-editor, search, AI, sharing, workspaces — is the same React code the
-desktop shell hosts. The reasoning, and what the upstream fork's native
-PDFKit/PencilKit app was measured against, is in
-[research/ipad.md](../research/ipad.md).
+There are two ways to use Gamma on an iPad:
 
-## What the user does
+- **The native app** (`ipad/`, [ipad/README.md](../../ipad/README.md))
+  keeps a copy of one workspace on the iPad. Its PDFs and notebooks read
+  and write offline with Apple Pencil, and it syncs with the server by the
+  desktop mirror's rules.
+- **The web app installed to the home screen** is every feature, online.
+  It is described under [The installed web app](#the-installed-web-app).
+
+Both store the same thing: handwriting is the same `gamma-ink` file and
+the same block properties, whichever client wrote it
+([handwriting.md](handwriting.md)). The native app also opens the web app
+in a web view for everything it does not do itself.
+
+## The native app
+
+### What the user does
+
+1. Enter the server's address and sign in on its own web page, with a
+   password or Gamma Cloud (whatever the server offers).
+2. Choose a workspace. The app mints a write token for it
+   (`POST /api/integrations/tokens {scope: "write"}`, the credential a
+   desktop clone holds, [mirror.md](mirror.md) "Credentials") and keeps it
+   in the Keychain. The web session stays in the app's web views for
+   "Open on the web".
+3. The first sync brings the workspace over, files included. The library
+   lists its pages by folder. A PDF page opens in PDFKit, a notebook as
+   its sheets, and a page of notes as its outline. The notes open beside
+   a PDF or a notebook.
+4. The Pencil writes. Fingers scroll, zoom and select. The tool strip has
+   the pen and highlighter presets, the eraser, the hand (the Pencil
+   scrolls), a new group, undo and redo. The Pencil's double tap switches
+   to the eraser and back.
+5. Rounds run every 30 seconds while the app is in front, when it comes
+   back, two seconds after an edit, and on request. The sync button shows
+   a round running, edits not sent yet, or a problem. "Sync decisions"
+   lists the choices rounds made on their own (merged texts, edits that
+   beat deletions). "Receive only" stops pushing, like a clone's
+   direction.
+
+### A replica: a mirror without a server
+
+A desktop clone is a second Gamma server holding a copy
+([mirror.md](mirror.md)). An iPad cannot run that server, so the app keeps
+a **replica**: the same copy, kept by the same protocol and rules, on a
+device with no server of its own.
+
+- **What the remote sees is a clone's traffic.** The replica calls
+  `GET /api/sync/whoami`, walks `GET /api/sync/changes`, reads
+  `GET /api/blocks/{id}/subtree`, and pushes `POST /api/pages/{id}/ops`
+  batches under batch ids with `client: "sync"`. It creates pages with
+  `POST /api/pages {id, title, properties}` and deletes them with
+  `DELETE /api/blocks/{id}`. Files travel by name with `HEAD`/`GET`
+  `/api/uploads/<name>` and `POST /api/upload-file`, or `/api/uploads`
+  for a PDF. The server needs nothing new.
+- **The rules are the mirror's**, one page at a time as in
+  `sync_engine._sync_page`. A page deleted on one side goes on the other
+  unless the other side edited it. The remote's changes since the saved
+  base are applied here, and an edit beats a delete in both directions.
+  Only this copy's own edits are pushed. A push whose answer was lost is
+  confirmed and sent again only where the remote does not show it. A
+  block the remote moved to another page moves here too, carrying what
+  was typed in it here.
+- **The code is JavaScript,** a port of the pure half of the Python
+  engine that runs in the app's JavaScriptCore. `frontend/src/replica/tree.js`
+  is `sync_tree.py`, and `reconcile.js` holds `_known`,
+  `_reconcile_remote_ops`, `_own_edits`, `_split`, `_strays` and
+  `_unlanded`. `round.js` is `_sync_page` and `_round`, and `textmerge.js`
+  is `textmerge.py` over the same diff-match-patch. The replica applies
+  the remote's ops itself, with the server's merge rules
+  (`tree.applyLocal`: a text edited from an older base merges, a drawing
+  edited from an older `ink_url` merges by stroke, an insert of a known
+  id changes nothing).
+- **Local writes during a round** use versions instead of the Python
+  engine's op-log scan (`_touched`). The round reads a page with its
+  version and writes the merge only if the page is still at that
+  version, otherwise it reads again. It then acknowledges the version it
+  pushed from, so an edit made during the push stays marked for the next
+  round.
+- **The host** is where the replica lives: the device's storage,
+  network and files. `round.js` names its interface, and the iPad's is
+  Swift (`ipad/GammaIPad/Core/Replica.swift` over SQLite and URLSession).
+  The tests' host keeps it in memory (`frontend/tests/replica/memoryHost.mjs`).
+  The host only reads and writes. Every decision is the shared JavaScript's.
+
+Two implementations of one logic need a pin. The pure rules have shared
+fixtures, which both the Python engine and the JavaScript port read:
+
+- `tests/shared/synctree.json`: diff, apply, moved and `_unlanded`, with
+  outputs taken from the Python reference.
+- `textmerge.json`: merge, contains and map_offset.
+- `inkmerge.json`: the stroke merge.
+- `paper.json`: notebook paper.
+
+The rounds themselves run against a real server in the browser suite's
+`replica` group (below).
+
+### Ink on the iPad
+
+The iPad captures the Pencil itself, and stores exactly what a browser
+stores.
+
+- **Capture.** A Pencil-only gesture recognizer (`Ink/InkPageView.swift`
+  `PencilRecognizer`) takes the coalesced touches, every sample the
+  Pencil measured. Each sample carries `preciseLocation`, force over
+  `maximumPossibleForce`, and the hardware timestamp, in ms since the
+  stroke's first sample. A touch that reports no force, such as the
+  lift, keeps the last pressure, as `ink/inkInput.js` does. Predicted
+  touches only extend the preview and are never stored. Fingers keep
+  PDFKit's scrolling, zooming and text selection, because its scroll
+  views accept direct touches only.
+- **Encoding.** The stroke is `ink.js encodeStroke` in the core, with
+  `ch: "xypt"` like a browser pen and `t0` as wall-clock ms rounded to an
+  integer (the schema's `t0: int`).
+- **Frame.** A PDF page's ink is in pdf.js's viewport frame at scale 1,
+  rotation applied. The core's `viewportTransform` is pdf.js's
+  `PageViewport` transform. `Reader/PDFReader.swift` composes its inverse
+  with PDFKit's page-to-overlay mapping, read off three points, so
+  rotated pages and every zoom land in the same frame. A notebook
+  sheet's ink is in the sheet's own frame, points from its top-left.
+- **Saving** is `replica/edits.js saveInk`, the browser's `flushInk` on
+  the device. The file is written as `serializeInk` bytes and named by
+  their hash. The block properties come from `inkProps`. The base is the
+  file the strokes were drawn onto. An emptied group follows the same
+  rule as in the browser.
+- **Drawing** comes from the core too: a pen stroke's outline polygon
+  (`perfect-freehand` with `outlineOptions`) is filled as the web's
+  `svgPathFromPoints` path, and a highlighter's centre line is stroked
+  and multiplied. The live stroke is a plain line at the tool's width
+  until the outline replaces it.
+- **Undo and redo** rebase by stroke id (`mergeInk`), like the browser's.
+
+Why not PencilKit: its `PKDrawing` is an opaque format no server or
+browser reads ([research/handwriting.md](../research/handwriting.md)).
+Converting to and from it resamples strokes and loses their identity.
+Raw touches carry everything `gamma-ink` stores.
+
+### Tests
+
+- `ipad/scripts/core.test.mjs` runs the bundle in a bare context with no
+  browser or Node globals. It covers ink, paper, the viewport transform,
+  and a notebook made through a synchronous host. It runs in `check.yml`
+  and `ipad.yml`.
+- `frontend/tests/replica.test.mjs` covers the tree rules against the
+  shared fixtures, the local merges, edit-beats-delete and the page views.
+- The browser suite's `replica` group (`frontend/tests/e2e/scenarios/replica.mjs`,
+  no browser) runs rounds against a real server: the first fill, pushes,
+  text and drawings merged on both sides, an edit beating a delete both
+  ways, a lost answer, a block moved between pages, deletions both ways,
+  and receive-only.
+- `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`) covers the
+  store's version, edit-mark and tombstone semantics, file names, and the
+  bundled core through the Swift host.
+
+### Not built yet
+
+- A highlight from a text selection. PDFKit selects, and the web view
+  highlights.
+- The lasso, the partial eraser, moving and restyling strokes, and
+  editing presets beyond colour and width.
+- A per-page choice of what to keep offline: every file comes over, like
+  a desktop clone.
+- Sync in the background, and resolving a conflict from the app (the
+  list is for looking; the web app's clone view resolves).
+
+## The installed web app
+
+The home-screen app is the web app installed to the home screen. Its
+browser ink layer already gives Apple Pencil pressure, tilt, hover, palm
+rejection and Safari's touch-gesture handling
+([handwriting.md](handwriting.md)). Every other feature (the block editor,
+search, AI, sharing, workspaces) is the same React code the desktop shell
+hosts. [research/ipad.md](../research/ipad.md) has the reasoning, and
+what the upstream fork's PDFKit/PencilKit app was measured against.
+
+### What the user does
 
 1. Open the server's URL in Safari on the iPad and sign in.
 2. Share button → **Add to Home Screen** → Add. Chrome and Edge on a
@@ -23,7 +189,7 @@ Writing then works as everywhere else: a Pencil draws right away, fingers
 scroll and pinch, the tool strip's presets are per browser (the installed
 app counts as one browser, separate from Safari).
 
-## What the install adds, and where it lives
+### What the install adds, and where it lives
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -33,7 +199,7 @@ app counts as one browser, separate from Safari).
 | The status bar colour | `index.html`'s pre-paint script, then `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`. Before the bundle loads, the pre-paint script writes the resolved theme's chrome colour from a small table of each theme's `--bg-page` (`tests/themes.test.mjs` holds it to the tokens), so a cold start never shows another theme's bar. From then on the meta is set to the topbar's background (the chrome, `--bg-page`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (the content surface, `--bg-surface`) while the compact layout shows no topbar. Both are resolved to a hex first (`tokenHex`): most tokens are `color-mix()` expressions. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
 | Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | The document stops rubber-banding (`overscroll-behavior: none` on html/body; the panes still scroll) and `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. |
 
-## Layout by orientation
+### Layout by orientation
 
 An iPad's Safari sends a desktop-class UA, so the layout follows the
 screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
@@ -51,7 +217,7 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
 - A phone keeps the compact shell both ways: 700px wide or less, or a
   coarse pointer on a screen at most 500px tall.
 
-### The compact shell
+#### The compact shell
 
 - **The bottom bar** (`.phoneBottomBar`): view tabs on the left — Library
   (home: the topbar has no Home button here, so it stays on a page's bar
@@ -76,22 +242,20 @@ browser zoom in favour of the viewer's own pinch-zoom, `touch-action:
 manipulation` removes double-tap zoom, and both layouts carry the touch
 rules the ink layer and the viewer already have.
 
-## Not built (and why)
+### Not built (and why)
 
-- **No service worker / offline shell.** Installability on iOS does not
+- **No service worker or offline shell.** Installability on iOS does not
   need one, and a cache layer would sit on top of the asset cache rules
-  in [repository.md](repository.md). Offline reading is the separate
-  "offline library" item in the upstream study, to be scoped on its own.
-- **Pencil double-tap and squeeze** are not exposed to web content by
-  iPadOS; Pencil hover is (a `pen` pointer with no buttons) and already
-  shows the tool footprint.
-- **A native wrapper** (a `WKWebView` shell like the desktop's Electron
-  one) would only add App Store distribution and system share-sheet
-  integration. It stays out until distribution is a goal; the web app is
-  the product either way, as the desktop shell's black-box rule already
-  says ([desktop.md](desktop.md)).
+  in [repository.md](repository.md). Offline reading and writing is the
+  native app's job ([above](#the-native-app)).
+- **Pencil double tap and squeeze** are not exposed to web content by
+  iPadOS. Pencil hover is exposed (a `pen` pointer with no buttons) and
+  already shows the tool footprint. The native app handles the double tap.
+- **No wrapper around the web app.** The native app is not a
+  `WKWebView` shell: it reads and writes its replica natively, and opens
+  the web app in a web view only for what it does not do itself.
 
-## Tests
+### Tests
 
 - `backend/tests/test_static.py`: the manifest's media type and cache
   header.

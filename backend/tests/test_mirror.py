@@ -696,3 +696,49 @@ def test_resolving_a_conflict_writes_into_the_page_the_block_is_in_now():
     assert r.status_code == 200, r.text
     assert local.texts(other["id"])["rc1"] == "ALPHA beta"
     assert local.client.get(f"/api/mirrors/{local.ws}").json()["conflicts_open"] == 0
+
+
+def _ink_file(side, strokes):
+    """Upload a drawing of ``[(stroke id, x)]`` on ``side``: its url."""
+    import json as _json
+    from gamma import ink as inkmod
+    data = {"format": "gamma-ink", "version": 1, "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+            "strokes": [{"id": sid, "tool": "pen", "color": "#1f1f1f", "size": 2, "opacity": 1, "pen": True, "ch": "xy",
+                         "pts": inkmod.encode_points([{"x": x, "y": 100.0}, {"x": x + 5, "y": 105.0}], "xy")}
+                        for sid, x in strokes]}
+    body = _json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    r = side.client.post("/api/upload-ink", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 200, r.text
+    return r.json()["url"]
+
+
+def _strokes(side, bid):
+    from gamma import ink as inkmod
+    tree = side.tree(side.client.get(f"/api/blocks/{bid}").json()["parent_id"])
+    url = next(c for c in tree["children"] if c["id"] == bid)["properties"]["ink_url"]
+    return url, [s.id for s in inkmod.parse_ink(side.client.get(url).content).strokes]
+
+
+def test_both_sides_drawing_in_one_group_keep_every_stroke():
+    """A drawing both sides changed is merged by stroke (sync_tree's
+    base_props, ops.py merge_ink), never replaced by one side's."""
+    remote, local, _ = _pair()
+    page = remote.page("Ink on both sides")
+    u0 = _ink_file(remote, [("a", 100)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkG", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "pdf_page": 1, "ink_strokes": 1}}])
+    _sync(local)
+    assert _strokes(local, "inkG") == (u0, ["a"])
+    ur = _ink_file(remote, [("a", 100), ("x", 300)])
+    remote.ops(page["id"], [{"op": "set", "id": "inkG", "props": {"ink_url": ur, "ink_strokes": 2},
+                             "base_props": {"ink_url": u0}}])
+    ul = _ink_file(local, [("a", 100), ("b", 400)])
+    local.ops(page["id"], [{"op": "set", "id": "inkG", "props": {"ink_url": ul, "ink_strokes": 2},
+                            "base_props": {"ink_url": u0}}])
+    _sync(local)
+    there, here = _strokes(remote, "inkG"), _strokes(local, "inkG")
+    assert there == here and sorted(here[1]) == ["a", "b", "x"]
+    assert remote.tree(page["id"])["children"][0]["properties"]["ink_strokes"] == 3
+    # settled: the next round moves nothing
+    status = _sync(local)
+    assert status["pages_pulled"] == 0 and status["pages_pushed"] == 0

@@ -38,7 +38,7 @@ operation batches are broadcast but never written to the operation log.
 
 | op | fields | notes |
 |---|---|---|
-| `set` | `id`, `content?`, `base?`, `props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict |
+| `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), other keys stay last-writer-wins |
 | `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
@@ -399,6 +399,11 @@ focus, and `peers` / `me` as React state. The session owns:
   that can be saved, so the text is diffed and sent again once shortened.
   The editor stays open on it (`tooLong(id)`), the notice says why, and a
   refetch meanwhile keeps the long text on screen.
+- **same-group merge**: an ink group's drawing is saved through
+  `PUT /blocks/{id}` with `base_properties: {ink_url}`, the file the
+  draft was edited from, and the server merges it into a drawing someone
+  else saved meanwhile. The answer's `properties` names the merged file,
+  and the draft takes it ([handwriting.md](handwriting.md) "Client").
 - **same-block merge**: a content `set` carries `base`, the text the change
   was made from (`diffTrees` reads it off the base tree; `pushOp` keeps the
   first base of a run of keystrokes). When the server finds the block

@@ -57,6 +57,7 @@ class UBUpdateRequest(StorableBody):
     content: str | None = None
     base: str | None = None     # the text `content` was edited from: merged, not replaced (ops.py)
     properties: dict | None = None
+    base_properties: dict | None = None  # the values `properties` was computed from (an ink merge, ops.py)
 
 
 class UBReorderRequest(BaseModel):
@@ -433,7 +434,10 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     """Content and/or a properties PATCH (a null value deletes the key).
     With ``base`` (the text the client's ``content`` was computed from) the
     edit is merged into a block that changed meanwhile instead of replacing
-    it — the answer's ``content`` is the text actually stored."""
+    it — the answer's ``content`` is the text actually stored. Likewise
+    ``base_properties``: an ink group's ``ink_url`` whose base is not the
+    stored one is merged by stroke, and the answer's ``properties`` is the
+    patch actually applied (it names the merged file)."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
@@ -447,10 +451,14 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
             op["base"] = payload.base
     if payload.properties is not None:
         op["props"] = payload.properties
+        if payload.base_properties:
+            op["base_props"] = payload.base_properties
     result = _ops(ws, page_id, [op], request, scope)
     out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
     if payload.content is not None:
         out["content"] = result["ops"][0].get("content", payload.content)
+    if payload.properties is not None:
+        out["properties"] = result["ops"][0].get("props", payload.properties)
     return out
 
 

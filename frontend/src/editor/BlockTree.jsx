@@ -13,6 +13,7 @@ import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
+import { isSheet } from "../notebook/notebook";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
@@ -726,6 +727,7 @@ function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
 function BlockRow({
   block,
   depth,
+  sheetNumber = 0,
   focusedId,
   setFocusedId,
   flashingId,
@@ -1795,6 +1797,9 @@ function BlockRow({
                   onTableEdit={readOnly ? undefined : stableTableEdit}
                   onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
                   onObjectAction={readOnly ? undefined : stableObjectAction} />
+              ) : sheetNumber ? (
+                // an untitled notebook sheet reads as the page it stands for
+                <div className="blockPlaceholder blockSheetLabel">{t("Page {n}", { n: sheetNumber })}</div>
               ) : (
                 <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
@@ -2069,15 +2074,19 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
     if (i >= 0) ghostAt = i + 1;
   }
   const ghostRow = ghost ? <AiGhostRow key="ai-ghost" content={ghost.content || ""} depth={depth} /> : null;
+  // A notebook's sheets are the page's top-level blocks carrying `sheet`
+  // (notebook/notebook.js); their rows are numbered like the pages they are.
+  let sheets = 0;
   return (
     <>
       {ghostAt === 0 ? ghostRow : null}
-      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock); return (
+      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock);
+        const sheetNumber = depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>
           {!readOnly ? (
-            <SortableBlockRow block={block} depth={depth} {...rowProps} />
+            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
           ) : (
-            <BlockRow block={block} depth={depth} {...rowProps} />
+            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
           )}
           {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">

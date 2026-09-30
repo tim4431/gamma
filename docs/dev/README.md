@@ -67,7 +67,8 @@ These describe the implementation unless explicitly marked as plans.
 | Block operations, page sockets, reconciliation, and undo | [Collaboration](collab.md) |
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
-| Ink format, input, editing, and PDF ink import/export | [Handwriting](handwriting.md) |
+| Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
+| Notebook pages, paper, and page-on-demand sheets | [Notebooks](notebooks.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
 | Folder labels, page cards, recents, and trash | [Home library](home_library.md) |
@@ -85,7 +86,7 @@ These describe the implementation unless explicitly marked as plans.
 | Tours, anchors, triggers, and seeded welcome content | [Onboarding](onboarding.md) |
 | Browser connector | [Extension](extension.md) |
 | Electron shell, local servers, packaging, and QA | [Desktop](desktop.md) |
-| Home-screen web app and device-specific checks | [iPad](ipad.md) |
+| The native iPad app (offline replica, Pencil) and the home-screen web app | [iPad](ipad.md) |
 | Gamma Cloud identity service and server sign-in | [Cloud accounts](cloud_accounts.md) |
 | Public website build and deployment | [Website](../../sites/README.md) |
 

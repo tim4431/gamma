@@ -392,7 +392,11 @@ class Connection(sqlite3.Connection):
     collector, so a connection a traceback holds keeps its file open (on
     Windows a workspace directory cannot be deleted under it). Never use a
     connection after its ``with`` block; one opened without ``with`` is
-    closed by its owner."""
+    closed by its owner. ``ws`` names the workspace whose database it is
+    ("" for users.db), for writers that reach the workspace's files through
+    the connection (the ink merge in gamma/ops.py)."""
+
+    ws = ""
 
     def __exit__(self, exc_type, exc, tb):
         try:
@@ -663,6 +667,7 @@ def pdf_upload_path(ws: str, doc_id: str) -> Path:
 
 def _open_ws_db(ws: str, db_name: str, schema) -> Connection:
     conn = sqlite3.connect(ws_db_path(ws, db_name), timeout=BUSY_TIMEOUT_S, factory=Connection)
+    conn.ws = ws
     try:
         _wal(conn)
         for stmt in schema:

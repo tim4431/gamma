@@ -22,6 +22,37 @@ export function newInk(page, width, height) {
     space: { kind: "pdf-page", page, width, height }, strokes: [] };
 }
 
+// A notebook sheet's ink (notebook/notebook.js): the sheet is the canvas,
+// points from its top-left corner, y down, like a PDF page's frame.
+export function newCanvasInk(width, height) {
+  return { format: FORMAT, version: VERSION, space: { kind: "canvas", width, height }, strokes: [] };
+}
+
+// The upload bytes of an ink file: keys sorted at every level and no
+// whitespace, so the same strokes are the same file on every client (the
+// server stores an upload as it came and names it by its hash).
+export function serializeInk(ink) {
+  const canon = (v) => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === "object") {
+      const out = {};
+      for (const k of Object.keys(v).sort()) if (v[k] !== undefined && v[k] !== null) out[k] = canon(v[k]);
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(canon(ink));
+}
+
+// What a group's block carries for its file at `url`: the reference, the
+// stroke count and, on a PDF page, the page and the box in the highlight
+// shape. Every client writes these the same way; null clears a key.
+export function inkProps(ink, url) {
+  const pdf = ink.space?.kind === "pdf-page";
+  return { ink_url: url, ink_strokes: ink.strokes.length,
+    pdf_page: pdf ? ink.space.page : null, pdf_position: pdf ? pdfPositionOf(ink) : null };
+}
+
 const ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function strokeId() {
   let s = "";
@@ -274,6 +305,73 @@ export function duplicateStrokes(ink, ids, dx, dy) {
   });
   const copyIds = copies.map((s) => s.id);
   return { ink: translateStrokes({ ...ink, strokes: [...ink.strokes, ...copies] }, copyIds, dx, dy), ids: copyIds };
+}
+
+// Two strokes are the same when every field and sample is.
+export function sameStroke(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const x = a[k] ?? null, y = b[k] ?? null;
+    if (k === "pts") {
+      if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    } else if (x !== y) return false;
+  }
+  return true;
+}
+
+const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStroke(s, b[i]));
+
+// Apply the change base → ours to theirs (the group as stored now), stroke
+// by stroke: stroke ids survive every edit, so they play the part text
+// offsets play in the text merge. → {ink, clean}. Where theirs left a
+// stroke as the base had it, ours' change applies in place; a stroke ours
+// added goes after the stroke before it that the result keeps, behind
+// strokes theirs added there; a stroke both changed keeps theirs' version,
+// and a stroke one side changed survives the other's erasure (either makes
+// the merge unclean). base null merges as a union by id. The same rule as
+// gamma/ink.py merge_ink; tests/shared/inkmerge.json pins both. Undo and
+// redo rebase through it too (the action's after → before onto now).
+export function mergeInk(base, ours, theirs) {
+  const bList = base?.strokes || [];
+  if (base && sameStrokes(theirs.strokes, bList)) return { ink: ours, clean: true };
+  if (sameStrokes(ours.strokes, bList) || sameStrokes(ours.strokes, theirs.strokes)) return { ink: theirs, clean: true };
+  const b = new Map(bList.map((s) => [s.id, s]));
+  const o = new Map(ours.strokes.map((s) => [s.id, s]));
+  let clean = true;
+  const out = [];
+  for (const t of theirs.strokes) {
+    const was = b.get(t.id), mine = o.get(t.id);
+    if (!was) {
+      if (mine && !sameStroke(mine, t)) clean = false;
+      out.push(t);
+    } else if (!mine) {
+      if (!sameStroke(t, was)) { clean = false; out.push(t); }
+    } else if (sameStroke(mine, was) || sameStroke(t, mine)) out.push(t);
+    else if (sameStroke(t, was)) out.push(mine);
+    else { clean = false; out.push(t); }
+  }
+  const present = new Set(out.map((s) => s.id));
+  let anchor = null;
+  for (const s of ours.strokes) {
+    if (present.has(s.id)) { anchor = s.id; continue; }
+    const was = b.get(s.id);
+    if (was) {
+      if (sameStroke(s, was)) continue;
+      clean = false;
+    }
+    let at = anchor ? out.findIndex((x) => x.id === anchor) + 1 : 0;
+    while (at < out.length && !b.has(out[at].id) && !o.has(out[at].id)) at++;
+    out.splice(at, 0, s);
+    present.add(s.id);
+    anchor = s.id;
+  }
+  // a merge that changes nothing is that file itself (a change sent again)
+  if (sameStrokes(out, theirs.strokes)) return { ink: theirs, clean };
+  if (sameStrokes(out, ours.strokes) && JSON.stringify(ours.space) === JSON.stringify(theirs.space)) return { ink: ours, clean };
+  return { ink: { format: FORMAT, version: VERSION, space: theirs.space, strokes: out }, clean };
 }
 
 export function appendStroke(ink, stroke) {

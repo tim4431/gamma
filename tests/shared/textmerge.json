@@ -1,0 +1,269 @@
+{
+  "about": "The same-block text merge: gamma/textmerge.py and frontend/src/replica/textmerge.js read these cases (outputs from the Python reference). merge applies ours (base → ours) to theirs; contains asks whether theirs already holds base → ours; map_offset moves a caret from src to dst.",
+  "merge": [
+    {
+      "note": "different spans both survive",
+      "base": "hello world",
+      "ours": "hello brave world",
+      "theirs": "hello world!",
+      "result": [
+        "hello brave world!",
+        true
+      ]
+    },
+    {
+      "note": "two words at the ends",
+      "base": "alpha beta gamma delta",
+      "ours": "ALPHA beta gamma delta",
+      "theirs": "alpha beta gamma DELTA",
+      "result": [
+        "ALPHA beta gamma DELTA",
+        true
+      ]
+    },
+    {
+      "note": "a replacement and an appended word",
+      "base": "The cat sat",
+      "ours": "The dog sat",
+      "theirs": "The cat sat down",
+      "result": [
+        "The dog sat down",
+        true
+      ]
+    },
+    {
+      "note": "insertions at one caret: the stored first (end)",
+      "base": "tag",
+      "ours": "tagY",
+      "theirs": "tagx",
+      "result": [
+        "tagxY",
+        true
+      ]
+    },
+    {
+      "note": "insertions at one caret: the stored first (start)",
+      "base": "tag",
+      "ours": "Ytag",
+      "theirs": "xtag",
+      "result": [
+        "xYtag",
+        true
+      ]
+    },
+    {
+      "note": "typing on both sides of a merged caret",
+      "base": "tagxY",
+      "ours": "tagxYYYYYYYYYY",
+      "theirs": "tagxxxxxxxxxxY",
+      "result": [
+        "tagxxxxxxxxxxYYYYYYYYYY",
+        true
+      ]
+    },
+    {
+      "note": "a word typed before a replaced word stays in front",
+      "base": "alpha beta",
+      "ours": "alpha new beta",
+      "theirs": "alpha BETA",
+      "result": [
+        "alpha new BETA",
+        true
+      ]
+    },
+    {
+      "note": "a replaced word after a typed one, the other way round",
+      "base": "alpha beta",
+      "ours": "alpha BETA",
+      "theirs": "alpha new beta",
+      "result": [
+        "alpha new BETA",
+        true
+      ]
+    },
+    {
+      "note": "an insertion inside a span the other side deleted survives",
+      "base": "hello world",
+      "ours": "hello",
+      "theirs": "hello wor!ld",
+      "result": [
+        "hello!",
+        true
+      ]
+    },
+    {
+      "note": "a deleted span with an insertion, the other way round",
+      "base": "hello world",
+      "ours": "hello wor!ld",
+      "theirs": "hello",
+      "result": [
+        "hello!",
+        true
+      ]
+    },
+    {
+      "note": "a span both replaced keeps the stored text",
+      "base": "The cat sat",
+      "ours": "The dog sat",
+      "theirs": "The cow sat",
+      "result": [
+        "The cow sat",
+        false
+      ]
+    },
+    {
+      "note": "the rest of that change still applies",
+      "base": "The cat sat on it",
+      "ours": "The dog sat on it!",
+      "theirs": "The cow sat on it",
+      "result": [
+        "The cow sat on it!",
+        false
+      ]
+    },
+    {
+      "note": "the block did not move on: a plain replace",
+      "base": "a",
+      "ours": "b",
+      "theirs": "a",
+      "result": [
+        "b",
+        true
+      ]
+    },
+    {
+      "note": "no change of ours",
+      "base": "a",
+      "ours": "a",
+      "theirs": "c",
+      "result": [
+        "c",
+        true
+      ]
+    },
+    {
+      "note": "already the text",
+      "base": "a",
+      "ours": "ab",
+      "theirs": "ab",
+      "result": [
+        "ab",
+        true
+      ]
+    },
+    {
+      "note": "lines edited apart",
+      "base": "one\ntwo\nthree\n",
+      "ours": "one\nTWO\nthree\n",
+      "theirs": "one\ntwo\nthree\nfour\n",
+      "result": [
+        "one\nTWO\nthree\nfour\n",
+        true
+      ]
+    },
+    {
+      "note": "an empty base",
+      "base": "",
+      "ours": "mine",
+      "theirs": "theirs",
+      "result": [
+        "theirsmine",
+        true
+      ]
+    },
+    {
+      "note": "everything deleted on one side",
+      "base": "gone soon",
+      "ours": "",
+      "theirs": "gone soon, and more",
+      "result": [
+        ", and more",
+        true
+      ]
+    },
+    {
+      "note": "markdown around a word",
+      "base": "a **bold** claim",
+      "ours": "a **bold** claim, cited",
+      "theirs": "a *bold* claim",
+      "result": [
+        "a *bold* claim, cited",
+        true
+      ]
+    }
+  ],
+  "contains": [
+    {
+      "note": "an insertion held inside a longer one",
+      "base": "alpha",
+      "ours": "alpha beta",
+      "theirs": "alpha beta gamma",
+      "result": true
+    },
+    {
+      "note": "an insertion not there",
+      "base": "alpha",
+      "ours": "alpha beta",
+      "theirs": "alpha gamma",
+      "result": false
+    },
+    {
+      "note": "a deletion held",
+      "base": "one two three",
+      "ours": "one three",
+      "theirs": "one three!",
+      "result": true
+    },
+    {
+      "note": "a deletion not held",
+      "base": "one two three",
+      "ours": "one three",
+      "theirs": "one two three!",
+      "result": false
+    },
+    {
+      "note": "the text itself",
+      "base": "x",
+      "ours": "xy",
+      "theirs": "xy",
+      "result": true
+    }
+  ],
+  "map_offset": [
+    {
+      "note": "an unchanged text keeps the caret",
+      "src": "abc",
+      "dst": "abc",
+      "offset": 2,
+      "result": 2
+    },
+    {
+      "note": "text typed before the caret moves it",
+      "src": "abc",
+      "dst": "zzabc",
+      "offset": 2,
+      "result": 4
+    },
+    {
+      "note": "text typed after the caret leaves it",
+      "src": "abc",
+      "dst": "abczz",
+      "offset": 2,
+      "result": 2
+    },
+    {
+      "note": "the caret past the end is clamped",
+      "src": "abc",
+      "dst": "ab",
+      "offset": 9,
+      "result": 2
+    },
+    {
+      "note": "a deleted span takes the caret to its start",
+      "src": "abcdef",
+      "dst": "af",
+      "offset": 3,
+      "result": 1
+    }
+  ]
+}

@@ -68,6 +68,11 @@ jobs:
           npm ci
           npm test
           npm run build
+      # the iPad app's JavaScript (ipad/core/entry.js): bundled and run in a
+      # bare context like its JavaScriptCore; the app itself is ipad.yml's
+      - run: |
+          node ipad/scripts/build-core.mjs
+          node --test ipad/scripts/core.test.mjs
 
   # The browser suite (frontend/tests/e2e): a real backend from this
   # checkout over a throwaway data dir, Playwright's Chromium driving the

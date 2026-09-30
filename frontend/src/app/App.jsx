@@ -43,7 +43,7 @@ import {
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
 } from "../shared/ui/Icons";
 
 
@@ -93,7 +93,10 @@ import { useNotices } from "./useNotices";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
-import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
+import { firstSheetId, inkBySheet, isSheet, newSheet, normalizePaper, pageNotebook, sheetIdAfter, sheetOfBlock, sheetsOf } from "../notebook/notebook";
+import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
@@ -3689,6 +3692,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const inkActiveRef = useRef(null);
   const inkTimerRef = useRef(0);
   const prevInkRef = useRef({ json: "", value: [] });
+  // Notebooks: the open notebook's sheets (for handlers that run after an
+  // await), the sheet under the middle of the view, the viewer's scroller.
+  const nbSheetsRef = useRef([]);
+  const nbScrollRef = useRef(null);
+  const [nbCurrent, setNbCurrent] = useState("");
+  const [paperMenu, setPaperMenu] = useState(false);
   // Stroke-level history for the strip's Ctrl+Z and Undo/Redo buttons
   // (entries: {changes: [{id, page, before, after}], label} per action;
   // inkHistoryState mirrors the lengths for the buttons) and the lasso
@@ -4814,6 +4823,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // "New notebook": a page of sheets instead of a PDF, its first sheet
+  // written with it (its id follows from the page's, so a retry, or the
+  // iPad making the same notebook's first sheet, adds no second one), then
+  // opened with the title ready to type like a new page.
+  async function createNotebook(folder = folderFilter) {
+    if (shareMode) return;
+    setOpenPopover(null);
+    const json = { "Content-Type": "application/json" };
+    try {
+      const paper = normalizePaper(null);
+      const created = await apiJson(`${API}/pages`, { method: "POST", headers: json,
+        body: JSON.stringify({ title: "", properties: { notebook: { sheet: paper } }, ...(folder ? { folder } : {}) }) });
+      const sheet = newSheet(firstSheetId(created.id), paper);
+      await apiJson(`${API}/pages/${created.id}/ops`, { method: "POST", headers: json, body: JSON.stringify({
+        client: "", ops: [{ op: "insert", id: sheet.id, parent: created.id, position: generateKeyBetween(null, null),
+          content: "", props: sheet.properties }] }) });
+      await fetchHomeBlocks();
+      await openBlock(created.id, { pushNav: true, focusTitle: true });
+      setTitleDraft("");
+      setTitleEditing(true);
+    } catch (err) {
+      setStatus(t("Create failed: {err}", { err: err.message || err }));
+    }
+  }
+
   // Attach a PDF to the open page (one that carries none): the same ingest
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
@@ -4834,7 +4868,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   async function attachPdfToPage({ file, url }) {
     const pageId = focusedBlockId;
-    if (!pageId || shareMode || pageAttach || (!file && !url)) return;
+    if (!pageId || shareMode || pageAttach || notebook || (!file && !url)) return;
     if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
@@ -6137,6 +6171,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // plus a properties PATCH through the block API (a server-side writer, so
   // the change fans out over the page socket and lands in this tree like a
   // remote op); only the group's block itself is inserted through the tree.
+  // The PATCH names the file the draft was edited from (base_properties):
+  // when someone else changed the drawing meanwhile the server merges both
+  // by stroke and answers with the merged file (gamma/ops.py merge_ink).
   // The pen preset a stylus writes with when nothing is armed: the last pen
   // armed on the strip, else the first pen in the row.
   const inkPen = useMemo(() => {
@@ -6179,20 +6216,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
     const json = { "Content-Type": "application/json" };
-    for (const { id, ink } of inkStore.dirtyDrafts()) {
+    for (const { id, ink, base } of inkStore.dirtyDrafts()) {
       try {
-        if (!ink.strokes.length) {
+        const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
+        // A group erased empty goes, unless its block holds a caption or
+        // notes: those stay, with an empty drawing an undo can refill.
+        if (!ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
           await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
           // Keep the empty draft until the tree observes the deletion; the
           // HTTP response can arrive before the corresponding socket op.
-          const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
           inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
           continue;
         }
-        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: JSON.stringify(ink) });
-        const properties = { ink_url: r.url, pdf_position: r.pdf_position, ink_strokes: r.strokes, pdf_page: ink.space.page };
-        await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: JSON.stringify({ properties }) });
-        inkStore.markSaved(id, ink, r.url);
+        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: serializeInk(ink) });
+        const saved = await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json,
+          body: JSON.stringify({ properties: inkProps(ink, r.url), base_properties: { ink_url: base || "" } }) });
+        inkStore.markSaved(id, ink, r.url, saved?.properties?.ink_url || r.url);
       } catch (err) {
         // The block's insert may still be queued (404): try again shortly.
         setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
@@ -6236,12 +6275,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
-      setBlocks((prev) => [...prev, ...missing.map((c) => ({
-        id: c.id, parentId: null, children: [], content: "",
-        properties: { ink_url: "", pdf_page: c.page, ink_strokes: 0 },
-      }))]);
+      // A PDF page's group goes at the page's top level; a sheet's under
+      // its sheet (`page` is then the sheet's id).
+      setBlocks((prev) => missing.reduce((tree, c) => {
+        const onSheet = typeof c.page === "string";
+        const node = { id: c.id, parentId: onSheet ? c.page : null, children: [], content: "",
+          properties: onSheet ? { ink_url: "", ink_strokes: 0 } : { ink_url: "", pdf_page: c.page, ink_strokes: 0 } };
+        return onSheet && findBlock(tree, c.page)
+          ? updateBlockTree(tree, c.page, (sheet) => ({ ...sheet, children: [...(sheet.children || []), node] }))
+          : [...tree, node];
+      }, prev));
     }
-    for (const c of changes) inkStore.setDraft(c.id, c.after);
+    const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
+    for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
     if (record) {
       const h = inkHistRef.current;
       h.undo.push({ changes, label });
@@ -6256,16 +6302,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const h = inkHistRef.current;
     const entry = (redo ? h.redo : h.undo).pop();
     if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
-    // Entries are stored forward (before → after); undo applies them backward.
-    applyInk(redo ? entry.changes : entry.changes.map((c) => ({ ...c, before: c.after, after: c.before })), { record: false });
+    // Entries are stored forward (before → after). Undo applies after →
+    // before, redo before → after, each onto the group as it is NOW by
+    // stroke id (mergeInk), so strokes someone else drew meanwhile stay.
+    applyInk(entry.changes.map((c) => {
+      const [from, to] = redo ? [c.before, c.after] : [c.after, c.before];
+      const now = inkOf(c.id) || from;
+      return { ...c, before: now, after: mergeInk(from, to, now).ink };
+    }), { record: false });
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${entry.changes[0].page}).`);
+    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${inkPageNumber(entry.changes[0].page)}).`);
     if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
 
+  // What a stroke's `page` is called in messages: a PDF page's number, a
+  // notebook sheet's place among the sheets.
+  function inkPageNumber(page) {
+    if (typeof page !== "string") return page;
+    const i = nbSheetsRef.current.findIndex((s) => s.id === page);
+    return i >= 0 ? i + 1 : "?";
+  }
+  // `page`: a PDF page number, or a notebook sheet's id.
   async function handleInkStroke(page, stroke, size) {
     if (readOnly || !focusedBlockId) return;
     let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
@@ -6276,8 +6336,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a stroke must never replace strokes that just have not arrived yet).
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const before = inkStore.draft(id)?.ink || loaded || newInk(page, size.width, size.height);
+    const onSheet = typeof page === "string";
+    const before = inkStore.draft(id)?.ink || loaded
+      || (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
+    if (onSheet) {
+      // Writing into the last quarter of the last sheet adds the next one,
+      // so there is always paper below (Notability's continuous page).
+      const last = nbSheetsRef.current.at(-1), box = strokeBounds(stroke);
+      if (last?.id === page && box && box[3] > last.paper.height * 0.75) addSheet();
+    }
     guideEvents.emit("ink.stroke");
   }
   function handleInkErase(page, blockId, ids) {
@@ -6362,6 +6430,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showInkOnPage(id) {
     const b = flattenBlocks(blocksRef.current).find((x) => x.id === id);
     if (!b) return;
+    const sheetId = notebook ? sheetOfBlock(blocksRef.current, id) : null;
+    if (sheetId) {
+      const hidden = pdfHidden;
+      if (hidden) setPdfHidden(false);
+      const box = inkBounds(inkOf(id));
+      setTimeout(() => nbScrollRef.current?.(sheetId, box), hidden ? 300 : 0);
+      setInkFlash({ id, nonce: Date.now() });
+      return;
+    }
     const position = b.properties.pdf_position || { pageNumber: b.properties.pdf_page };
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
@@ -6372,6 +6449,45 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     scrollToBlock(id);
     reveal(id);
   }
+
+  // --- Notebooks (docs/dev/notebooks.md) ----------------------------------------
+  // A sheet is a top-level block carrying `sheet` (its paper): adding one is
+  // a tree insert like any block's, so it syncs, merges and undoes like one.
+  // Its id follows from the sheet before it (sheetIdAfter), so two devices
+  // adding "the next page" at the same time add one page.
+  function addSheet() {
+    if (readOnly || !notebook) return "";
+    const last = nbSheetsRef.current.at(-1)?.id;
+    let id = last ? sheetIdAfter(last) : firstSheetId(focusedBlockId);
+    if (findBlock(blocksRef.current, id)) id = makeId();
+    // (two strokes low on the last sheet before the first one's sheet lands add it once)
+    setBlocks((prev) => (findBlock(prev, id) ? prev : [...prev, newSheet(id, notebook.paper)]));
+    return id;
+  }
+  function setSheetPaper(sheetId, paper) {
+    if (readOnly) return;
+    const sheet = normalizePaper(paper);
+    setBlocks((prev) => updateBlockTree(prev, sheetId, (b) => ({ ...b, properties: { ...b.properties, sheet } })));
+  }
+  // The paper new sheets get: the notebook's own property, on the page root.
+  async function setNotebookPaper(paper) {
+    if (readOnly || !notebook || !focusedBlockId) return;
+    const nb = { ...(focusedBlock?.properties?.notebook || {}), sheet: normalizePaper(paper) };
+    try {
+      await apiJson(`${API}/blocks/${focusedBlockId}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ properties: { notebook: nb } }) });
+    } catch (err) {
+      setStatus(t("Paper not saved: {err}", { err: err.message || err }));
+    }
+  }
+  function applyPaperToAll(paper) {
+    if (readOnly) return;
+    const sheet = normalizePaper(paper);
+    setBlocks((prev) => prev.map((b) => (isSheet(b) ? { ...b, properties: { ...b.properties, sheet } } : b)));
+    setNotebookPaper(sheet);
+  }
+  // Leaving a notebook closes its paper menu.
+  useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
   // The strip's keys while it is open: 1–9 arm the preset at that position,
   // P / H step through the pens / highlighters, E the eraser, L the lasso,
   // V the hand, Esc drops the selection then closes, Delete removes the
@@ -6581,6 +6697,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  // A notebook page: its sheets of paper take the viewer's place, with the
+  // same ink tools (notebook/notebook.js, docs/dev/notebooks.md).
+  const notebook = useMemo(() => (pageAttach ? null : pageNotebook(focusedBlock)), [focusedBlock, pageAttach]);
+  const nbSheets = useMemo(() => (notebook ? sheetsOf(blocks, notebook.paper) : []), [notebook, blocks]);
+  const nbInk = useMemo(() => (notebook ? inkBySheet(blocks) : new Map()), [notebook, blocks]);
+  nbSheetsRef.current = nbSheets;
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
@@ -6865,7 +6987,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
   // A page with no attachment — the owner's pages and shared pages alike —
   // puts the notes in the center instead of an empty viewer.
-  const pageOnly = !!focusedBlockId && !pageAttach;
+  const pageOnly = !!focusedBlockId && !pageAttach && !notebook;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
@@ -7742,7 +7864,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
-                {pageAttach || !readOnly ? (
+                {pageAttach || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
                       className={`pageActionBtn ${pageAttach ? "active" : ""}`}
@@ -8983,14 +9105,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // share views omit AI chat and the import actions. A phone's bottom tabs
   // already switch Notes and Chat, so there only the PDF toggle is a window.
   const viewMenuItems = (menuReadOnly) => {
-    const pdfRow = !homeMode && !!pageAttach;
+    const pdfRow = !homeMode && (!!pageAttach || !!notebook);
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
     const exportable = (focusedBlock && !homeMode) || (homeMode && folderFilter);
     return menuGroups(
       [
         (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (
-          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
+          <MenuItem key="pdf" icon={notebook ? NotebookIcon : FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>{notebook ? t("Notebook") : "PDF"}</MenuItem>
         ),
         !homeMode && !isPhone && (
           <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
@@ -9123,6 +9245,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
             <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={NotebookIcon} onClick={() => createNotebook()}
+              title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}
               type="file"
@@ -9691,15 +9815,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         ) : null}
         <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
-          {pdfUrl && !pdfHidden ? (
+          {(pdfUrl || notebook) && !pdfHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
               onClick={() => setPdfHidden(true)}
-              title={t("Close PDF")}
-              aria-label={t("Close PDF")}
+              title={notebook ? t("Close notebook") : t("Close PDF")}
+              aria-label={notebook ? t("Close notebook") : t("Close PDF")}
             ><XIcon size={16} /></button>
           ) : null}
-          {pdfUrl && !pdfHidden ? (
+          {(pdfUrl || notebook) && !pdfHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
               <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
                 <ZoomOutIcon size={16} />
@@ -9710,7 +9834,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
                 <FitWidthIcon size={16} />
               </button>
-              {translateEnabled && !shareMode ? (
+              {translateEnabled && !shareMode && pdfUrl ? (
                 <button
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
                   onClick={(e) => {
@@ -9762,7 +9886,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <PenIcon size={16} />
                 </button>
               ) : null}
-              {isPhone && !shareMode ? (
+              {notebook && !readOnly ? (
+                <button
+                  className={paperMenu ? "modeActive" : ""}
+                  onClick={() => setPaperMenu((v) => !v)}
+                  title={t("Paper: size, pattern and colour of this page")}
+                  aria-label={t("Paper")}
+                  aria-expanded={paperMenu}
+                >
+                  <SheetIcon size={16} />
+                </button>
+              ) : null}
+              {isPhone && !shareMode && pdfUrl ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
@@ -9774,7 +9909,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
             </div>
           ) : null}
-          {pdfUrl && !pdfHidden && inkUi.open && !readOnly ? (
+          {notebook && !pdfHidden && paperMenu && !readOnly ? (() => {
+            const sheet = nbSheets.find((x) => x.id === nbCurrent) || nbSheets.at(-1);
+            if (!sheet) return null;
+            return (
+              <PaperMenu paper={sheet.paper} number={sheet.index + 1}
+                isDefault={JSON.stringify(sheet.paper) === JSON.stringify(notebook.paper)}
+                onChange={(paper) => setSheetPaper(sheet.id, paper)}
+                onUseForNew={() => setNotebookPaper(sheet.paper)}
+                onApplyAll={() => applyPaperToAll(sheet.paper)}
+                onClose={() => setPaperMenu(false)} />
+            );
+          })() : null}
+          {(pdfUrl || notebook) && !pdfHidden && inkUi.open && !readOnly ? (
             <InkToolbar
               tools={inkTools} active={inkUi.tool} options={inkUi.options}
               eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
@@ -9791,7 +9938,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
             />
           ) : null}
-          {pdfUrl && !pdfHidden ? (
+          {(pdfUrl || notebook) && !pdfHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox">
               <button
                 onPointerDown={fullscreenPointerDown}
@@ -9883,6 +10030,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 hideTip?.();
               }}
             />
+          ) : notebook ? (
+            <NotebookViewer sheets={nbSheets} inkBySheet={nbInk} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
+              onZoomTo={zoomTo} readOnly={readOnly} onAddSheet={readOnly ? undefined : addSheet}
+              onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef}
+              inkTool={inkTool} inkPenTool={inkPenTool} inkPenOnly={inkPenOnly} inkPressure={inkPressure}
+              inkEraserMode={inkEraserMode} inkEraserSize={inkEraserSize} inkLassoMode={inkLassoMode}
+              inkSelection={inkSelection} inkFlash={inkFlash}
+              onInkStroke={readOnly ? undefined : handleInkStroke}
+              onInkErase={readOnly ? undefined : handleInkErase}
+              onInkErasePartial={readOnly ? undefined : handleInkErasePartial}
+              onInkSelect={readOnly ? undefined : handleInkSelect}
+              onInkAction={readOnly ? undefined : handleInkAction}
+              onInkMoveSelection={readOnly ? undefined : handleInkMoveSelection}
+              onInkJump={showInkInNotes} />
           ) : (
             <div className="status">{t("No PDF open.")}</div>
           )}
@@ -9943,11 +10104,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`phoneTab ${phoneMainActive ? "active" : ""}`}
                 onClick={() => setPhonePanel(null)}
-                title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+                title={homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}
+                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}
               >
-                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
-                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
+                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : notebook ? <NotebookIcon size={16} /> : <FileIcon size={16} />}
+                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}</span>
               </button>
             ) : null}
             {!centerNotes ? (
@@ -9998,8 +10159,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={!!pageAttach && !exportFolder}
-          pdfStored={!!docId}
+          hasPdf={(!!pageAttach || !!notebook) && !exportFolder}
+          pdfStored={!!docId || !!notebook}
           folder={exportFolder}
           onCancel={() => setExportOpen(false)}
           onExport={runExport}

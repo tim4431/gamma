@@ -37,6 +37,16 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
+- Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
+
+### Notebooks
+
+**+ → New notebook** makes a page of blank paper to write on, like a Notability note. Write with the same pens and highlighters as on a PDF.
+
+- Writing near the bottom of the last page adds the next one, so there is always paper below. **Add page** at the end adds one too.
+- **Paper** sets the page's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background. *Use for new pages* makes it the paper new pages get.
+- The notes list the pages ("Page 1", or a title you type), with the handwriting of each under it. Notes you type under a page are about that page.
+- **Export → Annotated PDF** gives the notebook as a PDF of its pages.
 
 ### Links inside the PDF
 
@@ -238,6 +248,7 @@ Account credentials and private AI keys are never part of an export.
 Gamma is a web app; install it from the browser so it opens from an icon, full screen, pointed at your server.
 
 - **iPad / iPhone**: open your Gamma address in Safari, Share → **Add to Home Screen**. You may be asked to sign in once more (the installed app keeps its own cookies). The Apple Pencil writes on papers right away, with pressure, while fingers scroll and pinch.
+- **The Gamma iPad app** keeps a copy of one workspace on the iPad, so PDFs and notebooks open and take handwriting with no connection. It syncs with your server whenever it can reach it, the way a desktop offline copy does. Sign in on your server's page, pick a workspace, and the first sync brings it over. Search, AI chat and sharing open Gamma on the web from inside the app. It is built from source for now ([ipad/README.md](../ipad/README.md)).
 - **Android**: Chrome → ⋮ → **Install app**.
 - **Windows / macOS / Linux**: in Chrome or Edge, the install icon at the right end of the address bar, or **Install Gamma** from the browser menu.
 

@@ -1,0 +1,65 @@
+# The iPad app (ipad/, ipad/README.md): the web app's JavaScript bundled for
+# JavaScriptCore and checked in a bare context, the Xcode project generated,
+# the unit tests on an iPad simulator, and an unsigned device build. No
+# signing, no upload: running on a device takes a developer's own team.
+# Overview: docs/dev/github_actions.md.
+
+name: ipad
+
+on:
+  pull_request:
+    paths:
+      - "ipad/**"
+      - "frontend/src/ink/**"
+      - "frontend/src/notebook/**"
+      - "frontend/src/replica/**"
+      - "frontend/src/shared/model/blockModel.js"
+      - "frontend/package*.json"
+      - ".github/workflows/ipad.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ipad-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - name: Bundle and check the shared JavaScript
+        run: |
+          node ipad/scripts/build-core.mjs
+          node --test ipad/scripts/core.test.mjs
+      - name: Generate the Xcode project
+        working-directory: ipad
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Unit tests on an iPad simulator
+        working-directory: ipad
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ipads = [(rt, d) for rt, ds in devices.items() if "iOS" in rt for d in ds if d["name"].startswith("iPad")]
+          ipads.sort(key=lambda x: x[0])
+          print(ipads[-1][1]["udid"])')
+          echo "simulator: $DEVICE"
+          xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad -destination "id=$DEVICE" \
+            CODE_SIGNING_ALLOWED=NO | xcbeautify
+      - name: Device build (unsigned)
+        working-directory: ipad
+        run: |
+          set -o pipefail
+          xcodebuild build -project GammaIPad.xcodeproj -scheme GammaIPad -sdk iphoneos -configuration Release \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcbeautify

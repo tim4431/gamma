@@ -519,6 +519,11 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
                     "images": [(media_type, base64.b64encode(data).decode("ascii"))]}
 
 
+def is_sheet(props: dict) -> bool:
+    from .notebook import is_sheet as sheet
+    return sheet(props)
+
+
 def _run_read_block(conn, ws: str, scope: dict, args: dict):
     """The note outline under a block (or a whole page), every line prefixed
     with its block id — the ids the editing tools take. The requested block's
@@ -557,8 +562,10 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
                 bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
                             "the limit on this page)")
         if props.get("ink_url"):
-            bits.append(f"(handwriting on p. {props.get('pdf_page')}, {props.get('ink_strokes', 0)} strokes; "
-                        "the text is its caption)")
+            where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the notebook page above"
+            bits.append(f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)")
+        elif is_sheet(props):
+            bits.append("(a notebook page: the handwriting under it is written on it)")
         bits.append(text or "(empty)")
         pad = "  " * depth
         return pad + "- " + "\n".join(
