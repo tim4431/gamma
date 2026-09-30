@@ -943,7 +943,12 @@ export async function chatNavigationScenarios(env) {
       await push({ delta: "Done." });
       await finish();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
-      const saved = await alice.api(`/api/chats/${notesPage.id}`);
+      // The final save queues behind the reply's checkpoints (one of which
+      // held the waiting card), so it can land after Stop goes.
+      const saved = await until(async () => {
+        const chat = await alice.api(`/api/chats/${notesPage.id}`);
+        return chat.messages.every((m) => !m.partial) && chat;
+      }, { what: "the finished reply is saved" });
       assert(saved.messages.every((m) => !m.approval), "a waiting card is never saved with the reply");
       assertEq(saved.messages.filter((m) => m.role === "ai").flatMap((m) => m.actions || []).map((a) => a.approval).join(),
         "chat,deny,always");
