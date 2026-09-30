@@ -74,7 +74,7 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     assertEq(kid(paper, "rpNote2").content, "written on the iPad", "the new note arrived");
     const book = await there(bookId);
     assertEq(book.content, "Train notebook", "the notebook arrived under its id");
-    assert(book.properties.notebook?.sheet, "with its paper");
+    assert(kid(book, sheet)?.properties.sheet?.width > 0, "its first sheet, with its paper");
     assertEq(book.children.map((c) => c.id).join(","), `${sheet},${second}`, "its two sheets, in order");
     const group = kid(book, "rpBookInk");
     assert(group && group.properties.ink_strokes === 1 && !("pdf_page" in group.properties), "the drawing, under its sheet");

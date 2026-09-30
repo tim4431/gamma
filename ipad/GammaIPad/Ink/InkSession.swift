@@ -50,13 +50,8 @@ final class InkSession: ObservableObject {
     /// Bumps whenever a group's strokes change: the readers redraw.
     @Published private(set) var changed = 0
     @Published private(set) var jumpTarget: JumpRequest?
-    /// The page's sheets, in document order (a notebook's pages, or those
-    /// among a note's blocks): [{id, number, paper, ink}]. A notebook's
-    /// next page comes by writing low on its last one; its paper is the one
-    /// new pages get.
+    /// The page's sheets of paper, in document order: [{id, number, paper, ink}].
     @Published private(set) var sheets: [[String: Any]] = []
-    @Published private(set) var notebookPaper: [String: Any] = [:]
-    @Published private(set) var isNotebook = false
     /// The group whose writing is replaying, and a signal per frame of it
     /// (not published: the SwiftUI views need not redraw 60 times a second)
     /// on which the reader redraws the page the group is on (replayKey).
@@ -105,8 +100,6 @@ final class InkSession: ObservableObject {
             for g in list as? [[String: Any]] ?? [] { found.append((g.string("id"), .pdf(n), g.string("url"))) }
         }
         sheets = view.array("sheets").compactMap { $0 as? [String: Any] }
-        notebookPaper = view.dict("notebook").dict("paper")
-        isNotebook = view.string("kind") == "notebook"
         for sheet in sheets {
             for g in sheet.array("ink").compactMap({ $0 as? [String: Any] }) {
                 found.append((g.string("id"), .sheet(sheet.string("id")), g.string("url")))
@@ -200,11 +193,12 @@ final class InkSession: ObservableObject {
         }
         guard let after = (try? replica.pure("appendStroke", [before, stroke])) as? [String: Any] else { return }
         apply([Change(id: groupId, key: key, before: before, after: after)], record: true)
-        if isNotebook, case .sheet(let sheetId) = key, let last = sheets.last, last.string("id") == sheetId,
+        if case .sheet(let sheetId) = key, let last = sheets.last, last.string("id") == sheetId,
            let box = (try? replica.pure("strokeBounds", [stroke])) as? [Double], box.count == 4,
            box[3] > (last.dict("paper").double("height") ?? .infinity) * 0.75 {
-            // writing into the last quarter of the last sheet adds the next one (Notability's continuous page)
-            addSheet()
+            // writing into the last quarter of the last sheet adds the next one right after it
+            // (Notability's continuous page), once: a page after it already there is the one
+            addSheet(after: sheetId, once: true)
         }
     }
 
@@ -304,23 +298,23 @@ final class InkSession: ObservableObject {
 
     // --- sheets ----------------------------------------------------------------------------
 
-    /// A notebook's next page (at its end), or on any other page a page right
-    /// after its last one (at the end when it has none): replica/edits.js
-    /// addSheet, the browser's rules.
+    /// A page right after `after`, else after the page's last sheet (at its
+    /// end when it has none): replica/edits.js addSheet, the browser's rules.
+    /// `once`: none when the page after it is there already.
     @discardableResult
-    func addSheet() -> String? {
+    func addSheet(after: String? = nil, once: Bool = false) -> String? {
         guard let replica else { return nil }
-        var after: Any = NSNull()
-        if !isNotebook, let last = sheets.last?.string("id") { after = last }
-        let id = try? replica.edit("addSheet", [pageId, NSNull(), after]) as? String
+        var opts: [String: Any] = [:]
+        if let after { opts["after"] = after }
+        if once { opts["once"] = true }
+        let id = try? replica.edit("addSheet", [pageId, opts]) as? String
         onSaved()
         return id
     }
 
-    func setPaper(_ paper: [String: Any], sheet: String?, forNew: Bool) {
+    func setPaper(_ paper: [String: Any], sheet: String) {
         guard let replica else { return }
-        if let sheet { _ = try? replica.edit("setSheetPaper", [pageId, sheet, paper]) }
-        if forNew { _ = try? replica.edit("setNotebookPaper", [pageId, paper]) }
+        _ = try? replica.edit("setSheetPaper", [pageId, sheet, paper])
         onSaved()
     }
 

@@ -26,13 +26,12 @@ in a web view for everything it does not do itself.
    in the Keychain. The web session stays in the app's web views for
    "Open on the web".
 3. The first sync brings the workspace over, files included. The library
-   lists its pages by folder. A PDF page opens in PDFKit, a notebook as
-   its sheets, and a page of notes as its outline. A page of notes with
-   pages to write on among its blocks ([notebooks.md](notebooks.md)
-   "Pages in notes") opens as those pages, like a notebook: the browser
-   draws them in place, and here they stand one under the other. The
-   notes open beside a PDF or pages. "Add a page to write on" at the end
-   of the notes adds one after the last.
+   lists its pages by folder. A PDF page opens in PDFKit, and a page of
+   notes as its outline. A page with sheets of paper
+   ([notebooks.md](notebooks.md)) opens in the notebook view, its sheets
+   one under the other; a toolbar button shows its notes alone and back.
+   The notes open beside a PDF or the sheets. "Add a page to write on" at
+   the end of the notes adds a sheet after the last.
 4. The Pencil writes. Fingers scroll, zoom and select. The tool strip has
    the pen and highlighter presets, the eraser, the hand (the Pencil
    scrolls), a new group, undo and redo. The Pencil's double tap switches
@@ -145,12 +144,12 @@ stores.
   on `replayFrames`, a Combine subject rather than a published value, so
   only the page the group is on redraws and SwiftUI does not. An edit to
   the group, or the store changing it, ends the replay.
-- **Pages.** `pageView` lists every page's sheets (`sheets`), not only a
-  notebook's. Writing low on the last one adds the next only in a
-  notebook. "Add page" in the reader adds one after the last (edits.js
-  `addSheet` with `after`, as the browser's `addSheetAfter` does), folded,
-  with the paper of the page before it. The paper menu offers "Use for
-  new pages" only in a notebook.
+- **Sheets.** `pageView` lists a page's sheets (`sheets`); its kind is
+  `pdf` or `page`, since nothing else marks a notebook. Writing low on
+  the last sheet adds the next, once (edits.js `addSheet` with `after`
+  and `once`, as the browser's `addSheetAfter` does). "Add page" in the
+  reader adds one after the last sheet. A new sheet is folded and takes
+  the paper of the sheet before it.
 
 Why not PencilKit: its `PKDrawing` is an opaque format no server or
 browser reads ([research/handwriting.md](../research/handwriting.md)).
@@ -180,9 +179,9 @@ Raw touches carry everything `gamma-ink` stores.
 
 - A highlight from a text selection. PDFKit selects, and the web view
   highlights.
-- Pages among a note's blocks drawn in place in its outline, as the
-  browser draws them (they open as the page's reader instead), and pages
-  among a PDF page's notes (the PDF is that page's reader).
+- Sheets drawn in place in a page's outline, as the browser's notes view
+  draws them (the notebook view shows them instead), and sheets in a PDF
+  page's notes (the PDF is that page's reader).
 - The lasso, the partial eraser, moving and restyling strokes, and
   editing presets beyond colour and width.
 - A per-page choice of what to keep offline: every file comes over, like

@@ -1,12 +1,11 @@
 import Combine
 import SwiftUI
 
-/// A page's sheets — a notebook's pages, or those among a note's blocks —
-/// one under the other, each its paper (background and pattern from the
-/// core's paperLines, the web's notebook.js) with its handwriting over it,
-/// written on with the Pencil like a PDF page. In a notebook, writing low on
-/// the last sheet adds the next; "Add page" adds one after the last. The
-/// paper menu sets a sheet's paper, or a notebook's paper for new sheets
+/// The notebook view: a page's sheets one under the other, each its paper
+/// (background and pattern from the core's paperLines, the web's
+/// notebook.js) with its handwriting over it, written on with the Pencil
+/// like a PDF page. Writing low on the last sheet adds the next; "Add page"
+/// adds one after the last. The paper menu sets a sheet's paper
 /// (docs/dev/notebooks.md).
 struct NotebookReader: View {
     @ObservedObject var ink: InkSession
@@ -336,8 +335,8 @@ final class NotebookController: UIViewController, UIScrollViewDelegate, UIPencil
     }
 }
 
-/// A sheet's paper, and the paper new sheets get: the web's paper menu
-/// (notebook/NotebookViewer.jsx PaperMenu) on the iPad.
+/// A sheet's paper: the web's paper menu (notebook/NotebookViewer.jsx
+/// PaperMenu) on the iPad. A new page takes the paper of the page before it.
 struct PaperMenu: View {
     @ObservedObject var ink: InkSession
     let sheetId: String
@@ -386,11 +385,6 @@ struct PaperMenu: View {
                     ForEach(Self.colors, id: \.1) { item in swatch(name: item.0, hex: item.1) }
                 }
             }
-            if ink.isNotebook {
-                Section {
-                    Button("Use for new pages") { ink.setPaper(paper, sheet: nil, forNew: true) }
-                }
-            }
         }
     }
 
@@ -407,6 +401,6 @@ struct PaperMenu: View {
     private func set(_ patch: [String: Any]) {
         var next = paper
         for (k, v) in patch { next[k] = v }
-        ink.setPaper(next, sheet: sheetId, forNew: false)
+        ink.setPaper(next, sheet: sheetId)
     }
 }

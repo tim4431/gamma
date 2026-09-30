@@ -42,14 +42,15 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 ### Notebooks
 
-**+ → New notebook** makes a page of blank paper to write on, like a Notability note. Write with the same pens and highlighters as on a PDF.
+A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
 
-- Writing near the bottom of the last page adds the next one, so there is always paper below. **Add page** at the end adds one too.
-- **Paper** sets the page's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background. *Use for new pages* makes it the paper new pages get.
-- The notes list the pages ("Page 1", or a title you type), with the handwriting of each under it. Notes you type under a page are about that page.
-- **Export → Annotated PDF** gives the notebook as a PDF of its pages.
-
-**A page in your notes.** Any page's notes can hold a page to write on between their blocks: type **/page** in a block (an empty block becomes the page; otherwise the page goes right after it), or choose **Add page below** from a block's handle menu. The page is drawn right there in the notes. Under it are its pen (the tool strip), its **Paper**, a replay of what's written on it, and **+** for another page after it. Its handwriting is folded under it in the notes; unfold the page to see the drawings as cards. On the iPad, a note with such pages opens as its pages, with the notes beside them.
+- **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
+- **Two views.** The notes view draws each sheet right among your notes, with its pen, its **Paper**, a replay of what's written on it, and **+** for another sheet after it under it. The **Notebook view** button in the page's title shows the sheets large in the viewer instead, with your notes beside them; press it again, or close the viewer, to go back. Each page remembers its view in this browser.
+- Writing near the bottom of the last sheet adds the next one, so there is always paper below. **Add page** at the end of the notebook view adds one too. A new sheet takes the paper of the sheet before it.
+- **Paper** sets a sheet's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background; *Apply to all pages* gives every sheet that paper.
+- The notes list the sheets ("Page 1", or a title you type). A sheet's handwriting is folded under it; unfold it to see the drawings as cards. Notes you type under a sheet are about that page.
+- **Export → Annotated PDF** gives the sheets as a PDF.
+- On the iPad a page with sheets opens in the notebook view, with the notes beside them.
 
 ### Links inside the PDF
 

@@ -1,7 +1,7 @@
-"""Notebooks (gamma/notebook.py, docs/dev/notebooks.md): pages written on
-sheets of paper. A notebook is an ordinary page whose root carries
-``notebook`` and whose sheets are blocks, so these tests go through the
-ordinary page and op endpoints; the export draws the paper and the ink."""
+"""Sheets of paper (gamma/notebook.py, docs/dev/notebooks.md): a page's
+sheets are blocks carrying ``sheet`` — a notebook is just a page that has
+some — so these tests go through the ordinary page and op endpoints; the
+export draws the paper and the ink."""
 
 import io
 import json
@@ -14,8 +14,8 @@ from gamma import notebook
 A4 = notebook.normalize_paper(None)
 
 
-def _notebook(client, title="Notebook", paper=None):
-    r = client.post("/api/pages", json={"title": title, "properties": {"notebook": {"sheet": paper or A4}}})
+def _page(client, title="Notebook"):
+    r = client.post("/api/pages", json={"title": title})
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -48,20 +48,19 @@ def _stroke(sid, x, y):
 
 
 def test_paper_is_read_through_normalize_and_sheets_come_in_block_order(guest):
-    page = _notebook(guest, paper={"pattern": "ruled", "height": 792})
+    page = _page(guest)
     b = generate_key_between(None, None)
-    _ops(guest, page, [_sheet("nbA", page, b), _sheet("nbB", page, generate_key_between(b, None), {"width": "x"}),
+    _ops(guest, page, [_sheet("nbA", page, b),
+                       _sheet("nbB", page, generate_key_between(b, None), {"width": "x", "pattern": "ruled", "height": 792}),
                        {"op": "insert", "id": "nbNote", "parent": page, "position": generate_key_between(None, b),
                         "content": "an intro note", "props": {}}])
     rows = guest.get(f"/api/blocks/{page}/subtree").json()["block"]
-    root_props = rows["properties"]
-    assert notebook.page_notebook(root_props)["paper"]["pattern"] == "ruled"
-    flat = [{"id": rows["id"], "parent_id": "root", "position": "", "properties": root_props}]
+    flat = [{"id": rows["id"], "parent_id": "root", "position": "", "properties": rows["properties"]}]
     for c in rows["children"]:
         flat.append({"id": c["id"], "parent_id": page, "position": c["position"], "properties": c["properties"]})
     sheets = notebook.sheets_of(flat, page)
     assert [s["id"] for s in sheets] == ["nbA", "nbB"]
-    # a bad key falls back to the notebook's paper, not the built-in one
+    # a bad key falls back to the built-in paper; the good ones stay
     assert sheets[1]["paper"]["width"] == A4["width"] and sheets[1]["paper"]["pattern"] == "ruled"
     assert sheets[1]["paper"]["height"] == 792
 
@@ -69,7 +68,7 @@ def test_paper_is_read_through_normalize_and_sheets_come_in_block_order(guest):
 def test_pages_added_on_two_devices_at_once_both_stay(guest):
     """Adding a page is inserting a block: two writers appending after the
     same last sheet (each from the state it saw) both keep their page."""
-    page = _notebook(guest)
+    page = _page(guest)
     first = generate_key_between(None, None)
     _ops(guest, page, [_sheet("nb1", page, first)])
     after = generate_key_between(first, None)
@@ -81,9 +80,9 @@ def test_pages_added_on_two_devices_at_once_both_stay(guest):
     assert {c["id"] for c in kids} == {"nb1", "nb2a", "nb2b"}
 
 
-def test_the_notebook_exports_as_a_pdf_of_its_sheets(guest):
+def test_a_page_with_sheets_exports_as_a_pdf_of_them(guest):
     from PyPDF2 import PdfReader
-    page = _notebook(guest, "Lecture 3")
+    page = _page(guest, "Lecture 3")
     k1 = generate_key_between(None, None)
     k2 = generate_key_between(k1, None)
     letter = notebook.normalize_paper({"width": 612, "height": 792, "pattern": "grid", "spacing": 24})
@@ -106,12 +105,12 @@ def test_the_notebook_exports_as_a_pdf_of_its_sheets(guest):
     assert second.count(b" l S") > 40                        # the grid's lines
 
 
-def test_a_notebook_with_no_pages_still_exports(guest):
-    from PyPDF2 import PdfReader
-    page = _notebook(guest, "Empty")
+def test_a_page_with_neither_a_pdf_nor_sheets_has_no_pdf_to_export(guest):
+    page = _page(guest, "Plain notes")
+    _ops(guest, page, [{"op": "insert", "id": "nbPlain", "parent": page, "position": generate_key_between(None, None),
+                        "content": "just text", "props": {}}])
     r = guest.get(f"/api/pages/{page}/export-pdf")
-    assert r.status_code == 200, r.text
-    assert len(PdfReader(io.BytesIO(r.content)).pages) == 1
+    assert r.status_code == 400 and "no PDF" in r.text
 
 
 def test_paper_ops_draw_the_pattern():
@@ -123,12 +122,12 @@ def test_paper_ops_draw_the_pattern():
     assert notebook.paper_ops(notebook.normalize_paper(None)).count(b" l S") == 0
 
 
-def test_the_agent_reads_a_notebook_page_as_one(guest):
+def test_the_agent_reads_a_sheet_as_a_page_of_paper(guest):
     from gamma import ai_tools
     from gamma.db import connect_pages_db
     from gamma.workspaces import default_workspace
     from conftest import guest_name
-    page = _notebook(guest, "Agent notebook")
+    page = _page(guest, "Agent notebook")
     _ops(guest, page, [_sheet("nbAg", page, generate_key_between(None, None))])
     url = _canvas_ink(guest, [_stroke("s1", 50, 60)])
     _ops(guest, page, [{"op": "insert", "id": "nbAgInk", "parent": "nbAg", "content": "", "props": {"ink_url": url, "ink_strokes": 1}}])

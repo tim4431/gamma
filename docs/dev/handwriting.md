@@ -57,8 +57,8 @@ app ([ipad.md](ipad.md)).
   them; a full group refuses. One action across several blocks is one undo
   entry. The menu follows scrolling and resizing, flips above or below the
   selection and hides while the selection is off-screen. It keeps inside
-  the scroller the ink is seen through: the PDF viewer, a notebook's
-  viewer, or the notes for a page among them. A blank tap or Escape
+  the scroller the ink is seen through: the PDF viewer, the notebook
+  view, or the notes for a sheet among them. A blank tap or Escape
   dismisses it.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside it
@@ -93,7 +93,7 @@ app ([ipad.md](ipad.md)).
   touch screen) replays the group's writing in the card: the strokes
   appear in the order they were written, each at the pace it was written.
   Pauses shrink to 0.4 s, and a replay longer than 15 s plays faster. The
-  same button stops it. A page among a note's blocks has the button under
+  same button stops it. A sheet in the notes view has the button under
   it, for all its handwriting ([notebooks.md](notebooks.md)); on the iPad
   it is on a group's row in the notes and plays on the page
   ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
@@ -152,9 +152,8 @@ Plain JSON (`application/json`), one per group:
   scale 1 (pdf.js viewport: points, origin top-left, y down, rotation
   applied) — the same frame highlight rects normalise to and the frame the
   PDF writers map to user space. `{kind: "canvas", width, height}` is a
-  sheet (a notebook's page, or a page among a note's blocks): points from
-  its top-left corner, the sheet's size when the group was drawn
-  ([notebooks.md](notebooks.md)).
+  sheet of paper: points from its top-left corner, the sheet's size when
+  the group was drawn ([notebooks.md](notebooks.md)).
 - `ch` names the channels of each sample, InkML-style: `x` `y` always, then
   any of `p` pressure, `t` time, `a` altitude, `z` azimuth. `pts` is one
   flat integer array: x/y in 1/100 pt and t in ms are deltas after the

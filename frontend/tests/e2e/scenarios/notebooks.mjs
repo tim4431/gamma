@@ -1,10 +1,13 @@
-// Notebooks (docs/dev/notebooks.md): a page of sheets instead of a PDF —
-// made from the add menu, written on with the same ink tools, a click on a
-// stroke selecting it, a page added by writing low on the last one and by
-// the button, the paper menu, the sheets in the notes, a reload, and the
-// export as a PDF of the sheets. Then pages among a note's blocks: "/page",
-// written on in place, the replay of the page and of its group's card, and
-// "Add page below". The rules behind it are backend/tests/test_notebooks.py,
+// Sheets of paper (docs/dev/notebooks.md): a notebook is a page with
+// sheets, shown in the notebook view or among its notes. A new notebook
+// opens in the notebook view; it is written on with the same ink tools, a
+// click on a stroke selects it, a page is added by writing low on the last
+// one and by the button, the paper menu sets a page's paper and the page
+// added after it takes that paper; the view switch shows the same pages
+// among the notes and back, remembered over a reload; the export is a PDF
+// of the sheets. Then pages in a note: "/page", written on in place, the
+// replay of the page and of its group's card, and "Add page below". The
+// rules behind it are backend/tests/test_notebooks.py,
 // frontend/tests/notebook.test.mjs and ink.test.mjs (the replay's timing).
 import { closeEditor, newPageViaUi } from "./notes.mjs";
 
@@ -32,8 +35,9 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
   const tree = async () => (await account.api(`/api/blocks/${pageId}/subtree`)).block;
   const sheetsOnServer = async () => ((await tree()).children || []).filter((b) => b.properties?.sheet);
   const sheetBox = (i) => page.locator(".nbSheet").nth(i).boundingBox();
+  const pageRow = (n) => page.locator(".sortableBlockWrap", { has: page.locator(".blockSheetLabel", { hasText: `Page ${n}` }) }).first();
 
-  await step("notebook: the add menu makes a notebook with one page; a stroke on it becomes a group under that page", async () => {
+  await step("notebook: the add menu makes a page with one sheet, in the notebook view; a stroke on it becomes a group under the sheet", async () => {
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
     await page.click("button[aria-label='Add']");
@@ -43,13 +47,14 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.keyboard.press("Enter");
     pageId = await until(async () => {
       const pages = (await account.api("/api/blocks/root/children")).children || [];
-      return pages.find((b) => b.properties?.notebook && b.content === "Lecture notes")?.id;
+      return pages.find((b) => b.content === "Lecture notes")?.id;
     }, { what: "the notebook, named, in the library" });
     assert(page.url().includes(pageId), "the address names the open notebook");
     assertEq((await page.$$(".nbSheet")).length, 1, "one page to start");
     const root = await tree();
-    assert(root.properties.notebook?.sheet?.width > 0, "the root carries the notebook's paper");
-    assertEq((await sheetsOnServer()).length, 1, "the first sheet is stored with it");
+    assert(!("notebook" in root.properties), "nothing marks the page as a notebook: it has a sheet");
+    const [first] = await sheetsOnServer();
+    assert(first?.properties.sheet.width > 0 && first.properties.collapsed === true, "the first sheet, with its paper, folded");
     await page.click("button[aria-label='Handwriting tools']");
     await page.waitForSelector(".pdfInkBar");
     const b = await sheetBox(0);
@@ -95,16 +100,18 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.click(".nbAddSheet");
     await until(async () => (await page.$$(".nbSheet")).length === 3, { what: "a third page from the button" });
     await until(async () => (await sheetsOnServer()).length === 3, { what: "three sheets stored" });
-    // the notes list the sheets as pages, the handwriting under the first
+    // the notes list the sheets as pages, each folded over its handwriting
     await until(async () => (await page.locator(".blockSheetLabel").allTextContents()).join("|") === "Page 1|Page 2|Page 3",
       { what: "Page 1-3 in the notes" });
-    assert(await page.$(".blockInkCard"), "the handwriting's card in the notes");
+    assertEq((await page.$$(".blockInkCard")).length, 0, "page 1 folded over its drawing");
+    await pageRow(1).locator(".collapseBtn").click();
+    await page.waitForSelector(".blockInkCard", { timeout: 5000 });
     b = await sheetBox(0);
     assert(b.width > 300, "the page fits the viewer's width");
     assertNoProblems(page);
   });
 
-  await step("notebook: the paper menu sets a page's pattern and the paper new pages get", async () => {
+  await step("notebook: the paper menu sets a page's pattern; a page added after it takes its paper", async () => {
     await page.keyboard.press("Escape"); // close the ink strip
     await page.evaluate(() => document.querySelector(".nbViewer").scrollTo({ top: 0 }));
     await page.click("button[aria-label='Paper of this page']");
@@ -113,14 +120,16 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await until(async () => (await sheetsOnServer())[0].properties.sheet.pattern === "ruled", { what: "page 1 ruled on the server" });
     await until(async () => !!(await page.$(".nbSheet >> nth=0 >> .nbPaper path")), { what: "page 1 draws its lines" });
     if (flags.keep) await page.screenshot({ path: `${server.dir}/notebook-paper.png` });
-    await page.locator(".nbPaperMenu").getByRole("button", { name: "Use for new pages" }).click();
-    await until(async () => (await tree()).properties.notebook.sheet.pattern === "ruled", { what: "the notebook's paper is ruled" });
-    await page.click(".nbAddSheet");
+    const first = pageRow(1);
+    await first.hover();
+    await first.locator(".dragHandle").click();
+    await page.locator(".ctxMenu").getByText("Add page below", { exact: true }).click();
     await until(async () => {
       const sheets = await sheetsOnServer();
-      return sheets.length === 4 && sheets[3].properties.sheet.pattern === "ruled";
-    }, { what: "a new page gets the notebook's paper" });
-    assertEq((await sheetsOnServer())[1].properties.sheet.pattern, "blank", "the other pages keep theirs");
+      return sheets.length === 4 && sheets[1].properties.sheet.pattern === "ruled";
+    }, { what: "the page after page 1 takes its paper" });
+    assertEq((await sheetsOnServer())[2].properties.sheet.pattern, "blank", "the other pages keep theirs");
+    await until(async () => (await page.$$(".nbViewer .nbSheet")).length === 4, { what: "four pages in the viewer" });
     assertNoProblems(page);
   });
 
@@ -136,10 +145,28 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     const text = new TextDecoder("latin1").decode(bytes);
     assertEq((text.match(/\/Type\s*\/Page\b/g) || []).length, 4, "one PDF page per sheet");
     assertNoProblems(page);
+  });
+
+  await step("notebook: the view switch shows the same pages among the notes, and back; the choice outlives a reload", async () => {
+    const toggle = page.locator("button[aria-label='Notebook view']");
+    assertEq(await toggle.getAttribute("aria-pressed"), "true", "on for a new notebook, and over the reload");
+    await toggle.click();
+    await until(async () => !(await page.$(".nbViewer")) && (await page.$$(".noteSheet .nbSheet")).length === 4,
+      { what: "the notes view draws the four pages among the blocks" });
+    await until(async () => (await page.$$(".noteSheet .inkLayer path")).length === 2, { what: "page 1's strokes there too" });
+    await toggle.click();
+    await page.waitForSelector(".nbViewer .nbSheet", { timeout: 5000 });
+    assertEq((await page.$$(".noteSheet")).length, 0, "the notes list the pages as rows again");
+    await page.click("button[aria-label='Back to the notes']");
+    await until(async () => !(await page.$(".nbViewer")), { what: "the viewer's close button goes back to the notes" });
+    await page.reload();
+    await until(async () => (await page.$$(".noteSheet .nbSheet")).length === 4, { what: "the notes view, remembered", timeout: 15000 });
+    assertEq(await page.locator("button[aria-label='Notebook view']").getAttribute("aria-pressed"), "false", "the switch shows it");
+    assertNoProblems(page);
     await ctx.close();
   });
 
-  // --- pages among a note's blocks ------------------------------------------------
+  // --- pages in a note ----------------------------------------------------------------
   let noteId;
   const noteTree = async () => (await account.api(`/api/blocks/${noteId}/subtree`)).block;
   const notePage = (i = 0) => page.locator(".noteSheet .nbSheet").nth(i);
@@ -163,7 +190,8 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     assertEq((await page.$$(".blockEditorCm")).length, 0, "the block is the page now; its editor closed");
     const sheet = await until(async () => (await noteTree()).children.find((c) => c.properties?.sheet), { what: "the page on the server" });
     assertEq(sheet.properties.sheet.width, 595.28, "A4 when no page stands before it");
-    assertEq(sheet.properties.collapsed, true, "a page among notes starts folded: it shows its drawings itself");
+    assertEq(sheet.properties.collapsed, true, "a new page starts folded: it shows its drawings itself");
+    assert(await page.$("button[aria-label='Notebook view']"), "a page with pages can show them in the notebook view");
     await page.click("button[aria-label='Write on this page']");
     await page.waitForSelector(".notesInkDock .pdfInkBar", { timeout: 5000 });
     await notePage().evaluate((n) => n.scrollIntoView({ block: "start" }));

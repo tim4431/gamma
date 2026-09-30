@@ -2,16 +2,15 @@
 // gamma/notebook.py; pure, so it runs under node --test and in the iPad's
 // JavaScriptCore.
 //
-// A sheet is a block carrying `sheet: <paper>`. A page's sheets are those
-// blocks in document order, at any depth; adding a page is inserting a
-// block, so sheets two devices add while apart both survive a merge. A
-// notebook is a page whose root carries `notebook: {sheet: <paper>}`, the
-// paper new sheets get: its sheets take the viewer's place. Any other page
-// can hold sheets among its notes, drawn where they stand. A sheet's
-// handwriting is the ink groups under it that no nearer sheet holds
-// (blocks with `ink_url`, their file on a `canvas` space the sheet's size);
-// other blocks under a sheet are notes about that page. Stored papers are
-// read through normalizePaper, never trusted.
+// A sheet is a block carrying `sheet: <paper>`, anywhere among a page's
+// blocks; nothing else marks a page as a notebook — the notebook view is a
+// way of showing the sheets it has. A page's sheets are those blocks in
+// document order, at any depth; adding a page is inserting a block, so
+// sheets two devices add while apart both survive a merge. A sheet's
+// handwriting is the ink groups under it that no nearer sheet holds (blocks
+// with `ink_url`, their file on a `canvas` space the sheet's size); other
+// blocks under a sheet are notes about that page. Stored papers are read
+// through normalizePaper, never trusted.
 
 export const DEFAULT_PAPER = Object.freeze({ width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank",
   spacing: 24, line: "#c8d1dc" });
@@ -82,27 +81,20 @@ export function paperSizeKey(paper) {
   return hit ? hit.key : "";
 }
 
-// --- the notebook in a page's tree -------------------------------------------
+// --- the sheets in a page's tree ---------------------------------------------
 
-// {paper: the paper new sheets get} for a notebook page's root, else null.
-export function pageNotebook(root) {
-  const nb = root?.properties?.notebook;
-  if (!nb || typeof nb !== "object" || Array.isArray(nb)) return null;
-  return { paper: normalizePaper(nb.sheet) };
-}
 export const isSheet = (block) => {
   const s = block?.properties?.sheet;
   return !!s && typeof s === "object" && !Array.isArray(s);
 };
 
 // The sheets of a page's tree (the page's blocks, nested `children`), in
-// document order at any depth: [{id, index (0-based), paper, block}]. A
-// sheet's missing paper keys come from `paper` (a notebook's own).
-export function sheetsOf(tree, paper = DEFAULT_PAPER) {
+// document order at any depth: [{id, index (0-based), paper, block}].
+export function sheetsOf(tree) {
   const out = [];
   const walk = (list) => {
     for (const b of list || []) {
-      if (isSheet(b)) out.push({ id: b.id, index: out.length, paper: normalizePaper(b.properties.sheet, paper), block: b });
+      if (isSheet(b)) out.push({ id: b.id, index: out.length, paper: normalizePaper(b.properties.sheet), block: b });
       walk(b.children);
     }
   };
@@ -141,9 +133,9 @@ export function sheetOfBlock(tree, id) {
   return walk(tree, null) ?? null;
 }
 
-// The paper a sheet added right after block `id` gets on a page that is no
-// notebook: that of the sheet nearest before it in document order (itself,
-// when it is one), else the default.
+// The paper a sheet added right after block `id` gets: that of the sheet
+// nearest before it in document order (itself, when it is one), else the
+// default.
 export function paperBefore(tree, id) {
   let paper = DEFAULT_PAPER, found = false;
   const walk = (list) => {
@@ -171,12 +163,12 @@ export function stableId(prefix, ...parts) {
   }
   return prefix + h.toString(16).padStart(16, "0");
 }
-// The first sheet of a notebook page, and the sheet that follows `sheetId`.
+// A new notebook's first sheet, and the sheet that follows `sheetId`.
 export const firstSheetId = (pageId) => stableId("s", "first-sheet", pageId);
 export const sheetIdAfter = (sheetId) => stableId("s", "sheet-after", sheetId);
 
-// A new sheet block. `folded` for one among a page's notes: its handwriting
-// groups start folded under it, since the sheet itself shows them there.
-export function newSheet(id, paper, { folded = false } = {}) {
-  return { id, content: "", properties: { sheet: normalizePaper(paper), ...(folded ? { collapsed: true } : {}) }, children: [] };
+// A new sheet block, folded: its handwriting groups are its children, and
+// the sheet itself shows them.
+export function newSheet(id, paper) {
+  return { id, content: "", properties: { sheet: normalizePaper(paper), collapsed: true }, children: [] };
 }

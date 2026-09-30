@@ -1,15 +1,13 @@
 """Sheets of paper to write on (docs/dev/notebooks.md).
 
-A sheet is a block carrying ``sheet: <paper>``. A page's sheets are those
+A sheet is a block carrying ``sheet: <paper>``, anywhere among a page's
+blocks; nothing else marks a page as a notebook. A page's sheets are those
 blocks in document order, at any depth: adding a page is inserting a
 block, so sheets two devices add while apart both survive a merge, and
-nothing counts pages. A notebook is a page whose root carries ``notebook:
-{sheet: <paper>}``, the paper new sheets get, and whose sheets are its
-pages; any other page can hold sheets among its notes. A sheet's
-handwriting is the ink groups under it that no nearer sheet holds — blocks
-with an ``ink_url`` whose file (gamma/ink.py) is drawn on a ``canvas``
-space the sheet's size, points from its top-left corner. Other blocks under
-a sheet are notes about that page.
+nothing counts pages. A sheet's handwriting is the ink groups under it that
+no nearer sheet holds — blocks with an ``ink_url`` whose file
+(gamma/ink.py) is drawn on a ``canvas`` space the sheet's size, points from
+its top-left corner. Other blocks under a sheet are notes about that page.
 
 A paper is ``{width, height, color, pattern, spacing, line}``: the size in
 points, the background colour, ``blank`` / ``ruled`` / ``grid`` / ``dots``
@@ -95,20 +93,11 @@ def paper_lines(paper: dict) -> dict:
     return {"lines": lines, "dots": dots}
 
 
-def page_notebook(props: dict | None) -> dict | None:
-    """``{"paper": <the paper new sheets get>}`` when the page is a
-    notebook, else None."""
-    nb = (props or {}).get("notebook")
-    if not isinstance(nb, dict):
-        return None
-    return {"paper": normalize_paper(nb.get("sheet"))}
-
-
 def is_sheet(props: dict | None) -> bool:
     return isinstance((props or {}).get("sheet"), dict)
 
 
-# --- the notebook as a PDF ------------------------------------------------------------
+# --- the sheets as a PDF --------------------------------------------------------------
 
 def _rgb(hex_color: str) -> bytes:
     from .pdf_typeset import num
@@ -135,9 +124,10 @@ def paper_ops(paper: dict) -> bytes:
 
 
 def notebook_pdf(sheets: list[tuple[dict, list]]) -> bytes:
-    """A PDF of the notebook: one page per ``(paper, [InkFile])`` in order,
-    the paper painted and the handwriting drawn on it as vectors (the page
-    is the drawing, so every viewer and printer shows it as written)."""
+    """A PDF of a page's sheets: one PDF page per ``(paper, [InkFile])`` in
+    order (at least one), the paper painted and the handwriting drawn on it
+    as vectors (the page is the drawing, so every viewer and printer shows
+    it as written)."""
     from PyPDF2 import PdfWriter
     from PyPDF2.generic import DecodedStreamObject, NameObject
 
@@ -155,8 +145,6 @@ def notebook_pdf(sheets: list[tuple[dict, list]]) -> bytes:
         stream = DecodedStreamObject()
         stream.set_data(b"\n".join(body))
         page[NameObject("/Contents")] = writer._add_object(stream.flate_encode())
-    if not sheets:  # a notebook with no page yet still exports as one blank sheet
-        writer.add_blank_page(DEFAULT_PAPER["width"], DEFAULT_PAPER["height"])
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -165,22 +153,19 @@ def notebook_pdf(sheets: list[tuple[dict, list]]) -> bytes:
 def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
     """The page's sheets in document order, at any depth, from its flat
     block dicts (``block_to_dict``): ``[{id, paper, blocks: [the blocks
-    under it that no nearer sheet holds]}]``. A notebook's paper fills a
-    sheet's missing keys."""
+    under it that no nearer sheet holds]}]``."""
     kids: dict[str, list[dict]] = {}
     for b in blocks:
         kids.setdefault(b.get("parent_id"), []).append(b)
     for rows in kids.values():
         rows.sort(key=lambda b: (b.get("position") or "", b["id"]))
-    root = next((b for b in blocks if b["id"] == page_id), None)
-    default = normalize_paper((((root or {}).get("properties") or {}).get("notebook") or {}).get("sheet"))
     out, of = [], {}
     stack = [(b, None) for b in kids.get(page_id, [])]
     while stack:
         b, sheet = stack.pop(0)
         props = b.get("properties") or {}
         if is_sheet(props):
-            of[b["id"]] = {"id": b["id"], "paper": normalize_paper(props["sheet"], default), "blocks": []}
+            of[b["id"]] = {"id": b["id"], "paper": normalize_paper(props["sheet"]), "blocks": []}
             out.append(of[b["id"]])
             sheet = b["id"]
         elif sheet:

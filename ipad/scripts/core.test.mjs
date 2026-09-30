@@ -77,7 +77,7 @@ test("a notebook made through the host is the one the web app makes", async () =
   const bookId = await c.run("createNotebook", host, { title: "On the iPad" });
   const sheet = await c.run("addSheet", host, bookId);
   const view = c.pure("pageView", pages.get(bookId).snapshot, bookId);
-  assert.equal(view.kind, "notebook");
+  assert.equal(view.kind, "page", "a notebook is a page with sheets");
   assert.equal(view.sheets.length, 2);
   assert.equal(view.sheets[1].id, sheet);
   const stroke = c.pure("encodeStroke", { id: "k1", samples: [{ x: 5, y: 5 }, { x: 9, y: 9 }] });
@@ -111,13 +111,16 @@ test("a page among a note's blocks goes where the browser puts it", async () => 
   const noteId = await c.run("createPage", host, { title: "Notes" });
   const a = await c.run("addNote", host, noteId, { content: "first" });
   const z = await c.run("addNote", host, noteId, { content: "last" });
-  const p1 = await c.run("addSheet", host, noteId, null, a);                       // right after the first note
+  const p1 = await c.run("addSheet", host, noteId, { after: a });                  // right after the first note
   await c.run("setSheetPaper", host, noteId, p1, { pattern: "grid" });
-  const p2 = await c.run("addSheet", host, noteId, null, p1);                      // the page after that page
+  const p2 = await c.run("addSheet", host, noteId, { after: p1 });                 // the page after that page
+  assert.equal(await c.run("addSheet", host, noteId, { after: p1, once: true }), p2, "once: the page after it is there");
   const tree = c.pure("tree", pages.get(noteId).snapshot, noteId);
   assert.deepEqual(tree.map((n) => n.id), [a, p1, p2, z]);
   assert.equal(p2, c.pure("pageView", pages.get(noteId).snapshot, noteId).sheets[1].id);
   const second = tree[2].properties;
   assert.equal(second.sheet.pattern, "grid", "the paper of the page before it");
-  assert.equal(second.collapsed, true, "folded among a note's blocks");
+  assert.equal(second.collapsed, true, "folded: the page shows its drawings");
+  const last = await c.run("addSheet", host, noteId);                              // after the last page
+  assert.deepEqual(c.pure("tree", pages.get(noteId).snapshot, noteId).map((n) => n.id), [a, p1, p2, last, z]);
 });

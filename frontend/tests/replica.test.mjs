@@ -91,29 +91,23 @@ test("snapshots, trees and upload references", () => {
   assert.deepEqual([...uploadRefs(Object.values(snap))].sort(), ["abc123.png", `${"d".repeat(24)}.pdf`, "ffff.ink"]);
 });
 
-test("a page's view: a PDF's ink by page, a notebook's sheets with their ink, a note's pages", () => {
+test("a page's view: a PDF's ink by page, a page's sheets with their ink", () => {
   const pdf = { [P]: b("root", "a0", "Paper", { doc_id: "e".repeat(24), source_url: `/api/uploads/${"e".repeat(24)}.pdf` }),
     g1: b(P, "a0", "", { ink_url: "/api/uploads/1.ink", pdf_page: 2 }), n1: b(P, "a1", "note") };
   const v = pageView(pdf, P);
   assert.equal(v.kind, "pdf");
   assert.deepEqual(v.pdfInk, { 2: [{ id: "g1", url: "/api/uploads/1.ink" }] });
-  const sheet = newSheet(firstSheetId("bk"), { pattern: "grid" });
-  const book = { bk: b("root", "a0", "Notebook", { notebook: { sheet: { pattern: "dots" } } }),
-    [sheet.id]: b("bk", "a0", "", sheet.properties), g2: b(sheet.id, "a0", "", { ink_url: "/api/uploads/2.ink" }) };
-  const nv = pageView(book, "bk");
-  assert.equal(nv.kind, "notebook");
-  assert.equal(nv.notebook.paper.pattern, "dots");
-  assert.deepEqual(nv.sheets.map((s) => [s.number, s.paper.pattern, s.ink.map((i) => i.id)]), [[1, "grid", ["g2"]]]);
   assert.deepEqual(v.sheets, [], "a PDF's page has its PDF to read");
-  const note = { nt: b("root", "a0", "Notes", {}), t1: b("nt", "a0", "text"), p1: b("nt", "a1", "", { sheet: { pattern: "ruled" } }),
-    g3: b("p1", "a0", "", { ink_url: "/api/uploads/3.ink" }), t2: b("t1", "a0", "under"), p2: b("t2", "a0", "", { sheet: {} }) };
-  const pv = pageView(note, "nt");
-  assert.equal(pv.kind, "page");
-  assert.equal(pv.notebook, null);
-  assert.deepEqual(pv.sheets.map((s) => [s.id, s.number, s.paper.pattern, s.ink.map((i) => i.id)]),
-    [["p2", 1, "blank", []], ["p1", 2, "ruled", ["g3"]]], "in document order, at any depth");
+  const sheet = newSheet(firstSheetId("bk"), { pattern: "grid" });
+  const book = { bk: b("root", "a0", "Notebook", {}), [sheet.id]: b("bk", "a0", "", sheet.properties),
+    g2: b(sheet.id, "a0", "", { ink_url: "/api/uploads/2.ink" }), t1: b("bk", "a1", "text"),
+    t2: b("t1", "a0", "under"), p2: b("t2", "a0", "", { sheet: {} }) };
+  const nv = pageView(book, "bk");
+  assert.equal(nv.kind, "page", "a notebook is a page with sheets");
+  assert.deepEqual(nv.sheets.map((s) => [s.id, s.number, s.paper.pattern, s.ink.map((i) => i.id)]),
+    [[sheet.id, 1, "grid", ["g2"]], ["p2", 2, "blank", []]], "in document order, at any depth");
   assert.deepEqual(libraryRows([{ id: "bk", content: "Notebook", props: book.bk.props, position: "a1" },
     { id: P, content: "", props: pdf[P].props, position: "a0" }]).map((r) => [r.id, r.kind, r.title]),
-  [[P, "pdf", "Untitled"], ["bk", "notebook", "Notebook"]]);
+  [[P, "pdf", "Untitled"], ["bk", "page", "Notebook"]]);
   assert.equal(newCanvasInk(10, 20).space.kind, "canvas");
 });

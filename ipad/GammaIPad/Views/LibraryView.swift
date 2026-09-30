@@ -92,7 +92,6 @@ struct LibraryView: View {
     private func icon(_ kind: String) -> String {
         switch kind {
         case "pdf": return "doc.richtext"
-        case "notebook": return "book.closed"
         default: return "doc.text"
         }
     }

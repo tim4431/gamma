@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  DEFAULT_PAPER, firstSheetId, inkBySheet, newSheet, normalizePaper, pageNotebook, paperBefore, paperLines, paperSizeKey,
+  DEFAULT_PAPER, firstSheetId, inkBySheet, newSheet, normalizePaper, paperBefore, paperLines, paperSizeKey,
   sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper,
 } from "../src/notebook/notebook.js";
 import { treeOf } from "../src/replica/tree.js";
@@ -20,9 +20,8 @@ for (const c of PAPER.lines) {
 for (const c of PAPER.sheets) {
   test(`page sheets: ${c.note}`, () => {
     const tree = treeOf(c.blocks, c.page);
-    const nb = pageNotebook({ properties: c.blocks[c.page].props });
     const ink = inkBySheet(tree);
-    assert.deepEqual(sheetsOf(tree, nb?.paper).map((s) => ({ id: s.id, paper: s.paper, ink: ink.get(s.id).map((b) => b.id) })), c.sheets);
+    assert.deepEqual(sheetsOf(tree).map((s) => ({ id: s.id, paper: s.paper, ink: ink.get(s.id).map((b) => b.id) })), c.sheets);
   });
 }
 
@@ -35,14 +34,11 @@ const tree = [
   { id: "s2", content: "", properties: { sheet: { width: 612 } }, children: [] },
 ];
 
-test("a notebook's sheets, in order, take missing paper keys from the notebook's", () => {
-  const nb = pageNotebook({ properties: { notebook: { sheet: { height: 792, pattern: "dots" } } } });
-  assert.deepEqual(nb.paper, { ...DEFAULT_PAPER, height: 792, pattern: "dots" });
-  assert.equal(pageNotebook({ properties: {} }), null);
-  assert.equal(pageNotebook({ properties: { notebook: "yes" } }), null);
-  const sheets = sheetsOf(tree, nb.paper);
+test("a page's sheets, in order, take missing paper keys from the default paper", () => {
+  const sheets = sheetsOf(tree);
   assert.deepEqual(sheets.map((s) => [s.id, s.index, s.paper.pattern, s.paper.width, s.paper.height]),
-    [["s1", 0, "ruled", 595.28, 792], ["s2", 1, "dots", 612, 792]]);
+    [["s1", 0, "ruled", 595.28, 841.89], ["s2", 1, "blank", 612, 841.89]]);
+  assert.deepEqual(sheetsOf([]), []);
 });
 
 test("ink belongs to the sheet it is under, at any depth", () => {
@@ -70,8 +66,6 @@ test("a page among a note's blocks: the nearest sheet holds the ink, and a new o
   assert.equal(paperBefore(note, "p1").pattern, "grid");       // a page: its own
   assert.equal(paperBefore(note, "b").pattern, "dots");        // the last page before it in document order
   assert.equal(paperBefore(note, "missing").pattern, "dots");
-  assert.deepEqual(newSheet("x", null, { folded: true }).properties, { sheet: DEFAULT_PAPER, collapsed: true });
-  assert.equal("collapsed" in newSheet("x", null).properties, false);
 });
 
 test("stable ids: the same parts give the same block id on every device", () => {
@@ -92,7 +86,7 @@ test("paper sizes are recognised either way round", () => {
   assert.equal(paperSizeKey(normalizePaper({ width: 700, height: 700 })), "");
 });
 
-test("a new sheet stores its whole paper", () => {
+test("a new sheet stores its whole paper and starts folded: it shows its drawings itself", () => {
   assert.deepEqual(newSheet("s9", { pattern: "grid" }),
-    { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" } }, children: [] });
+    { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" }, collapsed: true }, children: [] });
 });

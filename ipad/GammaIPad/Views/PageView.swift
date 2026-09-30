@@ -1,23 +1,25 @@
 import SwiftUI
 
-/// One page of the library: a PDF to read and write on, a notebook's sheets,
-/// or a page of notes — with the page's notes beside it and the ink tools
-/// above (docs/dev/ipad.md). A note's pages to write on (the browser draws
-/// them among its blocks) are read here the way a notebook's are, its notes
-/// beside them. What it shows comes from the replica's store through the
-/// core's pageView (frontend/src/replica/views.js).
+/// One page of the library: a PDF to read and write on, or a page of notes
+/// — with the page's notes beside it and the ink tools above
+/// (docs/dev/ipad.md). A page with sheets of paper opens in the notebook
+/// view (its sheets one under the other, written on with the Pencil); the
+/// toolbar switches it to its notes alone and back. What it shows comes
+/// from the replica's store through the core's pageView
+/// (frontend/src/replica/views.js).
 struct PageView: View {
     @EnvironmentObject private var model: AppModel
     let pageId: String
     @StateObject private var ink = InkSession()
     @State private var view: [String: Any] = [:]
     @State private var showNotes = true
+    @State private var showPages = true
     @State private var showWeb = false
 
     private var kind: String { view.string("kind") }
-    private var hasSheets: Bool { !view.array("sheets").isEmpty }
-    /// A reader beside the notes: a PDF, or pages to write on.
-    private var reads: Bool { kind == "pdf" || kind == "notebook" || hasSheets }
+    private var hasSheets: Bool { kind != "pdf" && !view.array("sheets").isEmpty }
+    /// A reader beside the notes: the PDF, or the sheets in the notebook view.
+    private var reads: Bool { kind == "pdf" || (hasSheets && showPages) }
 
     var body: some View {
         Group {
@@ -25,10 +27,11 @@ struct PageView: View {
                 ContentUnavailableView("This page is not here", systemImage: "questionmark.folder")
             } else if kind == "pdf" {
                 pdf
-            } else if kind == "notebook" || hasSheets {
+            } else if reads {
                 NotebookReader(ink: ink)
             } else {
-                NotesView(pageId: pageId, onEdit: edited, onAddPage: { _ = ink.addSheet() })
+                NotesView(pageId: pageId, onEdit: edited, onJump: { show($0) }, onReplay: { show($0, replay: true) },
+                          replaying: ink.replaying, onAddPage: addPage)
             }
         }
         .navigationTitle(view.string("title").isEmpty ? "Untitled" : view.string("title"))
@@ -41,6 +44,12 @@ struct PageView: View {
                         .help("Notes")
                 }
             }
+            if hasSheets {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showPages.toggle() } label: { Image(systemName: showPages ? "text.alignleft" : "book") }
+                        .help(showPages ? "The notes alone" : "Notebook view: the pages beside the notes")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showWeb = true } label: { Image(systemName: "safari") }
                     .help("Open this page in Gamma on the web")
@@ -48,7 +57,7 @@ struct PageView: View {
         }
         .inspector(isPresented: Binding(get: { showNotes && reads }, set: { showNotes = $0 })) {
             NotesView(pageId: pageId, onEdit: edited, onJump: { ink.jump(to: $0) }, onReplay: { ink.replay($0) },
-                      replaying: ink.replaying, onAddPage: kind == "pdf" ? nil : { _ = ink.addSheet() })
+                      replaying: ink.replaying, onAddPage: addPage)
                 .inspectorColumnWidth(min: 260, ideal: 340, max: 480)
         }
         .sheet(isPresented: $showWeb) {
@@ -79,6 +88,18 @@ struct PageView: View {
         view = replica.view(of: pageId) ?? [:]
         if first { ink.attach(replica: replica, pageId: pageId, onSaved: edited) }
         ink.load(view)
+    }
+
+    /// "Add a page to write on": a sheet after the last, on a page without a PDF.
+    private var addPage: (() -> Void)? {
+        guard kind != "pdf" else { return nil }
+        return { _ = ink.addSheet() }
+    }
+
+    /// From the notes alone: the notebook view, at the page or drawing (replaying it).
+    private func show(_ id: String, replay: Bool = false) {
+        showPages = true
+        if replay { ink.replay(id) } else { ink.jump(to: id) }
     }
 
     private func edited() { model.edited() }

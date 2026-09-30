@@ -1,10 +1,10 @@
-// A sheet among a page's notes (docs/dev/notebooks.md "Pages in notes"):
-// drawn where it stands, fitted to the column — its paper, with the ink
-// layer a notebook's sheet has — and under it a row of its tools: the pen
-// (the ink strip), its paper, a replay of its handwriting, and a new page
-// after it. A notebook's own sheets stay rows in its notes; its viewer
-// draws them. App owns the tree, the tools, the stroke history and the
-// commits, and hands them down through NoteSheetContext.
+// A sheet in the notes view (docs/dev/notebooks.md): drawn where it stands
+// among the page's blocks, fitted to the column — its paper, with the ink
+// layer the notebook view's sheets have — and under it a row of its tools:
+// the pen (the ink strip), its paper, a replay of its handwriting, and a
+// new page after it. In the notebook view the viewer draws the sheets and
+// the notes list them as rows. App owns the tree, the tools, the stroke
+// history and the commits, and hands them down through NoteSheetContext.
 import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { InkLayer, InkReplayButton, Strokes, useInkReplay, useInkVersion } from "../ink/InkLayer";
 import * as inkStore from "../ink/inkStore";
@@ -17,7 +17,7 @@ import { t } from "../shared/i18n/i18n.js";
 // {readOnly, inkBySheet, tool, penTool, penOnly, pressure, eraserMode,
 // eraserSize, lassoMode, selection, flash, inkOpen, the InkLayer's
 // handlers (onStroke …), onPen(), onPaper(sheetId, paper),
-// onPaperAll(paper), onAddAfter(sheetId)}; null where sheets are rows.
+// onPaperAll(paper), onAddAfter(sheetId)}; null in the notebook view.
 export const NoteSheetContext = createContext(null);
 
 const MAX_SCALE = 1.5; // css px per pt: a page never grows past this in a wide column

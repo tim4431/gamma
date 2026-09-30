@@ -391,8 +391,8 @@ materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
 `/pages/{id}/export-pdf?highlights=&notes=`. "Annotated PDF" is the paper itself and is
-hidden when there is none (a note page or a folder); a notebook shows it too,
-and exports its sheets ([notebooks.md](notebooks.md)). An unsaved proxy PDF can
+hidden when there is none (a note page or a folder); a page with sheets of
+paper shows it too, and exports them ([notebooks.md](notebooks.md)). An unsaved proxy PDF can
 export only its original file, so it skips the options page and exports directly.
 "PDF" in the Notes row (`?mode=notes-pdf`) takes over as the fallback format, and its
 Bundle switch is hidden because a document always embeds its images. Two
@@ -539,8 +539,8 @@ drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
 
-A notebook page has no PDF to annotate: `annotated_pdf` writes
-`notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
+A page with sheets of paper and no PDF has none to annotate:
+`annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
 size, painted with the paper, with the ink groups under it drawn as
 vectors in the content (the page is the drawing, so no `/Ink` layer). The
 switches do not apply.

@@ -14,7 +14,7 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { inkProps, serializeInk } from "../ink/ink.js";
 import {
-  firstSheetId, isSheet, normalizePaper, pageNotebook, paperBefore, sheetIdAfter, sheetsOf,
+  firstSheetId, isSheet, newSheet, normalizePaper, paperBefore, sheetIdAfter, sheetsOf,
 } from "../notebook/notebook.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { applyLocal, childrenOf, treeOf } from "./tree.js";
@@ -79,56 +79,53 @@ export async function saveInk(host, pageId, { blockId, ink, baseUrl = "", parent
 // files itself.
 export const inkBytes = (ink) => serializeInk(ink);
 
-// --- notebooks -----------------------------------------------------------------------
+// --- sheets --------------------------------------------------------------------------
 
-// A new notebook page with its first sheet (notebook.js firstSheetId, the
-// id the browser gives it too). → the page's id.
+// A new notebook: a page with one sheet (notebook.js firstSheetId, the id
+// the browser gives it too). → the page's id.
 export async function createNotebook(host, { id = makeBlockId(), title = "", folder = "", paper = null } = {}) {
-  const sheet = normalizePaper(paper);
-  const root = { parent: "root", position: "", content: title, props: { notebook: { sheet }, ...(folder ? { folder } : {}) } };
-  const snapshot = { [id]: root, [firstSheetId(id)]: { parent: id, position: generateKeyBetween(null, null), content: "", props: { sheet } } };
+  const first = newSheet(firstSheetId(id), paper);
+  const root = { parent: "root", position: "", content: title, props: folder ? { folder } : {} };
+  const snapshot = { [id]: root,
+    [first.id]: { parent: id, position: generateKeyBetween(null, null), content: "", props: first.properties } };
   if (!(await host.writeEdit(id, snapshot, 0))) throw new Error(`a page ${id} exists here`);
   return id;
 }
 
-// A new sheet, as the browser adds one (app/App.jsx addSheet,
-// addSheetAfter). Without `after`: at the page's end, its id following
-// from the page's last sheet (a notebook's next page). With `after`: right
-// after that block, among its siblings, its id following from it when it
-// is a sheet. The paper is `paper`, else the notebook's, else that of the
-// page nearest before it; on a page that is no notebook the sheet starts
-// folded (it shows its drawings itself). → its id.
-export async function addSheet(host, pageId, paper = null, after = null) {
+// A new sheet, as the browser adds one (app/App.jsx addSheetAfter): right
+// after block `after`, among its siblings, else after the page's last
+// sheet, else at the page's end. After a sheet its id follows from that
+// sheet's (sheetIdAfter; the first at the end: firstSheetId), so two
+// devices adding "the page after this one" add one page, and `once` adds
+// none when that page is there already. Its paper is `paper`, else that of
+// the page nearest before it; it starts folded (notebook.js newSheet).
+// → its id.
+export async function addSheet(host, pageId, { paper = null, after = null, once = false } = {}) {
   const { snapshot } = await host.page(pageId);
   if (!snapshot) throw new Error(`no page ${pageId} here`);
   if (after && !snapshot[after]) throw new Error(`no block ${after} here`);
   const tree = treeOf(snapshot, pageId);
-  const nb = pageNotebook({ properties: snapshot[pageId].props });
-  const prev = after ? (isSheet({ properties: snapshot[after].props }) ? after : null) : sheetsOf(tree).at(-1)?.id;
-  let id = prev ? sheetIdAfter(prev) : after ? makeBlockId() : firstSheetId(pageId);
-  if (snapshot[id]) id = makeBlockId();
+  const anchor = after || sheetsOf(tree).at(-1)?.id || null;
+  let id = !anchor ? firstSheetId(pageId) : isSheet({ properties: snapshot[anchor].props }) ? sheetIdAfter(anchor) : makeBlockId();
+  if (snapshot[id]) {
+    if (once) return id;
+    id = makeBlockId();
+  }
   let parent = pageId, position = keyAtEnd(snapshot, pageId);
-  if (after) {
-    parent = snapshot[after].parent;
+  if (anchor) {
+    parent = snapshot[anchor].parent;
     const kids = childrenOf(snapshot).get(parent) || [];
-    const next = kids[kids.indexOf(after) + 1];
-    const a = snapshot[after].position || null, b = next ? snapshot[next].position || null : null;
+    const next = kids[kids.indexOf(anchor) + 1];
+    const a = snapshot[anchor].position || null, b = next ? snapshot[next].position || null : null;
     position = a !== null && b !== null && a >= b ? generateKeyBetween(a, null) : generateKeyBetween(a, b);
   }
-  const sheet = normalizePaper(paper ?? (nb ? nb.paper : paperBefore(tree, after)));
-  await editPage(host, pageId, [{ op: "insert", id, parent, position, content: "", props: { sheet, ...(nb ? {} : { collapsed: true }) } }]);
+  const sheet = newSheet(id, paper ?? paperBefore(tree, anchor));
+  await editPage(host, pageId, [{ op: "insert", id, parent, position, content: "", props: sheet.properties }]);
   return id;
 }
 
 export async function setSheetPaper(host, pageId, sheetId, paper) {
   return editPage(host, pageId, [{ op: "set", id: sheetId, props: { sheet: normalizePaper(paper) } }]);
-}
-
-// The paper new sheets get (the root's `notebook`).
-export async function setNotebookPaper(host, pageId, paper) {
-  const { snapshot } = await host.page(pageId);
-  const nb = { ...(snapshot?.[pageId]?.props.notebook || {}), sheet: normalizePaper(paper) };
-  return editPage(host, pageId, [{ op: "set", id: pageId, props: { notebook: nb } }]);
 }
 
 // --- text ------------------------------------------------------------------------------
