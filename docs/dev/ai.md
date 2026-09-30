@@ -854,6 +854,9 @@ streams no `progress`, so the note is not typed in before the user decides.
 In the client (`chat/ApprovalCard.jsx`, its rules in `chat/approvals.js`),
 the card takes the Thinking pill's place in the streaming reply. The steps
 pill reads "Waiting for your approval" until the user answers. The card
+carries the `chat.approval` guide anchor and emits `approval.shown` while it
+is up, so a hint beside the first one ever shown explains the four answers
+([onboarding.md](onboarding.md)). The card
 names the change ("Add to a note in “Paper”") and the permission, and shows
 the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one

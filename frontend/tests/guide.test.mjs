@@ -12,6 +12,7 @@ import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStora
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
+import { MEDIA, mediaRatio } from "../src/guide/media.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -126,6 +127,80 @@ test("every data-guide attribute in the source is registered", () => {
   for (const id of Object.keys(ANCHORS)) assert.ok(used.has(id), `anchor ${id} is registered but no element carries it`);
 });
 
+test("a step's drawing is a registered id with a file, and every drawing is used", () => {
+  const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const files = new Set(readdirSync(dir).filter((n) => n.endsWith(".svg")).map((n) => n.replace(/\.svg$/, "")));
+  const used = new Set();
+  for (const tour of Object.values(TOURS)) {
+    for (const step of tour.steps) {
+      if (!step.media) continue;
+      assert.ok(MEDIA[step.media], `${tour.id}/${step.id}: unregistered media ${step.media}`);
+      assert.ok(files.has(step.media), `${tour.id}/${step.id}: no guide/media/${step.media}.svg`);
+      used.add(step.media);
+      // An offer and a hint are a card of words: only a run's step draws.
+      assert.ok(!tour.hint, `${tour.id}: a hint takes no drawing`);
+    }
+  }
+  for (const id of Object.keys(MEDIA)) {
+    assert.ok(files.has(id), `media ${id} is registered but guide/media/${id}.svg is missing`);
+    assert.ok(used.has(id), `media ${id} is registered but no step shows it`);
+  }
+  for (const id of files) assert.ok(MEDIA[id], `guide/media/${id}.svg is not in guide/media.js`);
+  // The card is 320 px wide: a very tall drawing would push the copy off a
+  // short viewport, and place.js measures the card once.
+  for (const [id, m] of Object.entries(MEDIA)) {
+    assert.ok(m.ratio >= 1.4 && m.ratio <= 2.2, `media ${id}: ratio ${m.ratio} outside 1.4-2.2`);
+    assert.ok(m.description, `media ${id}: needs a one-line description`);
+    assert.equal(mediaRatio(id), m.ratio);
+  }
+  assert.equal(mediaRatio("nope"), 1.6, "an unknown id still gives the box a height");
+});
+
+// A drawing is inlined into the card, so its <style> is the document's and
+// its colours are the theme's: the rules must be scoped to its own wrapper,
+// and no colour may be its own.
+test("a drawing keeps its colours and its rules to itself", () => {
+  const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  // The selectors of a stylesheet: what stands before each top-level "{",
+  // with @keyframes and their frames left out.
+  const selectorsOf = (css) => {
+    const out = [];
+    let depth = 0;
+    let at = 0;
+    for (let i = 0; i < css.length; i++) {
+      if (css[i] === "{") {
+        if (depth === 0) out.push(css.slice(at, i).trim());
+        depth++;
+      } else if (css[i] === "}") {
+        depth--;
+        if (depth === 0) at = i + 1;
+      }
+    }
+    return out.filter(Boolean);
+  };
+  for (const id of Object.keys(MEDIA)) {
+    const svg = readFileSync(join(dir, `${id}.svg`), "utf8");
+    const style = svg.slice(svg.indexOf("<style>") + 7, svg.indexOf("</style>")).replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.ok(style.trim(), `${id}: no <style> block`);
+    for (const selector of selectorsOf(style)) {
+      if (selector.startsWith("@")) {
+        assert.match(selector, /^@keyframes\s/, `${id}: only @keyframes belongs in a drawing ("${selector}")`);
+        continue;
+      }
+      for (const one of selector.split(",")) {
+        assert.ok(one.trim().startsWith(`[data-media="${id}"]`), `${id}: unscoped selector "${one.trim()}"`);
+      }
+    }
+    // Colours come from tokens: eight themes, so a drawing carrying its own
+    // would be wrong in most of them (docs/dev/ui-design.md).
+    const raw = [...svg.matchAll(/(?:fill|stroke|color)\s*[:=]\s*"?(#[0-9a-fA-F]{3,8}|rgba?\()/g)].map((m) => m[1]);
+    assert.deepEqual(raw, [], `${id}: raw colour, use a var(--…) token`);
+    const root = svg.slice(0, svg.indexOf(">"));
+    assert.ok(/viewBox=/.test(root), `${id}: needs a viewBox`);
+    assert.ok(!/\s(?:width|height)=/.test(root), `${id}: the root sizes itself from CSS, not from width/height`);
+  }
+});
+
 test("eventMatches honours the payload match", () => {
   assert.equal(eventMatches({ event: "popover.opened", match: { name: "add" } }, "popover.opened", { name: "add" }), true);
   assert.equal(eventMatches({ event: "popover.opened", match: { name: "add" } }, "popover.opened", { name: "user" }), false);
@@ -222,7 +297,8 @@ test("the sharing tour follows the popover and words access for an anyone-with-t
 
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
-  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install"]);
+  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
+    "approvals", "export-page", "clone-sync"]);
 });
 
 // Keys in guide copy: `{key:<command id>}` shows the account's chord for a

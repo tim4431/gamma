@@ -1,22 +1,28 @@
 # README demos
 
-Looping animated WebP images, one per README slot. Recordings, timing manifests
-and QA frames live in ignored `artifacts/readme-media/`; the scripts, delivery
-rules and regeneration steps are in
+Looping animated WebP images, one per README slot. Captures, timing manifests,
+masters and QA frames live in ignored `artifacts/readme-media/`; the scripts,
+delivery rules and regeneration steps are in
 [tools/readme-media](../../../tools/readme-media/README.md).
 
 | Demo | Duration | Dimensions | Size |
 |---|---:|---:|---:|
-| [annotate-and-ink](demo-annotate-and-ink.webp) | 19.0 s | 1040 x 662 | 2.92 MiB |
-| [native-agentic](demo-native-agentic.webp) | 37.6 s | 960 x 612 | 4.52 MiB |
-| [library](demo-library.webp) | 17.2 s | 1120 x 714 | 4.43 MiB |
+| [annotate-and-ink](demo-annotate-and-ink.webp) | 22.8 s | 1600 x 900 | 1.89 MiB |
+| [notes](demo-notes.webp) | 29.0 s | 1600 x 900 | 1.04 MiB |
+| [native-agentic](demo-native-agentic.webp) | 41.1 s | 1600 x 900 | 3.05 MiB |
+| [agentic-notes](demo-agentic-notes.webp) | 18.9 s | 1600 x 900 | 0.59 MiB |
+| [search](demo-search.webp) | 15.4 s | 1600 x 900 | 2.05 MiB |
+| [library](demo-library.webp) | 17.8 s | 1600 x 900 | 3.32 MiB |
 | [metadata](demo-metadata.webp) | 13.2 s | 1120 x 714 | 1.10 MiB |
-| [notes](demo-notes.webp) | 31.3 s | 1120 x 654 | 1.60 MiB |
 | [reference-links](demo-reference-links.webp) | 15.2 s | 1040 x 662 | 4.58 MiB |
 
-The six published animations total about 19.15 MiB; each is below 5 MiB.
-The superseded connector animation was removed; the README uses the connections
-SVG instead. Its recording tools remain available for future captures.
+The first five are the README's; annotate-and-ink, notes, native-agentic,
+library, metadata and reference-links appear on the website. The eight total
+about 17.6 MiB; each is below 5 MiB. The six 1600 × 900 animations are retina
+captures, and each that replaced a file is smaller than it: the README's five
+come to 8.62 MiB, against 10.34 MiB for the four it had before. The superseded
+connector animation was removed; the README uses the connections SVG instead.
+Its recording tools remain available for future captures.
 
 ## Abstract counterparts
 

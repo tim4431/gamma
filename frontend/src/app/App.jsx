@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
+import PdfViewer from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
@@ -344,10 +345,10 @@ function captureViewerSnapshot() {
 }
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
-function CardCarousel({ label, children, className }) {
+function CardCarousel({ label, children, className, guide }) {
   const trackRef = useWheelPan();
   return (
-    <div className={"carouselRow" + (className ? " " + className : "")}>
+    <div className={"carouselRow" + (className ? " " + className : "")} data-guide={guide}>
       {label ? <div className="carouselLabel">{label}</div> : null}
       <div className="carouselTrack" ref={trackRef}>{children}</div>
     </div>
@@ -4691,6 +4692,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         client: "", ops: [{ op: "insert", id: sheet.id, parent: created.id, position: generateKeyBetween(null, null),
           content: "", props: sheet.properties }] }) });
       setNotebookView(created.id, true);
+      guideEvents.emit("sheet.created", { id: sheet.id });
       await fetchHomeBlocks();
       await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
@@ -6447,6 +6449,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const sheet = newSheet(id, paperBefore(tree, afterId));
     setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
+    guideEvents.emit("sheet.created", { id });
     return id;
   }
   // The viewer's "Add page": after the last page.
@@ -6467,6 +6470,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fold = !block.children?.length;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
       properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    guideEvents.emit("sheet.created", { id: blockId });
     saveNowRef.current = true;
     setView((v) => closeEditing(v, blockId));
   }
@@ -6807,6 +6811,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // A library big enough that folders and labels start to pay: the
+  // "Organize your library" tour is offered once, past the folders hint.
+  const growingLibrary = useMemo(() => homeBlocks.length >= 20, [homeBlocks]);
+  // The open page carries enough of the user's own work to be worth
+  // taking out of Gamma: the export hint.
+  const annotatedPage = useMemo(() => blocksToHighlights(blocks).length >= 5, [blocks]);
   // Nothing in the library yet but the seeded Welcome page, once the listing
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
@@ -6890,6 +6900,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       editable: !readOnly,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
+      growingLibrary,
+      annotatedPage,
+      // the notebook view: the sheets fill the viewer, so the notes view's
+      // own sheet and its tool row (the notebook tour's anchors) are not up
+      notebookView: !!notebook,
+      // this workspace has an offline copy or a publication, so it has a sync pill
+      clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
@@ -8237,7 +8254,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
             {homeMode && lib.history && recentViewedPages.length > 0 ? (
-              <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
+              <CardCarousel label={t("Recently viewed")} className="recentsCarousel" guide="home.recents">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
@@ -8259,7 +8276,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={14} /> {t("Pinned")}</div>
-                <div className="pinnedStrip" ref={pinnedStripRef}>
+                <div className="pinnedStrip" ref={pinnedStripRef} data-guide="home.pinned">
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
                       key={item.key}
@@ -8401,7 +8418,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
                 {lib.organize && !folderFilter && !categoryFilter ? (
-                  <button type="button" className="ctlBtn" title={t("Recently deleted")}
+                  <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}>
                     <Trash2Icon size={16} />
                   </button>
@@ -8511,6 +8528,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <PageCard
                           key={id}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
                           preview={b._preview}
                           title={b.content}
@@ -8659,6 +8677,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div
                           key={id}
                           className={`fileRow ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
@@ -9198,6 +9217,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem
             key="export"
             icon={ExportIcon}
+            data-guide="page.export"
             onClick={() => {
               setOpenPopover(null);
               setExportFolder(homeMode ? folderFilter : null);
@@ -9300,11 +9320,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
-            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
-            <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
-            <MenuItem icon={NotebookIcon} onClick={() => createNotebook()}
+            <MenuItem icon={FilePlusIcon} data-guide="add.newPage" onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={NotebookIcon} data-guide="add.newNotebook" onClick={() => createNotebook()}
               title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}

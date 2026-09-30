@@ -38,6 +38,13 @@ export async function launchRetina(options = {}) {
     `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${VIEW.height}`,
     '--enable-gpu', '--ignore-gpu-blocklist', `--remote-debugging-port=${port}`, ...(options.args || [])] });
   cdpPorts.set(browser, port);
+  // Tour offers would cover the demo; the e2e harness turns them off the same way.
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => {
+    const context = await newContext(options);
+    await context.addInitScript(() => { try { localStorage.setItem('gamma-suggest-tours', '0'); } catch {} });
+    return context;
+  };
   return browser;
 }
 // Context options for launchRetina: the window is the viewport; light English UI.
@@ -106,8 +113,8 @@ parentPort.on('message', async () => {
 });
 `;
 
-// Screencasts have no pointer: draw an arrow that follows the mouse, with a
-// ring on each press. `zoom` is the CSS zoom the page applies to <html> (the
+// Screencasts have no pointer: draw an arrow that follows the mouse or pen,
+// with a ring on each press. `zoom` is the CSS zoom the page applies to <html> (the
 // arrow lives inside it, so its CSS px are zoom× the pointer's).
 export function addCursor(context, { zoom = 1 } = {}) {
   return context.addInitScript((zoom) => {
@@ -123,12 +130,12 @@ export function addCursor(context, { zoom = 1 } = {}) {
       document.body.appendChild(c);
       const z = Number(zoom) || 1;
       let x = 0, y = 0;
-      document.addEventListener('mousemove', e => {
+      document.addEventListener('pointermove', e => {
         x = e.clientX / z; y = e.clientY / z;
         c.style.opacity = '1';
         c.style.transform = `translate(${x}px,${y}px)`;
       }, true);
-      document.addEventListener('mousedown', () => {
+      document.addEventListener('pointerdown', () => {
         arrow.style.transform = 'scale(.86)';
         const ring = document.createElement('div');
         ring.style.cssText = `position:fixed;z-index:2147483646;left:${x}px;top:${y}px;width:30px;height:30px;margin:-15px 0 0 -15px;`
@@ -139,8 +146,8 @@ export function addCursor(context, { zoom = 1 } = {}) {
       }, true);
       // An editor may swallow the mouseup, so the press also relaxes on its own.
       const rest = () => { arrow.style.transform = ''; };
-      document.addEventListener('mouseup', rest, true);
-      document.addEventListener('mousedown', () => setTimeout(rest, 320), true);
+      document.addEventListener('pointerup', rest, true);
+      document.addEventListener('pointerdown', () => setTimeout(rest, 320), true);
     });
   }, zoom);
 }

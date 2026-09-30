@@ -106,7 +106,7 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
     </>
   );
   return (
-    <div className={`taskRow ${task.state}`} title={info ? `${title} — ${info}` : title}>
+    <div className={`taskRow ${task.state}`} data-guide="tasks.row" title={info ? `${title} — ${info}` : title}>
       <StatusGlyph state={task.state} />
       <span className="taskKind" aria-hidden="true"><Icon size={14} /></span>
       {openable ? (
@@ -147,11 +147,11 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
   const now = useNow(active.length > 0);
   const row = (task) => <TaskRow key={task.id} task={task} tasks={tasks} now={now} onOpen={onOpen} onRetry={onRetry} />;
   return (
-    <div className="popover tasksPopover" role="region" aria-label={t("Background tasks")}>
+    <div className="popover tasksPopover" role="region" data-guide="tasks.panel" aria-label={t("Background tasks")}>
       <div className="popoverTitle tasksHead">
         <span>{t("Background tasks")}</span>
         {finished.length ? (
-          <button type="button" className="uiBtn ghost sm" onClick={() => tasks.clear().catch(() => {})}>{t("Clear finished")}</button>
+          <button type="button" className="uiBtn ghost sm" data-guide="tasks.clear" onClick={() => tasks.clear().catch(() => {})}>{t("Clear finished")}</button>
         ) : null}
       </div>
       {!rows.length ? <Empty icon={ActivityIcon}>{t("Nothing running")}</Empty> : null}

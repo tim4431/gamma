@@ -13,13 +13,13 @@ and follow it.
 | deployment | runs | built from | skill |
 |---|---|---|---|
 | account server | `ghcr.io/tim4431/gamma-cloud`, `/root/Container/gamma-account/` on `root@69.63.206.178` | the branch (`cloud.yml`) | `update-account-server` |
-| demo | `ghcr.io/tim4431/gamma:sha-<short>`, `/root/Container/gamma-demo/` on the same VPS | the branch (`docker.yml --ref`) | `update-demo-server` |
+| demo | `ghcr.io/tim4431/gamma:sha-<short>`, `/root/Container/gamma-demo/` on the same VPS | `main` only (the `sha-<short>` a merge's `docker.yml` run pushes, pinned) | `update-demo-server` |
 | NAS | `ghcr.io/tim4431/gamma:latest`, `/mnt/TimNAS2/Container/gamma/` on `Tim@100.100.10.237` | `main` only (a merge publishes `:latest`) | `update-server` |
 
 Arguments: a branch name (default `git branch --show-current`, normally
 `dev`) and/or `check` (report, then stop). Never commit. Never merge without
-asking: the NAS follows `main`, and getting branch changes there is the
-`merge` skill's job, run only on the user's yes.
+asking: the demo and the NAS follow `main`, and getting branch changes there
+is the `merge` skill's job, run only on the user's yes.
 
 ## 1. Collect (read-only)
 
@@ -45,8 +45,8 @@ From the output: the account server is the `gamma-cloud` image
 service (a pinned Gamma image, the share host) is reported but never updated
 here: its tag is changed by hand in the host's `compose.yml`.
 
-What `:latest` is (the NAS's candidate) — the newest `docker.yml` run on
-`main`:
+What `main`'s image is (the candidate for the demo and the NAS) — the
+newest `docker.yml` run on `main`:
 
 ```bash
 gh run list --workflow docker.yml --branch main --limit 3 --json headSha,status,conclusion,event,url
@@ -76,25 +76,26 @@ is not empty. Tests, docs and other folders never make one due.
   `cloud/deploy/` changes outside `cloud/deploy/demo/` (the host's
   `compose.yml` / `Caddyfile` / `.env.example`): they alone make it due, since
   its skill compares and copies them.
-- **Demo**: running vs `origin/<branch>`, `$IMG`, plus `cloud/deploy/demo/`
-  changes (its skill compares `compose.yml` and names new `demo.env`
-  variables).
-- **NAS**: running vs the newest `docker.yml` run on `main`:
+- **Demo** and **NAS**, each: running vs the newest `docker.yml` run on
+  `main`:
   - that run succeeded and its `headSha` ≠ the running commit, and `$IMG`
     differs → due.
-  - that run is queued / in progress → due once it finishes (the
-    `update-server` skill waits for it).
+  - that run is queued / in progress → due once it finishes (both skills
+    wait for it).
   - that run failed → not deployable; report its link.
+  - the demo also: `cloud/deploy/demo/` changes between its running commit
+    and that `headSha` (its skill compares `compose.yml` and names new
+    `demo.env` variables).
   - separately: `git diff --name-only origin/main origin/<branch> -- $IMG`
-    not empty → the branch has server changes `main` lacks. The NAS gets
-    them only through a merge. Say how many files, and ask whether to run
-    the `merge` skill; never merge on your own.
+    not empty → the branch has server changes `main` lacks. The demo and the
+    NAS get them only through a merge. Say how many files, and ask whether
+    to run the `merge` skill; never merge on your own.
 - **Share host** (report only): running vs `origin/<branch>`, `$IMG`.
 
 Uncommitted or unpushed changes in those paths are NOT in any image: name
-them. Unpushed commits are pushed by the build skills (`git push origin
-<branch>`); uncommitted ones stay out — say so, and ask whether to go on
-before building.
+them. Unpushed commits are pushed by `build-cloud` and the `merge` skill
+(`git push origin <branch>`); uncommitted ones stay out — say so, and ask
+whether to go on before building or merging.
 
 ## 3. Report the plan
 
@@ -103,8 +104,10 @@ One table, then the decision per row. For example:
 | deployment | runs | candidate | changed | action |
 |---|---|---|---|---|
 | account server | `5372586` | `e3e058c` (dev) | 12 image files, `compose.yml`, `Caddyfile` | update |
-| demo | `sha-4bd648c` | `e3e058c` (dev) | 16 image files | update |
-| NAS | `4bd648c` | `4bd648c` (main, built) | — | up to date; dev has 16 server files main lacks → merge? |
+| demo | `sha-0e07fe9` | `4bd648c` (main, built) | 9 image files | update |
+| NAS | `4bd648c` | `4bd648c` (main, built) | — | up to date |
+
+Then, under the table: dev has 16 server files main lacks → merge?
 | share host | `sha-a0d31c6` | `e3e058c` | 20 image files | manual (pinned tag) |
 
 Short commits with their subjects (`git log -1 --format='%h %s' <sha>`), and
@@ -120,18 +123,18 @@ one after the other:
    which builds through `build-cloud`). Gamma servers may rely on what a new
    account server offers (for example connecting a server needs its
    `/connect-server`), never the other way round.
-2. **Demo** (`.claude/skills/update-demo-server/SKILL.md`).
-3. **NAS** (`.claude/skills/update-server/SKILL.md`), when `main`'s image is
-   newer than what it runs. When the user said yes to a merge in step 2, run
-   the `merge` skill first; the merge publishes `:latest`, and
-   `update-server` waits for that run before pulling.
+2. **The merge**, when the user said yes to one in step 2: the `merge`
+   skill. Its `docker.yml` run is then the demo's and the NAS's candidate,
+   and both skills wait for it before deploying.
+3. **Demo** (`.claude/skills/update-demo-server/SKILL.md`).
+4. **NAS** (`.claude/skills/update-server/SKILL.md`).
 
-The builds are independent: when both the account server and the demo are
-due and need building, dispatch `cloud.yml` and `docker.yml` for the branch
-first, then wait on each (`cloud.yml` takes ~3 minutes, `docker.yml` ~10).
-Deploy the account server as soon as its run is green, and the demo after
-it. Wait with `gh run watch <id> --exit-status` in the background, never a
-sleep loop.
+Only the account server builds here (`cloud.yml`, ~3 minutes); the demo and
+the NAS take `main`'s build (`docker.yml`, ~10 minutes after a merge). When
+both are pending, start the `cloud.yml` build and the merge together, deploy
+the account server as soon as its run is green, then the demo and the NAS
+once the merge's run is. Wait with `gh run watch <id> --exit-status` in the
+background, never a sleep loop.
 
 Each skill keeps its own stops: a red build ends that deployment (report
 the failed log, go on with the others only if they do not depend on it —

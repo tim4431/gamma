@@ -1,6 +1,10 @@
 # Home library
 
 Folders, labels, the card surfaces, the recents strip, and cover snapshots.
+The **Organize your library** tour teaches this model once the library
+passes 20 pages: a label is anything you will look for later, a folder is a
+label that nests, and filing never copies the page
+([onboarding.md](onboarding.md)).
 Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 [libraryUtils.js](../../frontend/src/library/libraryUtils.js),
 [Menus.jsx](../../frontend/src/shared/ui/Menus.jsx), glue in App.jsx.

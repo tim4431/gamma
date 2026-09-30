@@ -10,11 +10,11 @@
 // containing the query is what surfaces the "Tab adds a filter" suggestion);
 // the recorder opens each paper once so the recents strip is populated. (The
 // match jump cancels the paper's last-read restore, so a stored read position
-// can't scroll the match away.) Writes the webm path to `video_library.txt`
-// and time marks to `library_marks.json` (m0 = first action, for trimming the
-// loading pre-roll). Search details are forced on (`gamma-search-details*` =
+// can't scroll the match away.) Writes retina frames to frames/, and time
+// marks and framing rects to `library_marks.json` (capture seconds; m0 = first
+// action). Search details are forced on (`gamma-search-details*` =
 // "1"; the paper view's default is the compact find bar).
-import { chromium, configureContext, addCursor, pointer, readSession, BASE, CURATED } from './runtime.mjs';
+import { RETINA, launchRetina, startCapture, configureContext, addCursor, pointer, readSession, BASE, CURATED } from './runtime.mjs';
 import fs from 'fs';
 
 const SCRATCH = process.cwd();
@@ -34,13 +34,8 @@ async function resultsIn() {
   await settled();
 }
 
-const browser = await chromium.launch({ headless: true, slowMo: 0 });
-const ctx = await browser.newContext({
-  colorScheme: 'light',
-  viewport: { width: VW, height: VH },
-  deviceScaleFactor: 2,
-  recordVideo: { dir: SCRATCH + '/video', size: { width: VW, height: VH } },
-});
+const browser = await launchRetina();
+const ctx = await browser.newContext(RETINA);
 await configureContext(ctx);
 await ctx.addCookies([{ name: 'session', value: SESSION, url: BASE }]);
 await ctx.addInitScript(() => {
@@ -55,8 +50,7 @@ await addCursor(ctx);
 const page = await ctx.newPage();
 const { glide, glideTo, at } = pointer(page, VW / 2, VH / 2);
 page.on('console', m => { const t = m.text(); if (t.startsWith('SCRIPT:')) console.log(t); });
-const t0 = Date.now();
-const mark = () => (Date.now() - t0) / 1000;
+let mark;
 
 // Populate recents and PDF covers through real navigation, before the first shot.
 for (const id of ['fy0-h_BqOHcH', QEC]) {
@@ -75,7 +69,10 @@ await beat(800);
 await page.click('[aria-label="Home"]');
 await page.waitForSelector('.recentsCarousel', { timeout: 30000 });
 await page.mouse.move(at().x, at().y);
-await beat(2500);
+await beat(1000);
+const capture = await startCapture(page, SCRATCH + '/frames');
+mark = capture.clock;
+await beat(1500);
 
 // 2. open the search panel from the topbar, type the query ------------------
 const m0 = mark();
@@ -87,6 +84,7 @@ await beat(400);
 await page.keyboard.press('Control+a');           // the box keeps its previous query
 await page.keyboard.type(QUERY, { delay: 60 });
 await resultsIn();
+const framing = { popover: await page.locator('.searchPopover').boundingBox() };
 await beat(1400);
 console.log('SCRIPT: results', await page.evaluate(() => [...document.querySelectorAll('.searchSection')].map(e => e.textContent).join(' | ')));
 
@@ -117,7 +115,7 @@ console.log('SCRIPT: narrowed', await page.evaluate(() => [...document.querySele
 
 // 5. open the library PDF hit on page 1 ---------------------------------------
 const hit = page.locator('.searchPopover .searchResult[title^="Open"]', {
-  has: page.locator('.searchResultPage', { hasText: /· p\. 1$/ }),
+  has: page.locator('.searchPageTag', { hasText: /^p\. 1$/ }),
 }).first();
 await hit.waitFor({ timeout: 5000 });
 const mOpen = mark();
@@ -142,12 +140,11 @@ const firstMark = await page.locator('[data-page="1"] .pdfFindMark').first().bou
 if (firstMark) await glide(firstMark.x + firstMark.width + 30, firstMark.y + firstMark.height / 2, 24);
 await beat(3000);
 const tEnd = mark();
+const frames = await capture.stop();
+framing.mark = firstMark;
 
 await page.screenshot({ path: SCRATCH + '/library-final.png' });
-const video = page.video();
 await ctx.close();
-const vpath = await video.path();
-fs.writeFileSync(SCRATCH + '/video_library.txt', vpath);
-fs.writeFileSync(SCRATCH + '/library_marks.json', JSON.stringify({ m0, mChip, mOpen, mMark, tEnd, cssW: VW, cssH: VH }));
-console.log('SCRIPT: video', vpath, JSON.stringify({ m0, mChip, mOpen, mMark, tEnd }));
+fs.writeFileSync(SCRATCH + '/library_marks.json', JSON.stringify({ frames, m0, mChip, mOpen, mMark, tEnd, framing }));
+console.log('SCRIPT: frames', frames, JSON.stringify({ m0, mChip, mOpen, mMark, tEnd }));
 await browser.close();

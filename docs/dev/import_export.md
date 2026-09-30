@@ -11,7 +11,10 @@ typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imp
 `gamma/pdf_image.py`, `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
 [App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
-background jobs, which the dialogs follow ([tasks.md](tasks.md)).
+background jobs, which the dialogs follow ([tasks.md](tasks.md)). The
+Export… row carries the `page.export` guide anchor: a hint beside it offers
+the export once a page has five highlights of the user's own
+([onboarding.md](onboarding.md)).
 
 ## Importing annotations embedded in a PDF
 

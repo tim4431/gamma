@@ -74,4 +74,42 @@ export const install = {
   steps: [{ id: "install", anchor: null, title: T("Install Gamma for full screen and a Home Screen icon: tap Share, then Add to Home Screen.") }],
 };
 
-export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install];
+// The first time the assistant asks before a change: four answers whose
+// differences matter, and the one that is easy to miss (a declined call can
+// say what to do instead). A card, not a tour — answering it takes the
+// anchor away (docs/dev/ai.md, "Asking before a call").
+export const approvals = {
+  id: "approvals",
+  version: 1,
+  hint: true,
+  trigger: { event: "approval.shown" },
+  steps: [{ id: "approvals", anchor: "chat.approval", placement: "top",
+    title: T("Allow it once, or for the rest of this chat. Don't allow can say what to do instead.") }],
+};
+
+// A page with the user's own work on it, the moment they open the menu that
+// holds Export — the row is only on screen while that menu is, so the hint
+// comes with it rather than on the highlight that earned it.
+export const exportPage = {
+  id: "export-page",
+  version: 1,
+  hint: true,
+  requires: { onPage: true, annotatedPage: true },
+  trigger: { event: "popover.opened", match: { name: "menu" } },
+  steps: [{ id: "export-page", anchor: "page.export", placement: "left",
+    title: T("Your highlights and notes come out whole: the PDF with them drawn on it, or Markdown.") }],
+};
+
+// This workspace has an offline copy or a publication, so it carries a sync
+// pill: one calm sentence about it before a conflict ever makes it loud.
+export const cloneSync = {
+  id: "clone-sync",
+  version: 1,
+  hint: true,
+  requires: { clonedWorkspace: true },
+  trigger: {},
+  steps: [{ id: "clone-sync", anchor: "sync.pill", placement: "bottom",
+    title: T("This workspace syncs with a copy elsewhere: the pill says what is still to go, and opens the log of what changed.") }],
+};
+
+export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage, cloneSync];

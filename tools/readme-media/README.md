@@ -1,6 +1,6 @@
 # README media tooling
 
-Record real Gamma interactions; publish small, looping **animated WebP** images.
+Record real Gamma interactions at 2× and publish small, looping **animated WebP** images.
 The production research is in [demo-production.md](../../docs/research/demo-production.md).
 
 | Location | Contents |
@@ -8,29 +8,29 @@ The production research is in [demo-production.md](../../docs/research/demo-prod
 | This directory | Recorders, renderers, shared helpers and [shot recipes](WORKFLOW.md) |
 | `docs/assets/demos/` | Published WebP animations, including the retained connector demo |
 | `docs/assets/screenshots/` | Documentation stills |
-| `artifacts/readme-media/` | Ignored workspace export, private build, WebM recordings, timing files and QA frames |
+| `artifacts/readme-media/` | Ignored workspace export, private build, frame captures, timing files, masters and QA frames |
 | `.claude/skills/readme-media/SKILL.md` | Agent entry point pointing here |
 
-Delivery rules (every renderer applies them; `media_output.py` checks the result):
+Delivery rules (the retina renderers apply them; `media_output.py` checks the result):
 
 | Rule | Value |
 |---|---|
-| Capture | 1440 x 900 viewport = video size, light UI, visible cursor, eased pointer travel |
-| Frame | Warm paper `#f6f4ef`, fine card edge `#e3e0d8`, centered capture on a 1728 × 972 (16:9) canvas; detail crops retain their proportions |
-| Edit | trim setup and static waits; never speed up typing, drawing or streaming |
-| Export | 25 fps animated WebP, below 5 MiB, no MP4 or GIF copy; encode from the capture or a lossless master |
-| Raster | 1120 px wide, quality 85, effort 6; `annotate-and-ink` and `reference-links` 1040 / 75 / 4; `native-agentic` 960 / 65 / 6 |
+| Capture | A 1440 × 900 window on a 2× screen: `launchRetina()` and `startCapture()` (`runtime.mjs`) save the screencast as 2880 × 1800 JPEG frames. Playwright's `recordVideo`, even with `deviceScaleFactor: 2`, records at 1×. Light English UI, an arrow cursor with a ring on each press, eased pointer travel |
+| Frame | 1600 × 900: warm paper `#f6f4ef`, the app on a rounded card with a fine edge `#e3e0d8` and the illustrations' soft shadow (`compose.Frame`) |
+| Camera | Still by default. A zoom or pan (`compose.Camera.move`) is a 0.5–0.6 s eased move with a light motion blur. Moving frames are what an animated WebP pays for (up to about 1 MB per move), so use one only where the text would otherwise be too small. Don't reframe inside a dissolve: blending two framings costs as much as a move |
+| Edit | Trim setup and long still stretches (`compose.quiet`), cut model waits; each cut and the loop back to the start dissolve. Never speed up typing, drawing or streaming |
+| Export | 25 fps animated WebP from a lossless master (`media_output.encode_master`: quality 75, moving frames down to 40), each no larger than the file it replaces and below 5 MiB; no MP4 or GIF copy |
 
 ## Setup
 
 Use the existing frontend dependencies, Playwright Chromium, and the backend venv
-with `imageio-ffmpeg`. From the repository root in PowerShell:
+with `imageio-ffmpeg`, Pillow and NumPy. From the repository root in PowerShell:
 
 ```powershell
 # Only if dependencies/browser are missing:
 npm --prefix frontend ci
 npm --prefix frontend exec -- playwright install chromium
-backend/venv/Scripts/python.exe -m pip install imageio-ffmpeg
+backend/venv/Scripts/python.exe -m pip install imageio-ffmpeg pillow numpy
 
 # Prompts for the curated demo password, or accepts DEMO_PASSWORD.
 backend/venv/Scripts/python.exe tools/readme-media/export-demo.py
@@ -45,8 +45,10 @@ On Unix use `backend/venv/bin/python` and
 Initialize fnm normally if Node is not on PATH. If the browser is installed in a
 custom cache, set `PLAYWRIGHT_BROWSERS_PATH` for both installation and recording.
 The extension recorder needs full Chromium, not just the headless shell.
+`launchRetina()` turns on GPU compositing: with software compositing the 2×
+readback throttles input, and a scripted one-second stroke took three.
 
-## First demo: highlight, annotate and draw
+## Highlight, annotate and draw
 
 ```powershell
 $env:DEMO_EXPORT = (Resolve-Path artifacts/readme-media/demo.zip).Path
@@ -57,16 +59,20 @@ node tools/readme-media/check-media.mjs annotate-and-ink
 ```
 
 The recorder starts an isolated backend through the e2e harness, imports the
-curated export into a throwaway account, records, and stops the server. It
-checks that the annotation and the four strokes survive a reload.
+curated export into a throwaway account, records, and stops the server. The
+story: highlight "robust quantum information storage" and note why it matters,
+circle the claim it makes possible ("non-local connectivity"), draw an arrow
+from the phrase up to the claim, then lasso the arrow and recolor it red. After
+a reload it checks the annotation, the three strokes and the two recolored ones.
 
 `DEMO_EXPORT` overrides the archive, `MEDIA_SCRATCH` the capture directory, and
-`PAGE_ID` the paper. The stroke coordinates assume the curated atom-arrays paper
-at 1440 x 900 with Notes open. `--inspect` saves setup screenshots and layout
-measurements. `render-ink.py --scratch PATH --out PATH` renders the ink-only
-capture (no annotation) to `demo-ink.webp`.
+`PAGE_ID` the paper. The gestures are placed from the text layer of the curated
+atom-arrays paper (at 1440 x 900 with Notes open). `--inspect` saves the text
+layout.
+`render-ink.py --scratch PATH --out PATH` renders the ink-only capture (no
+annotation) to `demo-ink.webp`.
 
-## Second demo: native agentic
+## Ask an AI about your papers
 
 Use the demo account's configured AI provider and a disposable workspace. Set
 `DEMO_PASSWORD` in the environment without logging it. Then:
@@ -81,15 +87,46 @@ node tools/readme-media/suite-workspace.mjs --remove
 Remove-Item Env:MEDIA_SCRATCH
 ```
 
-The recorder verifies the exact citation match, both saved answers, the saved
-figure image and the PDF context on both AI requests. `--inspect` captures the
-layout without sending AI requests. `GAMMA_MEDIA_DIST` points at a private
-frontend build; only its static files are served, PDFs and APIs still reach the
-real server. The render cuts model waits and keeps fixed close-ups on the
-questions, answer and citation. Model timing varies, so inspect the timestamps
-and sample frames after each capture.
+One PDF chat, opening on Figure 1 (page 2): Ctrl+drag panels c and d into the
+chat and ask about them, hover a citation in the answer for its quote and
+follow it to the passage, then "find the two most-cited papers that build on
+this one and save them". The agent searches online, the save waits on its
+approval card (Save papers is Ask by default), and **Allow in this chat** lets
+both land; the render closes in on those steps. The recorder verifies the
+figure on the first question, the exact citation match, both questions with the
+PDF's context, and two saved actions with two new pages in the library. Record
+in a fresh workspace each time: a second run finds the papers there already and
+shows no card, and a paper deleted for good came back when saved again.
 
-## Take notes: paste and resize a picture
+`--inspect` captures the layout without sending AI requests.
+`GAMMA_MEDIA_DIST` points at a private frontend build; only its static files are
+served, PDFs and APIs still reach the real server. The render cuts the model's
+waits. Model timing varies, so inspect the timestamps and sample frames after
+each capture.
+
+## Ask an AI in the notes
+
+```powershell
+$env:MEDIA_SCRATCH = Join-Path (Get-Location) 'artifacts/readme-media/agentic-notes'
+node tools/readme-media/suite-workspace.mjs
+node tools/readme-media/record-agentic-notes.mjs
+backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py agentic-notes
+node tools/readme-media/check-media.mjs agentic-notes
+node tools/readme-media/suite-workspace.mjs --remove
+Remove-Item Env:MEDIA_SCRATCH
+```
+
+The shot needs `rabi-slide.png` in that directory: a picture of an equation (it
+was drawn with matplotlib's mathtext, Computer Modern). A new notes page, at a
+130% interface size since the note and the chat sit at opposite edges: the
+cursor goes on a block, the slide is pasted into the chat (a picture in a note
+block does not reach the model; one in the chat does), and the request asks
+for the equation under that block. The insert waits on its approval card (Edit
+note blocks is Ask), and **Allow once** lands it rendered. The recorder
+verifies that the block under the cursor's holds the LaTeX and that the request
+carried the picture.
+
+## Take notes: a page to write on
 
 After building the private frontend above, run:
 
@@ -100,8 +137,28 @@ node tools/readme-media/check-media.mjs notes
 ```
 
 Notes uses an isolated server and imports `artifacts/readme-media/demo.zip`;
-it needs no demo login or suite workspace. The recorder checks the pasted image
-and its saved width after a reload.
+it needs no demo login or suite workspace. It records at a 130% interface size
+(Settings → Appearance): markdown and a `[[` link, a display equation typed
+with autocomplete, then `/page` makes the next block a sheet and a stylus
+sketches on it. The pen is real pen input (CDP `pointerType: 'pen'`), which
+writes on a sheet with the tools closed, since the sheet's own pen button sits
+below it. After a reload the recorder checks the text and the sheet's strokes.
+
+## Search: in the paper, and a label by Ctrl+P
+
+```powershell
+node tools/readme-media/run-case.mjs search
+backend/venv/Scripts/python.exe tools/readme-media/render-suite.py search
+node tools/readme-media/check-media.mjs search
+```
+
+It runs in the suite workspace (below). The case files the two quantum papers
+under topic labels ("quantum computing" on both, "neutral atoms" and "error
+correction"; "machine learning" on the Attention paper), and resets the
+account's paper-view search to its compact default. Reading the atom-arrays
+paper: Ctrl+F finds "rydberg" in this PDF and Enter steps to the second and
+third match; then Ctrl+P, "quantum comp", and the label row opens the label's
+two papers.
 
 ## Record the published suite cases
 
@@ -117,6 +174,7 @@ node tools/readme-media/suite-workspace.mjs
 # Run sequentially: scenarios change the disposable library.
 node tools/readme-media/run-case.mjs notes
 node tools/readme-media/run-case.mjs library
+node tools/readme-media/run-case.mjs search
 node tools/readme-media/run-case.mjs metadata
 node tools/readme-media/run-case.mjs reference-links
 node tools/readme-media/run-case.mjs connector
@@ -127,23 +185,33 @@ node tools/readme-media/suite-workspace.mjs --remove
 
 `run-case.mjs` prepares each case in that disposable workspace: it clears the
 note page, removes a paper that must visibly be fetched, or resets tabs. Run
-library before reference-links, which removes and fetches the QEC paper again.
-A failed recording leaves the workspace available for inspection; remove it
-after finishing. Never read account databases for credentials or commit
-cookies, passwords, exports, or raw recordings.
+library and search before reference-links, which removes and fetches the
+QEC paper again. The library search demo feeds the website; the README shows
+search. A failed recording leaves the workspace available for inspection;
+remove it after finishing. Never read account databases for credentials or
+commit cookies, passwords, exports, or raw recordings.
 
 ## Delivery and review
 
 `render-suite.py <name>` re-renders one published slot; `all` renders every
-slot, including `annotate-and-ink` and `native-agentic`. The connector
-animation is published but the README shows the connections SVG instead.
+slot, including the three feature demos (`render-feature-demos.py`:
+`annotate-and-ink`, `native-agentic`, `agentic-notes`). Notes, library, search
+and the feature demos are retina captures composed by
+`compose.py`. Metadata, reference-links and the connector are still 1× WebM
+recordings, rendered through FFmpeg (`encode_webp`). The connector animation is
+published but the README shows the connections SVG instead.
 
-`media_output.py` checks the animation container, frame timing, loop flag and
+`encode_master` writes the WebP itself: each frame re-encodes only the 16 px
+tiles that changed since that tile was last encoded, or that were last encoded
+at a lower quality, and leaves the rest transparent. libwebp's animation
+encoder compares each frame with the previous one, so slow changes (a settling
+camera, a dissolve, a popup's fading shadow) piled up on screen as faint
+blocks. `media_output.py` checks the container, frame timing, loop flag and
 size before publishing. `check-media.mjs` then decodes every encoded frame in
 Chromium (FFmpeg builds can encode animated WebP without decoding it) and saves
 contact sheets in `artifacts/readme-media/qa/`. Review the contact sheets and
-loop playback before updating README links. Timing manifests and render reports
-stay next to the raw recordings in scratch.
+loop playback before updating README links. Timing manifests, masters and
+render reports stay next to the captures in scratch.
 
 ## Optional experiments
 
@@ -153,7 +221,7 @@ their renders as `preview.webp` next to the capture, and no README slot uses
 them. The ink-only renderer and the three `gen-*.py` GIF experiments are also
 retained for reuse; the GIF experiments write to scratch and have no callers.
 
-`runtime.mjs` resolves Playwright through the frontend dependency,
-so no second Node project is needed, and holds the recorders' shared pieces:
-`BASE`, `readSession`, the cursor dot, paced pointer travel and the curated
-page ids.
+`runtime.mjs` resolves Playwright through the frontend dependency, so no second
+Node project is needed, and holds the recorders' shared pieces: the retina
+launch, context options and capture, `BASE`, `readSession`, the cursor, paced
+pointer travel and the curated page ids.

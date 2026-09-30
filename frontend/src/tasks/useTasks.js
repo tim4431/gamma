@@ -18,6 +18,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, uploadJob } from "./tasksApi";
 import { addLocalRow, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge } from "./taskModel.js";
 import { quietKinds } from "./taskKinds.js";
+import { guideEvents } from "../guide/events.js";
 
 const FAST_MS = 1500;
 const SLOW_MS = 30000;
@@ -147,6 +148,7 @@ export function useTasks({ enabled, onFinished }) {
   const adopt = useCallback((job, meta) => {
     const fresh = !started.current.has(job.id);
     started.current.set(job.id, { download: "none", ...meta });
+    if (fresh) guideEvents.emit("job.started", { kind: job.kind });
     know(job);
     if (fresh && isFinished(job)) settle(job);
     return job;

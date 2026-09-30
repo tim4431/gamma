@@ -37,10 +37,11 @@ believes that header from loopback only, so the demo's `compose.yml` sets
 (compose refuses to start without it). A wrong value makes every visitor
 share Caddy's one limit of ten guests an hour.
 
-The image is pinned to the `sha-<short>` tag of a branch build (`docker.yml`
-dispatched on the branch, which never moves `:latest`), named by
-`GAMMA_TAG` in the folder's `.env`. The `update-demo-server` skill
-(`.claude/skills/`) builds, writes that line and restarts the demo.
+The demo runs `main`, like the NAS: the image is pinned to the
+`sha-<short>` tag a merge's `docker.yml` run pushes (not `:latest`, so it
+changes only when deployed), named by `GAMMA_TAG` in the folder's `.env`.
+The `update-demo-server` skill (`.claude/skills/`) takes `main`'s newest
+build, writes that line and restarts the demo.
 
 ## First deployment
 
