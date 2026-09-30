@@ -57,7 +57,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       page.on("request", request => {
         if (request.method() !== "POST") return;
         const path = new URL(request.url()).pathname;
-        if (path.startsWith("/api/import/review/")) imports++;
+        if (path === "/api/jobs/import") imports++; // the import itself is a background job
         if (path === "/api/import/review") uploads++;
       });
       let review = await selectZip();
@@ -201,14 +201,19 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await toggle(dialog, "Highlights").check();
       await toggle(dialog, "Notes").check();
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-page-preview.png` });
-      const request = page.waitForRequest((r) => r.url().includes("mode=notes-pdf"));
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
       const download = page.waitForEvent("download");
       await choice(dialog, "Export").click();
-      const url = new URL((await request).url());
-      assertEq(url.searchParams.get("highlights"), "1");
-      assertEq(url.searchParams.get("notes"), "1");
-      const file = await download;
+      const body = (await request).postDataJSON();
+      assertEq(body.mode, "notes-pdf");
+      assertEq(body.highlights, true);
+      assertEq(body.notes, true);
+      const file = await download; // the dialog watches the job: its file comes by itself
       assertEq(fs.readFileSync(await file.path()).subarray(0, 5).toString(), "%PDF-");
+      await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+      assert((await dialog.innerText()).includes("1 page exported."), "the finished step counts the pages");
+      await choice(dialog, "Done").click();
+      await dialog.waitFor({ state: "detached" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -224,6 +229,9 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       const gammaDownload = page.waitForEvent("download");
       await choice(dialog, "Export").click();
       assertEq(fs.readFileSync(await (await gammaDownload).path()).subarray(0, 2).toString(), "PK");
+      await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+      assert(!(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "the finished step fits mobile");
+      await choice(dialog, "Done").click();
       await dialog.waitFor({ state: "detached" });
       dialog = await openDialog(page, "Export");
       await choice(dialog, "Logseq").click();
@@ -307,11 +315,12 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await newPageViaUi(page, "Direct transfer example");
       let dialog = await openDialog(page, "Export");
       await choice(dialog, "PDF").click();
-      const request = page.waitForRequest((r) => r.url().includes("mode=gamma"));
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
       const download = page.waitForEvent("download");
       await choice(dialog, "Gamma").dblclick();
-      await request;
+      assertEq((await request).postDataJSON().mode, "gamma");
       assertEq(fs.readFileSync(await (await download).path()).subarray(0, 2).toString(), "PK");
+      await choice(dialog, "Done").click();
       await dialog.waitFor({ state: "detached" });
       for (const [name, accept, multiple] of [["Gamma export (.zip)", ".zip,application/zip", false], ["Logseq highlights", ".pdf,.edn,.md", true]]) {
         dialog = await openDialog(page, "Import");
@@ -326,6 +335,87 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
         assertEq(fileChooser.isMultiple(), multiple);
         await dialog.waitFor({ state: "detached" });
       }
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("transfer: a folder's papers export as annotated PDFs in one zip, in the background, reopened from the tray", async () => {
+    const folder = "E2E annotated";
+    for (const [title, where] of [["Folder paper one", folder], ["Folder paper two", `${folder}/Sub`]]) {
+      const up = await alice.upload("/api/uploads", makePdf([[title]]), `${title}.pdf`, "application/pdf");
+      const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
+      await alice.api(`/api/blocks/${created.id}`, { method: "PUT", body: { properties: { ...created.properties, folder: where } } });
+    }
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder note page", properties: { folder } } });
+    const { ctx, page } = await setup();
+    try {
+      // The server's job is quick: its listing is held at "running" so the
+      // window can be closed and opened again while it works.
+      let hold = true;
+      await page.route(/\/api\/jobs(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        for (const job of body.jobs || []) {
+          if (hold && job.kind === "export" && job.params.folder === folder) {
+            Object.assign(job, { state: "running", finished_at: "", artifact: null, stoppable: true,
+              progress: { done: 1, total: 3, unit: "pages", item: "Folder paper two" } });
+          }
+        }
+        await route.fulfill({ response, json: body });
+      });
+      await page.goto(`${server.base}/?folder=${encodeURIComponent(folder)}&ws=${alice.ws}`);
+      await page.waitForSelector(".folderNewBtn");
+      const view = page.locator('[data-popover="menu"] > button');
+      await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
+      await page.getByRole("button", { name: "Export…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
+      await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
+      await choice(dialog, "Annotated PDF").click();
+      await choice(dialog, "Next").click();
+      await toggle(dialog, "Highlights").check();
+      await toggle(dialog, "Notes").uncheck();
+      assert((await dialog.innerText()).includes("Pages without a PDF are left out"), "the summary says what a folder export skips");
+      const started = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
+      await choice(dialog, "Export").click();
+      const job = await (await started).json();
+      assertEq(job.params.mode, "annotated-pdf");
+      assertEq(job.params.folder, folder);
+      await dialog.getByRole("heading", { name: "Exporting…", exact: true }).waitFor();
+      await dialog.getByText("1 of 3 pages · Folder paper two", { exact: true }).waitFor();
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/export-running.png` });
+      // Closed mid-way: the export goes on in Background tasks, where its row stops or opens it.
+      await choice(dialog, "Close").click();
+      await dialog.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Background tasks']");
+      const title = `Export “${folder}” as Annotated PDF`;
+      const row = page.locator(".taskRow", { hasText: title });
+      await row.waitFor();
+      assert(await row.getByRole("button", { name: `Stop ${title}`, exact: true }).isVisible(), "a running export can be stopped");
+      assert((await row.innerText()).includes("1 of 3 pages"), "the row shows how far it got");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/tasks-running.png` });
+      await row.getByRole("button", { name: `Open ${title}`, exact: true }).click();
+      const again = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
+      await again.getByRole("heading", { name: "Exporting…", exact: true }).waitFor();
+      // Once ready, the file comes by itself to the window watching it.
+      const download = page.waitForEvent("download");
+      hold = false;
+      const file = await download;
+      assertEq(file.suggestedFilename(), `${folder}-annotated.zip`);
+      await again.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+      const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+      const names = JSON.parse(execFileSync(python, ["-c", "import json, sys, zipfile; print(json.dumps(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))",
+        await file.path()]).toString());
+      assertEq(names.join(","), "Folder paper one.pdf,Sub/Folder paper two.pdf");
+      const text = await again.innerText();
+      assert(text.includes("2 pages exported.") && text.includes("1 page left out") && text.includes("Folder note page"),
+        `the finished step lists the page without a PDF: ${text}`);
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/export-ready.png` });
+      await choice(again, "Done").click();
+      // The tray keeps the finished export with its file, and removes it on request.
+      await page.click("button[aria-label='Background tasks']");
+      await row.getByRole("button", { name: `Download ${title}`, exact: true }).waitFor();
+      await row.getByRole("button", { name: `Remove ${title}`, exact: true }).click();
+      await row.waitFor({ state: "detached" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

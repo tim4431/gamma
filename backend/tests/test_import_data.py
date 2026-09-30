@@ -92,11 +92,45 @@ def test_nested_or_dotted_upload_names_are_skipped(receiver, donor):
     assert r.json()["uploads_in_backup"] == 0
 
 
-def test_export_progress_side_channel(donor):
-    assert donor.get("/api/export").status_code == 200
-    p = donor.get("/api/export-progress").json()
-    assert p["active"] is False
-    assert p["total"] > 0 and p["done"] == p["total"]
+def test_export_and_restore_as_jobs(donor, receiver):
+    """The web app's way: the export is a job whose file is the zip (bytes
+    counted), the restore a job over the uploaded zip whose result is the
+    restore's report; the upload is gone once the job read it."""
+    from gamma import jobs
+
+    make_page(donor, "Donor page in a job export")
+    started = donor.post("/api/jobs/workspace-export", json={"uploads": True})
+    assert started.status_code == 200, started.text
+    job = jobs.wait(started.json()["id"])
+    assert job["state"] == "done", job["error"]
+    assert job["progress"]["unit"] == "bytes" and job["progress"]["done"] == job["progress"]["total"] > 0
+    assert job["artifact"]["name"].startswith("gamma-export-") and job["artifact"]["size"] > 0
+    download = donor.get(f"/api/jobs/{job['id']}/download")
+    assert download.status_code == 200 and download.headers["content-type"] == "application/zip"
+    assert json.loads(zipfile.ZipFile(io.BytesIO(download.content)).read("manifest.json"))["format"] == "gamma-backup-1"
+    assert receiver.get(f"/api/jobs/{job['id']}/download").status_code == 404  # someone else's
+
+    incoming = jobs.root() / "incoming"
+    waiting = set(incoming.iterdir()) if incoming.is_dir() else set()
+    restored = receiver.post("/api/jobs/restore", data={"mode": "merge"},
+                             files={"file": ("donor.zip", download.content, "application/zip")})
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["params"]["filename"] == "donor.zip"
+    done = jobs.wait(restored.json()["id"])
+    assert done["state"] == "done", done["error"]
+    assert done["result"]["mode"] == "merge" and done["result"]["pages_added"] >= 1
+    assert done["progress"]["phase"] == "restoring"
+    assert set(incoming.iterdir()) == waiting  # the job removed the upload it read
+
+
+def test_a_bad_zip_fails_the_restore_job(receiver):
+    from gamma import jobs
+
+    started = receiver.post("/api/jobs/restore", data={"mode": "merge"},
+                            files={"file": ("broken.zip", b"not a zip", "application/zip")})
+    assert started.status_code == 200, started.text
+    done = jobs.wait(started.json()["id"])
+    assert done["state"] == "failed" and done["error"] == "not a zip file"
 
 
 def test_export_notes_only_skips_uploads(donor):

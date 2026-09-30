@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { chromium, ROOT } from './runtime.mjs';
+import { ROOT, VIEW, RETINA, launchRetina, startCapture, addCursor } from './runtime.mjs';
 import { Server, Account } from '../../frontend/tests/e2e/harness.mjs';
 
 const scratch = path.resolve(process.env.MEDIA_SCRATCH || path.join(ROOT, 'artifacts/readme-media'));
@@ -10,44 +10,57 @@ const archive = process.env.DEMO_EXPORT || path.join(scratch, 'demo.zip');
 if (!fs.existsSync(archive)) throw new Error('Set DEMO_EXPORT to an API export of the curated demo workspace. See README.md.');
 fs.mkdirSync(scratch, { recursive: true });
 const server = new Server();
-let browser, context, page;
-const W = 1440, H = 900;
+let browser, context, page, capture;
+const { width: W, height: H } = VIEW;
 try {
   await server.start();
   server.manage('create-user', 'media-demo', 'isolated-media-only');
   const account = await new Account(server, 'media-demo', 'isolated-media-only').login();
   await account.upload('/api/import-data', fs.readFileSync(archive), 'demo.zip', 'application/zip');
-  browser = await chromium.launch({ headless: true });
-  context = await account.context(browser, {
-    viewport: { width: W, height: H }, colorScheme: 'light', deviceScaleFactor: 2,
-    recordVideo: { dir: path.join(scratch, 'video-ink'), size: { width: W, height: H } },
-  });
-  await context.addInitScript(() => {
-    localStorage.setItem('gamma-ink-tools', '');
-    addEventListener('DOMContentLoaded', () => {
-      const c = document.createElement('div');
-      c.id = 'media-cursor';
-      c.style.cssText = 'position:fixed;left:0;top:0;width:10px;height:10px;border:2px solid white;border-radius:50%;background:#2563eb;box-shadow:0 1px 5px #0004;pointer-events:none;z-index:999999;opacity:0;';
-      document.body.append(c);
-      addEventListener('pointermove', e => { c.style.opacity = '1'; c.style.transform = `translate(${e.clientX - 5}px,${e.clientY - 5}px)`; }, true);
-      addEventListener('pointerdown', () => { c.style.background = '#1e40af'; }, true);
-      addEventListener('pointerup', () => { c.style.background = '#2563eb'; }, true);
-    });
-  });
+  browser = await launchRetina();
+  context = await account.context(browser, RETINA);
+  await context.addInitScript(() => localStorage.setItem('gamma-ink-tools', ''));
+  await addCursor(context);
   page = await context.newPage();
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('response', r => { if (r.url().includes('/api/') && r.status() >= 400) errors.push(`${r.status()} ${new URL(r.url()).pathname}`); });
-  const start = performance.now();
-  const at = () => (performance.now() - start) / 1000;
-  const marks = {};
+  const marks = {}, framing = {};
   const pageId = process.env.PAGE_ID || 'fy0-h_BqOHcH';
   await page.goto(`${server.base}/?page=${pageId}&ws=${account.ws}`);
   await page.locator('[data-page="1"] .textLayer span').first().waitFor({ timeout: 60000 });
   const chatClose = page.getByRole('button', { name: 'Close Chat', exact: true });
   if (await chatClose.isVisible()) await chatClose.click();
+  let pointer = [980, 820];
+  await page.mouse.move(...pointer);
   await page.waitForTimeout(1500);
+  capture = await startCapture(page, path.join(scratch, 'frames-ink'));
+  const at = capture.clock;
+  // Time-paced samples, not Playwright's unpaced `steps`: retain smooth motion
+  // even on a fast machine. Drawing follows its path; transit uses smoothstep.
+  async function motion(points, duration, ease = false) {
+    const t0 = performance.now();
+    const n = Math.ceil(duration / 16);
+    for (let i = 1; i <= n; i++) {
+      let u = i / n;
+      if (ease) u = u * u * (3 - 2 * u);
+      const p = u * (points.length - 1), j = Math.min(points.length - 2, Math.floor(p)), f = p - j;
+      pointer = points[j].map((v, k) => v + (points[j + 1][k] - v) * f);
+      await page.mouse.move(...pointer);
+      const remaining = t0 + duration * i / n - performance.now();
+      if (remaining > 0) await page.waitForTimeout(remaining);
+    }
+  }
+  const glide = (to, ms = 320) => motion([pointer, to], ms, true);
+  async function click(locator) {
+    const b = await locator.boundingBox();
+    if (!b) throw new Error('Demo target is not visible');
+    await glide([b.x + b.width / 2, b.y + b.height / 2], 420);
+    await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up();
+    await page.waitForTimeout(100);
+    return b;
+  }
   // Optional first README story: text highlight and a real annotation before ink.
   if (process.argv.includes('--annotate')) {
     marks.start = at();
@@ -59,66 +72,42 @@ try {
       const first=a.getBoundingClientRect(), last=z.getBoundingClientRect();
       return {x:first.x,y:first.y,width:last.right-first.x,height:first.height};
     });
-    await page.mouse.move(b.x+8,b.y+b.height/2);
-    await page.waitForTimeout(350);
+    framing.sentence = b;
+    await page.waitForTimeout(400);
+    await glide([b.x+8,b.y+b.height/2], 650);
+    await page.waitForTimeout(250);
     await page.mouse.down({clickCount:2});
-    for(let i=1;i<=40;i++) {
-      await page.mouse.move(b.x+8+(b.width-16)*i/40,b.y+b.height/2);
-      await page.waitForTimeout(20);
-    }
+    await motion([pointer, [b.x+b.width-8,b.y+b.height/2]], 800);
     await page.mouse.up();
     const selected = await page.evaluate(() => window.getSelection()?.toString());
     if (!selected?.includes('quantum information storage')) throw new Error(`Text drag missed the claim: ${selected}`);
     await page.locator('.plainTip .colorBtn').first().waitFor();
-    await page.waitForTimeout(650);
-    await page.locator('.plainTip .colorBtn').first().click();
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(450);
+    await click(page.locator('.plainTip .colorBtn').first());
+    await page.waitForTimeout(700);
     marks.textHighlight = at();
-    await page.locator('.blockEditorCm .cm-content').waitFor();
-    await page.locator('.blockEditorCm .cm-content').click();
+    // The new annotation opens focused. Clicking into it would make the reader
+    // jump to the highlight (a full-page scroll), so type straight away.
+    const editor = page.locator('.blockEditorCm .cm-content');
+    await editor.waitFor();
+    framing.note = await editor.boundingBox();
+    if (!await editor.evaluate(el => el.contains(document.activeElement))) throw new Error('The new annotation is not focused');
+    await glide([framing.note.x + framing.note.width * 0.7, framing.note.y + 70], 600);
     await page.keyboard.type('Long-lived storage supports entanglement.', {delay:42});
     await page.keyboard.press('Escape');
     await page.waitForTimeout(1100);
     marks.annotation = at();
-    // Focusing a linked note jumps the reader to that highlight. Return to the
-    // original paper framing before the hand-plotted ink gestures.
-    await page.mouse.move(850,650);
-    await page.mouse.wheel(0,-1200);
-    await page.waitForTimeout(800);
+    const moved = await span.evaluate((el, y) => Math.abs(el.getBoundingClientRect().y - y) > 2, b.y);
+    if (moved) throw new Error('The reader scrolled while annotating; the ink gestures assume the first framing');
   }
-  await page.getByRole('button', { name: 'Handwriting tools', exact: true }).click();
+  marks.start ??= at();
+  framing.toolbar = await click(page.getByRole('button', { name: 'Handwriting tools', exact: true }));
   await page.waitForTimeout(500);
-  await page.screenshot({ path: path.join(scratch, 'ink-setup.png') });
   const spans = await page.locator('[data-page="1"] .textLayer span').evaluateAll(es => es.map(e => { const b = e.getBoundingClientRect(); return { text: e.textContent, x: b.x, y: b.y, w: b.width, h: b.height }; }).filter(e => e.y > 50 && e.y < 900));
   fs.writeFileSync(path.join(scratch, 'ink-layout.json'), JSON.stringify({ spans, buttons: await page.locator('.pdfInkBar button').evaluateAll(es => es.map(e => e.getAttribute('aria-label'))) }, null, 2));
   if (!process.argv.includes('--inspect')) {
-    let pointer = [980, 820];
-    await page.mouse.move(...pointer);
-    // Time-paced samples, not Playwright's unpaced `steps`: retain smooth motion
-    // even on a fast machine. Drawing follows its path; transit uses smoothstep.
-    async function motion(points, duration, ease = false) {
-      const t0 = performance.now();
-      const n = Math.ceil(duration / 16);
-      for (let i = 1; i <= n; i++) {
-        let u = i / n;
-        if (ease) u = u * u * (3 - 2 * u);
-        const p = u * (points.length - 1), j = Math.min(points.length - 2, Math.floor(p)), f = p - j;
-        pointer = points[j].map((v, k) => v + (points[j + 1][k] - v) * f);
-        await page.mouse.move(...pointer);
-        const remaining = t0 + duration * i / n - performance.now();
-        if (remaining > 0) await page.waitForTimeout(remaining);
-      }
-    }
-    const glide = (to, ms = 320) => motion([pointer, to], ms, true);
-    async function click(locator) {
-      const b = await locator.boundingBox();
-      if (!b) throw new Error('Demo target is not visible');
-      await glide([b.x + b.width / 2, b.y + b.height / 2]);
-      await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up();
-      await page.waitForTimeout(100);
-    }
     async function stroke(points, ms) {
-      await glide(points[0], 220);
+      await glide(points[0], 300);
       await page.mouse.down(); await motion(points, ms); await page.mouse.up();
       await page.waitForTimeout(100);
     }
@@ -136,24 +125,33 @@ try {
       }
       return [...out, points.at(-1)];
     }
-    marks.start ??= at();
+    const gestures = {
+      circle: [[755,480],[721,475],[661,474],[596,477],[557,484],[552,493],[587,501],[654,503],[718,500],[760,492],[769,484],[757,479]],
+      arrow: [[268,527],[284,511],[312,497],[340,490],[365,491]],
+      head: [[355,482],[368,491],[354,500]],
+      highlight: [[380,561],[444,559],[531,560],[627,561],[730,559],[822,560]],
+    };
+    const xs = Object.values(gestures).flat().map(p => p[0]), ys = Object.values(gestures).flat().map(p => p[1]);
+    framing.ink = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
     await page.waitForTimeout(300);
-    await click(page.locator('.pdfInkBar button[aria-label^="Pen #1d4ed8"]'));
+    await click(page.locator('.pdfInkBar button[aria-label^="Blue pen"]'));
     marks.draw = at();
-    await stroke(freehand([[755,480],[721,475],[661,474],[596,477],[557,484],[552,493],[587,501],[654,503],[718,500],[760,492],[769,484],[757,479]]), 1050);
-    await stroke(freehand([[268,527],[284,511],[312,497],[340,490],[365,491]]), 620);
-    await stroke(freehand([[355,482],[368,491],[354,500]]), 270);
+    await stroke(freehand(gestures.circle), 1050);
+    await stroke(freehand(gestures.arrow), 620);
+    await stroke(freehand(gestures.head), 270);
     await count(3);
     await page.locator('.blockInkCard').first().waitFor();
     marks.highlight = at();
-    await click(page.locator('.pdfInkBar button[aria-label^="Highlighter #fde047"]'));
-    await stroke(freehand([[380,561],[444,559],[531,560],[627,561],[730,559],[822,560]]), 950);
+    await click(page.locator('.pdfInkBar button[aria-label^="Yellow highlighter"]'));
+    await stroke(freehand(gestures.highlight), 950);
     await count(4);
     await click(page.getByRole('button', { name: 'Hand', exact: true }));
     marks.notes = at();
-    await glide([1170, 320], 420);
-    await page.waitForTimeout(1400);
+    framing.inkCard = await page.locator('.blockInkCard').first().boundingBox();
+    await glide([1170, 320], 520);
+    await page.waitForTimeout(1600);
     marks.end = at();
+    const frames = await capture.stop(); capture = null;
     await page.screenshot({ path: path.join(scratch, 'ink-final.png') });
     // Verify that the on-screen ink really persisted, then reload off camera.
     await page.waitForFunction(() => document.querySelectorAll('.blockInkCard').length > 0);
@@ -170,22 +168,20 @@ try {
     if (!ink.strokes.some(s => s.tool === 'highlighter')) throw new Error('Highlighter was not saved');
     await page.reload();
     await count(4);
-    const video = page.video();
-    await context.close(); context = null;
-    const videoPath = await video.path();
     if (process.argv.includes('--annotate')) {
       const tree = await account.api(`/api/blocks/${pageId}/subtree`);
       if (!JSON.stringify(tree).includes('Long-lived storage supports entanglement.')) throw new Error('Annotation did not persist');
     }
-    fs.writeFileSync(path.join(scratch, 'ink-timeline.json'), JSON.stringify({ video: videoPath, width: W, height: H, marks, verified: { strokes: 4, pen: 3, highlighter: true, reload: true, annotation: process.argv.includes('--annotate') } }, null, 2));
+    fs.writeFileSync(path.join(scratch, 'ink-timeline.json'), JSON.stringify({ frames, width: W, height: H, marks, framing, verified: { strokes: 4, pen: 3, highlighter: true, reload: true, annotation: process.argv.includes('--annotate') } }, null, 2));
     console.log('Recorded ink demo; three pen strokes, highlight and reload verified.');
   }
   if (errors.length) throw new Error(errors.join('\n'));
-  if (process.argv.includes('--inspect')) console.log('Inspected curated paper; see ink-setup.png and ink-layout.json.');
+  if (process.argv.includes('--inspect')) console.log('Inspected curated paper; see ink-layout.json.');
 } catch (error) {
   if (page && !page.isClosed()) await page.screenshot({ path: path.join(scratch, 'ink-failure.png') }).catch(() => {});
   throw error;
 } finally {
+  if (capture) await capture.stop().catch(() => {});
   if (context) await context.close();
   if (browser) await browser.close();
   await server.stop();

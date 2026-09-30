@@ -1,4 +1,5 @@
-"""The shared upload/review/selection/commit contract and its isolation boundary."""
+"""The shared upload/review/selection/import contract and its isolation
+boundary. The import itself is a background job (POST /api/jobs/import)."""
 import io
 import zipfile
 
@@ -23,8 +24,26 @@ def review(client, data, source, name="review.zip", **options):
     return result.json()
 
 
+def start(client, plan, ids, **kwargs):
+    return client.post("/api/jobs/import", json={"review_id": plan["review_id"], "selected": ids}, **kwargs)
+
+
 def commit(client, plan, ids):
-    return client.post(f"/api/import/review/{plan['review_id']}", json={"selected": ids})
+    """Start the import job and wait for it: the finished job, its report in ``result``."""
+    from gamma import jobs
+    started = start(client, plan, ids)
+    assert started.status_code == 200, started.text
+    job = started.json()
+    assert job["kind"] == "import" and job["params"]["selected"] == len(set(ids))
+    jobs.wait(job["id"])
+    done = client.get(f"/api/jobs/{job['id']}")
+    assert done.status_code == 200, done.text
+    return done.json()
+
+
+def report(job):
+    assert job["state"] == "done", job["error"]
+    return job["result"]
 
 
 def rows(ws):
@@ -46,22 +65,23 @@ def test_zotero_selection_upload_once_and_commit_retry(guest):
     assert rows(ws) == before and uploads(ws) == before_files
     paper = next(p for p in plan["pages"] if p["kind"] == "pdf")
     assert any(p["missing"] for p in plan["pages"])
-    result = commit(guest, plan, paper["selection_ids"])
-    assert result.status_code == 200, result.text
-    data = result.json()
+    job = commit(guest, plan, paper["selection_ids"])
+    data = report(job)
     assert data["items"] == 1 and data["pages_created"] == 1
     assert all(w["title"] != "Proximal Policy Optimization" for w in data["warnings"])
-    assert commit(guest, plan, paper["selection_ids"]).json() == data
-    assert commit(guest, plan, []).status_code == 409
+    again = start(guest, plan, paper["selection_ids"])  # a retried request answers the same job
+    assert again.status_code == 200 and again.json()["id"] == job["id"]
+    assert start(guest, plan, []).status_code == 409
 
 
 def test_empty_selection_and_bad_ids_do_not_import(guest):
     ws = workspace_of(guest_name())
     before, before_files = rows(ws), uploads(ws)
     plan = review(guest, archive({"one.md": "# Empty selection\nhello"}), "markdown-zip")
-    assert commit(guest, plan, ["not-a-page"]).status_code == 400
-    result = commit(guest, plan, [])
-    assert result.status_code == 200 and result.json()["pages_created"] == 0
+    refused = commit(guest, plan, ["not-a-page"])
+    assert refused["state"] == "failed" and "selection" in refused["error"]
+    plan = review(guest, archive({"one.md": "# Empty selection\nhello"}), "markdown-zip")
+    assert report(commit(guest, plan, []))["pages_created"] == 0
     assert rows(ws) == before and uploads(ws) == before_files
 
 
@@ -74,9 +94,7 @@ def test_markdown_selection_preserves_links_and_only_stores_selected_assets(gues
     assert rows(ws) == before and uploads(ws) == before_files
     page = next(p for p in plan["pages"] if p["title"] == "One")
     assert page["missing"] and page["folders"] == ["Selected notes"]
-    result = commit(guest, plan, page["selection_ids"])
-    assert result.status_code == 200, result.text
-    data = result.json()
+    data = report(commit(guest, plan, page["selection_ids"]))
     assert data["pages_created"] == 1 and data["assets_stored"] == 1
     assert len(uploads(ws) - before_files) == 1
     assert any("Two" in w["reason"] for w in data["warnings"])
@@ -89,21 +107,21 @@ def test_single_markdown_uses_same_review_contract(guest):
     assert len(plan["pages"]) == 1
     page = plan["pages"][0]
     assert page["title"] == "Single reviewed note" and page["folders"] == ["Parent/child"]
-    assert commit(guest, plan, page["selection_ids"]).json()["pages_created"] == 1
+    assert report(commit(guest, plan, page["selection_ids"]))["pages_created"] == 1
 
 
 def test_markdown_repeat_review_shows_existing_destination(accounts):
     owner = accounts["review-owner"]
     content = b"# Repeat review note\nKeep the existing destination."
     first = review(owner, content, "markdown-file", name="repeat.md", folder="Original folder")
-    created = commit(owner, first, first["pages"][0]["selection_ids"]).json()["pages"][0]
+    created = report(commit(owner, first, first["pages"][0]["selection_ids"]))["pages"][0]
     result = owner.put(f"/api/blocks/{created['id']}", json={"content": "Renamed in library"})
     assert result.status_code == 200
     repeated = review(owner, content, "markdown-file", name="repeat.md", folder="Different folder")
     page = repeated["pages"][0]
     assert page["title"] == "Renamed in library" and page["folders"] == ["Original folder"]
     assert page["action"] == "skip" and repeated["pages_created"] == 0
-    imported = commit(owner, repeated, page["selection_ids"]).json()
+    imported = report(commit(owner, repeated, page["selection_ids"]))
     assert imported["pages_created"] == 0 and imported["pages_skipped"] == 1
     assert imported["pages"][0]["id"] == created["id"]
 
@@ -119,20 +137,19 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
     owner, other = accounts["review-owner"], accounts["review-other"]
     plan = review(owner, archive({"one.md": "# Private staged note"}), "markdown-zip")
     ids = plan["pages"][0]["selection_ids"]
-    assert commit(other, plan, ids).status_code == 404
+    assert start(other, plan, ids).status_code == 404
     assert other.delete(f"/api/import/review/{plan['review_id']}").status_code == 404
     other_ws = owner.post("/api/workspaces", json={"name": "Another review destination"}).json()["id"]
-    wrong_destination = owner.post(f"/api/import/review/{plan['review_id']}", json={"selected": ids},
-                                   headers={"X-Gamma-Workspace": other_ws})
-    assert wrong_destination.status_code == 404
+    assert start(owner, plan, ids, headers={"X-Gamma-Workspace": other_ws}).status_code == 404
     from gamma import import_staging
     path, _ = import_staging.get(plan["review_id"], "review-owner", workspace_of("review-owner"))
     assert path.exists()
     with import_staging.claim(plan["review_id"], "review-owner", workspace_of("review-owner")):
-        assert commit(owner, plan, ids).status_code == 409
+        # a delete while the import holds the upload waits for it
+        assert owner.delete(f"/api/import/review/{plan['review_id']}").status_code == 409
     assert owner.delete(f"/api/import/review/{plan['review_id']}").status_code == 200
     assert not path.exists()
-    assert commit(owner, plan, ids).status_code == 404
+    assert start(owner, plan, ids).status_code == 404
 
 
 def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accounts):
@@ -150,10 +167,9 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
     assert rows(ws) == before and uploads(ws) == before_files
     chosen = next(p for p in plan["pages"] if p["title"] == "Chosen Gamma page")
     assert chosen["folders"] == ["Research/Chosen"]
-    result = commit(receiver, plan, chosen["selection_ids"])
-    assert result.status_code == 200, result.text
-    assert result.json()["pages_added"] == 1 and result.json()["chats_added"] == 1
-    assert any("unselected" in w["reason"] for w in result.json()["warnings"])
+    data = report(commit(receiver, plan, chosen["selection_ids"]))
+    assert data["pages_added"] == 1 and data["chats_added"] == 1
+    assert any("unselected" in w["reason"] for w in data["warnings"])
     assert receiver.get(f"/api/blocks/{child['id']}").status_code == 200
     assert receiver.get(f"/api/blocks/{b['id']}").status_code == 404
     assert f"{a_pdf['doc_id']}.pdf" in uploads(ws) and f"{b_pdf['doc_id']}.pdf" not in uploads(ws)
@@ -167,3 +183,39 @@ def test_guest_cannot_use_review_to_bypass_backup_restriction(guest, accounts):
     data = accounts["review-donor"].get("/api/export").content
     result = guest.post("/api/import/review", data={"source": "gamma"}, files={"file": ("backup.zip", data)})
     assert result.status_code == 403
+
+
+def test_import_job_reports_progress_and_can_be_stopped(accounts, monkeypatch):
+    """A job stops at its next item and keeps what it imported; the staged
+    upload goes once the job is over."""
+    import threading
+    from gamma import import_staging, jobs
+    from gamma.routers import imports
+
+    owner = accounts["review-owner"]
+    plan = review(owner, archive({f"note{i}.md": f"# Stoppable note {i}\ntext" for i in range(3)}), "markdown-zip")
+    ids = [i for p in plan["pages"] for i in p["selection_ids"]]
+    reached, release = threading.Event(), threading.Event()
+    real = imports.import_markdown_zip
+
+    def gated(*args, progress=None, **kwargs):
+        def report(**fields):
+            if fields.get("done") == 1:  # hold the job after the first note
+                reached.set()
+                release.wait(10)
+            progress(**fields)
+        return real(*args, progress=report, **kwargs)
+
+    monkeypatch.setattr(imports, "import_markdown_zip", gated)
+    job = start(owner, plan, ids).json()
+    assert reached.wait(10)
+    live = owner.get(f"/api/jobs/{job['id']}").json()
+    assert live["state"] == "running" and live["progress"]["unit"] == "items" and live["progress"]["total"] == 3
+    assert owner.post(f"/api/jobs/{job['id']}/cancel").json()["stopping"] is True
+    release.set()
+    done = jobs.wait(job["id"])
+    assert done["state"] == "cancelled" and done["result"] is None
+    titles = {b["content"] for b in owner.get("/api/blocks/root/children").json()["children"]}
+    assert "Stoppable note 0" in titles and "Stoppable note 2" not in titles
+    with pytest.raises(Exception):
+        import_staging.get(plan["review_id"], "review-owner", workspace_of("review-owner"))

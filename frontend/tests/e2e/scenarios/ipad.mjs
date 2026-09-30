@@ -170,10 +170,10 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await sheet.getByRole("button", { name: "Import…", exact: true }).waitFor();
       await sheet.getByRole("button", { name: "Settings…", exact: true }).waitFor();
       await sheet.getByRole("button", { name: "Background tasks", exact: true }).tap();
-      await page.locator(".downloadsPopover").waitFor();
+      await page.locator(".tasksPopover").waitFor();
       assertEq(await sheet.count(), 0, "the sheet gave way to the tasks");
       await page.keyboard.press("Escape");
-      await page.locator(".downloadsPopover").waitFor({ state: "detached" });
+      await page.locator(".tasksPopover").waitFor({ state: "detached" });
       // A page: its tab brings the topbar back, Share joins the bar, and
       // the Library tab goes home.
       await row.tap();

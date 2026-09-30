@@ -28,7 +28,7 @@ from .config import USERS_DB, WORKSPACES_DIR
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 # How long a connection waits for another connection's write lock before
@@ -272,6 +272,37 @@ USERS_SCHEMA = [
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )""",
+    # Background jobs (gamma/jobs.py, docs/dev/tasks.md): exports, backups,
+    # restores, imports, the search indexer. owner: the account that started
+    # it, '' for a workspace's own work (the indexer). key: what makes two
+    # jobs of one owner and kind the same work (an import's review id).
+    # params / progress / result are JSON. The artifact_* columns describe
+    # the file a finished job produced (jobs/<id>/artifact); instance is the
+    # server process that runs it, so a restart can tell its own jobs from
+    # the ones a stopped process left behind.
+    """CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        params TEXT NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL,
+        progress TEXT NOT NULL DEFAULT '{}',
+        result TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        artifact_name TEXT NOT NULL DEFAULT '',
+        artifact_type TEXT NOT NULL DEFAULT '',
+        artifact_size INTEGER NOT NULL DEFAULT 0,
+        downloaded_at TEXT NOT NULL DEFAULT '',
+        instance TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT '',
+        finished_at TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
 ]
 
 PAGES_SCHEMA = [

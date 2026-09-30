@@ -38,7 +38,7 @@ and state owners in this table are proposals.
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeEntries`, click handlers, retagging, rename/move/delete, carousels |
 | `workspace/` | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
-| `transfers/` | Upload/import/export operations and progress reporting | `uploadFiles`, format imports, backup transfer functions, `runExport`, transfer rows |
+| `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions, `runExport` (the Background tasks store and tray already live in `tasks/`) |
 | `sharing/` | Share-link resolution/gates and owner share controls | `resolveShare`, `loadShareSettings`, invitation mutations (the popover itself, `SharePopover.jsx`, already lives here) |
 | `settings/` | Settings panels and AI provider form/request state | Existing settings files plus provider CRUD, catalog, OAuth, and usage handlers |
 | `chat/` | Chat attachments and page-change notifications | `addBlockToChat`, `addHighlightToChat`, image selection, existing `ChatDock` |

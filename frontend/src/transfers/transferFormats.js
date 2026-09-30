@@ -41,31 +41,49 @@ const EXPORT_SWITCH_TEXT = {
 };
 
 // The rows of both dialogs, in order; a format's `category` names its row.
-export const CATEGORIES = [T("This paper"), T("Notes"), T("Library")];
+export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Library")];
 
+// `mode`: the server's name for the format (POST /api/jobs/export,
+// routers/export.py). A folder exports the annotated PDFs of all its papers,
+// so there that format is "Papers", with its own hint.
 const EXPORT_FORMATS = [
-  { id: "pdf", label: T("Annotated PDF"), category: "This paper",
-    hint: T("Your original paper, with annotations"), editable: ["highlights", "notes"], fixed: { bundle: false } },
-  { id: "notespdf", label: "PDF", category: "Notes",
+  { id: "pdf", mode: "annotated-pdf", label: T("Annotated PDF"), category: "This paper",
+    hint: T("Your original paper, with annotations"), editable: ["highlights", "notes"], fixed: { bundle: false },
+    folder: { category: "Papers", hint: T("Each paper's PDF with its annotations, in one .zip") } },
+  { id: "notespdf", mode: "notes-pdf", label: "PDF", category: "Notes",
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
-  { id: "markdown", label: T("Markdown"), category: "Notes",
+  { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
     hint: T("Readable notes for any Markdown editor"), editable: ["highlights", "notes", "bundle"] },
-  { id: "obsidian", label: T("Obsidian"), category: "Library",
+  { id: "obsidian", mode: "obsidian", label: T("Obsidian"), category: "Library",
     hint: T("A vault with notes, links and attachments"), editable: ["highlights", "notes", "bundle"] },
-  { id: "logseq", label: T("Logseq"), category: "Library",
+  { id: "logseq", mode: "logseq-graph", label: T("Logseq"), category: "Library",
     hint: T("A graph with native PDF highlights"), editable: ["bundle"], fixed: { highlights: true, notes: true } },
-  { id: "zotero", label: T("Zotero"), category: "Library",
+  { id: "zotero", mode: "zotero-rdf", label: T("Zotero"), category: "Library",
     hint: T("Papers, collections and notes for Zotero"), editable: ["highlights", "notes", "bundle"] },
-  { id: "gamma", label: T("Gamma"), category: "Library",
+  { id: "gamma", mode: "gamma", label: T("Gamma"), category: "Library",
     hint: T("A complete copy for another Gamma library"), editable: [], fixed: { highlights: true, notes: true, bundle: true } },
 ];
+
+// The format a server export mode is (an export job's params name the mode).
+export function exportFormatOf(mode) {
+  return EXPORT_FORMATS.find((format) => format.mode === mode || format.id === mode) || null;
+}
+
+// What an export job is asked to do: the dialog's payload for a page or a
+// folder, in the server's terms (routers/export.py ExportJob).
+export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
+  const format = exportFormatOf(payload.format);
+  return { ...(folder ? { folder } : { page_id: pageId }), mode: format?.mode || "readable",
+    pdf: Boolean(payload.bundle), highlights: Boolean(payload.highlights), notes: Boolean(payload.notes) };
+}
 
 // Resolve again using the activated card's ID on double-click. Do not depend
 // on React having committed a preceding selection change.
 export function resolveExport(opts, { hasPdf, pdfStored, folder } = {}) {
-  const formats = EXPORT_FORMATS.filter(({ id }) => id !== "pdf" || (hasPdf && !folder));
+  const formats = EXPORT_FORMATS.filter(({ id }) => id !== "pdf" || hasPdf || folder)
+    .map((format) => (folder && format.folder ? { ...format, ...format.folder } : format));
   const definition = formats.find(({ id }) => id === opts.format) || formats.find(({ id }) => id === "notespdf");
-  const noPdfCopy = definition.id === "pdf" && !pdfStored;
+  const noPdfCopy = definition.id === "pdf" && !folder && !pdfStored;
   const values = { highlights: Boolean(opts.highlights), notes: Boolean(opts.notes), bundle: Boolean(opts.bundle), ...definition.fixed };
   if (noPdfCopy) Object.assign(values, { highlights: false, notes: false });
   // Zotero stores highlights inside the bundled PDFs, never in metadata alone.
@@ -89,6 +107,11 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
     case "obsidian":
       return t("An Obsidian vault: one note per page{folders}, links as [[wikilinks]], labels as tags{callouts}{lists}. Unzip it into a vault, or open it as one.", { folders: folder ? t(", subfolders as folders") : "", callouts: highlights ? t(", highlights as quote callouts") : "", lists: notes ? t(", your notes as headings, paragraphs and lists") : "" });
     case "pdf":
+      if (folder) {
+        return highlights || notes
+          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("no annotations"), page: notes ? t(" and every note printed onto the page") : "" })
+          : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
+      }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes) return t("The PDF file exactly as stored, with nothing added.");
       return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("no annotations"), page: notes ? t(" and every note printed onto the page") : "" });

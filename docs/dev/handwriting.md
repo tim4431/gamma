@@ -90,10 +90,12 @@ app ([ipad.md](ipad.md)).
   (Show note scrolls the notes to its block), and in read-only views jumps
   to the block directly.
 - **Replay.** The play button in the card's corner (on hover; always on a
-  touch screen) replays the group's writing in the card: the strokes
-  appear in the order they were written, each at the pace it was written.
-  Pauses shrink to 0.4 s, and a replay longer than 15 s plays faster. The
-  same button stops it. A sheet in the notes view has the button under
+  touch screen) replays the group's writing on its page, scrolled into
+  view (the PDF page, the notebook view's sheet, or the sheet in the
+  notes), and in the card: the strokes appear in the order they were
+  written, each at the pace it was written. Pauses shrink to 0.4 s, and a
+  replay longer than 15 s plays faster. The same button stops it, and one
+  replay at a time plays. A sheet in the notes view has the button under
   it, for all its handwriting ([notebooks.md](notebooks.md)); on the iPad
   it is on a group's row in the notes and plays on the page
   ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
@@ -261,9 +263,13 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
   - `inkAtTime(ink, timeline, t)` is the drawing at replay time `t`: the
     strokes begun, and the one being written cut short. A prefix of a
     stroke's delta-coded `pts` is its first samples, so that is a slice.
-  - `InkLayer.jsx` `useInkReplay` plays it on animation frames and
-    `InkReplayButton` starts and stops it. A change to the drawing ends a
-    replay.
+  - `ink/inkReplay.js` plays one replay at a time on animation frames,
+    under the id of what it shows (a group, or a sheet's whole
+    handwriting). `InkLayer.jsx` `useReplayOf(ids)` gives a layer or a
+    card the frame of one of its own groups, so only they re-render; the
+    layer draws that group as it stood, the card too.
+    `InkReplayButton` starts and stops it. An edit to the group
+    (`applyInk`) or leaving the page ends it.
 - `ink/inkStore.js`: files by URL, and per-block **drafts** — the strokes as
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
@@ -398,10 +404,9 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
-live co-drawing over presence, audio recording to go with the replay, a
+live co-drawing over presence, audio recording to go with the replay, and a
 replay of erasures and edits (it shows the drawing as it is, in the order
-it was written), and a replay on the PDF page itself in the browser (the
-card plays it). Obsidian vault export writes an ink block's
+it was written). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
 that returns to the last tool, the highlighter behind the ink, clipboard

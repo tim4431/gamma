@@ -149,9 +149,25 @@ word (Not run yet, Queued, Running, Finished, Failed).
 
 `GET/POST /api/backup-tasks`, `PUT/DELETE /api/backup-tasks/{id}`,
 `POST /api/backup-tasks/{id}/run` and `POST /api/backup-tasks/preview`.
-Guests and integration tokens cannot manage tasks.
+Guests and integration tokens cannot manage tasks. While a task runs, it also
+shows as a read-only row in Background tasks ([tasks.md](tasks.md)).
 
 Runtime and storage: [docs/dev/workspaces.md](workspaces.md#backups).
+
+### Snapshots and restores as background jobs
+
+Under the tasks, the pane's saved snapshots are taken and restored as
+background jobs ([tasks.md](tasks.md)): Back up now and Back up all start a
+`snapshot` job (one job for all of them), and Restore → Replace… or Merge…
+starts a `restore-snapshot` job. The pane never waits on the request. A
+workspace with a job under way shows its progress under its heading and
+takes no second one. Its list reloads once the job ends, wherever the job
+was started. A restore into the open workspace reloads the tab that started
+it. Settings → Server's server backups work the same way (`server-backup`).
+Settings → Workspaces → Data exports a workspace (a `workspace-export` job
+whose zip downloads by itself once ready) and merges or restores a zip into
+one (a `restore` job over the uploaded file); Export all is one
+`workspace-export` job.
 
 ## Notices: the red dot
 

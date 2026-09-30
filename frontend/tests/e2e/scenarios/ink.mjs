@@ -190,10 +190,16 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: the notes card jumps to the group and outlines it", async () => {
+  await step("ink: the notes card jumps to the group and outlines it; its replay plays on the PDF page", async () => {
     await page.click(".blockInkCard");
     await page.waitForSelector('[data-page="1"] .inkFlash', { timeout: 5000 });
     if (flags.keep) await page.screenshot({ path: `${server.dir}/ink-notes.png` });
+    const paths = '[data-page="1"] .inkLayer path';
+    const whole = (await page.$$(paths)).length;
+    await page.hover(".blockInkCardWrap");
+    await page.click(".blockInkCardWrap .inkReplayBtn");
+    await until(async () => (await page.$$(paths)).length < whole, { what: "the page draws the group stroke by stroke", every: 10 });
+    await until(async () => (await page.$$(paths)).length === whole, { what: "then whole again" });
     assertNoProblems(page);
   });
 

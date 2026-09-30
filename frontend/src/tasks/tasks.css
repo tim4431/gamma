@@ -1,0 +1,80 @@
+/* Background tasks (tasks/TasksTray.jsx): the panel under the topbar
+   button, its rows, and the progress block the export / import dialogs
+   show. The button's spinner and dots are .transferSpin / .transferDot /
+   .noticeDot in app.css. */
+.tasksPopover { width: min(440px, calc(100vw - 24px)); max-height: min(72vh, 560px); overflow-y: auto; }
+.tasksHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: 28px; }
+.tasksPopover .setEmpty { padding: 18px 12px; }
+/* The section captions (.popoverSection), in line with the rows. */
+.tasksPopover .popoverSection { padding: var(--space-4) 6px var(--space-1); }
+
+.taskRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+}
+.taskRow:hover { background: var(--bg-block); }
+.taskStatus, .taskKind { display: inline-flex; width: 14px; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+.taskKind { color: var(--text-dim); }
+.taskStatus.done { color: var(--ok); }
+.taskStatus.failed { color: var(--danger); }
+.taskStatus.cancelled, .taskStatus.queued { color: var(--text-dim); }
+
+/* Title over the bar over the line of detail; a button when the task has a
+   window to open again. */
+.taskMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.taskMain { cursor: pointer; border-radius: var(--radius-sm); }
+button.taskMain:hover .taskName { color: var(--text-primary); }
+.taskTitleLine { display: flex; align-items: baseline; gap: var(--space-4); min-width: 0; }
+.taskName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.taskRow.cancelled .taskName { color: var(--text-muted); }
+.taskTime { flex-shrink: 0; font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.taskInfo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+}
+/* A failure's reason is the one line worth reading whole. */
+.taskInfo.error { white-space: normal; overflow-wrap: anywhere; color: var(--text-secondary); }
+.taskActions { flex-shrink: 0; }
+
+/* The bar: its width is the fraction done; without one, a sweep. */
+.taskBar { position: relative; display: block; height: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
+.taskBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) ease; }
+.taskBar.indeterminate > span { width: 30%; animation: taskBarSweep 1.4s ease-in-out infinite; }
+@keyframes taskBarSweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+/* A dialog's progress block (the export and import dialogs' job step). */
+.taskProgress { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) 0; }
+.taskProgressLine { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-4); font-size: var(--fs-sm); }
+.taskProgressLine strong { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.taskProgressLine span { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.taskProgress .taskBar, .taskProgress .taskBar > span { height: 6px; border-radius: var(--radius-xs); }

@@ -250,16 +250,25 @@ manifest, database snapshots and uploads unless databases-only was selected.
 - **Export / Import:** Settings → Workspaces. Any member exports; editors
   may merge an import; owners may replace the workspace. Export all bundles
   the account's personal workspaces. API: `/export`, `/export-all`,
-  `/import-data`.
+  `/import-data` (`routers/ws_backups.py`); the web app runs each as a
+  background job — `workspace-export`, `restore` — that shows in Background
+  tasks ([tasks.md](tasks.md)).
 - **Saved workspace snapshots:** Settings → Backups. Owners create or delete
   them, members list and download them, editors merge them, and owners restore
   them in place. Each ZIP is independent. Up to 20 manual ones are kept per
   workspace (`MAX_PER_WORKSPACE`); they do not count against upload quotas.
   No snapshot is taken while the server's disk has less than 1 GB free
-  (`MIN_FREE_BYTES`). Guests cannot keep snapshots.
+  (`MIN_FREE_BYTES`). Guests cannot keep snapshots. The web app takes and
+  restores them as `snapshot` and `restore` jobs.
 - **Server snapshots:** Settings → Server. These cover the whole data
   directory and are restored with the server stopped. They are separate from
   workspace snapshots; see [migrations and server backups](migrations.md).
+  The web app takes one as a `server-backup` job.
+
+A job reports its progress as it goes: bytes of a zip written, files
+unpacked or copied, then the phase. A restore can be stopped until it swaps
+or merges the databases, and not after (`restore_zip`'s `progress`,
+[tasks.md](tasks.md)).
 
 Exports transfer library content. Passwords, sessions and private AI
 credentials stay with the account.

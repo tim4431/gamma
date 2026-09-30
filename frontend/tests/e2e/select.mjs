@@ -89,6 +89,7 @@ export const RULES = [
   ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab"]],
   ["frontend/src/transfers/**", EXPORTS],
+  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad"]], // the Background tasks tray and its store
   ["frontend/src/support/**", ["settings"]],
   ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish"]],
   ["frontend/public/**", ["ipad"]],
@@ -140,6 +141,8 @@ export const RULES = [
   ["backend/gamma/fonts/**", EXPORTS],
   ["backend/gamma/routers/export.py", EXPORTS],
   ["backend/gamma/routers/imports.py", EXPORTS],
+  ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share"]], // exports, backups, the search indexer
+  ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings"]],
   ["backend/gamma/backup_schedule.py", ["settings"]],
   ["backend/gamma/backups.py", ["settings"]],
   ["backend/gamma/ws_backup.py", ["settings"]],

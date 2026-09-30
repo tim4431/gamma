@@ -410,11 +410,14 @@ class _Plan:
 
 
 def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
-                        *, preview: bool = False, selected: set[str] | None = None) -> dict:
+                        *, preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
     """Import every note in ``zf`` into workspace ``ws`` through the open ``pages.db``
     connection. Each page is its own short transaction, committed here once
     its bundled files are stored (a long import never holds the write lock,
-    and every page is stamped at its commit). Returns the report dict."""
+    and every page is stamped at its commit). ``progress`` (a background
+    job's report, gamma/jobs.py) hears each note; a stopped job keeps the
+    notes it got to. Returns the report dict."""
+    progress = progress or (lambda **_: None)
     from .import_review import archive_entries, validate_selection
     prefix = clean_path(folder)
     entries, opened = [], []
@@ -704,9 +707,13 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
             raise
         staged.clear()
 
-    for plan in plans:
-        if selected is not None and plan.entry.path not in selected:
-            continue
+    chosen = [plan for plan in plans if selected is None or plan.entry.path in selected]
+    for n, plan in enumerate(chosen):
+        try:
+            progress(done=n, total=len(chosen), unit="items", item=plan.title)
+        except BaseException:  # stopped: the staged notes' files are stored, so they go in too
+            flush()
+            raise
         current_selection = plan.entry.path
         warning_start = len(report["warnings"])
         if plan.existing:

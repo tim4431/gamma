@@ -25,17 +25,18 @@ the shared cases in `tests/shared/paper.json`, and e2e
     blocks, fitted to the notes' width (at most 1.5 CSS px per point).
     Under a sheet are its pen (the ink strip opens at the top of the
     notes when no viewer holds it), its paper menu, the replay of its
-    handwriting ([handwriting.md](handwriting.md) "Replay") and **+**, a
-    page right after it.
+    handwriting ([handwriting.md](handwriting.md) "Replay"), **+** (a
+    page right after it) and the switch to the notebook view.
   - The **notebook view** puts the sheets in the viewer's place, one under
     the other, fitted to the width, with the zoom buttons, the pen button
     and the ink strip a PDF has, **Add page** at the end, and the paper
     button for the sheet in the middle of the view. The notes beside them
     list each sheet as a row.
-- **Switching.** The **Notebook view** button in the page's title row
-  switches between them; it shows once the page has a sheet and no PDF.
-  The viewer's close button goes back to the notes, and View → Notebook
-  view does both. The choice is remembered per page in this browser and
+- **Switching.** A sheet's **Notebook view** button (under it in the notes
+  view) opens the notebook view; it shows when the page has no PDF. The
+  **Notes view** button in the notebook view's side bar, under the paper
+  button, goes back, and so does the viewer's close button. View →
+  Notebook view does both. The choice is remembered per page in this browser and
   saved the moment it changes. A page with no choice opens in the notes
   view.
 - **+ → New notebook** makes a page with one blank A4 sheet and opens it in

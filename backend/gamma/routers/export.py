@@ -1,25 +1,30 @@
 """Exporting pages: one driver (``_run_export``) walks the selected page
-subtrees and feeds them to the format's ``_Builder`` — Markdown, a Logseq
-graph, a Zotero RDF library, a scoped Gamma backup, or the notes typeset as a
-PDF document. Most builders produce a zip; a bare .md (nothing to bundle) and
-the notes PDF are single files."""
+subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
+vault, a Logseq graph, a Zotero RDF library, a scoped Gamma backup, the notes
+typeset as a PDF document, or the annotated PDFs themselves. Most builders
+produce a zip; a bare .md (nothing to bundle), the notes PDF and one page's
+annotated PDF are single files. The same builders serve the downloads
+(``/pages/{id}/export``, ``/folders/export``: the share view, scripts) and
+the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
 import json
 import os
 import re
+import shutil
 import sqlite3
 import tempfile
 import zipfile
-from urllib.parse import quote
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from .. import ink as inkmod
-from .. import notebook
-from ..auth import resolve_ws, share_scope
+from .. import jobs, notebook
+from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, TRASH, assert_block_in_scope, block_to_dict, fetch_subtree, page_root_id)
 from ..db import connect_pages_db
@@ -46,8 +51,8 @@ from ..markdown_export import (
     slugify,
 )
 from ..logbuf import log
-from ..storage import upload_refs
-from ..obsidian_export import APP_JSON, VaultContext, referenced_blocks, render_vault_page
+from ..storage import attachment_disposition, upload_refs
+from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
 from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
 from ..pdf_notes import render_notes
@@ -63,48 +68,22 @@ from ..zotero_export import (
 router = APIRouter(prefix="/api", tags=["export"])
 
 
-def _content_disposition(filename: str) -> str:
-    """attachment header carrying both an ASCII fallback and a UTF-8 name."""
-    ascii_name = filename.encode("ascii", "ignore").decode() or "export"
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-
-
-def _md_response(md: str, slug: str) -> Response:
-    return Response(
-        content=md,
-        media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": _content_disposition(f"{slug}.md")},
-    )
-
-
-def _zip_response(entries, assets, uploads_dir, download_name: str, files=(), blobs=()) -> FileResponse:
+def _write_zip(dest, entries, assets, uploads_dir, files=(), blobs=(), progress=jobs.no_progress) -> None:
     """entries: list of (arcname, text). assets: set of upload filenames, written
     once under assets/ (deduped by content-addressed name). files: (arcname,
-    disk path) pairs; blobs: (arcname, bytes) pairs."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    tmp.close()
-    try:
-        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
-            for arcname, text in entries:
-                z.writestr(arcname, text)
-            for filename in sorted(assets):
-                path = uploads_dir / filename
-                if path.is_file():
-                    z.write(path, f"assets/{filename}")
-            for arcname, path in files:
-                if path.is_file():
-                    z.write(path, arcname)
-            for arcname, data in blobs:
-                z.writestr(arcname, data)
-    except Exception:
-        os.unlink(tmp.name)
-        raise
-    return FileResponse(
-        tmp.name,
-        media_type="application/zip",
-        headers={"Content-Disposition": _content_disposition(download_name)},
-        background=BackgroundTask(os.unlink, tmp.name),
-    )
+    disk path) pairs; blobs: (arcname, bytes) pairs. ``progress`` hears the
+    files packed so far (the phase "packing")."""
+    stored = [(f"assets/{name}", uploads_dir / name) for name in sorted(assets)] + list(files)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for arcname, text in entries:
+            z.writestr(arcname, text)
+        for n, (arcname, path) in enumerate(stored):
+            progress(phase="packing", done=n, total=len(stored), unit="files")
+            if path.is_file():
+                z.write(path, arcname)
+        for arcname, data in blobs:
+            z.writestr(arcname, data)
+    progress(phase="packing", done=len(stored), total=len(stored), unit="files")
 
 
 def _graph_page_parts(page, uploads_dir, include_pdf):
@@ -214,14 +193,15 @@ def _image_resolver(uploads_dir):
 
 # --- format builders --------------------------------------------------------
 # One export = one builder. The driver (_run_export) walks the selected pages
-# exactly once — subtree fetch, tree build, progress bookkeeping — and feeds
-# each page to the mode's builder; the builder accumulates zip parts and names
-# the download. Adding an export format = adding a builder here; the
-# endpoints, the progress plumbing and _zip_response stay untouched.
+# exactly once — subtree fetch, tree build, progress report — and feeds each
+# page to the mode's builder; the builder accumulates zip parts and names the
+# download, and ``save`` writes it. Adding an export format = adding a
+# builder here; the endpoints, the job and the zip writer stay untouched.
 
 class _Builder:
     """opts: {"pdf": bool, "highlights": bool, "notes": bool,
-    "folder_scope": path | None}."""
+    "folder_scope": path | None (None: one page is exported), "author": the
+    account exporting}."""
     suffix = ".zip"  # appended to the base slug for the download name
 
     def __init__(self, ws, base: str, opts: dict):
@@ -231,10 +211,12 @@ class _Builder:
         self.uploads_dir = ws_uploads_dir(ws)
         self.entries, self.assets = [], set()
         self.files, self.blobs = [], []
+        self.walked, self.skipped = 0, []  # pages the driver fed in; {title, reason} left out
+        self._spool = None
 
     def begin(self, conn, root_ids):
-        """Sees the whole export set before any page is walked (the request's
-        DB connection is only open during the walk, not in ``response``)."""
+        """Sees the whole export set before any page is walked (the DB
+        connection is only open during the walk, not in ``save``)."""
 
     def add_page(self, n: int, rows, page):
         raise NotImplementedError
@@ -242,10 +224,51 @@ class _Builder:
     def finish(self):
         """Last chance to add whole-export parts (config files, the RDF…)."""
 
+    def spool(self, arcname: str, data: bytes) -> None:
+        """A generated zip entry too big to hold until ``save`` (an annotated
+        PDF): written to a temporary file now and packed from there."""
+        if self._spool is None:
+            self._spool = Path(tempfile.mkdtemp(prefix="gamma-export-"))
+        path = self._spool / f"{len(self.files)}.part"
+        path.write_bytes(data)
+        self.files.append((arcname, path))
+
+    def discard(self) -> None:
+        """Remove what ``spool`` wrote (``save`` does it once the file is out)."""
+        if self._spool is not None:
+            shutil.rmtree(self._spool, ignore_errors=True)
+            self._spool = None
+
+    def save(self, dest, progress=jobs.no_progress) -> tuple[str, str]:
+        """Write the export to ``dest``: ``(download name, media type)``."""
+        try:
+            self.finish()
+            _write_zip(dest, self.entries, self.assets, self.uploads_dir, self.files, self.blobs, progress)
+        finally:
+            self.discard()
+        return f"{self.base}{self.suffix}", "application/zip"
+
     def response(self) -> FileResponse:
-        self.finish()
-        return _zip_response(self.entries, self.assets, self.uploads_dir,
-                             f"{self.base}{self.suffix}", self.files, self.blobs)
+        """The export as the answer to the request (a temporary file,
+        deleted once it is sent)."""
+        tmp = tempfile.NamedTemporaryFile(suffix=self.suffix, delete=False)
+        tmp.close()
+        try:
+            name, media_type = self.save(tmp.name)
+        except BaseException:
+            os.unlink(tmp.name)
+            raise
+        return FileResponse(tmp.name, media_type=media_type,
+                            headers={"Content-Disposition": attachment_disposition(name)},
+                            background=BackgroundTask(os.unlink, tmp.name))
+
+    def skip(self, page, reason: str) -> None:
+        """Leave a page out of the export, saying why (the job's result lists it)."""
+        self.skipped.append({"title": (page.get("content") or "").strip() or "Untitled", "reason": reason})
+
+    def summary(self) -> dict:
+        """The job's result: how many pages went in, which were left out and why."""
+        return {"pages": self.walked - len(self.skipped), "skipped": self.skipped}
 
     def render_ink_svgs(self, page_assets, prefix="assets/"):
         """Handwriting pictures for a rendered page: the Markdown names a
@@ -306,6 +329,14 @@ class _MarkdownBuilder(_Builder):
         arcname = self.filenames.get(page["id"]) \
             or f"{slugify(page.get('content'), page['id'])}.md"
         self.entries.append((arcname, md))
+
+    def save(self, dest, progress=jobs.no_progress):
+        # One page (no folder) referencing no local files is just its .md.
+        if self.opts.get("folder_scope") is None and not self.assets and len(self.entries) == 1:
+            Path(dest).write_bytes(self.entries[0][1].encode("utf-8"))
+            self.discard()
+            return f"{self.base}.md", "text/markdown; charset=utf-8"
+        return super().save(dest, progress)
 
 
 class _ObsidianBuilder(_Builder):
@@ -432,7 +463,7 @@ class _ZoteroBuilder(_Builder):
                             log(f"zotero export: annotating '{title}' failed, exporting bare PDF: {e}")
                             data = pdf_path.read_bytes()
                 pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
-                self.blobs.append((f"{self.base}/{pdf_arc}", data))
+                self.spool(f"{self.base}/{pdf_arc}", data)
 
         images = []
         if include_pdf:
@@ -443,7 +474,7 @@ class _ZoteroBuilder(_Builder):
                         continue
                     seen.add(fname)
                     arc = f"files/{n}/{fname}"
-                    self.blobs.append((f"{self.base}/{arc}", (self.uploads_dir / fname).read_bytes()))
+                    self.files.append((f"{self.base}/{arc}", self.uploads_dir / fname))
                     images.append({"path": arc, "title": fname,
                                    "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
                                            or "application/octet-stream"})
@@ -620,9 +651,9 @@ def _block_ref_resolver(conn):
 class _NotesPdfBuilder(_Builder):
     """The notes themselves as a PDF document (``pdf_document``): title,
     metadata, the block tree typeset as nested bullets with quotes, code,
-    images and math. The only builder whose download isn't a zip — one PDF
-    holds every selected page, each starting on a fresh sheet — so it
-    overrides ``response`` instead of accumulating zip parts."""
+    images and math. Its download isn't a zip — one PDF holds every
+    selected page, each starting on a fresh sheet — so it overrides
+    ``save`` instead of accumulating zip parts."""
     suffix = "-notes.pdf"
 
     def __init__(self, ws, base, opts):
@@ -634,7 +665,7 @@ class _NotesPdfBuilder(_Builder):
 
     def render(self) -> bytes:
         try:
-            # The request's connection is closed by the time render() runs,
+            # The walk's connection is closed by the time render() runs,
             # so [[ref]]/![[embed]] resolution opens its own (read-only use).
             with connect_pages_db(self.ws) as conn:
                 return render_document(
@@ -645,12 +676,58 @@ class _NotesPdfBuilder(_Builder):
             log(f"notes PDF export failed for '{self.base}': {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
 
-    def response(self) -> Response:
-        return Response(
-            content=self.render(),
-            media_type="application/pdf",
-            headers={"Content-Disposition": _content_disposition(f"{self.base}{self.suffix}")},
-        )
+    def save(self, dest, progress=jobs.no_progress):
+        progress(phase="typesetting")
+        Path(dest).write_bytes(self.render())
+        return f"{self.base}{self.suffix}", "application/pdf"
+
+
+class _AnnotatedPdfBuilder(_Builder):
+    """Each page's PDF with its highlights (and handwriting) as standard
+    annotations and, with the notes switch, its notes printed on the page
+    (``annotated_page_pdf``: what /pages/{id}/export-pdf downloads). One
+    page: that PDF itself. A folder: a zip of them, ``<dir>/<Title>.pdf``,
+    the directories mirroring the folder labels below the exported folder
+    (``obsidian_export.page_dir``). A page with sheets of paper and no PDF
+    is exported as its sheets; a page with neither is left out, and the
+    result lists it."""
+    suffix = "-annotated.zip"
+
+    def __init__(self, ws, base, opts):
+        super().__init__(ws, base, opts)
+        self.used = set()
+        self.single_name = ""
+
+    def add_page(self, n, rows, page):
+        try:
+            data, filename, _, _ = annotated_page_pdf(
+                self.ws, [block_to_dict(r) for r in rows], page["id"], highlights=self.opts["highlights"],
+                notes=self.opts["notes"], author=self.opts.get("author", ""))
+        except HTTPException as e:
+            self.skip(page, str(e.detail))
+            return
+        directory = page_dir((page.get("properties") or {}).get("folder"), self.opts.get("folder_scope"))
+        stem = vault_name(page.get("content") or "") or "Untitled"
+        name, count = stem, 1
+        while f"{directory}{name}.pdf".lower() in self.used:
+            count += 1
+            name = f"{stem} {count}"
+        self.used.add(f"{directory}{name}.pdf".lower())
+        self.single_name = filename
+        self.spool(f"{directory}{name}.pdf", data)
+
+    def save(self, dest, progress=jobs.no_progress):
+        if not self.files:
+            reasons = {s["reason"] for s in self.skipped}
+            raise HTTPException(status_code=400, detail=next(iter(reasons)) if len(reasons) == 1 else
+                                "none of these pages has a PDF stored on the server")
+        if self.opts.get("folder_scope") is None:  # one page: the PDF itself
+            try:
+                shutil.copyfile(self.files[0][1], dest)
+            finally:
+                self.discard()
+            return self.single_name, "application/pdf"
+        return super().save(dest, progress)
 
 
 _BUILDERS = {
@@ -660,34 +737,37 @@ _BUILDERS = {
     "zotero-rdf": _ZoteroBuilder,
     "gamma": _GammaBuilder,
     "notes-pdf": _NotesPdfBuilder,
+    "annotated-pdf": _AnnotatedPdfBuilder,
 }
 
 
-def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict,
-                progress: dict | None = None) -> _Builder:
+def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict, progress=jobs.no_progress) -> _Builder:
     """The shared export driver: one pass over the selected pages, each handed
-    to the mode's builder. ``progress`` is the /folders/export-progress dict."""
+    to the mode's builder. ``progress`` (a job's report) hears each page."""
     cls = _BUILDERS.get(mode)
     if cls is None:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
     builder = cls(ws, base, opts)
-    builder.begin(conn, root_ids)
-    for n, root_id in enumerate(root_ids, 1):
-        rows = fetch_subtree(conn, root_id)
-        page = build_tree(rows, root_id)
-        if page is None:
-            continue
-        if progress is not None:
-            progress["title"] = (page.get("content") or "").strip()
-        builder.add_page(n, rows, page)
-        if progress is not None:
-            progress["done"] += 1
+    try:
+        builder.begin(conn, root_ids)
+        for n, root_id in enumerate(root_ids, 1):
+            rows = fetch_subtree(conn, root_id)
+            page = build_tree(rows, root_id)
+            if page is None:
+                continue
+            progress(done=n - 1, total=len(root_ids), unit="pages", item=(page.get("content") or "").strip())
+            builder.add_page(n, rows, page)
+            builder.walked += 1
+        progress(done=len(root_ids), total=len(root_ids), unit="pages", item="")
+    except BaseException:
+        builder.discard()
+        raise
     return builder
 
 
-def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None) -> dict:
+def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="") -> dict:
     return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
-            "folder_scope": folder_scope}
+            "folder_scope": folder_scope, "author": author}
 
 
 def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _Builder:
@@ -734,7 +814,14 @@ def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, autho
         rows = fetch_subtree(conn, block_id) if page_root_id(conn, block_id) else []
     if not rows:
         raise HTTPException(status_code=404, detail="page not found")
-    blocks = [block_to_dict(r) for r in rows]
+    return annotated_page_pdf(ws, [block_to_dict(r) for r in rows], block_id,
+                              highlights=highlights, notes=notes, author=author)
+
+
+def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights=True, notes=False,
+                       author="") -> tuple[bytes, str, int, int]:
+    """``annotated_pdf`` of a page whose blocks (``block_to_dict``, the root
+    among them) are already read — what a folder export feeds it."""
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
     page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
@@ -794,17 +881,14 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     Obsidian vault zip: the page as ``<folder>/<Title>.md`` with wikilinks,
     the PDF and images under attachments/), ``notes-pdf`` (the
     notes typeset as their own PDF document — the one format a page without a
-    PDF can still export as one), ``logseq-graph`` (a complete Logseq file
-    graph, both switches pinned on), ``zotero-rdf`` (a one-item Zotero RDF
-    library), or ``gamma`` (a scoped account backup any Gamma imports via
-    /api/import-data?mode=merge)."""
+    PDF can still export as one), ``annotated-pdf`` (the page's PDF with its
+    annotations, what /export-pdf answers), ``logseq-graph`` (a complete
+    Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
+    Zotero RDF library), or ``gamma`` (a scoped account backup any Gamma
+    imports via /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
-    builder = page_builder(ws, block_id, mode, _export_opts(pdf, highlights, notes),
-                           share_scope(request))
-    # A single readable page referencing no local assets is just the .md.
-    if mode == "readable" and not builder.assets:
-        return _md_response(builder.entries[0][1], builder.base)
-    return builder.response()
+    opts = _export_opts(pdf, highlights, notes, author=request.state.user or "")
+    return page_builder(ws, block_id, mode, opts, share_scope(request)).response()
 
 
 # Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
@@ -825,25 +909,11 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": _content_disposition(filename),
+            "Content-Disposition": attachment_disposition(filename),
             "X-Annotations-Written": str(written),
             "X-Notes-Rendered": str(drawn),
         },
     )
-
-
-# Per-workspace progress of a running /folders/export, for the frontend's percent
-# display (same in-memory pattern as auth.py's backup _export_progress).
-_folder_export_progress: dict[str, dict] = {}
-
-
-@router.get("/folders/export-progress")
-def folder_export_progress(request: Request):
-    scope = share_scope(request)
-    if scope is not None and not scope.lists_library:
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
-    ws = resolve_ws(request)
-    return _folder_export_progress.get(ws) or {"active": False, "total": 0, "done": 0}
 
 
 def _page_in_folder(props: dict, name: str) -> bool:
@@ -854,6 +924,23 @@ def _page_in_folder(props: dict, name: str) -> bool:
     return False
 
 
+def _folder_name(name: str) -> str:
+    name = (name or "").strip().strip("/")
+    if not name:
+        raise HTTPException(status_code=400, detail="folder name required")
+    return name
+
+
+def _folder_pages(conn, name: str) -> list[str]:
+    """The ids of the pages filed in folder ``name`` or below it."""
+    roots = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root'").fetchall()
+    return [b["id"] for b in (block_to_dict(r) for r in roots) if _page_in_folder(b["properties"], name)]
+
+
+def _folder_base(name: str) -> str:
+    return slugify(name.replace("/", "-"), "")
+
+
 @router.get("/folders/export")
 def export_folder(request: Request, name: str, mode: str = "readable", pdf: int = 1,
                   highlights: int = 1, notes: int = 1):
@@ -861,36 +948,80 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
     export format (see the _Builder classes): ``readable`` (one .md per page +
     a shared assets/ folder), ``obsidian`` (a vault: subfolders as
     directories, attachments/), ``notes-pdf`` (every page's notes in one PDF
-    document, each starting on a fresh sheet), ``logseq-graph`` (a complete
-    Logseq file graph), ``zotero-rdf`` (a Zotero RDF library — subfolders
-    become collections), or ``gamma`` (a scoped account backup any Gamma
-    imports via /api/import-data?mode=merge). Progress:
-    /folders/export-progress."""
-    name = (name or "").strip().strip("/")
-    if not name:
-        raise HTTPException(status_code=400, detail="folder name required")
+    document, each starting on a fresh sheet), ``annotated-pdf`` (each
+    page's annotated PDF, the subfolders as directories), ``logseq-graph``
+    (a complete Logseq file graph), ``zotero-rdf`` (a Zotero RDF library —
+    subfolders become collections), or ``gamma`` (a scoped account backup
+    any Gamma imports via /api/import-data?mode=merge). The web app exports
+    through a job instead (``POST /api/jobs/export``); this is the share
+    view's and the scripts' download."""
+    name = _folder_name(name)
     # A page share never reaches a whole folder; a folder share exports its
     # own folder or a subfolder of it.
     scope = share_scope(request)
     if scope is not None and not scope.allows_folder(name):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
-    folder_slug = slugify(name.replace("/", "-"), "")
-    opts = _export_opts(pdf, highlights, notes, folder_scope=name)
+    opts = _export_opts(pdf, highlights, notes, folder_scope=name, author=request.state.user or "")
     with connect_pages_db(ws) as conn:
-        roots = conn.execute(
-            f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root'"
-        ).fetchall()
-        matches = [b for b in (block_to_dict(r) for r in roots)
-                   if _page_in_folder(b["properties"], name)]
-        if not matches:
+        ids = _folder_pages(conn, name)
+        if not ids:
             raise HTTPException(status_code=404, detail="no pages in that folder")
-
-        prog = {"active": True, "total": len(matches), "done": 0, "title": ""}
-        _folder_export_progress[ws] = prog
-        try:
-            builder = _run_export(conn, ws, mode, [b["id"] for b in matches],
-                                  folder_slug, opts, progress=prog)
-        finally:
-            prog["active"] = False
+        builder = _run_export(conn, ws, mode, ids, _folder_base(name), opts)
     return builder.response()
+
+
+class ExportJob(BaseModel):
+    page_id: str = ""   # a page …
+    folder: str = ""    # … or a folder label path (its pages and its subfolders')
+    mode: str = "readable"
+    pdf: bool = True
+    highlights: bool = True
+    notes: bool = True
+
+
+@router.post("/jobs/export")
+def start_export_job(payload: ExportJob, request: Request):
+    """A page or a folder in any export format (``mode``, as for the
+    downloads above) as a background job whose file is the download (kind
+    ``export``, docs/dev/tasks.md). Any member of the workspace may export.
+    A folder's pages are read again when the job runs, so a queued export
+    holds what the folder holds then; its result counts the pages and lists
+    the ones left out (an annotated-PDF export skips pages without a PDF)."""
+    user = require_user(request)
+    ws = require_ws(request)
+    mode = payload.mode
+    if mode not in _BUILDERS:
+        raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
+    folder = _folder_name(payload.folder) if payload.folder else ""
+    page_id = payload.page_id
+    with connect_pages_db(ws) as conn:
+        if folder:
+            if not _folder_pages(conn, folder):
+                raise HTTPException(status_code=404, detail="no pages in that folder")
+            title, base = folder, _folder_base(folder)
+        elif page_id:
+            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+            if row is None or page_root_id(conn, page_id) is None:  # none, or in Recently deleted
+                raise HTTPException(status_code=404, detail="page not found")
+            title, base = (row[0] or "").strip() or "Untitled", slugify(row[0], page_id)
+        else:
+            raise HTTPException(status_code=400, detail="name a page or a folder to export")
+    opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user)
+
+    def run(job):
+        with connect_pages_db(ws) as conn:
+            ids = _folder_pages(conn, folder) if folder else [page_id]
+            if not ids:
+                raise HTTPException(status_code=404, detail="the folder holds no pages any more")
+            if not folder and page_root_id(conn, page_id) is None:
+                raise HTTPException(status_code=404, detail="the page was deleted")
+            builder = _run_export(conn, ws, mode, ids, base, opts, job.progress)
+        name, media_type = builder.save(job.artifact_path, job.progress)
+        job.set_artifact(name, media_type)
+        return builder.summary()
+
+    return jobs.start("export", owner=user, ws=ws, run=run, artifact=True, title=f"Export of {title}",
+                      params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
+                              "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
+                              "notes": payload.notes})

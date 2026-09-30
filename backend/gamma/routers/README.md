@@ -4,7 +4,9 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 
 | file | routes | does |
 |------|--------|------|
-| `auth.py`     | `/api/login`, `/logout`, `/session`, `/export`, `/import-data` | session cookies, workspace backups |
+| `auth.py`     | `/api/login`, `/logout`, `/session`, `/accounts` | session cookies, the account directory |
+| `ws_backups.py` | `/api/workspaces/{id}/backups*`, `/export`, `/export-all`, `/import-data`, `/jobs/workspace-export`, `/jobs/snapshot`, `/jobs/restore*` | workspace backups: snapshots, downloads, restores, and their background jobs |
+| `jobs.py`     | `/api/jobs`, `/jobs/{id}*`          | Background tasks: list, read, stop, remove and download jobs (`gamma/jobs.py`; each kind starts in its own router) |
 | `workspaces.py` | `/api/workspaces/*`               | workspaces: list/create/rename/delete, members and roles |
 | `admin.py`    | `/api/admin/*`                      | accounts, server settings, every workspace, the server log |
 | `blocks.py`   | `/api/blocks/*`                     | the block tree (CRUD, children, subtree, by-doc) |
@@ -17,9 +19,10 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `chats.py`    | `/api/chats/*`                      | saved per-page chat history (workspace data) |
 | `collab.py`   | `/api/pages/{id}/ops`, `/api/ws/page/{id}` | the op write path + the page websocket |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |
-| `search.py`   | `/api/pdf-search`, `/tasks`         | FTS5 index over PDF text (pypdfium2, normalized via `gamma/textnorm.py`) |
+| `search.py`   | `/api/search`, `/pdf-search`, `/search-reindex` | FTS5 index over PDF text (pypdfium2, normalized via `gamma/textnorm.py`), built by the workspace's indexing job |
 | `shares.py`   | `/api/shares/*`                     | share tokens for public read-only views |
-| `imports.py`  | `/api/import/*`                     | Logseq import + embedded-PDF-annotation import |
+| `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports (the import itself a job) |
+| `export.py`   | `/api/pages/{id}/export*`, `/folders/export`, `/jobs/export` | every export format, as a download or a job |
 
 Gotchas:
 - **Route order** for `/api/blocks/*`: static prefixes (`by-doc`, `children`, `subtree`) must register **before** `/{block_id}`.

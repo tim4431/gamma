@@ -859,6 +859,52 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Settings → Workspaces → Data: the export and the merge are background
+  // jobs (docs/dev/tasks.md) — the export's file downloads by itself once
+  // it is ready, a merge into the open workspace reloads the library.
+  const openRow = (page) => page.locator(".settingsPane .aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "open" }) }).first();
+  await step("settings: a workspace export runs in Background tasks and downloads itself", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const download = page.waitForEvent("download", { timeout: 30000 });
+      await page.locator(".ctxMenuItem", { hasText: "Export databases only (.zip)" }).click();
+      const file = await download;
+      assert(/^gamma-export-db-.*\.zip$/.test(file.suggestedFilename()), `export name: ${file.suggestedFilename()}`);
+      assertEq(fs.readFileSync(await file.path()).subarray(0, 2).toString(), "PK");
+      await page.click("button[aria-label='Background tasks']");
+      const row = page.locator(".taskRow", { hasText: "Database export of" }).first();
+      await row.locator(".taskStatus.done").waitFor();
+      assert((await row.innerText()).includes("gamma-export-db-"), "the finished row names its file");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a backup merged in from Workspaces runs as a job and the library reloads with it", async () => {
+    const donor = await user.api("/api/workspaces", { method: "POST", body: { name: "Merge donor" } });
+    await user.api(`/api/blocks?ws=${donor.id}`, { method: "POST", body: { parent_id: "root", content: "Merged in by a job" } });
+    const zip = Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer());
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".ctxMenuItem", { hasText: "Merge a backup into it…" }).click();
+      await (await chooser).setFiles({ name: "donor.zip", mimeType: "application/zip", buffer: zip });
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await page.locator(".confirmModal").getByRole("button", { name: "Merge", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      await page.getByText("Merged in by a job", { exact: true }).first().waitFor();
+      const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "donor.zip");
+      assertEq(merged?.state, "done");
+      assertEq(merged.params.mode, "merge");
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: prompt and connection drafts have save, cancel, and dismissal protection", async () => {
     const { ctx, page } = await setup();
     try {

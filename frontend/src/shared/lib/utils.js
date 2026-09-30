@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
 import { t, T } from "../../shared/i18n/i18n.js";
+import { fmtBytes } from "./format.js";
 
 const API = "/api";
 
@@ -166,13 +167,6 @@ window.fetch = function (input, options) {
 // One id generator for blocks, uploads and tasks alike (blockModel owns it
 // so the pure model stays import-free).
 const makeId = makeBlockId;
-
-function fmtBytes(n) {
-  if (n == null) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1048576) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1048576).toFixed(1)} MB`;
-}
 
 async function sha256(text) {
   const data = new TextEncoder().encode(text);

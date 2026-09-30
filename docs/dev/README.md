@@ -71,6 +71,7 @@ These describe the implementation unless explicitly marked as plans.
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
+| Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folder labels, page cards, recents, and trash | [Home library](home_library.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |

@@ -1,8 +1,10 @@
-"""Short-lived import uploads shared by preview and commit.
+"""Short-lived import uploads shared by the review's preview and its import.
 
-Tokens are bound to an account and workspace. A filesystem claim prevents
-double submission across workers; successful reports survive a dropped response.
-No library content is written until commit. Cancelled/expired uploads are removed.
+Tokens are bound to an account and workspace. No library content is written
+until the import, which runs as a background job (``POST /api/jobs/import``,
+routers/imports.py): the job holds a filesystem claim while it reads the
+upload, keeps the report as its result and removes the upload once done.
+Cancelled and expired uploads are removed.
 """
 import hashlib
 import json
@@ -98,6 +100,6 @@ def claim(token, user, ws):
 def discard(token, user, ws):
     with claim(token, user, ws) as (path, _):
         # Remove payload while claimed; the small token directory follows.
-        for name in ("upload", "metadata.json", "result.json"):
+        for name in ("upload", "metadata.json"):
             (path / name).unlink(missing_ok=True)
     _remove(path)

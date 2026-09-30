@@ -4,6 +4,7 @@
 .importReviewHeader strong { overflow-wrap: anywhere; }
 .importReviewHeader p, .importDestination { color: var(--text-muted); font-size: var(--fs-sm); margin: 6px 0; }
 .importReviewColumns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.importReviewColumns.single { grid-template-columns: minmax(0, 1fr); } /* a summary opened again: no upload to show */
 .importReviewColumns section { border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; display: flex; flex-direction: column; }
 .importReviewColumns h3 { font-size: var(--fs-md); margin: 14px 14px 8px; }
 .importDestination { margin: 0 14px 8px; overflow-wrap: anywhere; }

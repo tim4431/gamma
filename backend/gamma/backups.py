@@ -75,14 +75,16 @@ def _upload_dirs() -> list[Path]:
     return dirs
 
 
-def create(label: str, uploads: bool = False, *, auto: bool = False) -> dict:
+def create(label: str, uploads: bool = False, *, auto: bool = False, progress=None) -> dict:
     """Snapshot the data directory into ``backups/<time>-<label>/`` (relative
     paths kept) with a manifest. ``uploads`` copies the upload files too (a
     file removed while the copy runs is left out, never a failed backup).
     ``auto`` marks the migration runner's snapshots, the only ones
-    ``prune_backups`` removes. Returns the backup's info dict; raises
-    ValueError on a bad label and OSError when the copy cannot be written
-    (nothing is left behind then)."""
+    ``prune_backups`` removes. ``progress`` (a background job's report,
+    gamma/jobs.py) hears each database and each file copied. Returns the
+    backup's info dict; raises ValueError on a bad label and OSError when
+    the copy cannot be written (nothing is left behind then)."""
+    progress = progress or (lambda **_: None)
     from .migrations import data_version  # local: migrations imports this module
 
     if not LABEL_RE.match(label or ""):
@@ -99,16 +101,21 @@ def create(label: str, uploads: bool = False, *, auto: bool = False) -> dict:
     checks = {}
     try:
         files = []
-        for src in integrity.db_files():
+        databases = integrity.db_files()
+        for n, src in enumerate(databases):
             rel = src.relative_to(config.DATA_DIR)
+            progress(phase="databases", done=n, total=len(databases), unit="files", item=rel.as_posix())
             checks[rel.as_posix()] = snapshot_db(src, work / rel)
             files.append(rel.as_posix())
         upload_files = 0
         if uploads:
-            for src in _upload_dirs():
+            listed = [(src, sorted(src.iterdir())) for src in _upload_dirs()]
+            total = sum(len(names) for _, names in listed)
+            for src, names in listed:
                 dest = work / src.relative_to(config.DATA_DIR)
                 dest.mkdir(parents=True, exist_ok=True)
-                for f in src.iterdir():
+                for f in names:
+                    progress(phase="files", done=upload_files, total=total, unit="files")
                     try:
                         if f.is_file():
                             shutil.copy2(f, dest / f.name)

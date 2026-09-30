@@ -85,7 +85,7 @@ class VaultContext:
         """``pages``: (page id, title, folder label) in export order."""
         used = set()
         for pid, title, folder in pages:
-            directory = _page_dir(folder, folder_scope)
+            directory = page_dir(folder, folder_scope)
             stem = vault_name(title)
             name = stem
             n = 1
@@ -131,7 +131,10 @@ class VaultContext:
         return marker
 
 
-def _page_dir(folder_label, folder_scope):
+def page_dir(folder_label, folder_scope):
+    """The directory a page's file goes in (``"a/b/"``, or ``""``): its first
+    folder label below ``folder_scope`` (the exported folder), each segment
+    a valid file name. Shared with the annotated-PDF folder export."""
     folders = [t.strip() for t in (folder_label or "").split(",") if t.strip()]
     if folder_scope:
         folders = [f[len(folder_scope) + 1:] for f in folders if f.startswith(folder_scope + "/")]

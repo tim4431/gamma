@@ -1,7 +1,11 @@
-"""Import Logseq PDF-highlight exports (PDF + EDN + optional MD), annotations
-embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), and whole
-Zotero libraries (a zip of the "Zotero RDF" export)."""
+"""Imports: Logseq PDF-highlight exports (PDF + EDN + optional MD), annotations
+embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), Markdown
+notes, and whole libraries — a Zotero RDF export, a zip of Markdown notes, a
+Gamma export — through the reviewed import: the upload is staged and
+previewed (``/import/review``), then the chosen items are imported by a
+background job (``POST /api/jobs/import``, gamma/jobs.py)."""
 
+import hashlib
 import io
 import json
 import os
@@ -17,6 +21,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
+from .. import import_staging, jobs
 from ..auth import actor_of, require_user, require_ws
 from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
 from ..blocks_store import create_page, last_child_position, page_for_doc, page_root_id, write_lock
@@ -42,77 +47,102 @@ from ..workspaces import is_guest_workspace
 router = APIRouter(prefix="/api", tags=["import"])
 
 
-class ReviewedImport(BaseModel):
-    selected: list[str]
+# --- The reviewed import: upload → review → import (a background job) -----------
+# Each source is a preview and a commit over a binary file (the staged
+# upload, or a plain endpoint's file) and the review's metadata (filename,
+# folder, strip): ``preview(ws, data, meta)`` and ``commit(ws, actor, data,
+# meta, selection, progress)`` — ``selection`` the chosen source ids (None:
+# everything), ``progress`` a background job's report (gamma/jobs.py).
 
-
-def _review_adapter(source):
-    adapters = {
-        "zotero": (preview_zotero, import_zotero),
-        "markdown-zip": (preview_markdown_zip, import_markdown_zip_endpoint),
-        "markdown-file": (preview_markdown_file, import_reviewed_markdown_file),
-        "gamma": (preview_gamma, import_selected_gamma),
+def _review_source(source):
+    sources = {
+        "zotero": (_preview_zotero, _commit_zotero),
+        "markdown-zip": (_preview_markdown_zip, _commit_markdown_zip),
+        "markdown-file": (_preview_markdown_file, _commit_markdown_file),
+        "gamma": (_preview_gamma, _commit_gamma),
     }
-    if source not in adapters:
+    if source not in sources:
         raise HTTPException(status_code=400, detail="unsupported import source")
-    return adapters[source]
-
-
-def _run_review_adapter(path, metadata, request, selection=None):
-    preview, commit = _review_adapter(metadata["source"])
-    with (path / "upload").open("rb") as data:
-        kwargs = {"request": request, "file": UploadFile(file=data, filename=metadata["filename"])}
-        if metadata["source"] != "gamma":
-            kwargs["folder"] = metadata["folder"]
-        if selection is None:
-            return preview(**kwargs)
-        kwargs["selected"] = json.dumps(selection)
-        if metadata["source"] == "zotero":
-            kwargs["strip"] = metadata["strip"]
-        return commit(**kwargs)
+    return sources[source]
 
 
 @router.post("/import/review")
 def upload_import_review(request: Request, file: UploadFile = File(...), source: str = Form(...),
                          folder: str = Form(""), strip: bool = Form(False)):
-    from .. import import_staging
+    """Stage the upload and answer the source's preview with the review's
+    ``review_id``: nothing is imported until ``POST /api/jobs/import``."""
     ws = require_ws(request, write=True)
-    _review_adapter(source)
+    preview, _ = _review_source(source)
     token = import_staging.create(file, user=request.state.user, ws=ws, source=source, folder=folder, strip=strip)
     try:
         path, metadata = import_staging.get(token, request.state.user, ws)
-        report = _run_review_adapter(path, metadata, request)
+        with (path / "upload").open("rb") as data:
+            report = preview(ws, data, metadata)
         return {**report, "review_id": token}
     except Exception:
         import_staging.discard(token, request.state.user, ws)
         raise
 
 
-@router.post("/import/review/{token}")
-def commit_import_review(token: str, payload: ReviewedImport, request: Request):
-    from .. import import_staging
-    ws = require_ws(request, write=True)
-    with import_staging.claim(token, request.state.user, ws) as (path, metadata):
-        result_file = path / "result.json"
-        if result_file.exists():
-            saved = json.loads(result_file.read_text(encoding="utf-8"))
-            if set(saved["selected"]) != set(payload.selected):
-                raise HTTPException(status_code=409, detail="this review was already imported with a different selection")
-            return saved["report"]
-        report = _run_review_adapter(path, metadata, request, payload.selected)
-        pending = path / "result.pending"
-        pending.write_text(json.dumps({"selected": payload.selected, "report": report}), encoding="utf-8")
-        pending.replace(result_file)
-        (path / "upload").unlink(missing_ok=True)
-        return report
-
-
 @router.delete("/import/review/{token}")
 def discard_import_review(token: str, request: Request):
-    from .. import import_staging
     ws = require_ws(request, write=True)
     import_staging.discard(token, request.state.user, ws)
     return {"ok": True}
+
+
+class ImportJob(BaseModel):
+    review_id: str
+    selected: list[str]
+
+
+def _selection_digest(selected) -> str:
+    return hashlib.sha256("\n".join(sorted(set(selected))).encode("utf-8")).hexdigest()
+
+
+@router.post("/jobs/import")
+def start_import_job(payload: ImportJob, request: Request):
+    """Import the selected items of a staged review as a background job
+    (kind ``import``, docs/dev/tasks.md); its result is the import's report.
+    Asking again for the same review answers the job already started — 409
+    when it was started with another selection."""
+    user = require_user(request)
+    ws = require_ws(request, write=True)
+    token, digest = payload.review_id, _selection_digest(payload.selected)
+
+    def same_review(job):
+        if job["params"].get("digest") != digest:
+            raise HTTPException(status_code=409, detail="this review was already imported with a different selection")
+        return job
+
+    prior = jobs.latest(user, "import", token)
+    if prior is not None and prior["state"] in ("queued", "running", "done"):
+        return same_review(prior)
+    path, metadata = import_staging.get(token, user, ws)
+    upload = path / "upload"
+    if not upload.exists():
+        raise HTTPException(status_code=410, detail="this review was already imported; choose the file again")
+    _, commit = _review_source(metadata["source"])
+    selection, actor = set(payload.selected), actor_of(request)
+
+    def run(job):
+        try:
+            with import_staging.claim(token, user, ws) as (staged, meta):
+                with (staged / "upload").open("rb") as data:
+                    return commit(ws, actor, data, meta, selection, job.progress)
+        finally:  # done, failed or stopped, the review is over: its upload goes
+            try:
+                import_staging.discard(token, user, ws)
+            except HTTPException:
+                pass  # already gone (expired)
+
+    try:
+        return jobs.start("import", owner=user, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
+                          params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
+                                  "folder": metadata["folder"], "size": upload.stat().st_size,
+                                  "selected": len(selection), "digest": digest})
+    except jobs.Busy as busy:  # a second start raced this one
+        return same_review(busy.job)
 
 
 @router.post("/import/logseq")
@@ -241,6 +271,84 @@ def import_markdown(request: Request, file: UploadFile = File(...),
     return {"ok": True, **result}
 
 
+def _markdown_zip(data, ws, folder, *, preview=False, selection=None, progress=jobs.no_progress):
+    """A zip of Markdown notes → one page per .md (see markdown_zip_import)."""
+    try:
+        zf = zipfile.ZipFile(data)
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="not a zip file")
+    with zf, connect_pages_db(ws) as conn:  # the import commits page by page
+        return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, preview=preview, selected=selection,
+                                                  progress=progress)}
+
+
+def _preview_markdown_zip(ws, data, meta):
+    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True)
+
+
+def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _markdown_zip(data, ws, meta.get("folder", ""), selection=selection, progress=progress)
+
+
+def _markdown_file(ws, data, meta, *, preview=False, selection=None, progress=jobs.no_progress):
+    """The review flow treats a single note as a one-entry archive."""
+    raw = data.read(MAX_MARKDOWN_BYTES + 1)
+    if len(raw) > MAX_MARKDOWN_BYTES:
+        raise HTTPException(status_code=413, detail="Markdown file exceeds 5 MB")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(display_filename(meta.get("filename"), "note.md"), raw)
+    buf.seek(0)
+    return _markdown_zip(buf, ws, meta.get("folder", ""), preview=preview, selection=selection, progress=progress)
+
+
+def _preview_markdown_file(ws, data, meta):
+    return _markdown_file(ws, data, meta, preview=True)
+
+
+def _commit_markdown_file(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _markdown_file(ws, data, meta, selection=selection, progress=progress)
+
+
+def _gamma_zip(ws, data, work):
+    """Refuses a guest's workspace; spools the export to ``work``."""
+    if is_guest_workspace(ws):
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+    path = Path(work) / "import.zip"
+    with path.open("wb") as dest:
+        shutil.copyfileobj(data, dest)
+    return path
+
+
+def _preview_gamma(ws, data, meta):
+    from .. import ws_backup
+    with tempfile.TemporaryDirectory(prefix="gamma-import-review-") as td:
+        try:
+            return {"ok": True, **ws_backup.preview_zip(ws, _gamma_zip(ws, data, td))}
+        except ws_backup.BackupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _commit_gamma(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    """A Gamma export's selected pages merged in (``restore_zip`` merge)."""
+    from .. import ws_backup
+    if selection is None:
+        raise HTTPException(status_code=400, detail="review and select items before importing")
+    with tempfile.TemporaryDirectory(prefix="gamma-import-review-") as td:
+        try:
+            return {"ok": True, **ws_backup.restore_zip(ws, _gamma_zip(ws, data, td), "merge", selected=selection,
+                                                        by=actor, progress=progress)}
+        except ws_backup.BackupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _meta(file: UploadFile, folder: str = "", strip: bool = False) -> dict:
+    """A plain endpoint's upload described like a staged review's metadata."""
+    return {"filename": file.filename or "", "folder": folder, "strip": strip}
+
+
+# The sources as plain endpoints (one request each; the web app goes
+# through the review above).
 @router.post("/import/markdown-zip")
 def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
                                  folder: str = Form(""), selected: str | None = Form(None)):
@@ -249,82 +357,35 @@ def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
     vault export, or any zipped folder of notes. ``folder`` prefixes every
     page's folder label."""
     ws = require_ws(request, write=True)
-    try:
-        zf = zipfile.ZipFile(file.file)
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="not a zip file")
-    with zf, connect_pages_db(ws) as conn:  # the import commits page by page
-        report = import_markdown_zip(ws, zf, conn, folder, selected=parse_selection(selected))
-    return {"ok": True, **report}
+    return _commit_markdown_zip(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
 @router.post("/import/markdown-zip/preview")
 def preview_markdown_zip(request: Request, file: UploadFile = File(...), folder: str = Form("")):
-    ws = require_ws(request, write=True)
-    try:
-        zf = zipfile.ZipFile(file.file)
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="not a zip file")
-    with zf, connect_pages_db(ws) as conn:
-        return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, preview=True)}
-
-
-def _review_markdown_file(request, file, folder, selected=None, preview=False):
-    """The review flow treats a single note as a one-entry archive."""
-    ws = require_ws(request, write=True)
-    raw = file.file.read(MAX_MARKDOWN_BYTES + 1)
-    if len(raw) > MAX_MARKDOWN_BYTES:
-        raise HTTPException(status_code=413, detail="Markdown file exceeds 5 MB")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(display_filename(file.filename, "note.md"), raw)
-    buf.seek(0)
-    with zipfile.ZipFile(buf) as zf, connect_pages_db(ws) as conn:
-        report = import_markdown_zip(ws, zf, conn, folder, preview=preview,
-                                     selected=parse_selection(selected))
-    return {"ok": True, **report}
+    return _preview_markdown_zip(require_ws(request, write=True), file.file, _meta(file, folder))
 
 
 @router.post("/import/markdown-file/preview")
 def preview_markdown_file(request: Request, file: UploadFile = File(...), folder: str = Form("")):
-    return _review_markdown_file(request, file, folder, preview=True)
+    return _preview_markdown_file(require_ws(request, write=True), file.file, _meta(file, folder))
 
 
 @router.post("/import/markdown-file")
 def import_reviewed_markdown_file(request: Request, file: UploadFile = File(...),
                                  folder: str = Form(""), selected: str | None = Form(None)):
-    return _review_markdown_file(request, file, folder, selected)
-
-
-def _review_gamma(request, file, selected=None, preview=False):
-    from .. import ws_backup
     ws = require_ws(request, write=True)
-    if is_guest_workspace(ws):
-        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
-    with tempfile.TemporaryDirectory(prefix="gamma-import-review-") as td:
-        path = Path(td) / "import.zip"
-        with path.open("wb") as dest:
-            shutil.copyfileobj(file.file, dest)
-        try:
-            if preview:
-                return {"ok": True, **ws_backup.preview_zip(ws, path)}
-            selection = parse_selection(selected)
-            if selection is None:
-                raise HTTPException(status_code=400, detail="review and select items before importing")
-            return {"ok": True, **ws_backup.restore_zip(ws, path, "merge", selected=selection,
-                                                        by=request.state.user or "")}
-        except ws_backup.BackupError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+    return _commit_markdown_file(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
 @router.post("/import/gamma/preview")
 def preview_gamma(request: Request, file: UploadFile = File(...)):
-    return _review_gamma(request, file, preview=True)
+    return _preview_gamma(require_ws(request, write=True), file.file, _meta(file))
 
 
 @router.post("/import/gamma")
 def import_selected_gamma(request: Request, file: UploadFile = File(...), selected: str = Form(...)):
-    return _review_gamma(request, file, selected)
+    ws = require_ws(request, write=True)
+    return _commit_gamma(ws, actor_of(request), file.file, _meta(file), parse_selection(selected))
 
 
 class MarkdownBlocksRequest(BaseModel):
@@ -811,10 +872,9 @@ def _zotero_write_new(conn, staged, report, uploads):
     return [job for job in (_zotero_done(prep, report, uploads) for prep in written) if job], retry
 
 
-# Sync endpoint: zip + PyPDF2 work is CPU-bound; the threadpool keeps the loop free.
-def _open_zotero_zip(file):
+def _open_zotero_zip(data):
     try:
-        return zipfile.ZipFile(file.file)
+        return zipfile.ZipFile(data)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="not a zip file — zip the exported folder and upload that")
 
@@ -826,11 +886,17 @@ def _zotero_plan(zf):
         raise HTTPException(status_code=400, detail=f"could not read the Zotero export: {exc}")
 
 
+# Sync endpoints: zip + PyPDF2 work is CPU-bound; the threadpool keeps the loop free.
 @router.post("/import/zotero/preview")
 def preview_zotero(request: Request, file: UploadFile = File(...), folder: str = Form("")):
-    ws = require_ws(request, write=True)
-    prefix = clean_path(folder)
-    with _open_zotero_zip(file) as zf:
+    return _preview_zotero(require_ws(request, write=True), file.file, _meta(file, folder))
+
+
+def _preview_zotero(ws, data, meta):
+    """What importing the Zotero export would make of the library, without
+    storing a file or changing a page (merges within the zip simulated)."""
+    prefix = clean_path(meta.get("folder", ""))
+    with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
     pages, by_digest, by_key = {}, {}, {}
     # Simulate merges within this ZIP too, without storing files or changing pages.
@@ -888,19 +954,26 @@ def preview_zotero(request: Request, file: UploadFile = File(...), folder: str =
 def import_zotero(request: Request, file: UploadFile = File(...),
                   strip: bool = Form(False), folder: str = Form(""), selected: str | None = Form(None)):
     ws = require_ws(request, write=True)
-    selection = parse_selection(selected)
-    with _open_zotero_zip(file) as zf:
+    return _commit_zotero(ws, actor_of(request), file.file, _meta(file, folder, strip), parse_selection(selected))
+
+
+def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    """Import the Zotero export's selected items (None: all): pages upserted
+    item by item, new ones written ZOTERO_PAGES_PER_COMMIT at a time, then
+    the annotations embedded in their PDFs. A stopped job keeps what it
+    wrote (the staged new pages are written first)."""
+    strip = bool(meta.get("strip"))
+    with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        prefix = clean_path(folder)
+        prefix = clean_path(meta.get("folder", ""))
         uploads = ws_uploads_dir(ws)
         uploads.mkdir(parents=True, exist_ok=True)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
                   "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}
         annot_jobs = []
-        actor = actor_of(request)
         with connect_pages_db(ws) as conn:
             staged = []  # new pages, written ZOTERO_PAGES_PER_COMMIT at a time
 
@@ -913,13 +986,13 @@ def import_zotero(request: Request, file: UploadFile = File(...),
                 batch = staged[:]
                 staged.clear()
                 try:
-                    jobs, retry = _zotero_write_new(conn, batch, report, uploads)
+                    written, retry = _zotero_write_new(conn, batch, report, uploads)
                 except Exception as e:
                     log.warning(f"[zotero] {len(batch)} new page(s) failed: {e}")
                     for prep in batch:
                         skip(prep["item"], str(e))
                     return
-                annot_jobs.extend(jobs)
+                annot_jobs.extend(written)
                 for item in retry:  # made meanwhile: merge into that page
                     run(item)
 
@@ -941,13 +1014,17 @@ def import_zotero(request: Request, file: UploadFile = File(...),
                     log.warning(f"[zotero] item '{item['title'][:80]}' failed: {e}")
                     skip(item, str(e))
 
-            for item in items:
-                run(item)
-            flush()
+            try:
+                for n, item in enumerate(items):
+                    progress(done=n, total=len(items), unit="items", item=item["title"])
+                    run(item)
+            finally:
+                flush()  # a stop keeps the pages whose files are already stored
 
     # Annotations after the pages are committed — import_embedded_annotations
     # opens its own connections.
-    for block_id, pdf_path in annot_jobs:
+    for n, (block_id, pdf_path) in enumerate(annot_jobs):
+        progress(phase="annotations", done=n, total=len(annot_jobs), unit="files")
         try:
             result = import_embedded_annotations(ws, block_id, pdf_path, strip, actor)
             report["annotations_imported"] += result["imported"]

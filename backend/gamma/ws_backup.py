@@ -77,25 +77,29 @@ def _size(path: Path) -> int:
         return 0
 
 
+def _no_progress(**_) -> None:
+    """The progress report of a caller that does not watch (see gamma/jobs.py)."""
+
+
 def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label: str = "",
-              progress: dict | None = None, scheduled: bool = False, task_id: str = "",
-              auto: bool = False) -> dict:
+              progress=None, scheduled: bool = False, task_id: str = "", auto: bool = False) -> dict:
     """Write the workspace's backup zip to ``dest``. The databases are
     copied first and the uploads listed only after them, so every file the
     copied pages reference is on disk when the list is taken; a file that
     goes in between (an orphan sweep) is recorded in ``missing_uploads``,
     never a failed backup. Each database copy is quick-checked
     (``integrity`` in the manifest, and the workspace's latest check).
-    ``progress`` (a dict the caller shares with a poller) gets ``total`` /
-    ``done`` byte counts. Returns the manifest."""
+    ``progress`` (a background job's report, gamma/jobs.py) hears the bytes
+    written so far of the estimated total. Returns the manifest."""
     from . import workspaces  # local: workspaces imports seed, which imports db
 
+    progress = progress or _no_progress
     root = ws_dir(ws)
     uploads_dir = root / "uploads"
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
-    if progress is not None:
-        estimate = sum(_size(f) for f in uploads_dir.iterdir() if f.is_file()) if uploads and uploads_dir.is_dir() else 0
-        progress.update(total=sum(_size(f) for f in db_files) + estimate, done=0)
+    estimate = sum(_size(f) for f in uploads_dir.iterdir() if f.is_file()) if uploads and uploads_dir.is_dir() else 0
+    done, total = 0, sum(_size(f) for f in db_files) + estimate
+    progress(done=done, total=total, unit="bytes")
     info = workspaces.get(ws) or {}
     checks, stored, missing = {}, [], []
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
@@ -107,12 +111,11 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
             finally:
                 for side in (snap, Path(str(snap) + "-wal"), Path(str(snap) + "-shm")):
                     side.unlink(missing_ok=True)
-            if progress is not None:
-                progress["done"] += _size(src)
+            done += _size(src)
+            progress(done=done, total=total, unit="bytes")
         if uploads and uploads_dir.is_dir():
             listed = sorted(f for f in uploads_dir.iterdir() if f.is_file())
-            if progress is not None:
-                progress["total"] = progress["done"] + sum(_size(f) for f in listed)
+            total = done + sum(_size(f) for f in listed)
             for f in listed:
                 try:
                     z.write(f, f"uploads/{f.name}")
@@ -120,8 +123,8 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
                     missing.append(f.name)  # swept since the listing: no copied page names it
                     continue
                 stored.append(f.name)
-                if progress is not None:
-                    progress["done"] += _size(f)
+                done += _size(f)
+                progress(done=done, total=total, unit="bytes")
         manifest = {
             "format": FORMAT,
             "workspace": ws,
@@ -161,7 +164,7 @@ def read_manifest(path: Path) -> dict:
 # --- restore -------------------------------------------------------------------------
 
 def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[str] | None = None,
-                by: str = "") -> dict:
+                by: str = "", progress=None) -> dict:
     """Apply a backup zip to the workspace.
 
     Everything is checked before any live data is touched: the zip's shape
@@ -184,14 +187,19 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
     above any seq a client has seen, so seqs never go back) and is stamped
     now for the change feed; pages a replace removed get tombstones; the
     open pages are told to reload. ``by`` is the actor in the log and on
-    the snapshot. Raises BackupError."""
+    the snapshot. ``progress`` (a background job's report, gamma/jobs.py)
+    hears each phase — unpacking, checking, saving (the pre-restore
+    snapshot), copying (the files), then restoring, from which point on the
+    restore can no longer be stopped. Raises BackupError."""
     if mode not in ("replace", "merge"):
         raise BackupError("mode must be 'replace' or 'merge'")
     if selected is not None and mode != "merge":
         raise BackupError("selection is only supported for additive imports")
+    progress = progress or _no_progress
     with tempfile.TemporaryDirectory(prefix="gamma-restore-") as td:
         tdir = Path(td)
-        upload_names = _unpack(zpath, tdir)
+        upload_names = _unpack(zpath, tdir, progress)
+        progress(phase="checking")
         _validate(tdir)
         root = ws_dir(ws)
         review = None
@@ -226,12 +234,15 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         if not (root / "pages.db").exists():
             create_workspace_files(ws)
         if mode == "merge":
-            uploads_added = _copy_uploads(root, tdir, upload_names)
+            uploads_added = _copy_uploads(root, tdir, upload_names, progress)
+            progress(phase="restoring", stoppable=False)
             result = _merge(ws, tdir, by)
         else:
             _normalize_copies(tdir)
-            pre = _keep_current(ws, by)
-            uploads_added = _copy_uploads(root, tdir, upload_names)
+            progress(phase="saving")
+            pre = _keep_current(ws, by, progress)
+            uploads_added = _copy_uploads(root, tdir, upload_names, progress)
+            progress(phase="restoring", stoppable=False)
             result = {**_replace(ws, root, tdir, by), "pre_restore": pre["name"] if pre else ""}
     if review is not None:
         result["pages"] = [{k: v for k, v in p.items() if not k.startswith("_")} for p in chosen]
@@ -240,7 +251,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
             "uploads_in_backup": len(upload_names), "uploads_added": uploads_added}
 
 
-def _copy_uploads(root: Path, tdir: Path, upload_names: list[str]) -> int:
+def _copy_uploads(root: Path, tdir: Path, upload_names: list[str], progress=_no_progress) -> int:
     """The backup's files the workspace lacks, each written whole
     (``storage.write_atomic``): a restore cut short never leaves a
     truncated file under a content-hash name."""
@@ -249,7 +260,8 @@ def _copy_uploads(root: Path, tdir: Path, upload_names: list[str]) -> int:
     dest_uploads = root / "uploads"
     dest_uploads.mkdir(parents=True, exist_ok=True)
     added = 0
-    for base in upload_names:
+    for n, base in enumerate(upload_names):
+        progress(phase="copying", done=n, total=len(upload_names), unit="files")
         target_file = dest_uploads / base
         if not target_file.exists():
             write_atomic(target_file, (tdir / "uploads" / base).read_bytes())
@@ -271,7 +283,7 @@ def _normalize_copies(tdir: Path) -> None:
             normalize_data_db(conn)
 
 
-def _keep_current(ws: str, by: str) -> dict | None:
+def _keep_current(ws: str, by: str, progress=_no_progress) -> dict | None:
     """Before a replace: the workspace as it is now, as an automatic
     ``pre-restore`` snapshot with its uploads (the newest PRE_RESTORE_KEEP
     stay). None for a guest's workspace, which keeps no snapshots."""
@@ -280,7 +292,7 @@ def _keep_current(ws: str, by: str) -> dict | None:
     if workspaces.is_guest_workspace(ws):
         return None
     try:
-        kept = create(ws, label="pre-restore", uploads=True, by=by, auto=True)
+        kept = create(ws, label="pre-restore", uploads=True, by=by, auto=True, progress=progress)
     except (OSError, sqlite3.Error, BackupError) as e:
         raise BackupError(f"nothing was restored: the workspace's current state could not be "
                           f"saved first ({e})") from e
@@ -440,7 +452,8 @@ def preview_zip(ws: str, zpath: Path) -> dict:
             "entries": entries, "warnings": [w for p in pages for w in p["warnings"]], "folder": ""}
 
 
-def _unpack(zpath: Path, tdir: Path) -> list[str]:
+def _unpack(zpath: Path, tdir: Path, progress=_no_progress) -> list[str]:
+    progress(phase="unpacking")
     try:
         zf = zipfile.ZipFile(zpath)
     except zipfile.BadZipFile:
@@ -462,12 +475,14 @@ def _unpack(zpath: Path, tdir: Path) -> list[str]:
                     shutil.copyfileobj(src, out)
         (tdir / "uploads").mkdir()
         upload_names = []
-        for n in sorted(names):
+        # Accept flat uploads/<file> entries only — the exporter never
+        # writes nested paths or dotfiles (also a zip-slip guard).
+        entries = [n for n in sorted(names)
+                   if n == f"uploads/{os.path.basename(n)}" and os.path.basename(n)
+                   and not os.path.basename(n).startswith(".")]
+        for i, n in enumerate(entries):
+            progress(phase="unpacking", done=i, total=len(entries), unit="files")
             base = os.path.basename(n)
-            # Accept flat uploads/<file> entries only — the exporter never
-            # writes nested paths or dotfiles (also a zip-slip guard).
-            if n != f"uploads/{base}" or not base or base.startswith("."):
-                continue
             with zf.open(n) as src, open(tdir / "uploads" / base, "wb") as out:
                 shutil.copyfileobj(src, out)
             upload_names.append(base)
@@ -717,13 +732,14 @@ def sweep_stale_temp(now: float | None = None) -> int:
 
 
 def create(ws: str, *, label: str = "manual", uploads: bool = True, by: str = "", scheduled: bool = False,
-           task_id: str = "", auto: bool = False) -> dict:
+           task_id: str = "", auto: bool = False, progress=None) -> dict:
     """Take a snapshot: ``scheduled`` for a backup task's run, ``auto`` for
     the one a replace restore keeps, else a manual one. One at a time per
     workspace; written under a unique temporary name and renamed when
-    complete. Raises BackupError on a bad label, a full store
-    (MAX_PER_WORKSPACE manual, MAX_SCHEDULED_PER_WORKSPACE scheduled
-    snapshots) or a disk with less than MIN_FREE_BYTES free."""
+    complete. ``progress``: see ``write_zip``. Raises BackupError on a bad
+    label, a full store (MAX_PER_WORKSPACE manual,
+    MAX_SCHEDULED_PER_WORKSPACE scheduled snapshots) or a disk with less
+    than MIN_FREE_BYTES free."""
     if not LABEL_RE.match(label or ""):
         raise BackupError("label must be 1-40 chars of letters, digits, _ . -")
     with _lock_for(ws):
@@ -743,7 +759,7 @@ def create(ws: str, *, label: str = "manual", uploads: bool = True, by: str = ""
         tmp = d / f".{name}.{secrets.token_hex(4)}.part"
         try:
             write_zip(ws, tmp, uploads=uploads, by=by, label=label, scheduled=scheduled, task_id=task_id,
-                      auto=auto)
+                      auto=auto, progress=progress)
             tmp.replace(dest)  # never a half-written snapshot in the listing
         except BaseException:
             tmp.unlink(missing_ok=True)
