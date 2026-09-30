@@ -4,11 +4,11 @@
 // lasso) being drawn, and the pointer handling that turns a pen (or, with
 // a tool armed, any pointer) into samples, erasures, a lasso selection or
 // a move of that selection. InkCard is the same strokes as a picture in
-// the notes, with a replay of their writing (useInkReplay); InkToolbar
-// the tool strip. Strokes come from inkStore (drafts ahead of uploads,
+// the notes, with a replay of their writing that plays there and on the
+// page (ink/inkReplay.js); InkToolbar the tool strip. Strokes come from inkStore (drafts ahead of uploads,
 // files behind block URLs); App owns the tool state, the selection, the
 // stroke history and the commits.
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ContextMenu } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
@@ -18,10 +18,11 @@ import {
 } from "../shared/ui/Icons";
 import {
   HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_STROKE_SIZE, MAX_TOOLS, PEN_COLORS, boundsOf, encodeStroke, hitStrokes,
-  inkAtTime, inkBounds, inkTimeline, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
+  inkBounds, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
   transformPoint, unionBox,
 } from "./ink";
 import * as inkStore from "./inkStore";
+import * as inkReplay from "./inkReplay";
 import { appendInkSample, predictedInkSamples } from "./inkInput.js";
 import { canvasSize } from "../shared/lib/canvasSize.js";
 import { t, T } from "../shared/i18n/i18n.js";
@@ -85,6 +86,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const ink = inkStore.inkFor(b);
     if (ink?.strokes?.length) groups.push({ id: b.id, ink });
   }
+  // A group of this page replaying (ink/inkReplay.js) is drawn as it stood.
+  const replay = useReplayOf(groups.map((g) => g.id));
   // This page's selection: the ids per group and their box.
   const sel = selection && selection.page === pageNumber ? selection : null;
   const selectedIds = new Set();
@@ -485,7 +488,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         {groups.map((g) => (
           <g key={g.id} data-ink-id={g.id}
             style={{ pointerEvents: armed || !onJump ? "none" : "visiblePainted", cursor: "pointer" }}>
-            <Strokes ink={g.ink} hide={dragging ? selectedIds : null}
+            <Strokes ink={replay?.id === g.id ? replay.frame : g.ink} hide={dragging ? selectedIds : null}
               onClick={!onSelect && onJump ? (e) => { e.stopPropagation(); onJump(g.id); } : undefined} />
           </g>
         ))}
@@ -688,29 +691,13 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   </ContextMenu>;
 }
 
-// A replay of a drawing's writing (ink.js inkTimeline): while it plays,
-// `frame` is the drawing as it stood at that moment, else null. A change
-// to the drawing ends it (callers keep `ink` the same object meanwhile).
-export function useInkReplay(ink) {
-  const [state, setState] = useState(null); // {timeline, t}
-  const raf = useRef(0);
-  const stop = () => { cancelAnimationFrame(raf.current); raf.current = 0; setState(null); };
-  const play = () => {
-    cancelAnimationFrame(raf.current);
-    if (!ink?.strokes?.length) return;
-    const timeline = inkTimeline(ink);
-    const begin = performance.now();
-    const tick = (now) => {
-      const at = now - begin;
-      if (at >= timeline.duration) { raf.current = 0; setState(null); return; }
-      setState({ timeline, t: at });
-      raf.current = requestAnimationFrame(tick);
-    };
-    setState({ timeline, t: 0 });
-    raf.current = requestAnimationFrame(tick);
-  };
-  useEffect(() => stop, [ink]);
-  return { playing: !!state, frame: state ? inkAtTime(ink, state.timeline, state.t) : null, play, stop };
+// The replay (ink/inkReplay.js) of one of these groups, {id, frame}, or
+// null: a layer or a card re-renders only for its own groups' frames.
+export function useReplayOf(ids) {
+  return useSyncExternalStore(inkReplay.subscribe, () => {
+    const cur = inkReplay.now();
+    return cur && ids.includes(cur.id) ? cur : null;
+  });
 }
 
 // The replay's play / stop button.
@@ -726,11 +713,17 @@ export function InkReplayButton({ replay, className = "" }) {
 }
 
 // The group as a picture in the notes tree (same strokes, cropped to its
-// box), its replay button in the corner. Click: jump to it on the page.
+// box), its replay button in the corner: the replay plays on the page
+// (scrolled to the group) and in the card. Click: jump to it on the page.
 export function InkCard({ block, onJump }) {
   useInkVersion();
   const ink = inkStore.inkFor(block);
-  const replay = useInkReplay(ink);
+  const playing = useReplayOf([block.id]);
+  const replay = {
+    playing: !!playing, frame: playing?.frame || null,
+    play: () => { onJump?.(block.id); inkReplay.play(block.id, ink); },
+    stop: () => inkReplay.stop(block.id),
+  };
   const b = ink ? inkBounds(ink) : null;
   if (!ink) {
     return <div className="blockInkCard blockInkPending" title={t("Loading handwriting…")} />;

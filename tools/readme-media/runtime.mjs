@@ -1,7 +1,9 @@
 // Resolve the existing frontend toolchain without a second node_modules tree.
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(new URL('../../frontend/package.json', import.meta.url));
@@ -23,35 +25,86 @@ export function readSession(dir = process.cwd()) {
 // 2× with a 1440×900 window gives the page its normal viewport at
 // devicePixelRatio 2, and its screencast frames are 2880×1800.
 export const VIEW = { width: 1440, height: 900, scale: 2 };
-export function launchRetina(options = {}) {
-  return chromium.launch({ headless: true, ...options, args: [
-    `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${VIEW.height}`, ...(options.args || [])] });
+const cdpPorts = new WeakMap();
+export async function launchRetina(options = {}) {
+  // A second DevTools endpoint lets a worker thread take the screencast (below).
+  const port = await new Promise((resolve, reject) => {
+    const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+    s.on('error', reject);
+  });
+  // Software compositing reads back and encodes every 2× frame so slowly that it
+  // throttles input (a 1 s stroke took 3 s); with the GPU the capture keeps ~30 fps.
+  const browser = await chromium.launch({ headless: true, ...options, args: [
+    `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${VIEW.height}`,
+    '--enable-gpu', '--ignore-gpu-blocklist', `--remote-debugging-port=${port}`, ...(options.args || [])] });
+  cdpPorts.set(browser, port);
+  return browser;
 }
 // Context options for launchRetina: the window is the viewport; light English UI.
 export const RETINA = { viewport: null, colorScheme: 'light', locale: 'en-US' };
 
 // Save the page's screencast as JPEG frames plus frames.json (seconds since the
 // capture started). `clock()` reads the same timeline for a recorder's marks.
+// Frames are about 1 MB each: a worker thread with its own DevTools connection
+// receives, acknowledges and writes them, so the recorder's pointer timing on
+// the main thread is not held up.
 export async function startCapture(page, dir, { quality = 90 } = {}) {
+  const port = cdpPorts.get(page.context().browser());
+  if (!port) throw new Error('startCapture needs a browser from launchRetina()');
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
+  const session = await page.context().newCDPSession(page);
+  const { targetInfo } = await session.send('Target.getTargetInfo');
+  await session.detach();
   const size = { width: VIEW.width * VIEW.scale, height: VIEW.height * VIEW.scale };
-  const frames = [], t0 = Date.now();
-  await page.screencast.start({ size, quality, onFrame: ({ data, timestamp }) => {
-    const file = `${String(frames.length).padStart(6, '0')}.jpg`;
-    fs.writeFileSync(path.join(dir, file), data);
-    frames.push({ t: (timestamp - t0) / 1000, file });
-  } });
+  const t0 = Date.now();
+  const worker = new Worker(CAPTURE_WORKER, { eval: true, workerData: {
+    url: `ws://127.0.0.1:${port}/devtools/page/${targetInfo.targetId}`, dir, t0, quality, ...size } });
+  const next = () => new Promise((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject); });
+  const ready = await next();
+  if (ready.error) { await worker.terminate(); throw new Error(ready.error); }
   return {
     clock: () => (Date.now() - t0) / 1000,
     async stop() {
-      await page.screencast.stop();
+      const done = next();
+      worker.postMessage('stop');
+      const { frames, error } = await done;
+      await worker.terminate();
+      if (error) throw new Error(error);
       if (frames.length < 2) throw new Error('The screencast delivered no frames');
       fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify({ ...size, scale: VIEW.scale, frames }));
       return dir;
     },
   };
 }
+
+const CAPTURE_WORKER = `
+const { workerData, parentPort } = require('node:worker_threads');
+const fs = require('node:fs'), path = require('node:path');
+const { url, dir, t0, quality, width, height } = workerData;
+const frames = [], writes = [];
+let id = 0, error = null;
+const ws = new WebSocket(url);
+const send = (method, params = {}) => ws.send(JSON.stringify({ id: ++id, method, params }));
+ws.onopen = () => send('Page.startScreencast', { format: 'jpeg', quality, maxWidth: width, maxHeight: height });
+ws.onerror = e => { error = String(e.message || e.type); if (id <= 1) parentPort.postMessage({ error }); };
+ws.onmessage = ({ data }) => {
+  const m = JSON.parse(data);
+  if (m.error) error = m.error.message;
+  if (m.id === 1) parentPort.postMessage({ error });
+  if (m.method !== 'Page.screencastFrame') return;
+  send('Page.screencastFrameAck', { sessionId: m.params.sessionId });
+  const file = String(frames.length).padStart(6, '0') + '.jpg';
+  frames.push({ t: (m.params.metadata.timestamp * 1000 - t0) / 1000, file });
+  writes.push(fs.promises.writeFile(path.join(dir, file), Buffer.from(m.params.data, 'base64')));
+};
+parentPort.on('message', async () => {
+  if (ws.readyState === 1) send('Page.stopScreencast');
+  await Promise.all(writes);
+  ws.close();
+  parentPort.postMessage({ frames, error });
+});
+`;
 
 // Screencasts have no pointer: draw an arrow that follows the mouse, with a
 // ring on each press. `zoom` is the CSS zoom the page applies to <html> (the

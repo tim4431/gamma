@@ -101,6 +101,7 @@ import {
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
+import * as inkReplay from "../ink/inkReplay";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -6280,6 +6281,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
+    inkReplay.stop();
     inkHistRef.current = { undo: [], redo: [] };
     setInkHistoryState({ undo: 0, redo: 0 });
     setInkSelection(null);
@@ -6297,6 +6299,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // block back first.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
+    for (const c of changes) inkReplay.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
@@ -7769,6 +7772,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInkInNotes,
     onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
+    onNotebookView: hasSheets ? () => setNotebookView(focusedBlockId, true) : undefined,
   };
   const inkToolbar = (
     <InkToolbar
@@ -8252,15 +8256,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       </div>
                     ) : null}
                   </span>
-                ) : null}
-                {hasSheets ? (
-                  <button
-                    className={`pageActionBtn ${notebook ? "active" : ""}`}
-                    title={notebook ? t("Back to the notes: the pages among the blocks") : t("Notebook view: the pages beside the notes")}
-                    aria-label={t("Notebook view")}
-                    aria-pressed={notebook}
-                    onClick={() => setNotebookView(focusedBlockId, !notebook)}
-                  ><NotebookIcon size={16} /></button>
                 ) : null}
                 <button
                   className="pageActionBtn pageDeleteBtn"
@@ -10023,6 +10018,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   aria-expanded={paperMenu}
                 >
                   <SheetIcon size={16} />
+                </button>
+              ) : null}
+              {notebook ? (
+                <button
+                  onClick={() => setNotebookView(focusedBlockId, false)}
+                  title={t("Notes view: the pages among the notes")}
+                  aria-label={t("Notes view")}
+                >
+                  <FileTextIcon size={16} />
                 </button>
               ) : null}
               {isPhone && !shareMode && pdfUrl ? (
