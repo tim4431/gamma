@@ -3,10 +3,11 @@
 // opens in the notebook view; it is written on with the same ink tools, a
 // click on a stroke selects it, a page is added by writing low on the last
 // one and by the button, the paper menu sets a page's paper and the page
-// added after it takes that paper; the view switch shows the same pages
-// among the notes and back, remembered over a reload; the export is a PDF
-// of the sheets. Then pages in a note: "/page", written on in place, the
-// replay of the page and of its group's card, and "Add page below". The
+// added after it takes that paper; the notebook view's side bar switches
+// to the notes view, a sheet's own switch back, remembered over a reload;
+// the export is a PDF of the sheets. Then pages in a note: "/page",
+// written on in place, the replay of the page and of its group's card (on
+// the page too), and "Add page below". The
 // rules behind it are backend/tests/test_notebooks.py,
 // frontend/tests/notebook.test.mjs and ink.test.mjs (the replay's timing).
 import { closeEditor, newPageViaUi } from "./notes.mjs";
@@ -147,21 +148,19 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     assertNoProblems(page);
   });
 
-  await step("notebook: the view switch shows the same pages among the notes, and back; the choice outlives a reload", async () => {
-    const toggle = page.locator("button[aria-label='Notebook view']");
-    assertEq(await toggle.getAttribute("aria-pressed"), "true", "on for a new notebook, and over the reload");
-    await toggle.click();
+  await step("notebook: the side bar switches to the notes view, a page's own switch back; the choice outlives a reload", async () => {
+    await page.click(".pdfZoomOverlay button[aria-label='Notes view']");
     await until(async () => !(await page.$(".nbViewer")) && (await page.$$(".noteSheet .nbSheet")).length === 4,
       { what: "the notes view draws the four pages among the blocks" });
     await until(async () => (await page.$$(".noteSheet .inkLayer path")).length === 2, { what: "page 1's strokes there too" });
-    await toggle.click();
+    assertEq((await page.$$(".noteSheetBar button[aria-label='Notebook view']")).length, 4, "each page's tools switch back");
+    await page.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
     await page.waitForSelector(".nbViewer .nbSheet", { timeout: 5000 });
     assertEq((await page.$$(".noteSheet")).length, 0, "the notes list the pages as rows again");
     await page.click("button[aria-label='Back to the notes']");
     await until(async () => !(await page.$(".nbViewer")), { what: "the viewer's close button goes back to the notes" });
     await page.reload();
     await until(async () => (await page.$$(".noteSheet .nbSheet")).length === 4, { what: "the notes view, remembered", timeout: 15000 });
-    assertEq(await page.locator("button[aria-label='Notebook view']").getAttribute("aria-pressed"), "false", "the switch shows it");
     assertNoProblems(page);
     await ctx.close();
   });
@@ -232,6 +231,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.hover(".blockInkCardWrap");
     await page.click(cardReplay);
     assertEq(await page.getAttribute(cardReplay, "aria-pressed"), "true", "the card replays its group");
+    assert((await page.$$(".noteSheet .inkLayer path")).length < 2, "on the page too, stroke by stroke");
     await page.click(cardReplay);
     assertEq(await page.getAttribute(cardReplay, "aria-pressed"), "false", "a second press stops it");
     assertEq((await page.$$(".blockInkCard path")).length, 2, "the card shows the whole drawing again");

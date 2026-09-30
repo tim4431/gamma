@@ -37,7 +37,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
-- **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
+- **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again on the page (it scrolls there) and in the card, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
 ### Notebooks
@@ -45,7 +45,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
 
 - **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
-- **Two views.** The notes view draws each sheet right among your notes, with its pen, its **Paper**, a replay of what's written on it, and **+** for another sheet after it under it. The **Notebook view** button in the page's title shows the sheets large in the viewer instead, with your notes beside them; press it again, or close the viewer, to go back. Each page remembers its view in this browser.
+- **Two views.** The notes view draws each sheet right among your notes, with its tools under it: its pen, its **Paper**, a replay of what's written on it, **+** for another sheet after it, and **Notebook view**, which shows the sheets large in the viewer instead, with your notes beside them. **Notes view** in the viewer's side bar, or closing the viewer, goes back. Each page remembers its view in this browser.
 - Writing near the bottom of the last sheet adds the next one, so there is always paper below. **Add page** at the end of the notebook view adds one too. A new sheet takes the paper of the sheet before it.
 - **Paper** sets a sheet's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background; *Apply to all pages* gives every sheet that paper.
 - The notes list the sheets ("Page 1", or a title you type). A sheet's handwriting is folded under it; unfold it to see the drawings as cards. Notes you type under a sheet are about that page.
