@@ -14,6 +14,10 @@ test("the card's headline says what the call would do", () => {
   assert.equal(card("edit_block", { title: "N", mode: "replace" }), "Edit a note in “N”");
   assert.equal(card("create_block", { title: "N", parent: "Methods" }), "Add a note under “Methods” in “N”");
   assert.equal(card("move_block", { title: "N", src_title: "M" }), "Move a note from “M” to “N”");
+  assert.equal(card("save_paper", { title: "Attention", to: "refs" }), "Save “Attention” to refs");
+  assert.equal(card("save_paper", { title: "arXiv:1706.03762", to: "" }), "Save “arXiv:1706.03762” to the library root");
+  assert.equal(card("save_paper", { title: "Attention", to: "refs", existed: true }), "File “Attention” in refs");
+  assert.equal(card("restore_page", { title: "Old draft", to: "ML" }), "Restore “Old draft” from Recently deleted");
   // A reading tool the user set to ask names its arguments, a page by title.
   assert.equal(approvalTitle({ tool: "read_page", args: { page_id: "a" } }, { titleOf: (id) => (id === "a" ? "Attention" : "") }),
     "Read “Attention”");

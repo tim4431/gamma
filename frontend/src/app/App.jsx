@@ -2993,12 +2993,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rewrites just that). Cleared on send, like pdfSelections; a page switch
   // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
+  const blockChip = (block) => ({ kind: "block", id: block.id, text: blockChipText(block).slice(0, 4000) });
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
+      ? prev : prev.length >= 12 ? prev : [...prev, blockChip(block)]);
     setStatus(t("Block attached to your next chat message."));
+  }
+  // "Transcribe with AI" on a handwriting block: the block goes to the chat
+  // as a chip (its picture rides with the message, ai_context) with the
+  // request, sent at once — the agent writes the text into its caption
+  // (view_ink, edit_block), or answers with it where it may not edit.
+  const [chatAsk, setChatAsk] = useState(null);
+  function transcribeInk(block) {
+    if (!block?.id) return;
+    // The block the request is about always goes: at 12 chips the oldest
+    // makes room.
+    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
+      ? prev : [...prev.slice(-11), blockChip(block)]);
+    showChat();
+    setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
   }
   // A Ctrl-selection inside one block's rendered view → its source range;
   // one that can't be pinned down (it spans blocks, or an end isn't the
@@ -4501,6 +4515,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const a = ev.action;
     if (!a || a.error) return;
     if (a.page_id !== focusedBlockId && a.src_page_id !== focusedBlockId) return;
+    if (a.kind === "ink") {
+      if (a.block_id) markAiBlock(a.block_id, "read", 2500);
+      return;
+    }
     if (a.kind === "read") {
       if (a.block_id && a.block_id !== focusedBlockId) markAiBlock(a.block_id, "read", 2500);
       else {
@@ -8943,6 +8961,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
+                  // A handwriting block's "Transcribe with AI".
+                  onTranscribe: shareMode ? null : transcribeInk,
                   // `above` puts the copy before the original (Duplicate
                   // block above).
                   onDuplicate: (id, { above = false } = {}) => {
@@ -9177,6 +9197,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
           fetchInBackground={fetchInBackground}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
+          askSignal={chatAsk}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {

@@ -49,7 +49,7 @@ from ..logbuf import log
 from ..storage import upload_refs
 from ..obsidian_export import APP_JSON, VaultContext, referenced_blocks, render_vault_page
 from ..pdf_document import render_document
-from ..pdf_export import annotate_pdf, highlight_note_text
+from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
 from ..pdf_notes import render_notes
 from ..zotero_export import (
     IMAGE_MIME,
@@ -149,15 +149,15 @@ def _children_by_id(blocks) -> dict:
 def _collect_marks(blocks) -> list[dict]:
     """Highlight blocks → annotate_pdf marks (position/color/popup note).
     Skips annotations that came from the PDF itself and are STILL embedded in
-    it (annot_stripped marks ones the import removed from the file), and link
-    regions (Gamma navigation aids, not annotations)."""
+    it (``still_embedded``), and link regions (Gamma navigation aids, not
+    annotations)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
         if not props.get("highlight_id") or not props.get("pdf_position"):
             continue
-        if props.get("imported_annot") and not props.get("annot_stripped"):
+        if still_embedded(props):
             continue
         if props.get("link_url") or props.get("link_page_id"):
             continue
@@ -181,7 +181,7 @@ def _collect_ink(blocks, uploads_dir) -> list[dict]:
     for b in blocks:
         props = b["properties"]
         url = props.get("ink_url")
-        if not url or (props.get("imported_annot") and not props.get("annot_stripped")):
+        if not url or still_embedded(props):
             continue
         ink_file = inkmod.read_upload(uploads_dir, url)
         if not ink_file:

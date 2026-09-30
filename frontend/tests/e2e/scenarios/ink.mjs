@@ -1,7 +1,9 @@
 // Handwriting (docs/dev/handwriting.md): the tool strip and its presets,
 // mouse strokes becoming an ink block with an .ink upload, persistence
-// across a reload, the eraser, the lasso, the notes card's jump + flash.
-// /Ink in the annotated PDF is backend/tests/test_ink.py.
+// across a reload, the eraser, the lasso, the notes card's jump + flash,
+// and a group's Transcribe with AI. /Ink in the annotated PDF is
+// backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
+import { fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 async function drawLine(page, from, to) {
@@ -498,6 +500,38 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       assertNoProblems(other);
     } finally { await ctx2.close(); }
     assertNoProblems(page);
+  });
+
+  await step("ink: Transcribe with AI asks the chat about the group, with the group attached", async () => {
+    const up = await account.api("/api/upload-ink", { method: "POST", body: {
+      format: "gamma-ink", version: 1, space: { kind: "pdf-page", page: 1, width: 612, height: 792 },
+      strokes: [{ id: "tr1", color: "#1f1f1f", size: 2, ch: "xy", pts: [10000, 60000, 3000, 400] }],
+    } });
+    const group = await account.api("/api/blocks", { method: "POST", body: {
+      parent_id: pageId, content: "", properties: { ink_url: up.url, pdf_page: 1, pdf_position: up.pdf_position, ink_strokes: 1 },
+    } });
+    const tctx = await account.context(browser);
+    try {
+      await fakeAiModels(tctx);
+      await tctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const sent = [];
+      await tctx.route("**/api/ai/chat", async (route) => {
+        sent.push(route.request().postDataJSON());
+        await route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"It says: hello."}\n' });
+      });
+      const tpage = await openPage(tctx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      const wrap = tpage.locator(`.sortableBlockWrap[data-block-id="${group.id}"]`).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").first().click();
+      await tpage.locator(".ctxMenuItem", { hasText: "Transcribe with AI" }).click();
+      await until(() => sent.length === 1, { what: "one chat request" });
+      assertEq(sent[0].prompt, "Transcribe this handwriting into its caption.", "the request's text");
+      assert(sent[0].context_blocks.includes(group.id), "the group rides with it as a chip");
+      await tpage.locator(".chatBubble.ai", { hasText: "It says: hello." }).waitFor();
+      await tpage.locator(".chatBubble.user", { hasText: "Transcribe this handwriting" }).waitFor();
+      assertEq(sent.length, 1, "sent once");
+      assertNoProblems(tpage);
+    } finally { await tctx.close(); }
   });
 
   if (ctx) await ctx.close();

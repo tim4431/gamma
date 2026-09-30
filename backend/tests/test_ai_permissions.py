@@ -64,7 +64,7 @@ def test_asking_tools_are_armed_and_tools_that_are_off_are_not():
 
 def test_the_prompt_names_the_tools_that_ask():
     scope = {**folder(""), "can_write": True}
-    asking = agent_system(scope, tool_states({"rename": "ask", "move": "allow", "block_edit": "allow"}))
+    asking = agent_system(scope, tool_states({**ALLOW_ALL, "rename": "ask"}))
     assert "approves each call of rename_page before it runs" in asking
     assert "never ask for permission in your reply first" in asking
     assert "approves each call" not in agent_system(scope, tool_states(ALLOW_ALL))
@@ -298,7 +298,7 @@ def test_a_change_asks_first_and_runs_once_allowed(org, monkeypatch):
     c, ids = org
     opened = _agent(monkeypatch, ("t1", "rename_page", {"page_id": ids["a"], "title": "Ada2019 cavity"}))
     asked = _answers(monkeypatch, ids["user"], "once")
-    lines, actions = _chat(c, permissions={"rename": "ask"})
+    lines, actions = _chat(c, permissions={**ALLOW_ALL, "rename": "ask"})
     assert _kinds(lines) == ["step", "approval", "action"]
     card = next(line["approval"] for line in lines if "approval" in line)
     assert card["id"] == asked[0] and (card["tool"], card["perm"], card["call_id"]) == ("rename_page", "rename", "t1")
@@ -308,6 +308,29 @@ def test_a_change_asks_first_and_runs_once_allowed(org, monkeypatch):
     assert props(c, ids["a"])["content"] == "Ada2019 cavity"
     assert "rename_page" in opened[0]["tools"] and "approves each call of rename_page" in opened[0]["system"]
     assert opened[1]["messages"][-1]["content"].startswith("ok")
+
+
+def test_a_paper_is_saved_only_once_the_user_allows_it(org, monkeypatch):
+    """Save papers asks by default: the card names the paper, the folder and
+    the source, and the ingest runs only after the user allowed it."""
+    import gamma.routers.clip as clip_mod
+
+    c, ids = org
+    saved = []
+    monkeypatch.setattr(clip_mod, "save_clip", lambda ws, actor, payload: saved.append(payload) or {
+        "block_id": ids["note"], "title": "A Saved Paper", "existed": False, "doc_id": "d1"})
+    call = ("s1", "save_paper", {"source": "arXiv:2601.03333", "title": "A Saved Paper"})
+    _answers(monkeypatch, ids["user"], "deny", "once")
+    _agent(monkeypatch, call)
+    lines, actions = _chat(c)
+    card = next(line["approval"] for line in lines if "approval" in line)
+    assert (card["tool"], card["perm"]) == ("save_paper", "save")
+    assert card["preview"] == {"title": "A Saved Paper", "to": "", "diff": [["ctx", "arXiv:2601.03333"]]}
+    assert saved == [] and actions[0]["declined"]
+    _agent(monkeypatch, call)
+    lines, actions = _chat(c)
+    assert [p.arxiv_id for p in saved] == ["2601.03333"]
+    assert (actions[0]["kind"], actions[0]["approval"]) == ("save", "once")
 
 
 def test_a_declined_change_is_not_made_and_the_model_hears_why(org, monkeypatch):

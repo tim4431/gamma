@@ -623,6 +623,16 @@ notes. The server resolves all three against the request's context pages.
   the agent prompt lists the ids, so *"rewrite these"* means them. Capped at
   12 chips / 12k chars (`MAX_CONTEXT_BLOCKS`, `MAX_BLOCK_SECTION_CHARS`).
   Ids outside the context pages, and page ids, are dropped silently.
+  Handwriting blocks and pages of paper are labelled the way `read_block`
+  labels them, in the cursor block too. An attached one also sends its
+  picture with the message, the same picture `view_ink` gives (up to
+  `MAX_INK_PICTURES`, 2, riding with the selection crops). The cursor block
+  never sends a picture, since it goes with every message. A handwriting
+  block's **Transcribe with AI** (⋮⋮ menu, `onTranscribe` → App's
+  `transcribeInk`) attaches the block and sends "Transcribe this
+  handwriting into its caption." through ChatDock's `askSignal`. The send
+  waits until the conversation has loaded, and while a reply streams the
+  request goes into the composer instead.
 - `note_selections` — selected note text as exact ranges of block sources,
   `[{block_id, from, to, text}]`; `text` is the source slice the client saw.
   Two sources feed it:
@@ -719,8 +729,8 @@ server, `chat/chatSettings.js` in the client):
   on an approval card in the reply ([Asking before a call](#asking-before-a-call-approvals)).
 - **Off**: its tools are not offered, and a call is refused.
 
-Reading is allowed by default and changes ask: Rename pages, Move pages and
-Edit note blocks start at Ask. The server gives a permission the request
+Reading is allowed by default and changes ask: Save papers, Rename pages,
+Move pages, Restore deleted pages and Edit note blocks start at Ask. The server gives a permission the request
 leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
@@ -740,12 +750,12 @@ sit below its description. Each column offers four presets:
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
 `{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, rename, move, block_edit}` → `"allow"` / `"ask"` /
-`"off"`, and a pre-kind flat map is applied to every kind on read. A stored
-boolean is the older on / off value (`normalizePerm`): `false` is Off, and
-`true` is the permission's default. So a change that was on asks, and
-reading stays allowed. The server reads a sent boolean as on / off, `true`
-meaning Allow, which is what an older tab sends.
+publisher_cookies, save, rename, move, restore, block_edit}` → `"allow"` /
+`"ask"` / `"off"`, and a pre-kind flat map is applied to every kind on read.
+A stored boolean is the older on / off value (`normalizePerm`): `false` is
+Off, and `true` is the permission's default. So a change that was on asks,
+and reading stays allowed. The server reads a sent boolean as on / off,
+`true` meaning Allow, which is what an older tab sends.
 The chat header's ⚙ popover carries the same picker for the kind of chat it
 is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so
@@ -754,15 +764,18 @@ a change in either place is the same change.
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
-One permission per capability: List pages (`list_pages` and the folder tree
-`list_folders`), Read pages (`read_page` and the page and folder chats
-`read_chats`), Read note blocks, View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
-scan or a figure), Search library (`search_library` — notes and PDF text; the stored key is
+One permission per capability: List pages (`list_pages`, the folder tree
+`list_folders` and Recently deleted `list_deleted`), Read pages (`read_page`, the page and folder chats
+`read_chats`, and the citation records `cite`), Read note blocks, View pages
+and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
+scan or a figure, and `view_ink`, the user's handwriting), Search library (`search_library` — notes and PDF text; the stored key is
 still `search`), Search papers online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
-"search_web" section), Rename pages, Move pages, and Edit
+"search_web" section), Save papers (`save` → `save_paper`, in every chat
+kind), Rename pages, Move pages, Restore deleted pages (`restore` →
+`restore_page`, folder chats only), and Edit
 note blocks (one permission for `edit_block`/`create_block`/`move_block`
 together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
@@ -801,7 +814,10 @@ A call of a tool whose permission is Ask waits for the user
    `del` removed, `ins` added (`ai_tools.text_diff`). Words are compared one
    by one, and CJK text character by character; long kept stretches are cut
    around "…". A page move has `from` / `to` instead. A created or moved
-   block has its `parent`, and `src_title` when it leaves its page.
+   block has its `parent`, and `src_title` when it leaves its page. A
+   saved paper has the folder it goes `to` and its source as the `diff`,
+   plus `existed` and `page_id` when the library holds it already. A
+   restored page has the folders it goes back `to`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -909,7 +925,10 @@ A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
 continues the conversation once it arrives
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
 or named papers ends with a **Save to library** list of them
-(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`.
+(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`. The agent's
+`save_paper` runs the same ingest itself. Its request carries the Reading
+choices the list uses as `paper_save` (`{allow_oa, save_copy,
+fetch_metadata}`), which the router puts in the tool scope.
 
 ### Watching the agent work (live footprint)
 

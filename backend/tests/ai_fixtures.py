@@ -11,7 +11,7 @@ from gamma.ai_tools import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
 ALL_PERMS = ("list", "read", "block_read", "view", "search", "web_search", "web_read",
-             "rename", "move", "block_edit")
+             "save", "rename", "move", "restore", "block_edit")
 # Every tool runs without asking: for chats whose changes are not about approvals.
 ALLOW_ALL = {k: "allow" for k in ALL_PERMS}
 

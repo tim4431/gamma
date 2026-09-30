@@ -99,6 +99,9 @@ app ([ipad.md](ipad.md)).
   ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
   strokes are gone, and the pieces the partial eraser left keep the time
   they were written.
+- **Transcribe with AI**, in a group's ⋮⋮ menu, attaches the block to the
+  chat and asks for its text in the caption ([ai_tools.md](ai_tools.md)
+  "view_ink").
 - A group erased empty deletes its block, and undo brings it back. A
   group whose block holds a caption or notes keeps its block, with an
   empty drawing, so erasing strokes never deletes text.
@@ -384,12 +387,17 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
   zip; the notes-as-PDF document draws the strokes as vectors under a
   "handwriting, p. N" line. The agent's `read_block` outline labels an ink
   block "handwriting on p. N, K strokes" before its caption.
+- `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
+  and an attached handwriting block), drawn where it was written. A sheet
+  goes through `notebook_pdf`, a PDF page through
+  `pdf_export.page_with_ink` (that page alone with the groups as `/Ink`),
+  and pdfium rasterizes either ([ai_tools.md](ai_tools.md) "view_ink").
 
 ## Not built yet
 
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
-ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import, *Transcribe with AI*,
+ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
 live co-drawing over presence, audio recording to go with the replay, a
 replay of erasures and edits (it shows the drawing as it is, in the order
 it was written), and a replay on the PDF page itself in the browser (the

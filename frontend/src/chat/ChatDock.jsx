@@ -30,7 +30,7 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FilePlusIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -61,7 +61,7 @@ function relAge(iso) {
 // that changed the library (they trigger the home-feed refresh). Every chip
 // carries the raw call the server ran (tool/args/result, both truncated), so
 // clicking one expands the arguments and the output the model saw.
-const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, error: XIcon };
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
@@ -182,6 +182,12 @@ function AgentChanges({ actions, onOpenPage }) {
       return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
         {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
       </span>;
+    }
+    if ((a.kind === "save" || a.kind === "restore") && a.title) {
+      const args = { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> };
+      return a.kind === "restore" ? t("Restored {page} to {folder}", args)
+        : a.existed ? t("{page}, already in your library, filed in {folder}", args)
+          : t("Saved {page} to {folder}", args);
     }
     return pageLink(a.page_id, a.summary); // saved before the structured fields
   };
@@ -389,8 +395,12 @@ export default function ChatDock({
   onOpenPage,
   // A blocked fetch's card hands it to Gamma Connector by itself, to fetch
   // out of sight (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
-  // fetchMetadata}, how a reply's "Save to library" saves (Settings → Reading).
+  // fetchMetadata}, how a reply's "Save to library" and save_paper save
+  // (Settings → Reading).
   fetchInBackground = false, paperSave = {},
+  // {id, text}: a message App asks the chat to send (a handwriting block's
+  // "Transcribe with AI"), with whatever is attached at that moment.
+  askSignal = null,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState([]);
@@ -483,7 +493,10 @@ export default function ChatDock({
     return scope
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
           permissions: chatToolPerms, agent_system: agentSystem || "",
-          granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)) }
+          granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)),
+          // save_paper stores a paper the way the reply's Save to library does.
+          paper_save: { allow_oa: paperSave.allowOa !== false, save_copy: paperSave.saveCopy !== false,
+                        fetch_metadata: paperSave.fetchMetadata !== false } }
       : {};
   };
   // The user's answer on an approval card: the server runs the call or
@@ -620,6 +633,9 @@ export default function ChatDock({
     setAttachPdf(!sent && nativePdf);
   }
 
+  // The bucket whose stored conversation has been read (or failed to): an
+  // ask from App waits for it, so it never starts over the history.
+  const [loadedFor, setLoadedFor] = useState("");
   // Load chat from backend whenever the chat bucket changes.
   useEffect(() => {
     let cancelled = false;
@@ -648,8 +664,13 @@ export default function ChatDock({
           showLoaded(latest?.messages || data.messages || [], data.title);
           if (!latest) session.seen(chatKey, data.messages || [], data.updated_at);
         }
+        setLoadedFor(chatKey);
       })
-      .catch((err) => { if (!cancelled && !session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message })); });
+      .catch((err) => {
+        if (cancelled) return;
+        if (!session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message }));
+        setLoadedFor(chatKey);
+      });
     return () => { cancelled = true; };
   }, [chatKey, docId, readOnly, session]);
 
@@ -1181,6 +1202,18 @@ export default function ChatDock({
   }
 
   sendChatRef.current = sendChat;
+
+  // App's asks go out once the chat knows its AI and holds its stored
+  // conversation: sent as the user's message, or left in the composer while
+  // a reply is still streaming here.
+  const askedRef = useRef(0);
+  useEffect(() => {
+    if (!askSignal?.id || askSignal.id === askedRef.current || !aiInfo || loadedFor !== chatKey) return;
+    askedRef.current = askSignal.id;
+    if (aiOff || readOnly) return;
+    if (busyHere) setChatInput(askSignal.text);
+    else sendChatRef.current?.(askSignal.text);
+  }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
 
   function sendChatMessage() {
     const text = chatInput;

@@ -38,6 +38,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
 - **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
+- **Transcribe with AI**: in a handwriting block's ⋮⋮ menu. The chat reads the strokes and writes them out as text in the block's caption. Math comes out as LaTeX, and a word it can't read is marked *[illegible]*. Without the **Edit note blocks** permission it answers in the chat instead. You can also ask the chat about your handwriting: it looks at the strokes where you wrote them.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
 ### Notebooks
@@ -112,9 +113,14 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, compare findings, rename pages, file them into folders — *"rename these to AuthorYear style"*, *"which of these measure T1?"*. It can also search the web for papers (Crossref, arXiv) and read a document by DOI, arXiv id or URL.
 
+- **Save papers**: when you ask, it adds the papers it found to your library, the way **Save to library** does (*"save the three most cited follow-ups into refs"*). A paper you already have is filed, not duplicated.
+- **Citations**: it builds references and BibTeX from the metadata your pages keep (*"BibTeX for everything in this folder"*). It says when a page has no metadata instead of making one up.
+- **Recently deleted**: in a folder chat it can find a page you deleted and put it back (*"bring back the page on Rydberg blockade I deleted last week"*).
+- **Handwriting**: it can look at your pen strokes and read or transcribe them.
+
 In a paper or a notes page it can also edit your notes when you ask: rewrite a block, add one, append to it or move it. The **Edit note blocks** permission controls this.
 
-**Asking before a change.** By default the assistant reads freely but asks before it changes anything. When it wants to rename a page, file it into a folder or edit your notes, the reply shows a card with the change. Words it removes are struck through, and words it adds are highlighted. Pick one:
+**Asking before a change.** By default the assistant reads freely but asks before it changes anything. When it wants to rename a page, file it into a folder, save a paper, restore a deleted page or edit your notes, the reply shows a card with the change. Words it removes are struck through, and words it adds are highlighted. Pick one:
 
 - **Allow once**: make this change.
 - **Allow in this chat**: make it, and don't ask again for this kind of change in this conversation. The composer shows **Allowed in this chat**; click it to be asked again. A new chat asks again.
@@ -125,7 +131,7 @@ So you can ask it to read a folder of papers and write what it finds into your n
 
 **Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
 
-While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
 

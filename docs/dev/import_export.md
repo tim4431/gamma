@@ -43,7 +43,7 @@ rewrites the stored PDF without them (the View menu's "Import…" dialog can
 override that for one run; the auto-import on open always follows the
 preference); stripped blocks get `properties.annot_stripped`, which tells
 `/export-pdf` to write them again (it skips `imported_annot` blocks only while
-the original is still embedded).
+the original is still embedded, `pdf_export.still_embedded`).
 
 ## The Import dialog
 

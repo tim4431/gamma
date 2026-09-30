@@ -13,9 +13,10 @@ from .db import connect_data_db, connect_pages_db, page_now, pdf_upload_path
 from .foldertags import parse_tags
 from .logbuf import log
 from .net_guard import guarded_urlopen
+from .notebook import is_sheet
 from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
-                       extract_text_pages, outline, page_count, page_label, render_page)
+                       extract_text_pages, image_part, outline, page_count, page_label, render_page)
 from .server_settings import can_store
 from .storage import write_atomic
 from .textnorm import normalize_text
@@ -196,6 +197,9 @@ MAX_CONTEXT_BLOCKS = 12
 MAX_NOTE_SELECTIONS = 6
 MAX_NOTE_PASSAGE_CHARS = 4000
 MAX_BLOCK_SECTION_CHARS = 12_000
+# Attached handwriting blocks whose picture (gamma/ink_view.py) rides with
+# one message, so "transcribe this" needs no tool call.
+MAX_INK_PICTURES = 2
 
 
 def request_note_selections(payload) -> list[dict]:
@@ -221,7 +225,20 @@ def request_note_selections(payload) -> list[dict]:
     return out
 
 
-def notes_focus_section(ws: str, payload, notes_seen: dict | None = None) -> str:
+def handwriting_label(props: dict) -> str:
+    """How an outline line (read_block, the notes-focus section) names a
+    handwriting block or a page of paper, whose text is only a caption; ""
+    for any other block."""
+    if props.get("ink_url"):
+        where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the page of paper above"
+        return f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)"
+    if is_sheet(props):
+        return "(a page of paper: the handwriting under it is written on it)"
+    return ""
+
+
+def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
+                        crops: list | None = None) -> str:
     """The user's pointer into their notes, as one context section: the
     block their cursor is on and the blocks they attached to this message,
     each as ``[id] text`` with its sub-blocks indented — the same id-labelled
@@ -229,8 +246,10 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None) -> str
     blocks of the request's context pages are served (a chip from another
     page is silently dropped). Empty when there is nothing to point at.
     ``notes_seen`` receives ``{block_id: text}`` for every block shown in
-    full — what an edit_block replace may start from (ai_tools.notes_seen)."""
-    focus = str(getattr(payload, "focus_block_id", "") or "").strip()
+    full — what an edit_block replace may start from (ai_tools.notes_seen).
+    ``crops``, when given, receives the pictures of attached handwriting
+    blocks and pages of paper (up to ``MAX_INK_PICTURES``)."""
+    focus =str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
     # A selection's block rides along whole, so the model sees what surrounds
@@ -276,6 +295,8 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None) -> str
                     quote = (props.get("quote") or "").strip()
                     if quote:
                         text = f'(highlight: "{quote[:200]}") {text}'
+                    elif label := handwriting_label(props):
+                        text = f"{label} {text}"
                     pad = "  " * depth
                     return pad + f"- [{row[0]}] " + text.replace("\n", "\n" + pad + "  ")
 
@@ -307,13 +328,39 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None) -> str
                 if text:
                     out.append("The user's cursor is on this note block (\"this block\", "
                                "\"here\" mean it):\n" + text)
+            def ink_picture(block_id: str):
+                """An attached handwriting block's (or page of paper's)
+                picture, as the wires take it; None for any other block."""
+                row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                   (block_id,)).fetchone()
+                try:
+                    props = json.loads(row[0] or "{}") if row else {}
+                except ValueError:
+                    props = {}
+                if not handwriting_label(props):
+                    return None
+                from .ink_view import picture
+                try:
+                    shown = picture(ws, conn, block_id, page_root_id(conn, block_id))
+                except Exception as error:  # a picture that fails never fails the message
+                    log.warning(f"[ai_chat] handwriting picture of {block_id} failed: {error}")
+                    return None
+                return image_part(shown["image"]) if shown.get("image") else None
+
             if chips:
                 shown = []
                 budget = MAX_BLOCK_SECTION_CHARS
+                pictures = 0
                 for block_id in chips:
                     if block_id in pages:
                         continue
                     text = outline(block_id, max(500, budget // max(1, len(chips))))
+                    if text and crops is not None and pictures < MAX_INK_PICTURES:
+                        image = ink_picture(block_id)
+                        if image:
+                            crops.append(image)
+                            pictures += 1
+                            text += "\n  (a picture of this handwriting is attached to the message)"
                     if text:
                         shown.append(text)
                 if shown:
@@ -1105,7 +1152,7 @@ def selection_crops(ws: str, doc_id: str, passages: list[dict],
         box = _crop_box(passage["box"])
         image = render_selection_crop(path, passage["page"], box)
         if image:
-            images.append((image[1], base64.standard_b64encode(image[0]).decode("ascii")))
+            images.append(image_part(image))
             where.update(crop=True, box=list(box))
     return images
 
@@ -1158,7 +1205,7 @@ def render_area_crops(ws: str, doc_id: str, areas: list) -> list[tuple[str, str]
     for page, box in areas:
         image = render_selection_crop(path, page, box)
         if image:
-            images.append((image[1], base64.standard_b64encode(image[0]).decode("ascii")))
+            images.append(image_part(image))
     return images
 
 
@@ -1499,7 +1546,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
 
     # Where the user is pointing inside the notes (cursor block, attached
     # block chips) belongs to this message, right before the question.
-    focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen)
+    focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen, crops=crops)
     if focus_section:
         message_sections.append(focus_section)
 

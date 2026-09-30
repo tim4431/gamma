@@ -31,11 +31,12 @@ Folder semantics mirror
 [frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
-Pages in Recently deleted are out of every tool's reach, the MCP adapter's
+Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
 `blocks_store.page_root_id` find no page for them or their blocks
-([home_library.md](home_library.md) "Recently deleted"). The agent cannot
-delete pages.
+([home_library.md](home_library.md) "Recently deleted"). Two folder-chat
+tools are the exception: `list_deleted` lists them and `restore_page` brings
+one back. The agent cannot delete pages.
 
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
@@ -47,9 +48,9 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes its fixed allowlist of the seven read tools below that stay
-inside the library (everything but the web and write tools) and a
-non-writable workspace scope.
+set; MCP passes its fixed allowlist of seven read tools that stay inside
+the library (not the web and write tools, `view_ink`, `cite` or
+`list_deleted`) and a non-writable workspace scope.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -58,14 +59,19 @@ non-writable workspace scope.
 | `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
-| `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
+| `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
 | `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
 | `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
 | `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `save_paper` | Save papers | folder + page | Add a paper to the library by DOI, arXiv id or URL, through the ingest the reply's Save to library and the Connector use |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
+| `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
+| `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
@@ -214,6 +220,72 @@ The armed prompt tells the model when a picture is worth its tokens
 an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
+
+### view_ink (both scopes)
+
+The model's eyes on handwriting ([handwriting.md](handwriting.md)). An ink
+group's text is only its caption, so read_block labels the block
+("handwriting on p. N, K strokes" or "on the page of paper above") and
+view_ink shows the strokes. `block_id` names a handwriting block or a page
+of paper (a sheet). A group is drawn where it was written, cropped to its
+strokes with a margin (`ink_view.crop_box`: a tenth of the strokes' larger
+side or 18 pt, and at least 2 inches a side, so one word is seen with what
+surrounds it). `area: "page"` shows the whole PDF page or sheet with all its
+handwriting instead. A sheet's id always shows the whole sheet.
+
+Nothing is drawn by hand. Both paths reuse an export
+(`gamma/ink_view.py`):
+
+- **A sheet** (a `canvas` group, or the sheet itself) is the notebook
+  export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
+  strokes as vectors.
+- **A PDF page** is that page on its own with the groups written on it as
+  the annotated export's `/Ink` annotations
+  (`pdf_export.page_with_ink`). pdfium generates their appearance when it
+  renders, so highlighters stay translucent over the text. Ink imported
+  from the PDF and still embedded in it (`pdf_export.still_embedded`) is
+  not added twice. When the PDF
+  is missing or PyPDF2 cannot copy the page (an encrypted file), the
+  strokes are drawn on blank paper of the page's size, and the result says
+  so.
+
+`pdf_text.render_page` rasterizes either, whole at `RENDER_MAX_SIDE` or
+cropped under its 4× zoom cap, and `pdf_text.image_part` encodes the picture
+as every tool picture is. It rides on the chip's `images` like
+`view_pdf_page`'s and is never saved. The result names the block, the
+page and the stroke count, quotes the caption, and asks the model to mark a
+word it cannot read `[illegible]` rather than guess. Its chip is ✎
+"Looked at handwriting in …" (kind `ink`, with `block_id`), and the open
+page rings that block. It shares the View permission with `view_pdf_page`.
+
+With `edit_block` armed, the agent prompt also says how to transcribe:
+look with view_ink, then write the text into the group's caption, as an
+append when it has one. The notes' **Transcribe with AI** (a handwriting
+block's ⋮⋮ menu) sends exactly that request with the block attached as a
+chip, and an attached handwriting block's picture rides with the message
+(see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
+tools still answers with the transcription.
+
+### cite (both scopes)
+
+The citation records Gamma keeps with pages, so a bibliography is built
+from the records and not from the model's memory. `page_ids` takes up to
+50 pages; in a page chat the default is the open page. For each page the
+result gives:
+
+- the record from `properties.meta` (authors, year, venue, volume, pages,
+  publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
+  and the paper's own title when it differs from the page's;
+- the stored BibTeX, else one built from the record the way a hand edit
+  builds it (`routers/metadata._build_bibtex`);
+- the slide citation when one was made (`ppt_cite`). None is generated,
+  since that is an AI call.
+
+A record flagged `unverified` says so. A page without metadata says so
+too, and the model is told not to invent one. Nothing is looked up or
+stored. Pages outside the scope are refused one by one, and a call where
+every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
+`cite`), under the Read permission.
 
 ### The web tools (both scopes)
 
@@ -572,6 +644,52 @@ a challenge bound to that browser or IP. The model is told not to repeatedly
 retry a blocked URL and to respect rate limits. Reading an uploaded library
 page requires **Read pages** and selecting that page as context.
 
+### save_paper (both scopes)
+
+Adds a paper to the library when the user asks, the same way the reply's
+**Save to library** does. `source` is a DOI, an arXiv id or an http(s)
+URL; `title` is the exact title when known. The call goes through the clip
+ingest (`routers/clip.py` `save_clip`, the body of `POST /api/clip`):
+
+- the usual dedup by identifier;
+- the PDF resolved, fetched and stored, or a page carrying the paper's web
+  address when none is reachable;
+- the page filed;
+- the metadata lookup started in the background.
+
+The request is built as `chat/chatPapers.js` builds it. An identifier's
+DOI or arXiv page is the page's source, and a URL is also the address to
+resolve. The account's Reading choices ride in the request as
+`paper_save` (`{allow_oa, save_copy, fetch_metadata}`, missing means on),
+the same ones the pill uses. When the user's browser delivered this source
+through a fetch handoff, the held PDF is stored first (`storage.store_pdf`)
+and the clip uses it. Journal sign-ins are bound from the chat scope like
+`fetch_paper`'s.
+
+`folder` files the paper. A folder chat resolves it inside its folder
+(`move_page`'s rule); a page chat takes it as given, else the open page's
+first folder, which is where the pill files. A paper already in the
+library is only filed. When it is in that folder already, `_plan_save_paper`
+answers that nothing changed, so there is no card and the chip is a no-op.
+In a page chat the new page is outside the chat's reach, and the result
+says to read the paper with `fetch_paper`.
+
+The approval card's preview has the paper's `title` (the one passed, else
+the library page's, else the source), the folder it goes `to` and the source
+as its `diff`. A paper the library holds adds `existed` and its `page_id`,
+and the card reads "File … in …" instead of "Save … to …". Planning looks
+nothing up online; the PDF is fetched only once the call runs.
+
+One message saves at most `MAX_SAVES` (20) papers. The count lives in
+`scope["tally"]`, which `run_agent_tool` creates before it copies the scope
+for a mutation, so the copies share it. The action (kind `save`) carries
+`page_id`, `title`, `to` (the folder, `""` for the library root),
+`existed` and `pdf`. The chat lists it under "Changed in your library" as
+"Saved {page} to {folder}", or as filed there when it was already in the
+library. The agent prompt says to save only on request, never as a side
+effect of reading. The permission is **Save papers** (`save`), a change
+permission in every chat kind, Ask by default.
+
 ### rename_page / move_page (folder only)
 
 `rename_page` changes a page's title. `move_page` files a page into a
@@ -580,6 +698,28 @@ current folder are kept. Both are reversible with another call. Their
 actions name the change for the chat's change list: `title` (the page's
 title before the call), `from` / `to` (the old and new title; the old
 folder paths, comma-joined, and the new one, `""` for the library root).
+
+### list_deleted / restore_page (folder only)
+
+Recently deleted ([home_library.md](home_library.md)). A deleted page is in
+a folder chat's reach when it was filed under the chat's folder; at the
+library root, every deleted page is. A permission either reads or changes,
+so the two tools have one each:
+
+- `list_deleted`, under **List pages**, lists such pages, the last deleted
+  first: id, title, the folders a restore puts the page back in, when and
+  by whom it was deleted, and when it goes for good (`trash.list_trash`).
+  `title_contains` filters by title. Its chip is a `list` one.
+- `restore_page`, under **Restore deleted pages** (`restore`, Ask by
+  default), runs `ops.restore_page`, the route's restore. The page goes
+  back under the library root in its folders, with its notes, highlights,
+  files and chats. `_plan_restore_page` answers a page that is not deleted
+  (a no-op) or was filed outside the chat's folder (refused) without a card.
+
+The approval card's preview has the page's `title` and the folders it goes
+back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
+and `to` (its folders). The chat lists it under "Changed in your library".
+Deleting is not offered.
 
 ### edit_block / create_block / move_block (both scopes, one permission)
 
@@ -651,7 +791,10 @@ approaches"*, *"where did I note something about bias-preserving gates?"*
 (a notes hit with its block id), *"tidy my notes on this page into
 sections"* — and in a page chat, *"where does this paper define the
 protocol?"* (it searches inside the PDF and quotes page numbers) or *"add a
-summary block to my notes"*.
+summary block to my notes"*. Handwriting, citations, saving and Recently
+deleted: *"transcribe my handwriting on this page"*, *"BibTeX for everything
+in this folder"*, *"save the three most cited follow-ups into refs"*, *"bring
+back the page on Rydberg blockade I deleted last week"*.
 
 ## Guardrails
 
@@ -663,8 +806,9 @@ Deliberately not offered under any permission:
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads, share links, settings, or other users' data.
-- Adding a fetched paper to the library — `fetch_paper` reads, it never
-  creates a page; the user drops the PDF or uses the extension for that.
+- Adding a paper as a side effect of reading it: `fetch_paper` never
+  creates a page. Only `save_paper` does, under its own permission and on
+  the user's request.
 
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
@@ -679,10 +823,10 @@ rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
-`chat/ChatDock.jsx`: list, book, search, eye, globe, download, pencil,
-folder, plus). Each line expands to the arguments and the output the model
-got. Everything that changed is listed again under the pill: "Changed in
-your library" (renamed and filed pages, old → new) and "Changed in your
-notes" (edited, added and moved blocks), each entry a link to the page or
-block. The note tools' actions carry their page's `title` for that list; a
+`chat/ChatDock.jsx`: list, book, search, eye, pen, quote, globe, download,
+file-plus, history, pencil, folder, plus). Each line expands to the
+arguments and the output the model got. Everything that changed is listed
+again under the pill: "Changed in your library" (renamed, filed, saved and
+restored pages) and "Changed in your notes" (edited, added and moved
+blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.

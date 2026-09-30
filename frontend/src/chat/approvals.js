@@ -35,11 +35,19 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       if (preview.src_title) return t("Move a note from “{from}” to “{title}”", { from: preview.src_title, title });
       return preview.parent ? t("Move a note under “{parent}” in “{title}”", { parent: preview.parent, title })
         : t("Move a note in “{title}”", { title });
+    case "save_paper":
+      if (preview.existed) return t("File “{title}” in {folder}", { title, folder: preview.to });
+      return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
+        : t("Save “{title}” to the library root", { title });
+    case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
     case "list_pages": case "list_folders": return t("List your pages and folders");
+    case "list_deleted": return t("List Recently deleted");
     case "read_page": return t("Read “{title}”", { title });
     case "read_block": return t("Read notes of “{title}”", { title: args.block_id ? titleOf(args.block_id) || t("a page") : title });
     case "read_chats": return t("Read an earlier AI chat");
     case "view_pdf_page": return t("Look at PDF page {page}", { page: args.pdf_page || "?" });
+    case "view_ink": return t("Look at your handwriting");
+    case "cite": return t("Look up citation records");
     case "search_library": return t("Search your library for “{query}”", { query: args.query || "" });
     case "search_papers": return t("Search papers online for “{query}”", { query: args.query || "" });
     case "search_web": return t("Search the web for “{query}”", { query: args.query || "" });

@@ -76,6 +76,13 @@ def parse_css_color(value):
     return DEFAULT_COLOR
 
 
+def still_embedded(props: dict) -> bool:
+    """A highlight or ink block imported from the PDF's own annotations and
+    still in the stored file (``annot_stripped`` marks the ones the import
+    removed): the file draws it already, so the writers here skip it."""
+    return bool(props.get("imported_annot") and not props.get("annot_stripped"))
+
+
 def viewer_point_to_pdf(u, v, rotation, crop):
     """A display-space point, normalized (``u`` right, ``v`` down from the
     top of the page as shown) → PDF user space (bottom-left origin).
@@ -340,3 +347,24 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=()) -> tupl
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), written
+
+
+def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
+    """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
+    its own, with the handwriting groups ``inks`` (``gamma.ink.InkFile``s
+    drawn on that page) written on it as ``/Ink`` like ``annotate_pdf`` →
+    ``(pdf bytes, the source's page count)``; ``b""`` for a page past the
+    end. The agent's view_ink renders it (gamma/ink_view.py)."""
+    reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
+    pages = len(reader.pages)
+    if not 1 <= page_no <= pages:
+        return b"", pages
+    writer = PdfWriter()
+    writer.add_page(reader.pages[page_no - 1])
+    crop, rotation = _page_frame(writer.pages[0])
+    for ink in inks:
+        for annot in _ink_annotations(ink, rotation, crop, "", ""):
+            writer.add_annotation(page_number=0, annotation=annot)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue(), pages

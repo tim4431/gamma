@@ -187,6 +187,9 @@ class AIChatRequest(BaseModel):
     agent_system: str = ""
     tool_rounds: int = Field(default=0, ge=0, le=100)
     read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
+    # How save_paper stores a paper — the Reading choices the reply's Save to
+    # library also uses: {allow_oa, save_copy, fetch_metadata}, missing = on.
+    paper_save: dict = Field(default_factory=dict)
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
 
@@ -1501,6 +1504,8 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
             # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
             "handoff_user": (user if not request.state.is_guest
                              and not request.query_params.get("share") else None),
+            "paper_save": {key: payload.paper_save.get(key, True) is not False
+                           for key in ("allow_oa", "save_copy", "fetch_metadata")},
             # This turn's reads, {block_id: full text}: what an edit_block
             # replace merges from (ai_tools.notes_seen).
             "read_texts": {}}

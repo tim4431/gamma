@@ -28,6 +28,11 @@ test("permission presets cover each chat kind's tools, and changes ask unless to
   }
   assert.equal(presetPermissions("folder", "read").rename, "off");
   assert.equal(presetPermissions("pdf", "all").rename, undefined);
+  // Saving papers is a change in every chat; restoring pages the folder chat's.
+  assert.equal(presetPermissions("pdf", "read").save, "off");
+  assert.equal(presetPermissions("pdf", "ask").save, "ask");
+  assert.equal(presetPermissions("pdf", "all").restore, undefined);
+  assert.equal(presetPermissions("folder", "all").restore, "allow");
 });
 
 test("a stored permission reads as a state", () => {
@@ -36,6 +41,7 @@ test("a stored permission reads as a state", () => {
   assert.equal(normalizePerm("read", false), "off");
   assert.equal(normalizePerm("block_edit", "allow"), "allow");
   assert.equal(normalizePerm("block_edit", undefined), "ask");
+  assert.equal(normalizePerm("save", undefined), "ask", "a map stored before a change permission existed asks");
   assert.equal(normalizePerm("web_read", "bogus"), "allow");
   assert.equal(normalizePerm("publisher_cookies", "ask"), "allow", "journal sign-ins are on or off");
   assert.deepEqual(permStates("publisher_cookies"), ["allow", "off"]);

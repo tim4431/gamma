@@ -21,12 +21,14 @@ the user before such a call runs.
 Reads: list the pages and the folder tree (folder scope only); read a page
 (its notes and highlights, plus the extracted text of its PDF attachment when
 it has one); read a page's note outline with block ids; read the AI chat kept
-with a page or folder; look at a PDF page as a picture; full-text-search the reachable
+with a page or folder; look at a PDF page or the user's handwriting as a
+picture; the citation records kept with pages; full-text-search the reachable
 pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
-nothing stored).  Writes: rename pages and
-file them into (sub)folders (folder scope only); edit, create and move note
-blocks (both scopes, under their own permission).  Deliberately NOT offered
+nothing stored); list Recently deleted.  Writes: rename pages and
+file them into (sub)folders, restore deleted pages (folder scope only); edit,
+create and move note blocks; save a paper to the library (both scopes, each
+under its own permission).  Deliberately NOT offered
 under any permission: deleting anything, rewriting flat labels, or touching
 pages outside the scope — and every successful call is streamed back to the
 UI as an ``action`` event so the user sees exactly what the agent did.  The
@@ -41,7 +43,6 @@ is a comma-separated list of ``/``-nested paths, folders exist only through the
 tags in use, and ``properties.category`` holds the flat labels.
 """
 
-import base64
 import json
 import re
 import secrets
@@ -52,14 +53,16 @@ from fractional_indexing import generate_key_between
 
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         page_report_section, pdf_path, render_area_crops)
+                         handwriting_label, page_report_section, pdf_path, render_area_crops)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import connect_data_db, connect_pages_db, page_now
 from .ops import after_commit, apply_ops, note_reload, record_ops
 from .foldertags import add_tag, clean_path, parse_tags, path_within
 from .logbuf import log
+from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
-from .pdf_text import RENDER_MAX_SIDE, render_page
+from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
+from .trash import KEEP_DAYS, list_trash
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
@@ -133,13 +136,19 @@ def _in_scope_folder(scope: dict, raw) -> str:
     return f"{path}/{target}" if path and not path_within(target, path) else target
 
 
+def _filed_in_scope(scope: dict, tags: list[str]) -> bool:
+    """A folder chat reaches what is filed under its folder — everything at
+    the library root."""
+    path = _scope_folder(scope)
+    return not path or any(path_within(t, path) for t in tags)
+
+
 def _page_in_scope(scope: dict, page_id: str, tags: list[str]) -> bool:
     if page_id in (scope.get("context_pages") or []):
         return True
     if scope.get("type") == "page":
         return page_id == scope.get("page_id")
-    path = _scope_folder(scope)
-    return not path or any(path_within(t, path) for t in tags)
+    return _filed_in_scope(scope, tags)
 
 
 def _load_scoped_page(conn, scope: dict, args: dict):
@@ -515,18 +524,55 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
         return "error: the PDF could not be rendered", None
     if image is None:
         return f'error: PDF page {page_no} does not exist — "{title}" has {total} pages', None
-    data, media_type, width, height = image
+    _, _, width, height = image
     result = (f'PDF page {page_no} of {total} of "{title}" is attached as a {width}×{height} px '
               "picture: read it visually and cite it as PDF page "
               f"{page_no}. The picture is not kept in the chat history — call again to look at it later.")
     return result, {"kind": "view", "page_id": page_id, "pdf_page": page_no,
                     "summary": f"Looked at p. {page_no} of “{title[:60]}”",
-                    "images": [(media_type, base64.b64encode(data).decode("ascii"))]}
+                    "images": [image_part(image)]}
 
 
-def is_sheet(props: dict) -> bool:
-    from .notebook import is_sheet as sheet
-    return sheet(props)
+def _run_view_ink(conn, ws: str, scope: dict, args: dict):
+    """Handwriting as a picture (gamma/ink_view.py): a group's strokes on
+    their PDF page or sheet of paper, cropped to them, or with ``area``
+    "page" the whole page with all its handwriting; a sheet's id shows the
+    sheet. Like view_pdf_page's page, the picture rides on the chip's
+    ``images`` and never reaches the saved chat."""
+    from .ink_view import picture
+
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, page_id, page_title = loaded
+    whole = str(args.get("area") or "").strip().lower() == "page"
+    shown = picture(ws, conn, block["id"], page_id, whole=whole)
+    if shown.get("error"):
+        return shown["error"], None
+    _, _, width, height = shown["image"]
+    page_no = shown["pdf_page"]
+    sheet = is_sheet(block["properties"])
+    if sheet:
+        what = f'The page of paper [{block["id"]}] in "{page_title}", with all the handwriting on it,'
+    else:
+        where = f'PDF page {page_no} of "{page_title}"' if page_no else f'a page of paper in "{page_title}"'
+        what = (f"All the handwriting on {where}" if shown["whole"]
+                else f'Handwriting block [{block["id"]}] on {where} (cropped to it, with a margin)')
+    caption = (block["content"] or "").strip()
+    text = (f"{what} is attached as a {width}×{height} px picture ({shown['strokes']} strokes). "
+            + ("The PDF page could not be copied, so the strokes are drawn on blank paper. "
+               if shown["bare"] else "")
+            + ("" if sheet else f"Its caption (the block's text): {json.dumps(caption[:500], ensure_ascii=False)}. "
+               if caption else "It has no caption yet. ")
+            + "Read the strokes visually and say when an answer comes from handwriting; a word "
+            "you cannot read is [illegible], never a guess. The picture is not kept in the chat "
+            "history — call again to look at it later.")
+    chip = {"kind": "ink", "page_id": page_id, "block_id": block["id"],
+            "summary": f"Looked at handwriting in “{page_title[:60]}”" + (f" p. {page_no}" if page_no else ""),
+            "images": [image_part(shown["image"])]}
+    if page_no:
+        chip["pdf_page"] = page_no
+    return text, chip
 
 
 def _run_read_block(conn, ws: str, scope: dict, args: dict):
@@ -566,11 +612,8 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
             else:
                 bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
                             "the limit on this page)")
-        if props.get("ink_url"):
-            where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the page of paper above"
-            bits.append(f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)")
-        elif is_sheet(props):
-            bits.append("(a page of paper: the handwriting under it is written on it)")
+        if label := handwriting_label(props):
+            bits.append(label)
         bits.append(text or "(empty)")
         pad = "  " * depth
         return pad + "- " + "\n".join(
@@ -740,6 +783,73 @@ def _run_read_chats(conn, ws: str, scope: dict, args: dict):
         more = "\n(older conversations not shown)" if len(history) > _LIST_CAP else ""
         parts.append("Earlier conversations (read one with chat_id):\n" + "\n".join(lines) + more)
     return "\n\n".join(parts), action
+
+
+_CITE_MAX = 50  # pages one cite call formats
+_RECORD_FIELDS = (("authors", "Authors"), ("year", "Year"), ("venue", "Venue"), ("volume", "Volume"),
+                  ("pages", "Pages"), ("publisher", "Publisher"), ("isbn", "ISBN"), ("doi", "DOI"),
+                  ("arxiv_id", "arXiv"))
+
+
+def _run_cite(conn, ws: str, scope: dict, args: dict):
+    """The citation record of in-scope pages: the paper metadata the page
+    keeps (properties.meta, from the metadata lookup or a hand edit), its
+    BibTeX (the stored rendering, else built from the record as a hand edit
+    builds it) and the slide citation when one was made. Nothing is looked
+    up or stored — a page without metadata says so."""
+    from .routers.metadata import _build_bibtex
+
+    ids = args.get("page_ids") or args.get("page_id") or []
+    ids = [ids] if isinstance(ids, str) else ids if isinstance(ids, list) else []
+    ids = list(dict.fromkeys(str(i).strip() for i in ids if str(i).strip()))
+    if not ids and scope.get("type") == "page":
+        ids = [scope.get("page_id")]
+    if not ids:
+        return "error: name the pages to cite — page_ids from list_pages or search_library", None
+    entries, cited, missing = [], [], 0
+    for page_id in ids[:_CITE_MAX]:
+        loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id})
+        if error:
+            entries.append(f"- page_id {page_id}: {error}")
+            continue
+        page_id, title, props, _ = loaded
+        meta = props.get("meta") if isinstance(props.get("meta"), dict) else None
+        head = f'## "{title}" (page_id {page_id})'
+        if not meta:
+            missing += 1
+            entries.append(head + "\nNo paper metadata yet — the user can look it up with the (i) "
+                                  "button in the Notes panel; do not make a record up.")
+            continue
+        cited.append(title)
+        record = []
+        for key, label in _RECORD_FIELDS:
+            value = meta.get(key)
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value if str(v).strip())
+            if str(value or "").strip():
+                record.append(f"{label}: {value}")
+        lines = [head, " · ".join(record) or "(the record is empty)"]
+        if meta.get("title") and meta["title"] != title:
+            lines.append(f"Paper title: {meta['title']}")
+        if meta.get("unverified"):
+            lines.append("Unverified: nothing tied this record to the page's PDF (it may be a cited "
+                         "work's, or an AI reading) — say so and suggest checking it before it is cited.")
+        lines.append("```bibtex\n" + (props.get("bibtex") or _build_bibtex(meta)).strip() + "\n```")
+        if str(props.get("ppt_cite") or "").strip():
+            lines.append("Slide citation: " + props["ppt_cite"].strip())
+        entries.append("\n".join(lines))
+    if not cited and not missing:
+        return "error: none of those pages can be cited here\n" + "\n".join(entries), None
+    more = (f"\n(+{len(ids) - _CITE_MAX} more pages not shown — call again with the rest)"
+            if len(ids) > _CITE_MAX else "")
+    out = ("Citation records kept with the pages (from the metadata lookup or the user's own "
+           "edits). Format another style from the fields; never add a field the record lacks.\n\n"
+           + "\n\n".join(entries) + more)
+    summary = (f"Cited “{cited[0][:60]}”" if len(cited) == 1
+               else f"Cited {len(cited)} pages" if cited else "No citation record")
+    if missing:
+        summary += f" · {missing} without metadata"
+    return out, {"kind": "cite", **({"page_id": ids[0]} if len(ids) == 1 else {}), "summary": summary}
 
 
 EDIT_MODES = ("replace", "append", "prepend", "patch", "selection")
@@ -1496,6 +1606,126 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
 # anything (a wrong id, a page out of scope, a title it already has) is
 # answered without asking the user: the plan's answer goes to the model.
 
+MAX_SAVES = 20  # papers one message may save: each is a download into the library
+
+
+def _save_folder(conn, scope: dict, raw) -> str:
+    """Where save_paper files a paper: a folder chat resolves the argument
+    inside its folder (move_page's rule); a page chat takes it as given,
+    else the open page's first folder — where the reply's Save to library
+    files it."""
+    if scope.get("type") == "folder":
+        return _in_scope_folder(scope, raw)
+    target = clean_path(str(raw or ""))
+    if target:
+        return target
+    loaded, _ = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
+    return loaded[3][0] if loaded and loaded[3] else ""
+
+
+def _plan_save_paper(conn, scope: dict, args: dict):
+    """``(plan, None)``: the clip request for the paper (``payload``, the
+    folder it files the paper in included), the ``source`` it came from, its
+    ``title`` as far as it is known, and the page that holds the paper
+    already (``page``, else None) with the folders it is in (``filed``).
+    ``(None, answer)`` for a call that cannot save anything, or finds the
+    paper filed there already."""
+    from .ai_web import identifier
+    from .routers.clip import ClipRequest, find_page, norm_arxiv, norm_doi
+
+    source = str(args.get("source") or "").strip()[:2000]
+    if not source:
+        return None, "error: empty source — pass the paper's DOI, arXiv id or URL"
+    kind, ident = identifier(source)
+    url = source if urlsplit(source).scheme in ("http", "https") else ""
+    if not (kind or url):
+        return None, "error: source must be a DOI, an arXiv id or an http(s) URL"
+    if scope.get("tally", {}).get("saves", 0) >= MAX_SAVES:
+        return None, (f"error: {MAX_SAVES} papers is the most one message may save — tell the user "
+                      "which are left")
+    folder = _save_folder(conn, scope, args.get("folder"))
+    title = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:300]
+    doi, arxiv = (ident if kind == "doi" else ""), (ident if kind == "arxiv" else "")
+    # The source kept on the page, as the reply's Save to library keeps it
+    # (chat/chatPapers.js paperPage): the DOI or arXiv page, else the URL.
+    page_url = (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"https://doi.org/{doi}" if doi else url)
+    page = find_page(conn, norm_doi(doi), norm_arxiv(arxiv), (page_url,))
+    filed = parse_tags(page["properties"].get("folder")) if page else []
+    if page and (not folder or folder in filed):
+        return None, (f"ok — [{page['content']}](/?page={page['id']}) is already in the library"
+                      + (f' in "{folder}"' if folder else "") + "; nothing changed")
+    # A URL is also the address to resolve a PDF from; an identifier is
+    # resolved as itself. The Reading choices left out are ClipRequest's (on).
+    payload = ClipRequest(source_url=page_url, pdf_url="" if kind else url, doi=doi, arxiv_id=arxiv,
+                          title=title, folder=folder, **scope.get("paper_save", {}))
+    return {"payload": payload, "source": source, "page": page, "filed": filed,
+            "title": title or (page["content"] if page else "") or source}, None
+
+
+def _preview_save_paper(conn, scope: dict, args: dict):
+    plan, answer = _plan_save_paper(conn, scope, args)
+    if not plan:
+        return None, answer
+    preview = {"title": plan["title"], "to": plan["payload"].folder, "diff": [["ctx", plan["source"]]]}
+    if plan["page"]:
+        preview.update(page_id=plan["page"]["id"], existed=True)
+    return preview, None
+
+
+def _run_save_paper(conn, ws: str, scope: dict, args: dict):
+    """Add a paper to the library through the clip ingest (routers/clip.py
+    ``save_clip``, what the reply's Save to library and Gamma Connector
+    run): the usual dedup, the PDF resolved and stored with the account's
+    Reading choices (``scope["paper_save"]``), the page filed, its metadata
+    looked up in the background. A PDF the user's browser delivered for the
+    source is stored first."""
+    from fastapi import HTTPException
+
+    from . import fetch_handoff, publisher_sessions
+    from .routers.clip import save_clip
+    from .storage import store_pdf
+
+    plan, answer = _plan_save_paper(conn, scope, args)
+    if not plan:
+        return answer, None
+    scope["tally"]["saves"] = scope["tally"].get("saves", 0) + 1
+    payload = plan["payload"]
+    folder, title, source = payload.folder, payload.title, plan["source"]
+    helper = scope.get("handoff_user")
+    doc = fetch_handoff.delivered(helper, source)
+    held = fetch_handoff.held_pdf(helper, doc["request"]) if doc and doc.get("request") else None
+    if held:
+        payload.doc_id = store_pdf(ws, held[0])[0]
+    # Identities come from the authenticated chat scope, never model arguments.
+    token = publisher_sessions.current_user.set(scope.get("publisher_user"))
+    try:
+        out = save_clip(ws, scope.get("actor") or "", payload)
+    except HTTPException as e:
+        return f"error: could not save it — {e.detail}", None
+    finally:
+        publisher_sessions.current_user.reset(token)
+    page_id, name = out["block_id"], out.get("title") or title or source
+    where = f'"{folder}"' if folder else "the library root"
+    link = f"[{name}](/?page={page_id})"
+    if out.get("existed") and (not folder or folder in plan["filed"]):
+        return f"ok — {link} is already in the library" + (f" in {where}" if folder else "") + "; nothing changed", None
+    if out.get("existed"):
+        text = f"ok — {link} was already in the library (page_id {page_id}); it is now also filed in {where}"
+    else:
+        text = (f"ok — saved {link} as a new page (page_id {page_id}) in {where}"
+                + (" with its PDF" if out.get("doc_id") else
+                   " — no PDF could be fetched, so the page keeps the paper's web address")
+                + ". Its metadata is looked up in the background, so its title may change")
+    if out.get("note"):
+        text += f". Note: {out['note']}"
+    if scope.get("type") == "page":
+        text += (". The new page is outside this chat's reach (a page chat reads only its own "
+                 "page); read the paper with fetch_paper")
+    return text + ".", {"kind": "save", "page_id": page_id, "title": name, "to": folder,
+                        "existed": bool(out.get("existed")), "pdf": bool(out.get("doc_id")),
+                        "summary": f"Saved “{name[:60]}” to {folder or 'the library root'}"}
+
+
 def _plan_rename_page(conn, scope: dict, args: dict):
     """``((page_id, title, new), None)``, or ``(None, answer)`` for a call
     that changes nothing."""
@@ -1570,6 +1800,71 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
             {"kind": "move", "page_id": page_id, "title": title,
              "from": ", ".join(tags), "to": target,
              "summary": f"Moved “{title}” → {where}"})
+
+
+def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
+    """Recently deleted (gamma/trash.py) as far as the chat's folder
+    reaches — the pages that were filed under it — the last deleted first,
+    with the folders a restore puts each page back in."""
+    query = str(args.get("title_contains") or "").strip().lower()
+    pages = [p for p in list_trash(conn) if _filed_in_scope(scope, parse_tags(p["folder"]))
+             and (not query or query in p["title"].lower())]
+    path = _scope_folder(scope)
+    where = f' from "{path}"' if path else ""
+    action = {"kind": "list", "summary": f"Listed Recently deleted{where} — "
+                                         f"{len(pages)} page{'s' if len(pages) != 1 else ''}"}
+    if not pages:
+        return (f"Recently deleted holds no pages{where}"
+                + (f' with "{query}" in the title' if query else "") + ".", action)
+    lines = [f'- id={p["id"]} | "{p["title"]}" | was in {p["folder"] or "no folder"} | deleted '
+             f'{p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
+             + f' | gone for good after {p["purge_at"][:10]}' for p in pages[:_LIST_CAP]]
+    more = f"\n(+{len(pages) - _LIST_CAP} more not shown)" if len(pages) > _LIST_CAP else ""
+    return (f"Recently deleted{where} ({len(pages)}, the last deleted first; a page is deleted for "
+            f"good {KEEP_DAYS} days after it went) — restore_page(page_id) puts one back in the "
+            "folders it was in:\n" + "\n".join(lines) + more), action
+
+
+def _plan_restore_page(conn, scope: dict, args: dict):
+    """``(page, None)``: the Recently deleted entry to bring back
+    (``trash.list_trash``'s), or ``(None, answer)`` for a call that cannot
+    restore anything."""
+    page_id = str(args.get("page_id") or "").strip()
+    page = next((p for p in list_trash(conn) if p["id"] == page_id), None)
+    if page is None:
+        if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                        (page_id,)).fetchone():
+            return None, "ok — that page is not deleted; it is in the library"
+        return None, "error: no such page in Recently deleted — use ids from list_deleted"
+    if not _filed_in_scope(scope, parse_tags(page["folder"])):
+        return None, "error: that page was not filed in this chat's folder — restore it from the library root"
+    return page, None
+
+
+def _preview_restore_page(conn, scope: dict, args: dict):
+    page, answer = _plan_restore_page(conn, scope, args)
+    if not page:
+        return None, answer
+    return {"title": page["title"], "to": page["folder"]}, None
+
+
+def _run_restore_page(conn, ws: str, scope: dict, args: dict):
+    """Bring a page back from Recently deleted (``ops.restore_page``): under
+    the library root again, in the folders it was in, with its notes,
+    highlights, files and chats."""
+    from .ops import OpError, restore_page
+
+    page, answer = _plan_restore_page(conn, scope, args)
+    if not page:
+        return answer, None
+    try:
+        restore_page(ws, conn, page["id"], client="ai")
+    except OpError as e:
+        return f"error: {e.detail}", None
+    where = f'"{page["folder"]}"' if page["folder"] else "the library root"
+    return (f'ok — restored [{page["title"]}](/?page={page["id"]}) (page_id {page["id"]}) to {where}',
+            {"kind": "restore", "page_id": page["id"], "title": page["title"], "to": page["folder"],
+             "summary": f"Restored “{page['title'][:60]}”"})
 
 
 # --- registry ------------------------------------------------------------------
@@ -1726,6 +2021,49 @@ TOOLS = [
         },
     },
     {
+        "perm": "view", "kind": "ink", "scopes": ("folder", "page"), "mutating": False, "run": _run_view_ink,
+        "spec": {
+            "name": "view_ink",
+            "description": (
+                "Look at the user's handwriting as a picture: a handwriting block's strokes "
+                "(read_block labels it \"handwriting on p. N\" or \"on the page of paper above\") "
+                "drawn where they were written — on their PDF page or their page of paper — "
+                "cropped to them with a margin. `area` \"page\" shows the whole PDF page or page "
+                "of paper with all its handwriting instead; the id of a page of paper (\"a page of "
+                "paper: the handwriting under it…\") shows that page. Use it to read or transcribe "
+                "handwriting, or to see what the user drew or marked on a PDF page. A picture "
+                "costs many tokens: look only at the blocks you need."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string",
+                                            "description": "a handwriting block's or a page of paper's id"},
+                               "area": {"type": "string", "enum": ["ink", "page"],
+                                        "description": "ink (default): cropped to the handwriting; "
+                                                       "page: the whole page it is on"}},
+                "required": ["block_id"],
+            },
+        },
+    },
+    {
+        "perm": "read", "kind": "cite", "scopes": ("folder", "page"), "mutating": False, "run": _run_cite,
+        "spec": {
+            "name": "cite",
+            "description": (
+                "Citation records of pages: the paper metadata Gamma keeps with each page "
+                "(authors, year, venue, volume, pages, publisher, ISBN, DOI, arXiv id), its "
+                "BibTeX entry, and the slide citation when one was made. Use it for a "
+                "bibliography, a reference list in a given style or BibTeX — format other "
+                "styles from the fields — instead of writing records from memory. `page_ids`: "
+                f"up to {_CITE_MAX} page ids (in a page chat, default this page). A record may "
+                "be marked unverified, and a page may have none."),
+            "parameters": {
+                "type": "object",
+                "properties": {"page_ids": {"type": "array", "items": {"type": "string"}}},
+                "required": [],
+            },
+        },
+    },
+    {
         "perm": "search", "kind": "search", "scopes": ("folder", "page"), "mutating": False, "run": _run_search_library,
         "spec": {
             "name": "search_library",
@@ -1874,6 +2212,30 @@ TOOLS = [
         },
     },
     {
+        "perm": "save", "kind": "save", "scopes": ("folder", "page"), "mutating": True, "run": _run_save_paper,
+        "preview": _preview_save_paper,
+        "spec": {
+            "name": "save_paper",
+            "description": (
+                "Add a paper to the user's library as a new page, the way their Save to library "
+                "button does. `source` is its DOI, arXiv id or URL (a search_papers record's "
+                "doi:/arXiv: string, or the address fetch_paper read). Its PDF is fetched and "
+                "stored when one is reachable (else the page keeps the paper's web address), its "
+                "metadata is looked up, and a paper already in the library is never duplicated — "
+                "it is only filed. `folder` files it (a path; in a folder chat relative to the "
+                "current folder, which is the default; in a page chat, default the open page's "
+                "first folder). Pass `title` when you know the paper's exact title. Save only "
+                "what the user asked to add, save or keep."),
+            "parameters": {
+                "type": "object",
+                "properties": {"source": {"type": "string"},
+                               "title": {"type": "string", "description": "the paper's exact title, when known"},
+                               "folder": {"type": "string"}},
+                "required": ["source"],
+            },
+        },
+    },
+    {
         "perm": "rename", "kind": "rename", "scopes": ("folder",), "mutating": True, "run": _run_rename_page,
         "preview": _preview_rename_page,
         "spec": {
@@ -1903,6 +2265,38 @@ TOOLS = [
                 "type": "object",
                 "properties": {**_PAGE_ID_ARG, "folder": {"type": "string"}},
                 "required": ["page_id", "folder"],
+            },
+        },
+    },
+    {
+        # A permission either reads or changes, so the listing is List pages'.
+        "perm": "list", "kind": "list", "scopes": ("folder",), "mutating": False, "run": _run_list_deleted,
+        "spec": {
+            "name": "list_deleted",
+            "description": (
+                f"List Recently deleted: the pages deleted in the last {KEEP_DAYS} days that were "
+                "filed under the current folder — id, title, the folders they were in, when and by "
+                "whom they were deleted. `title_contains` filters by title. Deleted pages are in no "
+                "other tool's results; restore_page brings one back."),
+            "parameters": {
+                "type": "object",
+                "properties": {"title_contains": {"type": "string"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "perm": "restore", "kind": "restore", "scopes": ("folder",), "mutating": True, "run": _run_restore_page,
+        "preview": _preview_restore_page,
+        "spec": {
+            "name": "restore_page",
+            "description": (
+                "Bring a page back from Recently deleted — with its notes, highlights, files and "
+                "chats — filed in the folders it was in. Use an id from list_deleted."),
+            "parameters": {
+                "type": "object",
+                "properties": {**_PAGE_ID_ARG},
+                "required": ["page_id"],
             },
         },
     },
@@ -2181,6 +2575,31 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "page's extracted text is empty or garbled (a scan), or when the answer is "
             "in a figure, a table's layout or handwriting; otherwise the text tools "
             "are cheaper. Say when an answer was read from the picture.")
+    if "view_ink" in names:
+        text += (
+            "\nHandwriting: a handwriting block (read_block: \"handwriting on p. N\" or \"on the "
+            "page of paper above\") holds pen strokes, and its text is only a caption. Look at "
+            "the strokes with view_ink before answering from handwriting.")
+        if "edit_block" in names:
+            text += (
+                " To transcribe handwriting, read it with view_ink and write the text into that "
+                "block's caption with edit_block — append when it already has a caption, unless "
+                "the user asks to replace it: keep the lines as written, math as LaTeX ($…$), and "
+                "mark a word you cannot read [illegible] instead of guessing.")
+    if "cite" in names:
+        text += (
+            "\ncite returns the citation records Gamma keeps with pages, BibTeX included: build "
+            "references and bibliographies from them, never from memory, and say which pages "
+            "have no record or an unverified one.")
+    if "save_paper" in names:
+        text += (
+            "\nsave_paper adds a paper to the user's library like their Save to library button — "
+            "only when they ask to add, save, keep or collect papers, never as a side effect of "
+            "reading one. Afterwards say where each was filed and link its page.")
+    if "restore_page" in names:
+        text += (
+            f"\nDeleted pages stay in Recently deleted for {KEEP_DAYS} days: list_deleted finds "
+            "them and restore_page brings one back when the user asks. Deleting stays impossible.")
     web = [n for n in ("search_papers", "related_papers", "search_web", "fetch_paper") if n in names]
     if web:
         text += (
@@ -2321,6 +2740,9 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         result = "error: tool not enabled — the user's permission settings do not allow it"
         return result, tool_action("error", f"{name} — blocked by permissions", name, args, result, error=True)
     # Attaching a reference expands read access, never the editing scope.
+    # The message's counters (save_paper's saves) live in one dict the copy
+    # shares.
+    scope.setdefault("tally", {})
     if tool["mutating"]:
         scope = {**scope, "context_pages": []}
     try:
