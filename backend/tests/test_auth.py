@@ -1,4 +1,4 @@
-from conftest import guest_name
+from conftest import guest_name, login, make_user
 
 
 def test_session_requires_login(anon):
@@ -50,6 +50,29 @@ def test_user_guard_signed_out_session():
         r = c.get("/api/blocks/root/children", headers={"X-Gamma-User": "ghost"})
         assert r.status_code == 409
         assert r.headers["X-Gamma-Session-User"] == ""
+
+
+def test_request_log_names_why_a_request_failed(client, caplog):
+    """Uvicorn prints every access; Gamma's own [http] line supplements only
+    the ones worth reading, and its `reason` says which kind each was. A 404
+    is "not-found": nothing was rejected, the thing asked for is not here —
+    routine for a client polling something the server may have let go, such
+    as a chat's fetch handoff after a restart."""
+    import logging
+
+    make_user("log_reader", "log-password")
+    signed_in = login("log_reader", "log-password")
+
+    def reason_for(path):
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="gamma"):
+            signed_in.get(path)
+        lines = [r.message for r in caplog.records if r.message.startswith("[http]")]
+        assert lines, f"no [http] line for {path}"
+        return lines[-1].split("reason=")[1].strip()
+
+    assert reason_for("/api/ai/handoffs/no-such-request") == "not-found"
+    assert reason_for("/api/session") == "session-operation"
 
 
 def test_ai_disabled_without_keys(guest):

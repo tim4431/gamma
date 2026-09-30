@@ -57,10 +57,13 @@ def ai_fetch(accounts, monkeypatch):
     monkeypatch.setattr(pdf_mod, "_open_access_pdfs", lambda doi: [])
     ai_web.clear_cache()
 
-    def fetch(caller, *, stream=True, permissions=None, **kwargs):
+    def fetch(caller, *, stream=True, permissions=None, wait=False, **kwargs):
+        # `wait` off: a blocked fetch answers at once instead of holding the
+        # reply open on its card (gamma/ai_agent.PaperWait) — these tests are
+        # about whose cookies the fetch used, not about the card.
         response = caller.post("/api/ai/chat", json={
             "prompt": "Read the cited paper", "agent_scope": "folder", "stream": stream,
-            "permissions": permissions or {}}, **kwargs)
+            "paper_wait": wait, "permissions": permissions or {}}, **kwargs)
         assert response.status_code == 200, response.text
         assert SECRET not in response.text
         actions = ([line["action"] for line in map(json.loads, response.text.splitlines())

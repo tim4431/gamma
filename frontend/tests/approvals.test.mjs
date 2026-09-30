@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, conversationId, declinedSummary, grantsIn, readGrants, withGrant, withoutGrants, writeGrants,
+  approvalTitle, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+  withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
 test("the card's headline says what the call would do", () => {
@@ -62,4 +63,18 @@ test("grants survive a reload through storage, and bad storage asks again", () =
   const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("full"); } };
   assert.deepEqual(readGrants(broken), {});
   writeGrants({ x: 1 }, broken); // no throw
+});
+
+test("a conversation can stop waiting for blocked papers, without losing its grants", () => {
+  let store = withGrant({}, "ada", "c1", "move", 1);
+  assert.equal(waitsForPapers(store, "ada", "c1"), true);
+  store = withoutPaperWait(store, "ada", "c1", 2);
+  assert.equal(waitsForPapers(store, "ada", "c1"), false);
+  assert.deepEqual(grantsIn(store, "ada", "c1"), ["move"], "the grant survives the second decision");
+  // Another conversation, and another account, decide for themselves.
+  assert.equal(waitsForPapers(store, "ada", "c2"), true);
+  assert.equal(waitsForPapers(store, "bob", "c1"), true);
+  // A chat with no first message yet waits, and records nothing.
+  assert.equal(waitsForPapers(store, "ada", ""), true);
+  assert.deepEqual(withoutPaperWait(store, "ada", "", 3), store);
 });

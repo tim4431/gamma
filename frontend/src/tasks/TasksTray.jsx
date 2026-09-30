@@ -8,8 +8,9 @@
 import React from "react";
 import { Empty } from "../settings/SettingsKit";
 import {
-  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, DatabaseIcon, DownloadIcon, ExportIcon, FileIcon,
-  HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon, UploadIcon, XIcon,
+  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
+  ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
+  UploadIcon, XIcon,
 } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { isActive, progressFraction } from "./taskModel.js";
@@ -17,8 +18,9 @@ import { canOpen, kindOf, progressText, taskActions, taskInfo, taskTime, taskTit
 import "./tasks.css";
 
 const ICONS = {
-  activity: ActivityIcon, database: DatabaseIcon, download: DownloadIcon, export: ExportIcon, file: FileIcon,
-  hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon, sparkles: SparklesIcon, upload: UploadIcon,
+  activity: ActivityIcon, cloudDownload: CloudDownloadIcon, database: DatabaseIcon, download: DownloadIcon,
+  export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon,
+  sparkles: SparklesIcon, upload: UploadIcon,
 };
 
 // A clock that ticks while `live` (the elapsed times of running tasks).

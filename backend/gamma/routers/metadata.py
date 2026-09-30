@@ -495,19 +495,23 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     return meta, bibtex
 
 
-def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0) -> list[dict]:
+def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0,
+                     work_type: str = "") -> list[dict]:
     """Bibliographic search against the Crossref REST API, returning candidate
     meta dicts in Crossref's relevance order. Candidates are NOT trusted as-is
     — _pick_crossref_match decides whether one matches this paper. ``detail``
     adds the ``abstract`` and ``cited_by`` count a search result shows;
-    ``from_year`` keeps works published that year or later."""
+    ``from_year`` keeps works published that year or later, and ``work_type``
+    (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
     fields = "DOI,title,author,container-title,volume,page,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
+    narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
+        [f"type:{work_type}"] if work_type else [])
     url = ("https://api.crossref.org/works?rows=%d" % rows
            + "&select=" + fields
-           + (f"&filter=from-pub-date:{int(from_year)}" if from_year else "")
+           + (("&filter=" + ",".join(narrow)) if narrow else "")
            + "&mailto=" + urllib.parse.quote(CONTACT_EMAIL)
            + "&query.bibliographic=" + urllib.parse.quote(query[:400]))
     try:

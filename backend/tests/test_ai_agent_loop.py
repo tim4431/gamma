@@ -132,7 +132,7 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     # Anthropic's own API hosts a web search, so Automatic arms search_web.
     assert [t["name"] for t in seen["tools"]] == [
         "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "cite", "search_library",
-        "search_papers", "related_papers", "search_web", "fetch_paper", "save_paper", "edit_block",
+        "search_papers", "related_papers", "search_web", "fetch_paper", "read_paper", "save_paper", "edit_block",
         "create_block", "move_block"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -461,7 +461,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
         "view_ink", "cite", "search_library", "search_papers", "related_papers", "search_web",
-        "fetch_paper", "list_deleted"]
+        "fetch_paper", "read_paper", "list_deleted"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 
@@ -568,3 +568,89 @@ def test_view_pdf_page_picture_reaches_the_next_round_not_the_chip(org, monkeypa
     chip, = [l["action"] for l in lines if "action" in l]
     assert chip["kind"] == "view" and chip["tool"] == "view_pdf_page"
     assert "images" not in chip and chip["pdf_page"] == 1
+
+
+# --- batching a round's reads -------------------------------------------------------
+
+def _calls(*calls):
+    """Anthropic tool_use blocks for ``(id, name, args)`` calls of one turn."""
+    return [e for cid, name, args in calls for e in (
+        {"type": "content_block_start", "content_block": {"type": "tool_use", "id": cid, "name": name}},
+        {"type": "content_block_delta",
+         "delta": {"type": "input_json_delta", "partial_json": json.dumps(args)}},
+        {"type": "content_block_stop"})]
+
+
+def test_a_round_of_reads_runs_as_one_batch(org, monkeypatch):
+    """Reads of one round go together and are announced as one step; their
+    results still reach the model in the order the model asked."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    opened = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append([dict(m) for m in messages])
+        if len(opened) == 1:
+            return FakeResp(_calls(("r1", "read_page", {"page_id": ids["a"]}),
+                                   ("r2", "read_page", {"page_id": ids["b"]}),
+                                   ("r3", "search_library", {"query": "cavity"})))
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "read"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "read both", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    steps = [line["step"] for line in lines if "step" in line]
+    assert len(steps) == 1 and steps[0]["batch"] == 3
+    assert steps[0]["tool"] == "" and steps[0]["tools"] == ["read_page", "search_library"]
+    assert len([line for line in lines if "action" in line]) == 3
+    assert [m["call_id"] for m in opened[1] if m.get("role") == "tool"] == ["r1", "r2", "r3"]
+
+
+def test_changes_are_not_batched_with_reads(org, monkeypatch):
+    """A change runs on its own, in call order: the user watches them happen
+    one by one and the change budget stays exact."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    opened = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append(1)
+        if len(opened) == 1:
+            return FakeResp(_calls(("r1", "read_page", {"page_id": ids["a"]}),
+                                   ("w1", "rename_page", {"page_id": ids["a"], "title": "Renamed"}),
+                                   ("r2", "read_page", {"page_id": ids["b"]})))
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "read and rename", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    steps = [line["step"] for line in lines if "step" in line]
+    # Three steps, none batched: the rename splits the two reads apart.
+    assert [s["tool"] for s in steps] == ["read_page", "rename_page", "read_page"]
+    assert not any("batch" in s for s in steps)
+    assert props(c, ids["a"])["content"] == "Renamed"
+
+
+def test_an_asking_tool_is_never_batched(org):
+    """A call that may stop on an approval card runs alone, so the card
+    belongs to one call and nothing has run behind it."""
+    from gamma.ai_agent import AgentLoop, ApprovalGate, Conversation
+
+    _, ids = org
+    scope = {"type": "folder", "folder": "", "permissions": {"read": "allow", "web_read": "ask"}}
+    loop = AgentLoop(ws=ids["ws"], scope=scope,
+                     tools=[{"name": "read_page"}, {"name": "fetch_paper"}],
+                     conversation=Conversation([]), open_round=lambda talk: None,
+                     read_events=lambda resp: iter(()),
+                     gate=ApprovalGate(ids["ws"], scope, "someone"))
+    groups = loop._groups([{"id": "1", "name": "read_page", "arguments": {}},
+                           {"id": "2", "name": "fetch_paper", "arguments": {}},
+                           {"id": "3", "name": "read_page", "arguments": {}}])
+    assert [[item.name for item in group] for group in groups] == [
+        ["read_page"], ["fetch_paper"], ["read_page"]]

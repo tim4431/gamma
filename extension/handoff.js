@@ -134,3 +134,18 @@ export function backgroundBusy(bindings) {
     .map((b) => b.id));
   return working.size >= MAX_BACKGROUND;
 }
+
+// What a tab out of sight needs from the user, as a sentence to notify
+// with — "" when nothing is wanted (it is still working, or the user is
+// looking at the tab anyway and can see for themselves).
+export function needsYouMessage(binding, note, host) {
+  if (!binding?.background || !NEEDS_YOU.has(note)) return "";
+  const where = host || "a publisher";
+  switch (note) {
+    case "check": return `${where} is showing a bot check — open the tab to pass it.`;
+    case "signin": return `${where} wants you to sign in before it hands over the PDF.`;
+    case "other": return `The tab for ${where} shows another paper — open this one there.`;
+    case "refused": return `${where} didn't hand over the PDF — open the tab and save it yourself.`;
+    default: return `No PDF link on ${where} yet — open the tab and have a look.`;
+  }
+}

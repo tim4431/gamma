@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
+import { changePlace, chipNote, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -75,4 +75,24 @@ test("the running step reads as what the agent is doing", () => {
   assert.equal(runningLabel({ tool: "save_paper", args: { source: "arXiv:2601.1" } }), "Saving arXiv:2601.1 to your library…");
   assert.equal(runningLabel({ tool: "restore_page", args: { page_id: "a" } }, titleOf), "Restoring “Attention”…");
   assert.equal(runningLabel({ tool: "list_deleted", args: {} }), "Looking in Recently deleted…");
+});
+
+test("a batch of calls reads as how many, not as one of them", () => {
+  assert.equal(runningLabel({ tool: "fetch_paper", batch: 4 }), "Fetching 4 documents…");
+  assert.equal(runningLabel({ tool: "read_page", batch: 2 }), "Reading 2 pages…");
+  assert.equal(runningLabel({ tool: "", batch: 3, tools: ["read_page", "search_library"] }),
+    "Running 3 steps at once…");
+  // One call still names what it is doing.
+  assert.equal(runningLabel({ tool: "fetch_paper", batch: 1, args: { source: "doi:10.1/x" } }),
+    "Fetching doi:10.1/x…");
+});
+
+test("a chip says which copy was read, how it came and how long it took", () => {
+  assert.equal(chipNote({ version: "publisher", ms: 2400 }), "publisher PDF · 2.4s");
+  assert.equal(chipNote({ version: "submitted" }), "open-access, preprint");
+  assert.equal(chipNote({ probe: true }), "front matter only");
+  assert.equal(chipNote({ delivered: true }), "from your browser");
+  // Nothing worth saying: a fast call of unknown version.
+  assert.equal(chipNote({ ms: 120 }), "");
+  assert.equal(chipNote(null), "");
 });

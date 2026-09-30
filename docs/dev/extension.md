@@ -350,8 +350,19 @@ closes the ones out of sight. Every change to the bindings and the queue runs
 through one serialized section (`changeHandoffs`), since several requests
 open, note and deliver at once.
 
-The chat's card follows the request on the server and continues the
-conversation once the PDF has arrived. Before the user opens the page it asks
+A tab **out of sight** that stops on something only the user can do also
+says so in a notification, once per note (`handoff.needsYouMessage` names
+the host and what stopped it: a bot check, a sign-in, another paper, a
+site that refused, or no PDF link yet). A click brings that tab forward
+through the same `showHandoff` the card's button uses. A tab the user can
+already see gets none: they can look at it. This matters because the
+chat's reply is waiting on that card
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)) and a
+minimized window is easy to miss.
+
+The chat's card follows the request on the server; the reply it belongs to
+is held open until the PDF arrives, so the fetch that asked for it returns
+the document text. Before the user opens the page the card asks
 whether the Connector can do this (`bridge.js` → the worker's
 `connector-probe`, which asks its own server about the request): `ok` when it
 can, from any page, since only the request's account knows its id; to the

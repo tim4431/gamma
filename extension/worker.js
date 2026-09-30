@@ -6,7 +6,8 @@
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
 import {
-  NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork, siteOf,
+  NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, needsYouMessage, nextToOpen,
+  sameWork, siteOf,
 } from "./handoff.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
 import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
@@ -438,7 +439,13 @@ async function noteHandoff(bound, note) {
   try {
     await api(`/ai/handoffs/${encodeURIComponent(bound.id)}/watch`, { json: { note, background: !!bound.background } });
   } catch {}
-  if (changed && NEEDS_YOU.has(note)) pumpQueue();
+  if (!changed || !NEEDS_YOU.has(note)) return;
+  // A tab out of sight has stopped on something only the user can do, and
+  // the chat may be waiting on its card. Say so once, and let the click
+  // bring the tab out — a tab the user can already see says it itself.
+  const message = needsYouMessage(bound, note, bound.host);
+  if (message) await notify(message, { showHandoff: bound.id });
+  pumpQueue();
 }
 
 async function harvestHandoff(tabId, attempt = 0) {
@@ -667,20 +674,23 @@ async function clipSelection({ tabId, text, source_url, title }) {
 
 // ---------- notifications (context menu + shortcut results) ----------
 
+// What a click on a notification does: open a URL (a page saved to Gamma),
+// or bring forward the tab of a fetch that needs the user.
 const notifyTargets = new Map();
 
-async function notify(message, openUrl) {
+async function notify(message, target) {
   if (!chrome.notifications) return;
   const id = `gamma-${Date.now()}`;
-  if (openUrl) notifyTargets.set(id, openUrl);
+  if (target) notifyTargets.set(id, target);
   try {
     await chrome.notifications.create(id, { type: "basic", iconUrl: "assets/icons/icon128.png", title: "Gamma", message: String(message).slice(0, 300) });
   } catch {}
 }
 
 chrome.notifications && chrome.notifications.onClicked.addListener((id) => {
-  const url = notifyTargets.get(id);
-  if (url) chrome.tabs.create({ url });
+  const target = notifyTargets.get(id);
+  if (typeof target === "string") chrome.tabs.create({ url: target });
+  else if (target?.showHandoff) showHandoff(target.showHandoff).catch(() => {});
   notifyTargets.delete(id);
   chrome.notifications.clear(id);
 });

@@ -260,3 +260,72 @@ documentation and Codex CLI's tool spec), Brave and SearXNG with real
 accounts, and a full chat answering the 85Rb question end to end.
 
 Mechanics and permissions: [Agent tools](../dev/ai_tools.md).
+
+## What a real reply cost, and the shape that followed (2026-09-30)
+
+A Raman-sideband-cooling question was answered with four non-arXiv PDFs
+fetched and verified. The reply was 26 000 input tokens for 800 output —
+and reading the run explained where they went, which turned out to be four
+separate design problems rather than one.
+
+- **A verification read cost a full window.** Each `fetch_paper` put 20 000
+  characters of paper into the conversation, where every later round
+  re-sent it, although the task only needed the title and the version. Four
+  fetches were roughly 20 000 of the 26 000 tokens.
+- **The fetches were serial.** The loop ran a round's calls one after
+  another, so four publisher round trips were four waits.
+- **The model put intent in the query.** The searches included "journal pdf
+  publisher" — words that confuse a bibliographic match. The tool had
+  year and sort filters but no way to say "a published article" or "must
+  have a free PDF", so the model spelled it into the text.
+- **A wall ended the turn.** A blocked paper told the model to stop and
+  wait for the browser. With several papers in flight, the others waited
+  for a synthetic "Please continue." message that re-planned from scratch
+  and left a turn in the user's name they had not written.
+
+What was built, with its reasoning:
+
+- **`fetch_paper(mode="probe")`**, 1 500 characters of front matter with the
+  version and the identity check. Verifying four candidates now costs about
+  what one full read did, and the prompt says to probe before reading.
+- **A round's reads run side by side** (`ai_agent.AgentLoop._groups`, four
+  at a time), while changes stay serial so the user still watches them
+  happen in order and the change budget stays exact. Their shared counters
+  moved into one locked `Tally`, which also let a second search list a work
+  it had already shown as one line instead of a whole record.
+- **`kind` and `open_access` on `search_papers`**, routed to the registries
+  that can answer them (an `article` search skips arXiv; a `preprint`
+  search skips Crossref's bibliographic index). A filter belongs in an
+  argument, not in the query text.
+- **The reply waits on the card** (`ai_agent.PaperWait`). A blocked fetch
+  now pauses the turn exactly as an Ask permission does, the calls of a
+  round wait together, and the delivered PDF is read by running the same
+  call again — so the model gets the paper where it asked for it. The
+  automatic continuation message is gone; Skip can say what to do instead,
+  and "don't wait in this chat" keeps the old card-under-the-reply flow for
+  anyone who does not want to be held up.
+- **`read_paper`**, the first delegation: one document and one question to
+  a helper whose own conversation carries the windows, answering in a cited
+  paragraph. This is where a subagent earns its keep — not in verifying
+  four PDFs (the probe does that for less), but in "read these four papers
+  and answer X", where the alternative is carrying four papers for the rest
+  of the reply. Its token counts ride back on the action so the reply's
+  footer still says what the whole answer cost.
+- **Research as a background job** (`gamma/paper_research.py`), the same
+  loop headless, filing a report page. The user starts it; a model that
+  could put itself to work for ten minutes unasked is a different product,
+  and the reasoning that made changes ask before they run
+  ([ai-permissions.md](ai-permissions.md)) applies here too.
+
+The two loop pauses are now one mechanism with two policies, which is why
+the extraction came first: `AgentLoop` takes a `gate` (before a call) and a
+`settle` (after a round), the chat passes an approval card and a browser
+wait, and a job passes neither because nothing can ask a user who is not
+there.
+
+Not measured: the same question re-run end to end against the real
+services, so the token figure above has no after to compare with. The
+offline tests cover each piece (`test_ai_agent_loop.py` for the batching,
+`test_fetch_handoff.py` for the four wait outcomes, `test_ai_tools_web.py`
+for the probe and the helper, `test_paper_discovery.py` for the filters and
+the dedup, `test_paper_research.py` for the job).

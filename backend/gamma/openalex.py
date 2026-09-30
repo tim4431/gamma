@@ -132,13 +132,25 @@ def _year_filter(from_year: int) -> str:
     return f"from_publication_date:{int(from_year)}-01-01" if from_year else ""
 
 
-def search(query: str, rows: int = 5, from_year: int = 0, key: str = "") -> list[dict]:
-    """Records for a free-text query in OpenAlex's relevance order. Raises
-    OpenAlexError when OpenAlex does not answer."""
+# What ai_web's `kind` means to OpenAlex: a work published in a journal, or
+# one that is not (a preprint server's copy).
+WORK_TYPES = {"article": "article", "preprint": "preprint"}
+
+
+def search(query: str, rows: int = 5, from_year: int = 0, key: str = "", *,
+           work_type: str = "", open_access: bool = False) -> list[dict]:
+    """Records for a free-text query in OpenAlex's relevance order, narrowed
+    to a ``work_type`` (WORK_TYPES) and to works with a free full text
+    (``open_access``). Raises OpenAlexError when OpenAlex does not answer."""
     if not (query or "").strip():
         return []
+    narrow = [_year_filter(from_year)]
+    if WORK_TYPES.get(work_type):
+        narrow.append(f"type:{WORK_TYPES[work_type]}")
+    if open_access:
+        narrow.append("is_oa:true")
     data = _get("/works", {"search": query[:400], "per-page": rows, "select": _SELECT,
-                           "filter": _year_filter(from_year)}, key)
+                           "filter": ",".join(f for f in narrow if f)}, key)
     return [record(w) for w in data.get("results") or [] if w.get("display_name")]
 
 

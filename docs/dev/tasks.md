@@ -93,11 +93,16 @@ its editors and owners. Endpoints and shapes: [api.md](api.md) "Background
 jobs".
 
 - `GET /api/jobs` lists the account's newest 100 jobs without their
-  results, plus the request workspace's own. Scheduled backups keep their
-  own state (`gamma/backup_schedule.py`), so the listing adds a read-only
-  row (`scheduled-backup`) for each of the account's tasks while it is
-  queued or running. A finished or failed run stays in Settings → Backups;
-  a failure raises the `backup-failed` notice.
+  results, plus the request workspace's own. Two subsystems that keep their
+  own state add read-only rows to that listing rather than becoming jobs:
+  scheduled backups (`gamma/backup_schedule.py`) as `scheduled-backup`
+  while one is queued or running — a finished or failed run stays in
+  Settings → Backups, and a failure raises the `backup-failed` notice —
+  and the AI chat's blocked paper fetches (`gamma/fetch_handoff.py`) as
+  `paper-handoff` while one waits for the user's browser, so a card whose
+  reply has scrolled away is still somewhere to find. A click on that row
+  opens the publisher's page; the chat's own card settles the request
+  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.
@@ -117,7 +122,20 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
 | `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page imported by link | the restore report |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
+| `research` | `research` (`routers/ai.py`) | the chat composer's + menu, "Research this in the background" | `{page_id, title, steps, blocked}` |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
+
+**Research** (`gamma/paper_research.py`) is the one kind that is not a
+transfer: a question the user hands over, answered by the same agent loop
+the chat runs ([ai.md](ai.md#the-tool-loop)) with the reading and web tools
+only, filed as a report page in the folder they started from. The user
+starts it, never the model. Nothing can ask a user who is not there, so it
+arms no changing tool and no approval card, and a paper a publisher blocks
+is reported as blocked — its request shows as a `paper-handoff` row to
+finish by hand. Every action is a progress report, so the job stops at the
+next one. The page is written past the point where stopping is possible.
+Its row opens the report page once it exists, and `onJobFinished` offers it
+in the pill rather than opening it over whatever the user is reading.
 
 The export driver reads a folder's pages again when the job runs, so a
 queued export holds what the folder holds then. An import job holds the
@@ -208,7 +226,9 @@ through the synchronous endpoints.
   the account lifecycle. `test_export_jobs.py` covers every export format
   as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
   snapshots, restores and server backups. The import job is tested in
-  `test_import_review.py` and the indexer in `test_search.py`.
+  `test_import_review.py`, the indexer in `test_search.py` and the research
+  job in `test_paper_research.py` (its prompt and tool set, the report page
+  it files, the sources it lists, stopping it, and the route).
 - Frontend: `tests/tasks.test.mjs` covers the model and kinds, and
   `tests/transferFormats.test.mjs` the export job's body.
 - Browser: the transfers group covers a folder's annotated PDFs closed

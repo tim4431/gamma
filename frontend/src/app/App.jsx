@@ -2496,7 +2496,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
-    fetchInBackground, setFetchInBackground,
+    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -5947,11 +5947,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setExportOpen(true);
     } else if (open === "import") {
       setImportReview({ jobId: task.id });
+    } else if (open === "page") {
+      // A finished research job: the report page it filed. The listing
+      // leaves results out, so ask for this one job.
+      if (isActive(task)) setStatus(t("Still working — its page appears when it finishes."));
+      else {
+        tasks.fetchJob(task.id)
+          .then((full) => { if (full?.result?.page_id) openBlock(full.result.page_id); })
+          .catch(() => {});
+      }
+    } else if (open === "handoff") {
+      // A paper the chat could not download: its /go page leads on to the
+      // publisher, and Gamma Connector knows the tab by that address.
+      window.open(`${API}/ai/handoffs/${encodeURIComponent(task.params?.request || "")}/go`,
+                  "_blank", "noopener");
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }
   }
   // Start a task's work again (a row's retry button, the export dialog's
+  // Hand a question to the background researcher (gamma/paper_research.py):
+  // it searches and reads for minutes and files a report page in the folder
+  // being viewed. The tray follows it, and its row opens that page.
+  async function startResearch(question) {
+    if (!question) return;
+    try {
+      await tasks.start("research", { question, folder: folderFilter || "",
+                                      model: chatModel || "", read_char_limit: agentReadChars || 0 },
+                        { pill: true });
+      setStatus(t("Researching in the background — Background tasks has it."));
+    } catch (err) {
+      setStatus(err.message || t("Could not start the research"));
+    }
+  }
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
   // watches, a workspace export was asked for from a menu), else offered.
@@ -6004,6 +6032,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else if (!shownInDialog && started && job.state === "failed") {
         setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
       }
+      return;
+    }
+    if (job.kind === "research") {
+      if (job.state !== "done") {
+        if (started && job.state === "failed") setStatus(t("Research failed: {msg}", { msg: t(job.error) }));
+        return;
+      }
+      if (here) fetchHomeBlocks();
+      // Its report is a page: offer to open it rather than open it over
+      // whatever the user is reading now.
+      tasks.fetchJob(job.id).then((full) => {
+        const pageId = full?.result?.page_id;
+        if (!pageId) return;
+        postPill(`job:${job.id}`, { msg: t("Research finished: {name}.", { name: full.result.title || title }),
+          action: { label: t("Open"), run: () => { openBlock(pageId); postPill(`job:${job.id}`, null); } } },
+        { after: [60000, null] });
+      }).catch(() => {});
       return;
     }
     if (!started || shownInDialog) return;
@@ -9062,9 +9107,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
-          fetchInBackground={fetchInBackground}
+          fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
+          onResearch={startResearch}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -10479,6 +10525,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setAgentEnabled,
           fetchInBackground,
           setFetchInBackground,
+          delegateReads,
+          setDelegateReads,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

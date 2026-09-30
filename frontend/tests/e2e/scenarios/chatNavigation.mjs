@@ -614,10 +614,11 @@ export async function chatNavigationScenarios(env) {
   // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
   // card opens the page through /go, follows the request on the server (the
   // Connector taking the tab shows), takes a PDF dropped on it — never the
-  // library underneath — and the chat continues once, by itself. The
-  // request's endpoints are faked here; the server's are in
-  // backend/tests/test_fetch_handoff.py.
-  await step("chat navigation: a blocked fetch's card gets the PDF from the browser and the chat continues", async () => {
+  // library underneath — and then offers to continue the conversation. This
+  // is the card a request left behind: while a reply is still running the
+  // server waits on the card itself, which the backend tests cover
+  // (backend/tests/test_fetch_handoff.py, along with these endpoints).
+  await step("chat navigation: a card left behind gets the PDF from the browser and offers to continue", async () => {
     const HID = "e2eHandoffRequest01";
     const handoff = { id: HID, host: "www.science.org", wall: "captcha", source: "doi:10.1126/e2e.handoff" };
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
@@ -707,16 +708,21 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
         { what: "the Connector lets its tab go" });
 
-      await until(() => prompts.length === 1, { what: "the chat continues by itself" });
+      // The chat never speaks in the user's name: the card offers to go on.
+      const goOn = page.locator(".chatHandoffContinue");
+      await goOn.waitFor();
+      assertEq(prompts.length, 0, "nothing was sent for the user");
+      await goOn.click();
+      await until(() => prompts.length === 1, { what: "Continue asks the chat to go on" });
       assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("Reading the delivered PDF now."));
 
-      // A reload shows the settled card and sends nothing again.
+      // A reload shows the settled card and offers nothing again.
       await page.reload();
       await page.locator(".chatHandoff.done").waitFor();
       await page.waitForTimeout(500);
       assertEq(prompts.length, 1, "no second continuation");
-      assertEq(await page.locator(".chatHandoffContinue").count(), 0, "the conversation moved on: no Continue");
+      assertEq(await goOn.count(), 0, "the conversation moved on: no Continue");
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -943,10 +949,14 @@ export async function chatNavigationScenarios(env) {
       await push({ delta: "Done." });
       await finish();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      // The chat saves 500 ms after it changes, so wait for the finished
+      // reply to land before reading it back.
+      const approvals = async () => (await alice.api(`/api/chats/${notesPage.id}`)).messages
+        .filter((m) => m.role === "ai").flatMap((m) => m.actions || []).map((a) => a.approval);
+      await until(async () => (await approvals()).join() === "chat,deny,always",
+        { what: "the reply is saved with what was decided on each card" });
       const saved = await alice.api(`/api/chats/${notesPage.id}`);
       assert(saved.messages.every((m) => !m.approval), "a waiting card is never saved with the reply");
-      assertEq(saved.messages.filter((m) => m.role === "ai").flatMap((m) => m.actions || []).map((a) => a.approval).join(),
-        "chat,deny,always");
       assertNoProblems(page);
     } finally {
       await ctx.close();

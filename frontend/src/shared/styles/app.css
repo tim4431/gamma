@@ -3416,6 +3416,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
+/* Skipping a card the reply waits on may say what to do instead, like
+   declining an approval. */
+.chatHandoffInstead { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatHandoffInstead .aiKeyInput { flex: 1 1 14rem; min-width: 0; }
 /* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
    would do, the change as a word diff, the four answers. It looks like a
    fetch handoff's card, the other place the chat waits for the user. */
@@ -4698,6 +4702,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatToolActionHead.plain { cursor: default; }
+/* What a call turned out to be, beside its summary: the version fetched,
+   how long it took (chat/agentSteps.js chipNote). */
+.chatToolActionNote { flex: none; color: var(--text-muted); opacity: 0.8; }
+.chatToolActionNote::before { content: "·"; margin-right: 6px; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */

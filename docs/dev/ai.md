@@ -711,8 +711,12 @@ governs tool use in every chat. The chat header's Tools button and settings
 popover edit the same account preference; New chat does not reset it.
 Under the permission table, **Fetch blocked papers in the background**
 (`gamma-ai-fetch-background`, default off) lets a blocked fetch's card hand
-the page to Gamma Connector without a click
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
+the page to Gamma Connector without a click, and **Read long papers with a
+helper** (`gamma-ai-delegate-reads`, default on) offers `read_paper`, which
+gives one document to a second agent and keeps only its cited answer
+([ai_tools.md](ai_tools.md#read_paper)). Both are account-wide, not
+per-chat-kind: they change how a tool works rather than what a chat may
+reach.
 
 Which tools a chat may use is configured per chat KIND — there are three
 (`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
@@ -877,19 +881,62 @@ only where `auth.can_write` allows them, and the permission map and
 
 ### The tool loop
 
-The router runs a loop (`agent_events`) over `ai_client.sse_events`, which
-parses tool calls from every wire's SSE (`Protocol.events`): the model calls
-tools → the server executes them → results go back → repeat until it
-answers. Each adapter's `request` maps the tool defs and the
-`tool_calls`/`role:"tool"` turns to its wire. The Responses body enables
-`parallel_tool_calls` when tools ride along, so bulk renames batch per round.
+```mermaid
+flowchart LR
+  ask["POST /api/ai/chat"] --> build["context + prompt, fitted to the window"]
+  build --> arm["arm the tools"] --> turn["one provider turn"]
+  turn --> calls{"tool calls?"}
+  calls -- none --> saved(["reply saved"])
+  calls -- some --> group["group: reads batch, changes serial"]
+  group --> gate{"Ask?"}
+  gate -- yes --> card["{approval} card, wait"] --> run
+  gate -- no --> run["run, 4 reads at once"]
+  run --> settle{"hit a wall?"}
+  settle -- yes --> hand["{handoff} card, wait"] --> back
+  settle -- no --> back["{action} chips, results appended"]
+  back --> turn
+```
+
+The loop is `ai_agent.AgentLoop` (`gamma/ai_agent.py`) over
+`ai_client.sse_events`, which parses tool calls from every wire's SSE
+(`Protocol.events`): the model calls tools → the server executes them →
+results go back → repeat until it answers. Each adapter's `request` maps
+the tool defs and the `tool_calls`/`role:"tool"` turns to its wire. The
+Responses body enables `parallel_tool_calls` when tools ride along, so bulk
+renames batch per round.
+
+The router owns the HTTP and the connection and passes the loop what
+differs: `open_round(conversation)` opens one provider turn, `read_events`
+parses it, and two hooks hold the places where the reply stops for the
+user. `gate` is `ApprovalGate` — a permission set to Ask shows its card
+first. `settle` is `PaperWait` — a fetch a publisher blocked waits for the
+PDF from the user's own browser
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A caller with
+no user to ask passes neither: the background research job drives the same
+loop headless ([tasks.md](tasks.md)).
+
+**A round's reads run together.** The calls of one turn are grouped
+(`AgentLoop._groups`): a run of armed reads that cannot stop on a card is
+one batch of up to `MAX_PARALLEL_CALLS` (4), executed in threads with a
+connection each, and everything else is a batch of one in call order. So
+four papers are fetched side by side instead of one after another, while
+changes still happen one at a time — the user watches them in order and the
+`MAX_TOOL_ACTIONS` budget stays exact. A batch's tool results are appended
+in call order whatever order they finished in. What the calls of one message
+have spent — papers saved, web searches used, the works a search already
+listed — lives in one `ai_tools.Tally` behind a lock, so two parallel calls
+cannot take the same last unit of a budget.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs; a call that waits for the user's approval then sends an
-`{"approval"}` line ([Asking before a call](#asking-before-a-call-approvals)).
+it runs; a batch sends one step with `batch: n` (and `tools` when they are
+not all the same tool), which the chat reads as "Fetching 4 documents…". A
+call that waits for the user's approval then sends an `{"approval"}` line
+([Asking before a call](#asking-before-a-call-approvals)), and a blocked
+fetch a `{"handoff"}` line.
 The step's `args` are only the short ones the running label reads
-(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
-`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
+(`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
+`label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
+Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -920,10 +967,12 @@ also carries the rendered page: the loop lifts it off the action into the
 tool message's `images` before yielding the chip, so the model sees the
 picture and the saved chat never holds it ([ai_tools.md](ai_tools.md)).
 A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
-`handoff`; after the reply's text the chat shows a card for it
-(`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
-continues the conversation once it arrives
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
+`handoff`, and the reply stops on a card for it while the user's browser
+gets the PDF
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). Every chip also
+carries `ms` (how long the call took) and, for a fetch, the `version` it
+read and whether it was a `probe` or `delivered` by the browser, which the
+chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A reply that read
 or named papers ends with a **Save to library** list of them
 (`chat/ReplyPapers.jsx`), saved through `POST /api/clip`. The agent's
 `save_paper` runs the same ingest itself. Its request carries the Reading

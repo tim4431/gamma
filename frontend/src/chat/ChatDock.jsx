@@ -8,11 +8,11 @@ import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } 
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
-import FetchHandoffCards from "./FetchHandoffCards";
+import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
-import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, withGrant, withoutGrants,
-  writeGrants } from "./approvals.js";
+import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+  withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -21,7 +21,7 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { changePlace, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { changePlace, chipNote, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -145,7 +145,8 @@ function ChatErrorCard({ message, compact, actions }) {
 // under it the changes — renamed or filed pages, edited or added notes —
 // each old → new with a link to what changed. While the reply streams, the
 // pill names the step running now.
-// `waiting`: the running call waits on its approval card, so nothing spins.
+// `waiting`: what the running call waits for — the user's answer on an
+// approval card, or a blocked paper from their browser — so nothing spins.
 function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const live = !!running;
@@ -154,7 +155,11 @@ function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, childr
       <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatPillText">{waiting ? t("Waiting for your approval") : live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        <span className="chatPillText">
+          {waiting === "paper" ? t("Waiting for the paper from your browser")
+            : waiting ? t("Waiting for your approval")
+              : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
+        </span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
@@ -397,7 +402,7 @@ export default function ChatDock({
   // out of sight (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
   // fetchMetadata}, how a reply's "Save to library" and save_paper save
   // (Settings → Reading).
-  fetchInBackground = false, paperSave = {},
+  fetchInBackground = false, delegateReads = true, paperSave = {}, onResearch,
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
@@ -494,11 +499,19 @@ export default function ChatDock({
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
           permissions: chatToolPerms, agent_system: agentSystem || "",
           granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)),
+          // Whether a blocked paper holds the reply open on its card, or
+          // leaves the card under it ("Skip, and don't wait in this chat").
+          paper_wait: waitsForPapers(readGrants(), activeUser(), conversationId(prevMessages)),
+          delegate_reads: delegateReads !== false,
           // save_paper stores a paper the way the reply's Save to library does.
           paper_save: { allow_oa: paperSave.allowOa !== false, save_copy: paperSave.saveCopy !== false,
                         fetch_metadata: paperSave.fetchMetadata !== false } }
       : {};
   };
+  // "Skip, and don't wait in this chat": later blocked papers of this
+  // conversation leave their card under the reply instead of holding it.
+  const neverWaitHere = () =>
+    updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
   // The user's answer on an approval card: the server runs the call or
   // leaves it; "Allow in this chat" is kept for the conversation and
   // "Always allow" sets the permission in Settings — once the server took it.
@@ -1088,6 +1101,7 @@ export default function ChatDock({
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
     let approval = null; // its approval card ({"approval"} line), while the user decides
+    const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
@@ -1132,6 +1146,10 @@ export default function ChatDock({
             running = ev.step;
           } else if (ev.approval) {
             approval = ev.approval;
+          } else if (ev.handoff) {
+            // A fetch met a wall: the reply waits on this card until the
+            // user's browser sends the PDF, or they skip it.
+            handoffs.push(ev.handoff);
           } else if (ev.action) {
             running = null;
             approval = null;
@@ -1164,9 +1182,10 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage || running) {
+        if (acc || actions.length || usage || running || handoffs.length) {
           showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}),
-            ...(approval ? { approval } : {}) }));
+            ...(approval ? { approval } : {}),
+            ...(handoffs.length ? { handoffs: [...handoffs] } : {}) }));
         }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
@@ -1735,7 +1754,9 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
-                        waiting={isResponding && !!m.approval && !answeredApprovals.has(m.approval.id)}
+                        waiting={!isResponding ? ""
+                          : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"
+                            : m.handoffs?.length ? "paper" : ""}
                         open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
                         titleOf={pageTitleOf}>
                       <div className="chatToolActions">
@@ -1754,6 +1775,7 @@ export default function ChatDock({
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={14} />
                                   <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
+                                  {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
                                 </button>
                               ) : (
@@ -1780,7 +1802,11 @@ export default function ChatDock({
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
                         titleOf={pageTitleOf} onDecide={decideApproval} />
                     ) : null}
-                    {!isUser && m.actions?.some((a) => a.handoff) ? (
+                    {isResponding && m.handoffs?.length ? (
+                      <LiveHandoffCards handoffs={m.handoffs} readOnly={readOnly || aiOff}
+                        autoOpen={fetchInBackground} onNeverWait={neverWaitHere} />
+                    ) : null}
+                    {!isUser && !isResponding && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
                         autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
@@ -1981,6 +2007,19 @@ export default function ChatDock({
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                   <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
                 </button>
+                {onResearch && agentReads ? (
+                  <button type="button" className="chatPlusMenuItem" disabled={!chatInput.trim()}
+                    onClick={() => { setOpenPopover(null); onResearch(chatInput.trim()); setChatInput(""); }}>
+                    <span className="chatPlusMenuIcon">
+                      <SparklesIcon size={16} />
+                    </span>
+                    <span className="chatPlusMenuLabel">{t("Research this in the background")}</span>
+                    <span className="chatPlusMenuHint">
+                      {chatInput.trim() ? t("Searches and reads for minutes, then files a report page")
+                        : t("Type the question first")}
+                    </span>
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </span>

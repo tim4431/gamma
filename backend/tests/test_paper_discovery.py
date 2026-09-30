@@ -121,11 +121,13 @@ def three_registries(monkeypatch):
     arxiv = [{"title": "Old preprint", "arxiv_id": "quant-ph/9901001", "year": "1999", "authors": []}]
     asked = {}
     monkeypatch.setattr(metadata_mod, "_crossref_search",
-                        lambda q, rows=5, detail=False, from_year=0: asked.update(crossref=(detail, from_year)) or crossref)
+                        lambda q, rows=5, detail=False, from_year=0, work_type="":
+                        asked.update(crossref=(detail, from_year, work_type)) or crossref)
     monkeypatch.setattr(metadata_mod, "_arxiv_search",
                         lambda q, rows=5, detail=False: asked.update(arxiv=detail) or arxiv)
     monkeypatch.setattr(openalex, "search",
-                        lambda q, rows=5, from_year=0, key="": asked.update(openalex=(from_year, key)) or found)
+                        lambda q, rows=5, from_year=0, key="", work_type="", open_access=False:
+                        asked.update(openalex=(from_year, key, work_type, open_access)) or found)
     return asked
 
 
@@ -137,7 +139,8 @@ def test_search_papers_merges_three_registries(three_registries):
     merged = records[0]
     assert (merged["cited_by"], merged["abstract"], merged["oa_pdf"]) == (214, "We trap cesium.",
                                                                         "https://lab.example.edu/prl.pdf")
-    assert three_registries == {"crossref": (True, 0), "arxiv": True, "openalex": (0, "k")}
+    assert three_registries == {"crossref": (True, 0, ""), "arxiv": True,
+                                "openalex": (0, "k", "", False)}
     text = web.format_records(records)
     assert "cited by 214" in text and "open-access PDF: https://lab.example.edu/prl.pdf" in text
     assert "\n  Abstract: We trap cesium.\n" in text
@@ -150,13 +153,46 @@ def test_search_papers_filters_and_orders(three_registries):
     assert by(web.search_papers("cooling", sort="recent")) == [
         "Newer lattice cooling", "Old preprint", "Degenerate Raman Sideband Cooling"]
     assert by(web.search_papers("cooling", from_year=2000)) == ["Newer lattice cooling"]
-    assert three_registries["crossref"] == (True, 2000)  # the filter goes to the registries too
+    assert three_registries["crossref"] == (True, 2000, "")  # the filter goes to the registries too
     # A cited reference's exact title ranks first whatever the order.
     assert by(web.search_papers("Old preprint", sort="citations"))[0] == "Old preprint"
 
 
+def test_search_papers_narrows_by_kind_and_open_access(three_registries):
+    """A filter goes to the registries that can answer it, and skips the
+    one that cannot hold that kind — instead of the model spelling
+    "journal" or "preprint" into the query."""
+    web.search_papers("cooling", kind="article")
+    assert three_registries["crossref"] == (True, 0, "journal-article")
+    assert three_registries["openalex"][2] == "article"
+    assert "arxiv" not in three_registries          # arXiv holds no journal articles
+
+    three_registries.clear()
+    web.search_papers("cooling", kind="preprint")
+    assert three_registries["arxiv"] is True and three_registries["openalex"][2] == "preprint"
+    assert "crossref" not in three_registries       # Crossref searches the published record
+
+    three_registries.clear()
+    records = web.search_papers("cooling", open_access=True)
+    assert three_registries["openalex"][3] is True
+    # And a record no one can read for free is dropped from the merge.
+    assert [r["title"] for r in records] == ["Degenerate Raman Sideband Cooling", "Old preprint"]
+
+
+def test_a_work_listed_twice_in_one_reply_shrinks_to_one_line(three_registries):
+    from gamma.ai_tools import Tally
+
+    records = web.search_papers("cooling")
+    tally = Tally()
+    first = web.format_records(records, first_sight=tally.first_sight)
+    assert "cited by 214" in first and "Abstract: We trap cesium." in first
+    again = web.format_records(records, first_sight=tally.first_sight)
+    assert "cited by 214" not in again and "listed earlier in this reply" in again
+    assert len(again) < len(first) / 3
+
+
 def test_search_papers_notes_a_registry_outage(three_registries, monkeypatch):
-    def down(q, rows=5, from_year=0, key=""):
+    def down(q, rows=5, from_year=0, key="", work_type="", open_access=False):
         raise openalex.OpenAlexError("OpenAlex's daily budget is used up")
     monkeypatch.setattr(openalex, "search", down)
     notes = []
