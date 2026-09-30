@@ -74,6 +74,7 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
 | 21 | `folder_shares` | `shares` gains `folder`: a share names a page (`page_id`) or a folder-label path (`folder`, the pages filed there or below it, read live), the other column `''`; the page unique index becomes partial (`WHERE page_id != ''`) and a folder twin joins it ([api.md](api.md) "Shares") |
 | 22 | `upload_orphans` | Every workspace's `pages.db` gains `upload_orphans` (`name`, `since`): a stored file nothing references any more is kept 30 days before it is purged, instead of being deleted with its last reference ([user_db.md](user_db.md) "Stored files"). The table starts empty; the first background pass after startup records what is unreferenced |
 | 23 | `page_trash` | Every workspace's `pages.db` gains the reserved `trash` row beside `root` (parentless, position `a1`): the parent of the pages in Recently deleted ([home_library.md](home_library.md) "Recently deleted"). Written now so no block can take the id before the first delete; new workspaces get it from `seed.create_workspace_files`, and `ops.trash_page` writes it where a restored older backup lacks it. A workspace where a block already holds the id is named in the log and left as it is |
+| 24 | `jobs` | Adds the `jobs` table (+ owner and workspace indexes) in `users.db`: background jobs — exports, backups, restores, imports, the search indexer — with their parameters, progress, result, error and produced file ([tasks.md](tasks.md)). Nothing else changes |
 
 ## Backups (`gamma/backups.py`)
 

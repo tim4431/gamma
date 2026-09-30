@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+import { exportFormatOf, exportJobBody, exportSummary, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 const paper = { hasPdf: true, pdfStored: true };
@@ -16,17 +16,36 @@ test("fixed export contents override saved switches without changing the saved p
   assert.deepEqual(resolveExport({ ...allOff, format: "markdown" }, paper).payload, { format: "markdown", ...allOff });
 });
 
-test("remote PDFs export directly; note pages and folders fall back to a configurable notes PDF", () => {
+test("remote PDFs export directly; note pages fall back to a configurable notes PDF", () => {
   const opts = { format: "pdf", highlights: true, notes: true, bundle: true };
   const remote = resolveExport(opts, { hasPdf: true, pdfStored: false });
   assert.equal(remote.needsReview, false);
   assert.deepEqual(remote.payload, { format: "pdf", ...allOff });
-  for (const context of [{ hasPdf: false }, { ...paper, folder: "Reading" }]) {
-    const notes = resolveExport(opts, context);
-    assert.equal(notes.needsReview, true);
-    assert.deepEqual(notes.payload, { format: "notespdf", highlights: true, notes: true, bundle: false });
-    assert(!notes.formats.some(({ id }) => id === "pdf"));
-  }
+  const notes = resolveExport(opts, { hasPdf: false });
+  assert.equal(notes.needsReview, true);
+  assert.deepEqual(notes.payload, { format: "notespdf", highlights: true, notes: true, bundle: false });
+  assert(!notes.formats.some(({ id }) => id === "pdf"));
+});
+
+test("a folder exports its papers' annotated PDFs as one zip, with both switches", () => {
+  const opts = { format: "pdf", highlights: true, notes: false, bundle: true };
+  const folder = resolveExport(opts, { folder: "Reading" });
+  assert.equal(folder.definition.category, "Papers");
+  assert.match(folder.definition.hint, /one \.zip/);
+  assert.equal(folder.needsReview, true);
+  assert.deepEqual(folder.controls.map(({ key }) => key), ["highlights", "notes"]);
+  assert.deepEqual(folder.payload, { format: "pdf", highlights: true, notes: false, bundle: false });
+  assert.match(exportSummary(folder, "Reading"), /Pages without a PDF are left out/);
+});
+
+test("an export job's body names the server's mode for a page or a folder", () => {
+  assert.deepEqual(exportJobBody({ format: "pdf", highlights: true, notes: false, bundle: false }, { folder: "Reading" }),
+    { folder: "Reading", mode: "annotated-pdf", pdf: false, highlights: true, notes: false });
+  assert.deepEqual(exportJobBody({ format: "logseq", highlights: true, notes: true, bundle: true }, { pageId: "p1" }),
+    { page_id: "p1", mode: "logseq-graph", pdf: true, highlights: true, notes: true });
+  assert.equal(exportFormatOf("zotero-rdf").id, "zotero");
+  assert.equal(exportFormatOf("markdown").mode, "readable");
+  assert.equal(exportFormatOf("pptx"), null);
 });
 
 test("Zotero's effective highlights follow file bundling while preserving the user's preference", () => {

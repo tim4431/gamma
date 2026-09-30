@@ -586,7 +586,6 @@ def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
     assert anon.get("/api/folders/export", params={**q, "name": "lab/readout", "mode": "readable"}).status_code == 200
     assert anon.get("/api/folders/export", params={**q, "name": "lab/readout/sub", "mode": "readable"}).status_code == 200
     assert anon.get("/api/folders/export", params={**q, "name": "lab", "mode": "readable"}).status_code == 403
-    assert anon.get("/api/folders/export-progress", params=q).status_code == 200
 
     # membership is live: a page filed later joins, one moved out leaves
     later = make_page(bob, "Filed later", {"folder": "lab/readout"})

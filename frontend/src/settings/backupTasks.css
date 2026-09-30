@@ -21,4 +21,8 @@
 .backupTaskUtc { margin-top: 2px; }
 .backupCron { font-family: var(--font-mono); }
 .backupTaskError { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
+/* A snapshot or restore running for a workspace (a background job): its
+   title over its progress, under the section's heading. */
+.backupJob { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); font-size: var(--fs-xs); color: var(--text-secondary); }
+.backupJob .taskProgress { padding: var(--space-3) 0 0; }
 @media (max-width: 560px) { .backupTaskGrid { grid-template-columns: 1fr; gap: 0; } }

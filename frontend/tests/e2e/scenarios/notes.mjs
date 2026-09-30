@@ -700,7 +700,10 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await dialog.getByRole("button", { name: "Export", exact: true }).click();
     const file = await download;
     assert(/-obsidian\.zip$/.test(file.suggestedFilename()), `vault zip name: ${file.suggestedFilename()}`);
-    await until(async () => (await page.textContent("body")).includes("Obsidian vault saved"), { what: "export status" });
+    await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+    assert((await dialog.innerText()).includes("Unzip it into a vault"), "what to do with the vault");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
     assertNoProblems(page);
   });
 

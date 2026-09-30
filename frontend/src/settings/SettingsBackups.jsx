@@ -16,6 +16,9 @@ import { BackupTasks } from "./BackupTasks";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { TaskProgress } from "../tasks/TasksTray";
+import { isActive } from "../tasks/taskModel.js";
+import { taskTitle } from "../tasks/taskKinds.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // The one date format of this pane: "Sep 23, 3:00 AM PDT", in the browser's
@@ -26,11 +29,13 @@ export function fmtWhen(iso, fallback = "") {
   return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) : fallback;
 }
 
+// The workspaces a snapshot or restore job works on.
+const jobWorkspaces = (job) => (job.kind === "snapshot" ? job.params?.workspaces || [] : [job.params?.ws]);
+
 export function WorkspaceBackups({ value }) {
-  const { workspace, setStatus, confirm, closeSettings, reloadWorkspace } = value;
+  const { workspace, tasks, setStatus, confirm } = value;
   const [mine, setMine] = React.useState(null);   // GET /api/workspaces/mine → workspaces
   const [lists, setLists] = React.useState({});   // ws id → {backups, max} | {error}
-  const [busy, setBusy] = React.useState(null);   // ws id being backed up, or "all"
   const [error, setError] = React.useState("");
 
   const loadList = React.useCallback(async (id) => {
@@ -48,43 +53,35 @@ export function WorkspaceBackups({ value }) {
     }).catch((e) => setError(e.message));
   }, [loadList]);
 
-  async function backUp(w, uploads) {
-    setBusy(w.id);
-    setStatus(t("Backing up {name}…", { name: w.name }));
+  // Snapshots and restores run as background jobs (tasks/useTasks.js): the
+  // one running for a workspace shows under its heading, and its list
+  // reloads once the job ends (wherever it was started).
+  const running = React.useMemo(() => tasks.jobs.filter((job) => isActive(job)
+    && (job.kind === "snapshot" || job.kind === "restore")), [tasks.jobs]);
+  const runningFor = (id) => running.find((job) => jobWorkspaces(job).includes(id)) || null;
+  const busyIds = React.useMemo(() => new Set(running.flatMap(jobWorkspaces)), [running]);
+  const wasBusy = React.useRef(new Set());
+  React.useEffect(() => {
+    for (const id of wasBusy.current) if (!busyIds.has(id)) loadList(id);
+    wasBusy.current = busyIds;
+  }, [busyIds, loadList]);
+
+  async function startJob(route, body, meta, failure) {
     try {
-      const b = await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: uploads ? "full" : "db", uploads }),
-      });
-      setStatus(t("Backed up {name} ({size_bytes}).", { name: w.name, size_bytes: fmtBytes(b.size_bytes) }));
-      await loadList(w.id);
+      await tasks.start(route, body, meta);
     } catch (e) {
-      setStatus(t("Backup of {name} failed: {message}", { name: w.name, message: e.message }));
-    } finally {
-      setBusy(null);
+      setStatus(failure(e.message));
     }
   }
-
-  // Every workspace you own, one snapshot each under the same label.
-  async function backUpAll(uploads) {
-    const targets = (mine || []).filter((w) => w.role === "owner");
-    setBusy("all");
-    let done = 0;
-    for (const w of targets) {
-      setStatus(t("Backing up {name} ({done} of {targets})…", { name: w.name, done: done + 1, targets: targets.length }));
-      try {
-        await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label: uploads ? "all-full" : "all-db", uploads }),
-        });
-        done += 1;
-      } catch (e) {
-        setStatus(t("Backup of {name} failed: {message}", { name: w.name, message: e.message }));
-      }
-      await loadList(w.id);
-    }
-    setBusy(null);
-    setStatus(tn("Backed up {done} of {n} workspace.", "Backed up {done} of {n} workspaces.", targets.length, { done }));
+  function backUp(w, uploads) {
+    return startJob("snapshot", { workspaces: [w.id], uploads, label: uploads ? "full" : "db" }, {},
+      (message) => t("Backup of {name} failed: {message}", { name: w.name, message }));
+  }
+  // Every workspace you own, one snapshot each under the same label: one job.
+  function backUpAll(uploads) {
+    const targets = (mine || []).filter((w) => w.role === "owner").map((w) => w.id);
+    return startJob("snapshot", { workspaces: targets, uploads, label: uploads ? "all-full" : "all-db" }, {},
+      (message) => t("Backup failed: {message}", { message }));
   }
 
   function download(w, b) {
@@ -106,21 +103,10 @@ export function WorkspaceBackups({ value }) {
         : t("Restore \"{name}\" to the snapshot from {b}? ALL of its current pages and chats are REPLACED by the snapshot's. Files the snapshot holds come back; files only the current pages use are cleaned up later. The current state is saved first as a \"Before restore\" snapshot, so you can go back.", { name: w.name, b: when(b) }),
       confirmLabel: merging ? t("Merge") : t("Replace"),
       danger: !merging,
-      onConfirm: async () => {
-        setStatus(merging ? t("Merging into {name}…", { name: w.name }) : t("Restoring {name}…", { name: w.name }));
-        try {
-          const d = await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}/restore?mode=${mode}`, { method: "POST" });
-          if (w.id === workspace?.id) {
-            closeSettings?.();
-            reloadWorkspace(); // every piece of in-memory state is stale now
-            return;
-          }
-          setStatus(merging ? t("Merged into {name}: {pages_added} pages added.", { name: w.name, pages_added: d.pages_added ?? 0 }) : t("Restored {name}.", { name: w.name }));
-          loadList(w.id); // the "Before restore" snapshot joins the list
-        } catch (e) {
-          setStatus(merging ? t("Merge failed: {message}", { message: e.message }) : t("Restore failed: {message}", { message: e.message }));
-        }
-      },
+      // A job: once it is done in the open workspace this tab reloads (App's
+      // onJobFinished); elsewhere the list reloads with its "Before restore" snapshot.
+      onConfirm: () => startJob("restore-snapshot", { ws: w.id, name: b.name, mode }, { restoreInto: w.id },
+        (message) => (merging ? t("Merge failed: {message}", { message }) : t("Restore failed: {message}", { message }))),
     });
   }
 
@@ -146,6 +132,7 @@ export function WorkspaceBackups({ value }) {
     const list = lists[w.id];
     const owner = w.role === "owner";
     const full = list && list.backups.filter((b) => !b.scheduled && !b.auto).length >= list.max;
+    const job = runningFor(w.id);
     return (
       <Section
         key={w.id}
@@ -158,7 +145,7 @@ export function WorkspaceBackups({ value }) {
         )}
         action={owner ? (
           <ActionMenu
-            label={t("Back up now")} icon={PlusIcon} disabled={busy != null || full}
+            label={t("Back up now")} icon={PlusIcon} disabled={Boolean(job) || full}
             items={[
               { icon: HardDriveIcon, label: T("Everything"), title: T("Databases plus every uploaded PDF and image — a complete copy"),
                 onClick: () => backUp(w, true) },
@@ -168,6 +155,7 @@ export function WorkspaceBackups({ value }) {
           />
         ) : null}
       >
+        {job ? <div className="backupJob"><span>{taskTitle(job)}</span><TaskProgress task={job} label={taskTitle(job)} /></div> : null}
         {!list ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
         {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
         {list && !list.error && !list.backups.length ? (
@@ -227,7 +215,8 @@ export function WorkspaceBackups({ value }) {
           <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu
-              label={tn("Back up {n} workspace", "Back up all {n} workspaces", owned.length)} icon={PlusIcon} disabled={busy != null || !owned.length}
+              label={tn("Back up {n} workspace", "Back up all {n} workspaces", owned.length)} icon={PlusIcon}
+              disabled={!owned.length || owned.some((w) => busyIds.has(w.id))}
               items={[
                 { icon: HardDriveIcon, label: T("Everything"), title: T("One complete snapshot per workspace you own"), onClick: () => backUpAll(true) },
                 { icon: DatabaseIcon, label: T("Databases only"), title: T("One small snapshot per workspace you own — no uploaded PDFs"), onClick: () => backUpAll(false) },
@@ -241,32 +230,31 @@ export function WorkspaceBackups({ value }) {
   );
 }
 
-export function ServerBackups({ setStatus, confirm }) {
+export function ServerBackups({ setStatus, confirm, tasks }) {
   const [rows, setRows] = React.useState(null);
   const [error, setError] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
 
   const refresh = React.useCallback(() => {
     apiJson(`${API}/admin/backups`).then((d) => setRows([...d.backups].reverse())).catch((e) => setError(e.message));
   }, []);
   React.useEffect(() => { refresh(); }, [refresh]);
+  // A snapshot is a background job (server-backup): its progress shows
+  // here and in Background tasks, and the list reloads once it ends.
+  const job = tasks.jobs.find((j) => j.kind === "server-backup" && isActive(j)) || null;
+  const busy = Boolean(job);
+  const wasBusy = React.useRef(false);
+  React.useEffect(() => {
+    if (wasBusy.current && !busy) refresh();
+    wasBusy.current = busy;
+  }, [busy, refresh]);
 
   async function create(uploads) {
-    setBusy(true);
     setError("");
-    setStatus(uploads ? t("Backing up databases and uploads…") : t("Backing up databases…"));
     try {
-      const b = await apiJson(`${API}/admin/backups`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: uploads ? "full" : "db", uploads }),
-      });
-      setStatus(t("Backup {name} created ({size_bytes}).", { name: b.name, size_bytes: fmtBytes(b.size_bytes) }));
-      refresh();
+      await tasks.start("server-backup", { label: uploads ? "full" : "db", uploads });
     } catch (e) {
       setError(e.message);
       setStatus(t("Backup failed: {message}", { message: e.message }));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -313,6 +301,7 @@ export function ServerBackups({ setStatus, confirm }) {
         />
       )}
     >
+      {job ? <div className="backupJob"><span>{taskTitle(job)}</span><TaskProgress task={job} label={taskTitle(job)} /></div> : null}
       {rows === null && !error ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
       {rows && !rows.length ? <Empty icon={DatabaseIcon}>{t("No snapshots yet. The server also takes one before every data upgrade.")}</Empty> : null}
       {(rows || []).map((b) => (

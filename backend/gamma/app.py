@@ -9,7 +9,7 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from . import backup_schedule, cloud_sync, config, guests, migrations
+from . import backup_schedule, cloud_sync, config, guests, jobs, migrations
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -33,6 +33,7 @@ from .routers import (
     imports,
     integrations,
     ink,
+    jobs as jobs_router,
     links,
     metadata,
     mirrors,
@@ -104,6 +105,7 @@ def _startup_maintenance():
         log.info(f"[startup] data directory upgraded from schema version {done['from']} "
                  f"to {done['to']} ({', '.join(done['applied'])}); snapshot: {done['backup']}")
     connect_users_db().close()
+    jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
         ws_root = ws_dir(ws_id)
@@ -158,6 +160,7 @@ def create_app() -> FastAPI:
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
+                every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"):
             yield state
@@ -174,9 +177,12 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(cloud_auth_router.router)
     app.include_router(admin.router)
+    app.include_router(admin.jobs_router)
     app.include_router(workspaces_router.router)
     app.include_router(ws_backups.router)
+    app.include_router(ws_backups.transfers)
     app.include_router(backup_tasks.router)
+    app.include_router(jobs_router.router)
     app.include_router(ai.router)
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)

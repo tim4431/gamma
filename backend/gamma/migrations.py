@@ -682,6 +682,17 @@ def _v23_page_trash(conn: sqlite3.Connection) -> None:
     _each_pages_db("23 (page_trash)", add_trash)
 
 
+def _v24_jobs(conn: sqlite3.Connection) -> None:
+    """Adds the ``jobs`` table (+ its owner and workspace indexes) in
+    users.db: background jobs — exports, backups, restores, imports, the
+    search indexer — with their progress, result and produced file
+    (gamma/jobs.py). Nothing else changes."""
+    for stmt in USERS_SCHEMA:
+        if stmt.startswith(("CREATE TABLE IF NOT EXISTS jobs ", "CREATE INDEX IF NOT EXISTS idx_jobs_")):
+            conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -706,4 +717,5 @@ STEPS = [
     (21, "folder_shares", _v21_folder_shares),
     (22, "upload_orphans", _v22_upload_orphans),
     (23, "page_trash", _v23_page_trash),
+    (24, "jobs", _v24_jobs),
 ]

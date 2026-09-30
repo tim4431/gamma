@@ -306,7 +306,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   the translate button and the selection popup's translator (against a
   mocked `/api/ai/translate`).
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
-  the review step and its switches, direct export for fixed formats.
+  the review step and its switches, direct export for fixed formats, the
+  export job's finished step, and a folder's annotated PDFs exported in the
+  background: the dialog closed mid-way, reopened from Background tasks and
+  its zip downloaded ([tasks.md](tasks.md)). The job's listing is held at
+  "running" with `page.route`, since the server's job is quick.
 - `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
   becoming an ink block with an `.ink` upload, persistence across a reload,
   the eraser, stroke undo/redo, the partial eraser, a lasso move + delete,
@@ -352,7 +356,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   cannot), a PDF chip's right-click "Add to library" makes the document page
   in the project's folder and the chip gets an open-page button, a markdown
   chip's "Add to library" imports a note page and leaves the file untouched,
-  the upload endpoint's lab-file / executable rule.
+  the upload endpoint's lab-file / executable rule, and a slow upload
+  stopped from Background tasks.
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
@@ -389,23 +394,19 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `pdf <phase> +<ms>` (ms since the viewer started opening that url) and as
   a `performance.mark("pdf-<phase>")` for devtools' Performance panel — the
   phases and what a healthy open looks like: [pdf_loading.md](pdf_loading.md).
-- **Background tasks** — the tasks popover shows every client-side job
-  (downloads, uploads, imports, metadata / citation / title / translation AI
-  jobs) and the server's indexing (`GET /api/tasks`). A row carries a
-  progress bar while the work can measure itself (bytes, translated pages,
-  indexed papers) and a stop button (hover) while it can be stopped: the
-  viewer's download and the export download abort their fetch, uploads abort
-  their XHR, the AI jobs and zip imports abort their request, translation
-  halts the engine, indexing asks the server (`DELETE /api/tasks/indexing`,
-  which finishes the current paper and skips the rest). A stopped row reads
-  "stopped" and ignores the job's own late reports (`cancelledTransfersRef`
-  in App.jsx). The client polls `/api/tasks` every 2 s only while the popover
-  is open or indexing is known to run; otherwise a 60 s heartbeat, and
-  nothing at all while the tab is hidden (one refresh when it comes back).
-  Anything that starts indexing (the search panel's library query, the
-  Settings reindex buttons) calls `wakeTasks` so the button appears at once
-  instead of waiting for the heartbeat. Work started elsewhere (the AI chat's
-  own extraction, another tab) shows up within the heartbeat.
+- **Background tasks** — the topbar's tray lists the server's jobs
+  (exports, backups, restores, imports, the search indexer; `GET /api/jobs`)
+  and this tab's own work (downloads, uploads, metadata / citation / title /
+  translation AI lookups) ([tasks.md](tasks.md)). While a task runs, its
+  row shows the progress (what it counts, the phase, the item at hand), the
+  elapsed time and a stop button when it can stop. Once it ends, the row
+  shows its file, error or finish time, with Download, Start again and
+  Remove. A server job's failure is its `error`, and the server log names
+  it (`[jobs] <kind> <id> failed`, with a traceback when it is a bug). The
+  client polls every 1.5 s while a job runs or the tray is open, else every
+  30 s, and not at all while the tab is hidden. Anything that starts
+  indexing calls `wakeTasks`, so the row appears at once. A stopped local
+  row reads "stopped" and ignores the work's own late reports.
 - **Status bar** — Settings → Appearance turns the floating status pill into a
   persistent bar under the tabs.
 - **Report a problem** — account menu → "Report a problem…", or the Help

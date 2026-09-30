@@ -64,8 +64,8 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assertEq((await page.$$(".fileChipOpen")).length, 0, "no open-page buttons before any promotion");
     // both uploads are listed as finished background tasks
     await page.click("button[aria-label='Background tasks']");
-    await page.locator(".transferRow", { hasText: "supplement.pdf" }).waitFor({ timeout: 5000 });
-    assert((await page.$$(".transferRow .transferStatus.done")).length >= 2, "both uploads done");
+    await page.locator(".taskRow", { hasText: "supplement.pdf" }).waitFor({ timeout: 5000 });
+    assert((await page.$$(".taskRow .taskStatus.done")).length >= 2, "both uploads done");
     await page.keyboard.press("Escape");
     assertNoProblems(page);
   });
@@ -221,13 +221,12 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
     await (await chooser).setFiles([{ name: "slow-upload.pdf", mimeType: "application/pdf", buffer: Buffer.from(big) }]);
     await page.click("button[aria-label='Background tasks']");
-    const row = page.locator(".transferRow", { hasText: "slow-upload.pdf" });
-    await row.locator(".transferBar").waitFor({ timeout: 10000 });
+    const row = page.locator(".taskRow", { hasText: "slow-upload.pdf" });
+    await row.locator(".taskBar").waitFor({ timeout: 10000 });
     await until(async () => /\d+(\.\d+)? [KM]B \/ /.test(await row.innerText()), { what: "byte progress on the row" });
-    await row.hover();
-    await row.locator(".transferStop").click();
+    await row.getByRole("button", { name: "Stop slow-upload.pdf", exact: true }).click();
     await until(async () => (await row.innerText()).includes("stopped"), { what: "the row reads stopped" });
-    assertEq(await row.locator(".transferBar").count(), 0, "a stopped row has no bar");
+    assertEq(await row.locator(".taskBar").count(), 0, "a stopped row has no bar");
     await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await sleep(500);
     assertNoProblems(page);

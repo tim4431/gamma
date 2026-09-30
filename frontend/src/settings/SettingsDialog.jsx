@@ -190,7 +190,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
-      ? t("Indexing is already running—see the tasks popover.") : result.scheduled
+      ? t("Indexing is already running — see Background tasks.") : result.scheduled
         ? tn("Re-indexing {n} paper {scheduledSuffix}", "Re-indexing {n} papers {scheduledSuffix}", result.scheduled, { scheduledSuffix })
         : t("No papers with PDFs to index."));
   } catch (err) {
@@ -237,11 +237,11 @@ function MaintenanceSettings({ value }) {
         <Row
           icon={RefreshIcon}
           label={t("PDF text index")}
-          hint={value.indexTask?.active ? t("Rebuilding — progress in the tasks popover") : t("Re-extract every paper if results look stale")}
+          hint={value.indexing ? t("Rebuilding — progress in Background tasks") : t("Re-extract every paper if results look stale")}
           title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
-          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
-            {value.indexTask?.active ? t("Indexing…") : t("Rebuild")}
+          <button className="uiBtn sm" disabled={value.indexing} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
+            {value.indexing ? t("Indexing…") : t("Rebuild")}
           </button>
         </Row>
       </Section>
@@ -388,7 +388,7 @@ function MetaStatusSection({ value }) {
   // Same rule for the index button: the selection's indexable papers, else
   // everything the index is missing or holds stale.
   const indexTargets = selected.size ? list.filter((p) => selected.has(p.id) && p.doc_id && p.has_file) : toIndex;
-  const indexing = !!value.indexTask?.active;
+  const indexing = !!value.indexing;
 
   const cell = (tone, text, title) => (
     <span className={`metaCell ${tone}`} title={title}><i className="setDot" />{text}</span>

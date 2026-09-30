@@ -2,7 +2,7 @@
 gamma/block_index.py) and the PDF index (pdf_fts): result shape, ordering,
 folder scope, and the lazy per-page rebuild that follows every kind of block
 write — plus the PDF index itself: /api/pdf-search hits and separator
-tolerance, stale index versions, the reindex endpoint, the tasks shape."""
+tolerance, stale index versions, the reindex endpoint, the indexing job."""
 
 import sqlite3
 
@@ -249,23 +249,57 @@ def test_search_reindex_targeted_single_doc(guest):
     assert ver == INDEX_VERSION
 
 
-def test_tasks_endpoint_shape(guest):
-    r = guest.get("/api/tasks")
-    assert r.status_code == 200
-    idx = r.json()["indexing"]
-    assert set(idx) >= {"total", "done", "active"}
+def _indexing_jobs(c):
+    r = c.get("/api/jobs")
+    assert r.status_code == 200, r.text
+    return [j for j in r.json()["jobs"] if j["kind"] == "indexing"]
 
 
-def test_stop_indexing_reports_whether_one_was_running(guest):
-    # The reindex tests above start a real background indexer for this
-    # workspace; on a slow runner it can still be alive here, so wait for it
-    # to finish instead of assuming it has.
-    import time
-    deadline = time.monotonic() + 20
-    while guest.get("/api/tasks").json()["indexing"]["active"]:
-        assert time.monotonic() < deadline, "indexer still running"
-        time.sleep(0.05)
-    # nothing running: a no-op, not an error
-    r = guest.delete("/api/tasks/indexing")
-    assert r.status_code == 200
-    assert r.json() == {"cancelled": False}
+def test_indexing_is_the_workspaces_job(guest):
+    """A reindex runs as the workspace's indexing job: listed with its
+    papers counted, one row per workspace however often it runs."""
+    from gamma import jobs
+
+    make_page(guest, "Indexed as a job", properties={"doc_id": "ftsjob001"})
+    for _ in range(2):
+        for job in _indexing_jobs(guest):
+            jobs.wait(job["id"])
+        assert guest.post("/api/search-reindex", json={"doc_ids": ["ftsjob001"]}).json()["scheduled"] == 1
+    listed = _indexing_jobs(guest)
+    assert len(listed) == 1, listed
+    job = jobs.wait(listed[0]["id"])
+    assert job["owner"] == jobs.WORKSPACE and job["workspace"] == workspace_of(guest.get("/api/session").json()["user"])
+    assert job["state"] == "done" and job["result"] == {"papers": 1}
+    assert job["progress"] == {"done": 1, "total": 1, "unit": "papers"}
+
+
+def test_a_running_indexer_is_stopped_between_papers(guest, monkeypatch):
+    """Stopping the job ends it before the next paper; the rest stay stale
+    for the next search. A second run meanwhile is refused as busy."""
+    import threading
+    from gamma import jobs
+    from gamma.routers import search as search_mod
+
+    for job in _indexing_jobs(guest):
+        jobs.wait(job["id"])
+    user = guest.get("/api/session").json()["user"]
+    ids = [f"ftsstop00{i}" for i in range(3)]
+    for doc_id in ids:
+        make_page(guest, f"Stop at {doc_id}", properties={"doc_id": doc_id})
+    reached, release, seen = threading.Event(), threading.Event(), []
+
+    def slow(ws, doc_id):
+        seen.append(doc_id)
+        reached.set()
+        release.wait(10)
+
+    monkeypatch.setattr(search_mod, "_index_doc", slow)
+    assert search_mod._index_missing_async(workspace_of(user), ids) is True
+    assert reached.wait(10)
+    assert search_mod._index_missing_async(workspace_of(user), ids) is False  # one per workspace
+    job = next(j for j in _indexing_jobs(guest) if j["state"] == "running")
+    assert job["stoppable"] and job["progress"]["total"] == 3
+    assert guest.post(f"/api/jobs/{job['id']}/cancel").status_code == 200
+    release.set()
+    assert jobs.wait(job["id"])["state"] == "cancelled"
+    assert seen == ids[:1]

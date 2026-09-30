@@ -4849,7 +4849,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 9px;
 }
 @keyframes transferSpin { to { transform: rotate(360deg); } }
-/* Failed job, nothing running — same corner as the spinner. */
+/* A failure worth a look, nothing running — same corner as the spinner;
+   `.info` (accent): a finished export's file waits to be downloaded. The
+   task rows themselves are tasks/tasks.css. */
 .transferDot {
   position: absolute;
   top: 3px;
@@ -4859,49 +4861,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: 50%;
   background: var(--danger);
 }
-.downloadsPopover { min-width: 320px; max-width: 420px; }
-.transferRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 6px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-xs);
-}
-.transferRow:hover { background: var(--bg-block); }
-.transferStatus { display: inline-flex; width: 14px; justify-content: center; flex-shrink: 0; }
-.transferStatus.done { color: #4caf50; }
-.transferStatus.error { color: #e05c5c; }
-.transferStatus.cancelled { color: var(--text-dim); }
-.transferRow.cancelled .transferName { color: var(--text-muted); }
-/* name over an optional progress bar */
-.transferMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.transferBar { display: block; height: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
-.transferBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) ease; }
-/* the stop button keeps its slot when absent, so info texts line up */
-.transferStop, .transferStopSlot { flex-shrink: 0; width: 18px; }
-.transferStop { visibility: hidden; }
-.transferRow:hover .transferStop, .transferStop:focus-visible { visibility: visible; }
-.downloadsPopover .setEmpty { padding: 18px 12px; }
-.transferKind { display: inline-flex; color: var(--text-dim); flex-shrink: 0; }
-.transferName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-}
-.transferInfo {
-  flex-shrink: 1;
-  min-width: 0;
-  max-width: 62%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-}
-.searchToggle.transferClearBtn { width: auto; padding: 0 8px; }
+.transferDot.info { background: var(--accent); }
 
 /* --- global Back button (topbar) --- */
 @keyframes navBackIn {
@@ -5676,6 +5636,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferFooter { flex-shrink: 0; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; }
 .transferHelp { font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferHelp summary { cursor: pointer; padding: 6px 0; }
+/* The export step's finished file: its name and size. */
+.transferFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0 0 14px;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+.transferFile svg { flex-shrink: 0; color: var(--text-muted); }
+.transferFile strong { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.transferFile span { margin-left: auto; flex-shrink: 0; color: var(--text-muted); font-size: var(--fs-xs); }
 @media (max-width: 620px) {
   .transferModal { padding: 14px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .transferFormatRow { grid-template-columns: minmax(0, 1fr); gap: 6px; }

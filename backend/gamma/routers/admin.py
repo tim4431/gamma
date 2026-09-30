@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import (ai_settings, backup_schedule, backups, chatgpt_oauth, cloud_auth, integrity,
+from .. import (ai_settings, backup_schedule, backups, chatgpt_oauth, cloud_auth, integrity, jobs,
                publisher_sessions, workspaces)
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
@@ -58,6 +58,8 @@ from ..server_settings import (
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+# The admin's background jobs start at /api/jobs/<kind> like everyone's (routers/jobs.py).
+jobs_router = APIRouter(prefix="/api/jobs", tags=["admin"])
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 MAX_PASSWORD_LEN = 128
@@ -351,6 +353,26 @@ def create_backup(payload: BackupCreateRequest, request: Request):
         raise HTTPException(status_code=507, detail=f"the backup could not be written: {e}")
 
 
+@jobs_router.post("/server-backup")
+def start_server_backup(payload: BackupCreateRequest, request: Request):
+    """``POST /api/admin/backups`` as a background job (kind
+    ``server-backup``, what Settings → Server's snapshot menu starts): its
+    result is the new snapshot's info."""
+    admin = require_admin(request)
+    label = payload.label.strip() or "manual"
+    if not backups.LABEL_RE.match(label):
+        raise HTTPException(status_code=400, detail="label must be 1-40 chars of letters, digits, _ . -")
+
+    def run(job):
+        try:
+            return backups.create(label, uploads=payload.uploads, progress=job.progress)
+        except OSError as e:
+            raise OSError(f"the backup could not be written: {e}") from e
+
+    return jobs.start("server-backup", owner=admin, run=run, title="Server snapshot",
+                      params={"label": label, "uploads": payload.uploads})
+
+
 def _named_backup(name: str) -> dict:
     b = backups.info(name)
     if not b:
@@ -476,6 +498,7 @@ def rename_account(conn: sqlite3.Connection, old: str, new: str) -> None:
     with backup_schedule.renaming(old, new):
         rename_account_rows(conn, old, new)
         conn.commit()
+    jobs.renamed(old, new)
 
 
 def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
@@ -497,6 +520,7 @@ def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
     conn.execute("UPDATE user_prefs SET username = ? WHERE username = ?", (new, old))
     conn.execute("UPDATE mirrors SET owner = ? WHERE owner = ?", (new, old))
     conn.execute("UPDATE ai_usage SET username = ? WHERE username = ?", (new, old))
+    conn.execute("UPDATE jobs SET owner = ? WHERE owner = ?", (new, old))
     conn.execute("UPDATE pending_memberships SET invited_by = ? WHERE invited_by = ?", (new, old))
     publisher_sessions.rename_account(conn, old, new)
     # Invited-people lists on shares ("carol:edit,dave:view") name accounts too.
