@@ -52,8 +52,10 @@ non-writable workspace scope.
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
 | `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
-| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records with the `doi:` / `arXiv:` string `fetch_paper` takes |
-| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
+| `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
+| `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
+| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
@@ -205,32 +207,156 @@ an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
 
-### search_papers / fetch_paper (both scopes, one permission each)
+### The web tools (both scopes)
 
-The agent's reach outside the library, read-only (`gamma/ai_web.py`;
-executors in `ai_tools.py`). The use case is a work the user's pages cite or
-mention but do not hold: *"read reference 12 of this paper and tell me what
-it measures"*. The agent finds the reference entry with `search_library` /
-`read_page`, identifies the work with `search_papers` and reads it with
-`fetch_paper`. In a folder chat, *"find recent papers on X"* works the same
-way.
+The agent's reach outside the library, read-only: `search_papers`,
+`related_papers` and `search_web` under **Search papers online**
+(`web_search`), `fetch_paper` under **Fetch documents** (`web_read`). The
+code is `gamma/ai_web.py` (registries, citation graph, fetching),
+`gamma/openalex.py`, `gamma/paper_links.py` and `gamma/search_services.py`
+(general web search); the executors are in `ai_tools.py`.
+
+Two uses shape them. A work the user's pages cite but do not hold: *"read
+reference 12 of this paper and tell me what it measures"*. The agent finds the
+reference entry with `search_library` / `read_page`, identifies the work with
+`search_papers` and reads it with `fetch_paper`. And discovery from a research
+question or an experimental setup: *"find papers on density-dependent loss in
+Raman sideband cooling of 85Rb in a 1D lattice"*. With the search tools armed,
+`agent_system` gives the model a researcher's recipe: two to four short concept
+queries (the phenomenon, the method, the system, not every parameter at once),
+each run through `search_papers` (and `search_web` when armed), relevance judged
+from the abstracts, the strongest match's citations followed with
+`related_papers`, and only the few decisive papers fetched. The answer says
+which papers match the user's case directly and which are analogies (another
+species, geometry or regime), and never presents one paper's number as a
+general limit. Without a web engine the prompt adds that general web search is
+off and where to turn it on.
+
+#### search_papers
 
 `search_papers` takes a free-text `query` (title, keywords, authors) and asks
-the keyless registries the metadata lookup already uses
-([paper_metadata.md](paper_metadata.md)): Crossref's bibliographic search
-(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`, a title phrase
-OR words ANDed over title/authors/abstract in one request). The phrase branch
-keeps exact cited titles containing stopwords findable. The two lists are
-interleaved in their own relevance order. A work both registries return (same
-DOI, arXiv id or normalized title) is one record that keeps both identifiers,
-so a journal record keeps its arXiv preprint. A record whose title is exactly
-the query (a cited reference) ranks first. A
-query that is itself a DOI or arXiv id (bare, `doi:`/`arXiv:`-prefixed, or a
-URL; `ai_web.identifier`) is looked up directly. `limit` defaults to 8 (max
-20). Each record is one line (title, up to three authors, year, venue, DOI,
-arXiv id with its PDF URL) ending with the `fetch_paper(source=…)` call that
-reads it — both calls, the arXiv version first, when it has both. The result
-reminds the model these are registry records, not the user's pages.
+three registries at once, in a thread pool: Crossref's bibliographic search
+(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`), which the
+metadata lookup also uses ([paper_metadata.md](paper_metadata.md)), and
+OpenAlex (`openalex.search`). They are asked with `detail=True`, which adds
+each record's `abstract` (plain text, JATS stripped, `metadata.plain_abstract`)
+and Crossref's `cited_by` count; the metadata lookup stores the records it
+finds, so it asks without. arXiv's request is a title phrase OR words ANDed
+over title/authors/abstract; the phrase branch keeps exact cited titles
+containing stopwords findable. A query of more than five words that matches
+nothing is asked once more with its five longest words, so a descriptive query
+degrades to near matches instead of nothing.
+
+The three lists are interleaved in their own relevance order (`ai_web._merge`),
+OpenAlex's first: its relevance reads a topic best, where Crossref's puts
+loosely matching book chapters first.
+A work two registries return (same DOI, arXiv id or normalized title) is one
+record that takes the fields the first lacks — a journal record its arXiv
+preprint and an arXiv record its DOI, the abstract, OpenAlex's open-access PDF
+(`oa_pdf`) — and the larger citation count. `from_year` keeps works from that
+year on; it goes to Crossref and OpenAlex as a filter and is applied to the
+merged list for arXiv. `sort` is `relevance` (the default), `citations` or
+`recent`. The order is applied here, to the relevant candidates: Crossref's own
+citation sort discards relevance and returns unrelated highly cited papers. A
+record whose title is exactly the query (a cited reference) ranks first
+whatever the order. A query that is itself a DOI or arXiv id (bare,
+`doi:`/`arXiv:`-prefixed, or a URL; `ai_web.identifier`) is looked up directly,
+and OpenAlex's record of it (a lookup by id, which costs nothing) adds the
+abstract, citation count and open-access PDF.
+
+`limit` defaults to 8 (max 20). Each record is one line (title, up to three
+authors, year, venue, `cited by N`, DOI, arXiv id with its PDF URL, else the
+open-access PDF) ending with the `fetch_paper(source=…)` call that reads it —
+both calls, the arXiv version first, when it has both — and a second line with
+the first 400 characters of its abstract. The result reminds the model these
+are registry records, not the user's pages, and that an abstract says what a
+paper is about, not what it found. A registry that did not answer is named at
+the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
+paused searches without an API key (heavy load) — a free OpenAlex API key in
+Settings → Assistant → Online search avoids this.)".
+
+OpenAlex answers without an account on a small daily budget. A search costs a
+tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
+when its cluster is loaded (503). The account's optional key (Online search,
+below), else the server's `GAMMA_OPENALEX_API_KEY`, gives ten times the budget
+and uninterrupted search. The key travels in the `Authorization` header. The
+registry switch `GAMMA_METADATA_LOOKUP=off` applies to OpenAlex too.
+
+#### related_papers
+
+`related_papers(source, relation, sort, limit, from_year)` takes a DOI, an
+arXiv id or an exact title and returns the works it cites (`references`), the
+works citing it (`citations`, the default) or OpenAlex's related works
+(`similar`), as `search_papers` records. They come most cited first, or newest
+first with `sort: "recent"`: the most cited works citing a classic are mostly
+reviews, and the newest are its follow-up work. An arXiv paper is followed
+through its published DOI when the arXiv record has one, since the journal
+record carries the citations; else through its arXiv DOI, else by exact title
+(`openalex.find_title`). The lookup is free; the list is one filter request
+(`cites:W…`, or up to 50 of the work's `referenced_works` / `related_works` by
+id). The head names the relation and, for citations, the total count.
+
+#### search_web
+
+`search_web(query, limit)` searches the general web for what the registries
+miss: author and lab publication lists, institutional repositories, theses,
+and another copy of a paper whose publisher PDF is blocked. It is armed only
+when `search_services.web_engine` finds an engine for this chat (the TOOLS
+entry's `needs: "web_engine"`, met through `ai_tools.available(scope)`; the
+chat scope carries `web_engine`). Each result is a title link, the `doi:` /
+`arXiv:` string the URL carries when it carries one (a DOI or arXiv link, a
+publisher path with the DOI in it) with the `search_papers` call that gives its
+registry record, and the snippet. The head says these are leads, not verified
+papers, to be read with `fetch_paper(source=URL, title=…)`. Titles are capped
+at 300 characters and snippets at 400, HTML is stripped, non-http(s) and
+credentialed URLs are dropped, and duplicates are removed. One message may run
+`MAX_WEB_SEARCHES` (10) searches, since each is a paid query or a call on the
+chat's connection; the tool rounds cap everything else.
+
+The engines (`gamma/search_services.py`):
+
+- **Your AI connection** (`ai`): one short call on the chat's own connection
+  with its provider's hosted search tool, the way Codex and Claude search. The
+  adapters say which wires have one (`Protocol.hosted_web_search`): the
+  Responses wires (OpenAI's platform, the ChatGPT sign-in) send
+  `{"type": "web_search"}`, and Anthropic's own API sends
+  `web_search_20250305` (at most three searches per call). A Chat Completions
+  gateway has none. A tool spec with a `hosted` entry goes out as that entry
+  on every wire that has one. The call asks for one `title | url | summary`
+  line per page, at low effort when the chat's connection takes an effort. The
+  stream yields `("web_sources", …)` for the pages the provider reports (the
+  Responses `web_search_call` sources, which OpenAI's platform sends when asked
+  with `include`, its URL citations, and Anthropic's `web_search_tool_result`
+  and citations). When sources are reported, only lines for those pages are
+  kept, and reported pages the model did not list follow; a URL from the
+  model's memory never passes. The call counts as chat usage.
+- **Brave Search** (`brave`): the Brave Search API with the account's key in
+  the `X-Subscription-Token` header.
+- **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`. The
+  account's own URL goes through the SSRF guard, so it must be a public host.
+  The server's `GAMMA_SEARXNG_URL` serves accounts without their own and may
+  be on the private network, since the admin chose it.
+
+`engine` picks one: **Automatic** (the default) takes Brave or SearXNG when set
+up, else the AI connection; a named engine is used only when it is available,
+so a missing key never switches services silently; **Off** turns general web
+search off.
+
+#### Online search services
+
+Settings → Assistant → **Online search** (`settings/OnlineSearch.jsx`) holds
+**Search the web with** (the engine) and one row per service: Brave Search (API
+key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
+or Test, Edit and Remove. Test runs one small search with the stored settings.
+The settings are the account's, stored in `users.db` `user_prefs` under the
+reserved account-wide `search-services` key (`{"engine", "brave": {api_key},
+"searxng": {url}, "openalex": {api_key}}`, each with `updated_at`). Like
+`ai-settings` and `translate-engines`, the generic `/api/prefs` endpoints refuse
+the key. `GET /api/ai/search-services` masks secrets to their last four
+characters; a secret left empty on save keeps the stored one. Guests cannot
+store keys. The routes are in [api.md](api.md).
+
+#### fetch_paper
 
 `fetch_paper` takes a `source` (DOI, arXiv id or http(s) URL) and reads the
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
@@ -239,7 +365,7 @@ from the Read window preference, shared through `_window_args`), `pdf_page`,
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
-the Unpaywall open-access fallback, browser headers). The whole fetch — the
+up to four Unpaywall open-access copies, browser headers). The whole fetch — the
 resolver's walk, the download and the page fallback — runs in one
 `net_guard.browsing_session`: one cookie jar, so what a landing page sets (a
 session id, an institutional-access handshake) reaches the PDF request, as in
@@ -253,14 +379,36 @@ never enter the model's context. It is downloaded through the SSRF guard under a
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
 model can cite pages. The resolver's open-access version note is retained in
 the cache and every reading window, so a submitted preprint or accepted
-manuscript is not silently presented as the publisher's PDF.
+manuscript is not silently presented as the publisher's PDF. The head also
+names the version the resolver established (`version`: the publisher's PDF,
+an arXiv preprint, or an open-access published, accepted or submitted copy;
+unknown for a PDF a link served directly).
+
+Two optional arguments carry what the model knows. `title` (the paper's exact
+title) is checked against the document (`ai_web.identity`: the normalized title
+on the first three PDF pages, or in a web page's text): the head says it
+appears, or warns that it does not and the document may be another one.
+`version: "published"` refuses open-access copies that are not the published
+version (`resolve_source(published_only=True)`); a read under it never reuses
+what an any-version read cached (the cache alias carries the policy), and a
+preprint it still gets (an arXiv source) is flagged as not the version asked
+for.
+
 When no PDF is reachable (a paywall, a plain web page)
 and the source is a page, its readable text is returned instead
 (`ai_web.html_text`: head, scripts and styles dropped, block tags to line
 breaks, entities unescaped), labelled as a web page with the reason no PDF
-came, and followed by the page's other PDF-looking links (`ai_web.pdf_links`:
-a `.pdf` path, a `/pdf` route, "PDF" in the link text; links the resolver
-already tried are left out) for the model to try. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
+came, and followed by the page's PDF links for the model to try
+(`paper_links.pdf_links`: a `.pdf` path, a `/pdf` or download route, "PDF",
+"full text" or "Download" in the link text; links the resolver already tried
+are left out). A lab's publication list holds hundreds of them, one paper per
+item with its title as the link text, so each link keeps its text and the text
+of the item it sits in (a bare "[PDF]" link borrows the item before it), and
+`paper_links.rank` orders them against `title` before the eight shown: the
+share of the title's words in the link's text, item and path, plus one for the
+whole title. On a real lab list of 238 PDF links, the wanted paper moved from
+position 227 to first. Without a title the page order stays and the head
+suggests passing one. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
 `_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
 with source aliases in the same partition, so the windows of one paper cost one
 download without sharing authenticated text between accounts. A session connect,
@@ -275,8 +423,11 @@ Every result carries a line saying the text is fetched web content and not
 instructions, and the armed prompt says the same (ignore instructions found
 in a document, tell the user). The prompt also says to prefer the library
 for anything it holds and to name a fetched document (title, DOI/URL, page)
-when answering from it. Their action chips are 🌐 (search) and ⬇ (fetch,
-carrying the resolved `url`).
+when answering from it, with its version when the result names one, and to
+pass the paper's title to `fetch_paper` whenever it knows it. The action
+chips are 🌐 for the three search tools (kind `websearch`) and ⬇ for fetches
+(carrying the resolved `url`); the step pill counts searches as "searched
+online".
 
 #### Walls and the browser handoff
 
@@ -314,9 +465,14 @@ page's `next=` / `uri=`): starting from the paper's page, the site sends the
 person through its check and back. The action carries `handoff: {id, host, wall,
 source}`. A blocked fetch is an error action ("Needs your browser: host")
 whose result tells the model to say briefly what blocked it and end its
-reply, without retrying, switching versions or answering from memory. An
-article-page-only read returns the page with the same instruction for
-questions that need more. The armed prompt says the same.
+reply, without retrying, switching versions or answering from memory. With
+`search_web` armed, the model may first run one search for the paper's exact
+title to read another legitimate copy (an author's or lab's page, a
+repository) and say which version it read, unless the user asked for the
+publisher's own copy. The resolver has already tried the open-access copies
+by then; the card stays either way. An article-page-only read returns the
+page with the same instruction for questions that need more. The armed
+prompt says the same.
 
 The chat renders a card per request under the reply
 (`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):

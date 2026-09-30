@@ -215,6 +215,8 @@ Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain
 | `GAMMA_ADMIN_USER` / `GAMMA_ADMIN_PASSWORD` | No | `admin` / random, printed to the log once | Overrides the account a **fresh** instance seeds itself at startup (only while no real accounts exist; never touched afterwards). Admins manage users from the GUI (Settings → Users) |
 | `GAMMA_AI_ANTHROPIC_BASE_URL` | No | `https://api.anthropic.com` | Default Anthropic-protocol endpoint, e.g. `https://api.deepseek.com/anthropic` |
 | `GAMMA_AI_OPENAI_BASE_URL` | No | `https://api.openai.com` | Default OpenAI-compatible endpoint |
+| `GAMMA_SEARXNG_URL` | No | unset | A SearXNG instance (JSON format enabled) that the assistant's web search uses for accounts without a search service of their own; it may be on the private network |
+| `GAMMA_OPENALEX_API_KEY` | No | unset | An OpenAlex key for accounts without their own: ten times the keyless daily budget for scholarly search, and no pauses under load |
 
 AI is configured in the app, not the environment: each user adds provider entries under Settings → AI → Connections (pick the API format — Anthropic Messages or OpenAI Chat Completions — then a key, plus optional label, base URL, and model list), or connects a ChatGPT Plus/Pro subscription with *Sign in with ChatGPT* — OAuth, no key at all. Keys are stored server-side per user and never sent back to the browser. The base-URL variables above only change the per-protocol defaults shown in that dialog.
 

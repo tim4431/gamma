@@ -9,17 +9,17 @@ from ai_fixtures import ALL_PERMS, ALL_TOOLS, folder
 def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
-        "search_library", "search_papers", "fetch_paper", "rename_page", "move_page", "edit_block",
+        "search_library", "search_papers", "related_papers", "fetch_paper", "rename_page", "move_page", "edit_block",
         "create_block", "move_block"]
     # Paper chats never list, rename or move pages; the note-block tools exist there.
     assert [t["name"] for t in agent_tools("page")] == [
-        "read_page", "read_block", "read_chats", "view_pdf_page", "search_library", "search_papers",
+        "read_page", "read_block", "read_chats", "view_pdf_page", "search_library", "search_papers", "related_papers",
         "fetch_paper", "edit_block", "create_block", "move_block"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
         "folder", {"rename": False, "move": False, "block_edit": False})] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
-        "search_library", "search_papers", "fetch_paper"]
+        "search_library", "search_papers", "related_papers", "fetch_paper"]
     names = [t["name"] for t in agent_tools("folder", {"search": False})]
     assert "search_library" not in names and "read_page" in names
     # "List pages" gates the folder tree too; "Read pages" the page chats.
@@ -28,7 +28,7 @@ def test_registry_scopes_and_permissions():
     # One permission gates all three note-editing tools.
     names = [t["name"] for t in agent_tools("page", {"block_edit": False})]
     assert names == ["read_page", "read_block", "read_chats", "view_pdf_page", "search_library",
-                     "search_papers", "fetch_paper"]
+                     "search_papers", "related_papers", "fetch_paper"]
     # The two web tools have their own permissions.
     names = [t["name"] for t in agent_tools("page", {"web_search": False, "web_read": False})]
     assert "search_papers" not in names and "fetch_paper" not in names and "read_page" in names

@@ -49,9 +49,26 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
 
 
 def responses_tools(tools) -> list:
-    # Responses API uses a flattened function-tool shape (no "function" nesting).
-    return [{"type": "function", "name": t["name"], "description": t["description"],
+    # Responses API uses a flattened function-tool shape (no "function" nesting);
+    # a hosted tool (the provider's web search) goes out as it is.
+    return [t["hosted"] if t.get("hosted") else
+            {"type": "function", "name": t["name"], "description": t["description"],
              "parameters": t["parameters"], "strict": False} for t in (tools or [])]
+
+
+def _web_sources(item) -> list:
+    """The pages a finished output item names: a web search call's sources
+    (when the request asked for them) or a message's URL citations."""
+    if item.get("type") == "web_search_call":
+        found = ((item.get("action") or {}).get("sources")) or []
+        return [{"url": s["url"], "title": s.get("title") or ""}
+                for s in found if isinstance(s, dict) and s.get("url")]
+    if item.get("type") == "message":
+        return [{"url": a["url"], "title": a.get("title") or ""}
+                for part in item.get("content") or [] if isinstance(part, dict)
+                for a in part.get("annotations") or []
+                if isinstance(a, dict) and a.get("type") == "url_citation" and a.get("url")]
+    return []
 
 
 def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="") -> dict:
@@ -81,6 +98,9 @@ class ResponsesWire(Protocol):
     """The Responses stream and token report; a backend adds its request."""
 
     streams_only = True  # always SSE — read_reply joins the deltas
+
+    def hosted_web_search(self, conf):
+        return {"type": "web_search"}
 
     def usage(self, raw):
         if not isinstance(raw, dict):
@@ -113,6 +133,10 @@ class ResponsesWire(Protocol):
                 yield ("tool", {"id": item.get("call_id") or item.get("id") or "",
                                 "name": item.get("name") or "",
                                 "arguments": parse_tool_args(item.get("arguments"))})
+            else:
+                sources = _web_sources(item)
+                if sources:
+                    yield ("web_sources", sources)
         elif kind in ("response.completed", "response.incomplete"):
             # incomplete: the output cap or the window stopped it — the
             # counts still count, and the stop reason says it was cut off.
@@ -138,6 +162,9 @@ class OpenAIResponses(ResponsesWire):
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
         body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key),
                 "max_output_tokens": max_tokens}
+        if any((t.get("hosted") or {}).get("type") == "web_search" for t in tools or []):
+            # The pages a search consulted, beside the ones the reply cites.
+            body["include"] = ["web_search_call.action.sources"]
         if system:
             body["instructions"] = system
         return URLRequest(f"{conf['base_url']}/v1/responses", data=json.dumps(body).encode(), headers={

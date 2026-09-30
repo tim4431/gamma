@@ -140,6 +140,70 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: online search services are set up in the Chat pane, and the engine choice survives a reload", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Chat").click();
+      const tools = row(page, "Search papers online");
+      assert((await tools.innerText()).includes("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web"));
+      const engine = row(page, "Search the web with").getByRole("button", { name: "Search the web with", exact: true });
+      assert((await engine.innerText()).includes("Automatic"));
+      const brave = row(page, "Brave Search");
+      const searxng = row(page, "SearXNG");
+      const openalex = row(page, "OpenAlex");
+      assert((await brave.innerText()).includes("Not set up"));
+      assert((await openalex.innerText()).includes("Optional — works without a key"));
+
+      await brave.getByRole("button", { name: "Set up", exact: true }).click();
+      let dialog = page.getByRole("dialog", { name: "Brave Search", exact: true });
+      await dialog.locator('input[autocomplete="new-password"]').fill("BSA-test-key-123456");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Key …3456")));
+      // Test answers in the row; the real service is not reached from here.
+      await page.route("**/api/ai/search-services/brave/test", (route) => route.fulfill({
+        json: { ok: false, error: "Brave Search answered HTTP 401 — check the key" } }));
+      await brave.getByRole("button", { name: "Test", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("HTTP 401 — check the key")));
+      // Saving with the key left empty keeps the stored one.
+      await brave.getByRole("button", { name: "Edit", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Brave Search", exact: true });
+      assertEq(await dialog.locator('input[autocomplete="new-password"]').inputValue(), "");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Key …3456")));
+
+      await searxng.getByRole("button", { name: "Set up", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "SearXNG", exact: true });
+      await dialog.locator("input.aiKeyInput").fill("https://search.example.org/");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => searxng.innerText().then((text) => text.includes("https://search.example.org")));
+      if (flags.keep) {
+        await row(page, "Online search").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${server.dir}/settings-online-search.png`, animations: "disabled" });
+      }
+      await brave.getByRole("button", { name: "Remove", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Not set up")));
+
+      await engine.click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Off", exact: true }).click();
+      await until(() => engine.innerText().then((text) => text.includes("Off")));
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      // Settings search reaches the services by name.
+      await search(page, "SearXNG", "Online search services");
+      assert((await row(page, "Search the web with").innerText()).includes("Off"));
+      assert((await row(page, "SearXNG").innerText()).includes("https://search.example.org"));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const service of ["brave", "searxng"]) {
+        await user.api(`/api/ai/search-services/${service}`, { method: "DELETE" });
+      }
+      await user.api("/api/ai/search-services/engine", { method: "PUT", body: { engine: "auto" } });
+    }
+  });
+
   await step("settings: Ctrl+, opens it; Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
     const { ctx, page } = await setup();
     try {

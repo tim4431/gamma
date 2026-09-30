@@ -43,7 +43,7 @@ def accounts(client):
 @pytest.fixture
 def web(transport, monkeypatch):
     routes, seen = transport
-    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdfs", lambda doi: [])
     ai_web.clear_cache()
     fetch_handoff.clear()
     yield routes, seen
@@ -114,7 +114,8 @@ def test_article_page_only_is_read_and_offers_the_full_text(web, fetch):
     assert "Abstract: the abstract only." in text  # the model still gets what was readable
     assert "Only the article page was readable" in text and "say so briefly and end your reply" in text
     # The page's other PDF links, for the model to try; the advertised one met the wall already.
-    assert "PDF links on the page (fetch_paper can read them): https://journals.example.org/suppl/wall-si.pdf\n" in text
+    assert "PDF links on the page (1; fetch_paper can read them):\n" in text
+    assert ": https://journals.example.org/suppl/wall-si.pdf\n" in text and "/pdf/wall\n" not in text
     req = fetch_handoff.get(USER, action["handoff"]["id"])
     assert (req["wall"], req["url"], req["pdf_url"]) == ("abstract", landing, pdf)
 
@@ -364,7 +365,7 @@ def test_resolver_sends_the_article_page_as_referer(transport, monkeypatch):
         return real(self, req)
 
     monkeypatch.setattr(net_guard._BrowserAgent, "https_request", spy)
-    assert pdf_mod.resolve_source(page) == {"source_url": pdf, "referer": page}
+    assert pdf_mod.resolve_source(page) == {"source_url": pdf, "referer": page, "version": "publisher"}
     assert referers == [(page, None), (pdf, page)]
 
 
@@ -372,11 +373,12 @@ def test_resolver_sends_the_article_page_as_referer(transport, monkeypatch):
 
 def test_search_keeps_both_identifiers_and_ranks_the_exact_title_first(monkeypatch):
     title = "Bias-preserving gates with stabilized cat qubits"
-    monkeypatch.setattr(metadata_mod, "_crossref_search", lambda q, rows=5: [
+    monkeypatch.setattr(metadata_mod, "_crossref_search", lambda q, rows=5, detail=False, from_year=0: [
         {"title": "A survey of cat qubits", "doi": "10.1000/survey", "authors": []},
         {"title": title, "doi": "10.1126/sciadv.aay5901", "authors": []}])
-    monkeypatch.setattr(metadata_mod, "_arxiv_search", lambda q, rows=5: [
+    monkeypatch.setattr(metadata_mod, "_arxiv_search", lambda q, rows=5, detail=False: [
         {"title": title.upper(), "arxiv_id": "1905.00450", "authors": []}])
+    monkeypatch.setattr(ai_web.openalex, "search", lambda q, rows=5, from_year=0, key="": [])
     records = ai_web.search_papers(title)
     assert [r.get("doi") for r in records] == ["10.1126/sciadv.aay5901", "10.1000/survey"]
     assert records[0]["arxiv_id"] == "1905.00450"

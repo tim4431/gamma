@@ -485,3 +485,71 @@ def test_user_attachments_never_ride_on_a_tool_picture_turn():
                                      pdf_b64s=["QUJD"], tools=ALL_TOOLS).data)
     assert body["messages"][1]["content"][0]["type"] == "file"
     assert [c["type"] for c in body["messages"][5]["content"]] == ["text", "image_url"]
+
+
+# ------------------------------------------------------------- hosted web search
+
+HOSTED = {"name": "web_search", "description": "", "parameters": {}}
+
+
+def test_hosted_web_search_is_the_wire_tool_and_goes_out_as_is():
+    responses, anthropic = WIRES["openai-responses"], WIRES["anthropic"]
+    spec = responses.hosted_web_search(CONF)
+    assert spec == {"type": "web_search"} and WIRES["chatgpt"].hosted_web_search(CONF) == spec
+    # Anthropic's server tool on Anthropic itself only; a gateway has none.
+    assert anthropic.hosted_web_search(CONF) is None
+    platform = {**CONF, "base_url": "https://api.anthropic.com"}
+    assert anthropic.hosted_web_search(platform)["type"] == "web_search_20250305"
+    # OpenAI's platform routes a tool call to the Responses wire, which hosts it.
+    openai_platform = {**CONF, "base_url": "https://api.openai.com"}
+    assert WIRES["openai"].wire(openai_platform, [HOSTED]) is responses
+    assert WIRES["openai"].wire(CONF, [HOSTED]).hosted_web_search(CONF) is None
+
+    body = json.loads(openai_responses_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
+                                               tools=[{**HOSTED, "hosted": spec}]).data)
+    assert body["tools"] == [spec] and body["include"] == ["web_search_call.action.sources"]
+    body = json.loads(chatgpt_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
+                                      tools=[{**HOSTED, "hosted": spec}]).data)
+    assert body["tools"] == [spec] and body["include"] == []
+    server_tool = anthropic.hosted_web_search(platform)
+    body = json.loads(anthropic_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
+                                        tools=[*ALL_TOOLS[:1], {**HOSTED, "hosted": server_tool}]).data)
+    assert body["tools"][1] == server_tool and body["tools"][0]["name"] == "list_pages"
+    # A wire without hosted tools never sends one.
+    body = json.loads(openai_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
+                                     tools=[{**HOSTED, "hosted": spec}]).data)
+    assert "tools" not in body
+
+
+def test_hosted_search_streams_report_the_pages_found():
+    stream = sse(
+        {"type": "response.output_item.done", "item": {"type": "web_search_call", "action": {
+            "type": "search", "query": "q", "sources": [{"type": "url", "url": "https://lab.example.edu/p"}]}}},
+        {"type": "response.output_text.delta", "delta": "Lab page | https://lab.example.edu/p | papers"},
+        {"type": "response.output_item.done", "item": {"type": "message", "content": [{
+            "type": "output_text", "text": "…", "annotations": [
+                {"type": "url_citation", "url": "https://lab.example.edu/p", "title": "Lab"}]}]}},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    )
+    events = list(sse_events(stream, "chatgpt"))
+    assert events[0] == ("web_sources", [{"url": "https://lab.example.edu/p", "title": ""}])
+    assert events[2] == ("web_sources", [{"url": "https://lab.example.edu/p", "title": "Lab"}])
+
+    stream = sse(
+        {"type": "content_block_start", "content_block": {"type": "server_tool_use", "id": "s1",
+                                                          "name": "web_search"}},
+        {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": '{"query": "q"}'}},
+        {"type": "content_block_stop"},
+        {"type": "content_block_start", "content_block": {"type": "web_search_tool_result", "content": [
+            {"type": "web_search_result", "url": "https://arxiv.org/abs/1", "title": "Preprint",
+             "encrypted_content": "…"}]}},
+        {"type": "content_block_delta", "delta": {"type": "citations_delta", "citation": {
+            "type": "web_search_result_location", "url": "https://arxiv.org/abs/1", "title": "Preprint",
+            "cited_text": "…"}}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}},
+    )
+    events = list(sse_events(stream, "anthropic"))
+    # The server tool's own call is not a tool call for Gamma to run.
+    assert events == [("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
+                      ("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
+                      ("text", "done")]

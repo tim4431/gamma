@@ -34,7 +34,7 @@ const READ_VERBS = {
   read: (n) => tn("read {n} page", "read {n} pages", n),
   view: (n) => tn("looked at {n} PDF page", "looked at {n} PDF pages", n),
   search: (n) => tn("searched", "searched {n} times", n),
-  websearch: (n) => tn("searched papers online", "searched papers online {n} times", n),
+  websearch: (n) => tn("searched online", "searched online {n} times", n),
   fetch: (n) => tn("fetched {n} document", "fetched {n} documents", n),
 };
 
@@ -69,6 +69,8 @@ export function runningLabel(step, titleOf = () => "") {
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
     case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
+    case "related_papers": return t("Following citations of {source}…", { source: args.source || t("a paper") });
+    case "search_web": return t("Searching the web for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
     case "rename_page":
       if (args.title) {

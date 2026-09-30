@@ -125,6 +125,7 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
+| hosted web search | `hosted_web_search(conf)`: the provider's own search tool as the tools entry to send, or None. A tool spec with a `hosted` entry goes out as that entry, and a stream that used it yields `("web_sources", [{url, title}])`. `search_web`'s AI engine runs it ([ai_tools.md](ai_tools.md)) |
 
 The wires: `anthropic.py` (Messages API), `openai.py` (Chat Completions for
 OpenAI and every compatible server), `responses.py` (the Responses API that
@@ -731,12 +732,14 @@ One permission per capability: List pages (`list_pages` and the folder tree
 `list_folders`), Read pages (`read_page` and the page and folder chats
 `read_chats`), Read note blocks, View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure), Search library (`search_library` — notes and PDF text; the stored key is
-still `search`), Search papers online (`web_search` → `search_papers`), Fetch
-documents (`web_read` → `fetch_paper`; both web tools are read-only and
-described in [ai_tools.md](ai_tools.md)), Rename pages, Move pages, and Edit
+still `search`), Search papers online (`web_search` → `search_papers`,
+`related_papers` and, when the account has a web engine for this chat,
+`search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
+read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
+"search_web" section), Rename pages, Move pages, and Edit
 note blocks (one switch arming `edit_block`/`create_block`/`move_block`
 together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
-includes the two web tools and the page viewer. **Use journal sign-ins**
+includes the web permissions and the page viewer. **Use journal sign-ins**
 (`publisher_cookies`, default on) controls whether `fetch_paper` may use the
 caller's connected publisher cookies; the browser handoff for a blocked fetch
 needs no switch of its own. The backend excludes that identity when

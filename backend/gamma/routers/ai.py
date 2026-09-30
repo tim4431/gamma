@@ -17,7 +17,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
+from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, search_services, translate_engines
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -44,6 +44,7 @@ from ..ai_tools import (
     READ_CHARS_MAX,
     agent_system,
     agent_tools,
+    available,
     find_selection,
     run_agent_tool,
     tool_action,
@@ -1141,6 +1142,54 @@ def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, requ
     return {"ok": True, "text": text}
 
 
+# --- Online search services (Settings → Assistant → Online search) -----------
+# Which service searches the general web, and the keys (write-only like the
+# AI keys: GET masks them) — gamma/search_services.py.
+
+class SearchServiceRequest(BaseModel):
+    fields: dict = Field(default_factory=dict)  # {field id: value}; empty secret = keep
+
+
+class SearchEngineRequest(BaseModel):
+    engine: str
+
+
+@router.get("/ai/search-services")
+def search_services_get(request: Request):
+    user = require_user(request)
+    return search_services.masked(user, can_edit=not request.state.is_guest)
+
+
+@router.put("/ai/search-services/engine")
+def search_engine_set(payload: SearchEngineRequest, request: Request):
+    user = _require_editor(request)
+    search_services.set_engine(user, payload.engine)
+    return search_services.masked(user, can_edit=True)
+
+
+@router.put("/ai/search-services/{service}")
+def search_service_save(service: str, payload: SearchServiceRequest, request: Request):
+    user = _require_editor(request)
+    search_services.save(user, service, payload.fields)
+    return search_services.masked(user, can_edit=True)
+
+
+@router.delete("/ai/search-services/{service}")
+def search_service_remove(service: str, request: Request):
+    user = _require_editor(request)
+    search_services.remove(user, service)
+    return search_services.masked(user, can_edit=True)
+
+
+# Sync def: the service call runs in the threadpool.
+@router.post("/ai/search-services/{service}/test")
+def search_service_test(service: str, request: Request):
+    """One small search with the stored settings: {ok, text} or {ok: false,
+    error}, in the body like the AI provider test."""
+    user = _require_editor(request)
+    return search_services.test(user, service)
+
+
 # --- Voice dictation ----------------------------------------------------------
 
 # Default = ChatGPT's dictation model (user-overridable per request); whisper-1
@@ -1375,10 +1424,18 @@ def _next_drop(drop: int, history: int) -> int:
     return min(history, max(drop + 2, drop * 2))
 
 
-def _chat_scope(request: Request, user: str, payload) -> dict:
+def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, effort: str = "") -> dict:
     """The tool scope of a chat request: what its tools reach and what the
-    agent prompt names."""
-    return {"type": payload.agent_scope, "folder": payload.folder,
+    agent prompt names. ``runtime`` / ``entry`` are the connection the chat
+    answers on (absent for a context export): search_web may search through
+    it (gamma/search_services.py)."""
+    web = {}
+    if payload.permissions.get("web_search", True) is not False:
+        engine = search_services.web_engine(user, runtime, entry)
+        web["web_engine"] = engine
+        if engine == "ai":
+            web["ai_search"] = {"runtime": runtime, "entry": entry, "effort": effort}
+    return {**web, "type": payload.agent_scope, "folder": payload.folder,
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "context_pages": list(payload.pages),
             # The agent prompt names the cursor block / attached chips so
@@ -1402,15 +1459,15 @@ def _chat_scope(request: Request, user: str, payload) -> dict:
             "read_texts": {}}
 
 
-def _chat_tools(payload, writable: bool) -> list | None:
+def _chat_tools(payload, scope: dict) -> list | None:
     """The armed tool specs: the scope decides which tools exist, the
     permission toggles pick the subset — None (or no scope) is a plain chat.
-    Without ``writable`` (a viewer, a read-scope token) no mutating tool is
-    armed."""
+    Where the scope cannot write (a viewer, a read-scope token) no mutating
+    tool is armed; search_web only with a web engine."""
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
-    return (agent_tools(payload.agent_scope, payload.permissions,
-                        payload.read_char_limit, can_write=writable) or None) if valid_scope else None
+    return (agent_tools(payload.agent_scope, payload.permissions, payload.read_char_limit,
+                        can_write=scope["can_write"], has=available(scope)) or None) if valid_scope else None
 
 
 def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
@@ -1453,8 +1510,13 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     read or paste elsewhere); no provider is called, none needs to be set up."""
     ws = require_ws(request)  # a token too: the chat reads its workspace
     user = request.state.user
-    scope = _chat_scope(request, user, payload)
-    tools = _chat_tools(payload, scope["can_write"])
+    try:  # the connection decides whether search_web rides along
+        rt = require_ai_runtime(user)
+        entry = _resolve_model(rt, payload.model)
+    except HTTPException:
+        rt = entry = None
+    scope = _chat_scope(request, user, payload, rt, entry)
+    tools = _chat_tools(payload, scope)
     _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
     text = context_markdown(payload.title, system, messages, tools, coverage,
                             _parse_images(payload.images) + crops)
@@ -1480,8 +1542,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
     images = _parse_images(payload.images)
-    scope = _chat_scope(request, user, payload)
-    tools = _chat_tools(payload, scope["can_write"])
+    scope = _chat_scope(request, user, payload, rt, entry, effort)
+    tools = _chat_tools(payload, scope)
     # Which model answers, at what effort, with tools or not — the reply's
     # footer names them, and the coverage chip's advice depends on the tools.
     answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}

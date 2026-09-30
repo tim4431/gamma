@@ -35,6 +35,9 @@ test("the running step reads as what the agent is doing", () => {
   assert.equal(runningLabel({ tool: "read_page", args: { page_id: "a" } }, titleOf), "Reading “Attention”…");
   assert.equal(runningLabel({ tool: "read_page", args: { page_id: "zz" } }, titleOf), "Reading a page…");
   assert.equal(runningLabel({ tool: "something_new", args: {} }), "Working…");
+  assert.equal(runningLabel({ tool: "search_web", args: { query: "raman lab" } }), "Searching the web for “raman lab”…");
+  assert.equal(runningLabel({ tool: "related_papers", args: { source: "doi:10.1/x" } }), "Following citations of doi:10.1/x…");
+  assert.equal(runningLabel({ tool: "related_papers", args: {} }), "Following citations of a paper…");
   // The arguments a change is about: the new title, the folder, the edit's mode.
   assert.equal(runningLabel({ tool: "rename_page", args: { page_id: "a", title: "Ada2019" } }, titleOf), "Renaming “Attention” to “Ada2019”…");
   assert.equal(runningLabel({ tool: "rename_page", args: { page_id: "zz", title: "Ada2019" } }, titleOf), "Renaming to “Ada2019”…");

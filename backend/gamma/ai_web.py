@@ -1,17 +1,23 @@
-"""The agent's web reach: scholarly search and reading a document that is
-not in the library (``search_papers`` / ``fetch_paper`` in ``ai_tools.py``).
+"""The agent's scholarly reach: searching the registries, following a
+paper's citations, and reading a document that is not in the library
+(``search_papers`` / ``related_papers`` / ``fetch_paper`` in
+``ai_tools.py``; general web search is gamma/search_services.py).
 
-Nothing here writes to a workspace. ``search_papers`` asks the keyless
-registries the metadata lookup already uses (Crossref, arXiv — a bare DOI /
-arXiv id is resolved directly). ``fetch_document`` turns a DOI, arXiv id or
-URL into text: the PDF behind it through the resolver the extension and
-"open a link" use (``routers.pdf.resolve_source`` — arXiv abs pages,
-publisher ``citation_pdf_url`` tags, Unpaywall open-access fallback, the SSRF
-guard), extracted page by page; when no PDF is reachable and the source is a
-web page, its readable text instead. Fetched documents live in a small
-in-memory cache so the model can read a long paper in successive windows
-without re-downloading it — nothing is stored on disk and a restart forgets
-everything.
+Nothing here writes to a workspace. ``search_papers`` asks three registries
+at once — Crossref and arXiv (the ones the metadata lookup uses) and
+OpenAlex (gamma/openalex.py) — and merges what they return into one record
+per work, with its abstract and citation count when a registry has them; a
+bare DOI / arXiv id is looked up directly. ``related_papers`` walks
+OpenAlex's citation graph from one work. ``fetch_document`` turns a DOI,
+arXiv id or URL into text: the PDF behind it through the resolver the
+extension and "open a link" use (``routers.pdf.resolve_source`` — arXiv abs
+pages, publisher ``citation_pdf_url`` tags, several Unpaywall open-access
+copies, the SSRF guard), extracted page by page; when no PDF is reachable
+and the source is a web page, its readable text instead, with the page's
+PDF links (gamma/paper_links.py) for the model to rank against the paper it
+wants. Fetched documents live in a small in-memory cache so the model can
+read a long paper in successive windows without re-downloading it — nothing
+is stored on disk and a restart forgets everything.
 
 A fetch that meets a wall only a person gets past — a CAPTCHA or bot check,
 a sign-in page, a refusal, a paywall that serves only the article page — says
@@ -23,19 +29,22 @@ would go, so the chat can hand the fetch to the user's browser
 import html
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest
 
 from fastapi import HTTPException
 
-from . import publisher_sessions
+from . import openalex, paper_links, publisher_sessions
 from .logbuf import log
 from .net_guard import browsing_session, guarded_urlopen
 from .pdf_text import extract_pages
 
 SEARCH_LIMIT_DEFAULT = 8
 SEARCH_LIMIT_MAX = 20
+SORTS = ("relevance", "citations", "recent")
+_ABSTRACT_SHOWN = 400  # chars of a record's abstract a search result shows
 FETCH_MAX_BYTES = 40_000_000    # a PDF larger than this is refused, not read
 HTML_MAX_BYTES = 2_000_000      # of a web page, before tag stripping
 # The document cache: entries and total extracted chars kept in memory.
@@ -94,64 +103,149 @@ def identifier(text: str) -> tuple[str, str]:
     return "", ""
 
 
-def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT) -> list[dict]:
-    """Records for a free-text query (Crossref and arXiv, interleaved in
-    their own relevance order, duplicates by DOI / arXiv id / title
-    dropped), or the one record of an identifier query."""
-    # Local import: keep gamma.* module load free of the routers package.
-    from .routers import metadata as registry
+def _keys_of(rec: dict) -> set:
+    """What makes two registries' records the same work: a DOI, an arXiv
+    id, or the whole normalized title."""
+    return {k for k in (
+        f"doi:{rec.get('doi', '').lower()}" if rec.get("doi") else "",
+        f"arxiv:{rec.get('arxiv_id', '').lower()}" if rec.get("arxiv_id") else "",
+        "title:" + _title_key(rec.get("title", "")),
+    ) if k and k != "title:"}
 
-    limit = max(1, min(int(limit or SEARCH_LIMIT_DEFAULT), SEARCH_LIMIT_MAX))
-    kind, ident = identifier(query)
-    if kind == "arxiv":
-        rec = registry._fetch_arxiv(ident)
-        return [rec] if rec else []
-    if kind == "doi":
-        rec, _ = registry._fetch_doi(ident, with_bibtex=False)
-        return [rec] if rec else []
-    crossref = registry._crossref_search(query, rows=limit)
-    arxiv = registry._arxiv_search(query, rows=limit)
+
+def _merge(lists: list[list[dict]]) -> list[dict]:
+    """The registries' lists interleaved in their own relevance order, one
+    record per work. A work two registries return keeps the fields the
+    first lacks — a journal record its arXiv preprint (and an arXiv record
+    its DOI), the abstract, the open-access PDF — and the larger citation
+    count."""
     out: list[dict] = []
     kept: dict = {}  # DOI / arXiv id / title key → the record kept for it
-
-    def keys_of(rec):
-        return {k for k in (
-            f"doi:{rec.get('doi', '').lower()}" if rec.get("doi") else "",
-            f"arxiv:{rec.get('arxiv_id', '').lower()}" if rec.get("arxiv_id") else "",
-            "title:" + _title_key(rec.get("title", "")),
-        ) if k and k != "title:"}
-
-    for a, b in zip(crossref + [None] * len(arxiv), arxiv + [None] * len(crossref)):
-        for rec in (a, b):
+    for rank in range(max((len(lst) for lst in lists), default=0)):
+        for lst in lists:
+            rec = lst[rank] if rank < len(lst) else None
             if not rec:
                 continue
-            keys = keys_of(rec)
+            keys = _keys_of(rec)
             twin = next((kept[k] for k in keys if k in kept), None)
             if twin is None:
                 twin = dict(rec)
                 out.append(twin)
             else:
-                # The same work from the other registry: the kept record
-                # takes the identifiers it lacks, so a journal record keeps
-                # its arXiv preprint (and an arXiv record its DOI).
-                for field in ("doi", "arxiv_id"):
+                for field in ("doi", "arxiv_id", "abstract", "oa_pdf", "venue", "openalex_id"):
                     if rec.get(field) and not twin.get(field):
                         twin[field] = rec[field]
-            for k in keys | keys_of(twin):
+                if (rec.get("cited_by") or 0) > (twin.get("cited_by") or 0):
+                    twin["cited_by"] = rec["cited_by"]
+            for k in keys | _keys_of(twin):
                 kept.setdefault(k, twin)
-    # A query that is a record's exact title (a cited reference) ranks it first.
+    return out
+
+
+def _year(rec: dict) -> int:
+    m = re.match(r"\d{4}", str(rec.get("year") or ""))
+    return int(m.group(0)) if m else 0
+
+
+def _enriched(rec: dict, key: str) -> dict:
+    """An identifier lookup's record with what OpenAlex adds (abstract,
+    citation count, open-access PDF) — a lookup by id, which costs nothing."""
+    kind, ident = ("doi", rec["doi"]) if rec.get("doi") else ("arxiv", rec.get("arxiv_id", ""))
+    try:
+        work = openalex.lookup(kind, ident, key) if ident else None
+    except openalex.OpenAlexError:
+        work = None
+    return _merge([[rec], [openalex.record(work)] if work else []])[0]
+
+
+def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT, *, from_year: int = 0,
+                  sort: str = "relevance", openalex_key: str = "", notes: list | None = None) -> list[dict]:
+    """Records for a free-text query — Crossref, arXiv and OpenAlex asked at
+    once, merged (``_merge``) — or the one record of an identifier query.
+    ``from_year`` keeps works from that year on; ``sort`` orders the merged
+    records by relevance (the registries' own order), "citations" or
+    "recent" (the registries' own citation sorts ignore relevance, so the
+    order is applied here, to the relevant candidates). A record whose
+    title is exactly the query (a cited reference) ranks first. A
+    ``notes`` list collects the registries that did not answer, so the
+    model can say what the result lacks."""
+    # Local import: keep gamma.* module load free of the routers package.
+    from .routers import metadata as registry
+
+    limit = max(1, min(int(limit or SEARCH_LIMIT_DEFAULT), SEARCH_LIMIT_MAX))
+    notes = [] if notes is None else notes
+    kind, ident = identifier(query)
+    if kind:
+        rec = registry._fetch_arxiv(ident) if kind == "arxiv" else registry._fetch_doi(ident, with_bibtex=False)[0]
+        return [_enriched(rec, openalex_key)] if rec else []
+
+    def ask_openalex():
+        try:
+            return openalex.search(query, rows=limit, from_year=from_year, key=openalex_key)
+        except openalex.OpenAlexError as e:
+            notes.append(str(e))
+            return []
+
+    # OpenAlex leads the interleave: its relevance reads a topic best, where
+    # Crossref's puts loosely matching book chapters first. An exact title
+    # still ranks first whichever registry found it.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        asked = [pool.submit(ask_openalex),
+                 pool.submit(registry._crossref_search, query, limit, True, from_year),
+                 pool.submit(registry._arxiv_search, query, limit, True)]
+        found = [job.result() for job in asked]
+    out = _merge(found)
+    if from_year:
+        out = [rec for rec in out if not _year(rec) or _year(rec) >= from_year]
+    if sort == "citations":
+        out.sort(key=lambda rec: -(rec.get("cited_by") or 0))
+    elif sort == "recent":
+        out.sort(key=lambda rec: -_year(rec))
     want = _title_key(query)
     out.sort(key=lambda rec: _title_key(rec.get("title", "")) != want)
     return out[:limit]
+
+
+def related_papers(source: str, relation: str, limit: int = SEARCH_LIMIT_DEFAULT, *,
+                   from_year: int = 0, sort: str = "citations",
+                   openalex_key: str = "") -> tuple[dict, list[dict]]:
+    """``(the work, its linked works)`` for a DOI, an arXiv id or an exact
+    title: the works it cites ("references"), the works citing it
+    ("citations") or OpenAlex's related works ("similar"), most cited
+    first or, with ``sort`` "recent", newest first. An arXiv paper is
+    followed through its published DOI when it has one (the journal record
+    carries the citations). Raises LookupError when OpenAlex has no such
+    work, openalex.OpenAlexError when it does not answer."""
+    from .routers import metadata as registry
+
+    limit = max(1, min(int(limit or SEARCH_LIMIT_DEFAULT), SEARCH_LIMIT_MAX))
+    kind, ident = identifier(source)
+    work = None
+    if kind == "arxiv":
+        published = (registry._fetch_arxiv(ident) or {}).get("doi")
+        work = openalex.lookup("doi", published, openalex_key) if published else None
+    if work is None and kind:
+        work = openalex.lookup(kind, ident, openalex_key)
+    if work is None and not kind and not source.lower().startswith(("http://", "https://")):
+        work = openalex.find_title(source, openalex_key)
+    if work is None:
+        raise LookupError(f'OpenAlex has no record of "{source}" — pass its DOI, arXiv id or exact title')
+    return openalex.record(work), openalex.related(work, relation, limit, from_year, openalex_key, sort)
 
 
 def _title_key(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (title or "").lower())[:80]
 
 
+def _clip(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
+
+
 def format_records(records: list[dict]) -> str:
     """One line per record — what the model reads — ending with the source
-    string to hand fetch_paper."""
+    string to hand fetch_paper, then the start of its abstract (enough to
+    judge relevance before fetching; never evidence of what it contains)."""
     lines = []
     for rec in records:
         authors = [a for a in rec.get("authors") or [] if a]
@@ -166,10 +260,14 @@ def format_records(records: list[dict]) -> str:
         when = ", ".join(p for p in (rec.get("year", ""), rec.get("venue", "")) if p)
         if when:
             parts[0] += f" ({when})"
+        if isinstance(rec.get("cited_by"), int):
+            parts.append(f"cited by {rec['cited_by']}")
         if rec.get("doi"):
             parts.append(f"doi:{rec['doi']}")
         if rec.get("arxiv_id"):
             parts.append(f"arXiv:{rec['arxiv_id']} (PDF: https://arxiv.org/pdf/{rec['arxiv_id']})")
+        elif rec.get("oa_pdf"):
+            parts.append(f"open-access PDF: {rec['oa_pdf']}")
         if rec.get("arxiv_id") and rec.get("doi"):
             parts.append(f'→ fetch_paper(source="arXiv:{rec["arxiv_id"]}") for the arXiv version, '
                          f'fetch_paper(source="doi:{rec["doi"]}") for the publisher\'s')
@@ -177,6 +275,8 @@ def format_records(records: list[dict]) -> str:
             source = f"arXiv:{rec['arxiv_id']}" if rec.get("arxiv_id") else f"doi:{rec['doi']}"
             parts.append(f'→ fetch_paper(source="{source}")')
         lines.append("- " + " · ".join(parts))
+        if rec.get("abstract"):
+            lines.append("  Abstract: " + _clip(rec["abstract"], _ABSTRACT_SHOWN))
     return "\n".join(lines)
 
 
@@ -210,7 +310,6 @@ _BLOCK_TAG_RE = re.compile(
 _DROP_RE = re.compile(r"<(head|script|style|noscript|svg|template)\b.*?</\1\s*>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
-_HREF_RE = re.compile(r"""<a\b[^>]*?\bhref\s*=\s*["']([^"'#>]+)["'][^>]*>(.*?)</a\s*>""", re.I | re.S)
 
 
 def _decode(raw: bytes, ctype: str = "") -> str:
@@ -236,24 +335,6 @@ def html_text(raw: bytes, ctype: str = "") -> tuple[str, str]:
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return title, text
-
-
-def pdf_links(raw: bytes, base: str, ctype: str = "", limit: int = 8) -> list[str]:
-    """Links on a page that look like a PDF of it — a ``.pdf`` path, a
-    ``/pdf`` route, "PDF" in the link text: what the model can try next
-    when the page itself was all that came back (a lab page, a repository)."""
-    out = []
-    for href, label in _HREF_RE.findall(_decode(raw, ctype)):
-        url = urljoin(base, html.unescape(href.strip()))
-        if not url.lower().startswith(("http://", "https://")) or url in out:
-            continue
-        path = urlsplit(url).path.lower()
-        if (path.endswith((".pdf", "/pdf")) or "/pdf/" in path
-                or re.search(r"\bpdf\b", _TAG_RE.sub(" ", label), re.I)):
-            out.append(url)
-            if len(out) >= limit:
-                break
-    return out
 
 
 # Walls a person passes in a browser. A bot-check page is recognized by its
@@ -392,7 +473,7 @@ def _source_url(source: str) -> str:
     return source if source.lower().startswith(("http://", "https://")) else ""
 
 
-def pdf_document(url: str, data: bytes, note: str = "") -> dict:
+def pdf_document(url: str, data: bytes, note: str = "", version: str = "") -> dict:
     """A PDF as the cache holds it: its text page by page. Raises FetchError
     when there is no text to read."""
     try:
@@ -403,40 +484,59 @@ def pdf_document(url: str, data: bytes, note: str = "") -> dict:
     if not any(p.strip() for p in pages):
         raise FetchError(f"the PDF at {url} has no text layer (a scan?)")
     return {"url": url, "kind": "pdf", "title": "", "pages": pages,
-            "chars": sum(len(p) for p in pages), "note": note}
+            "chars": sum(len(p) for p in pages), "note": note, "version": version}
 
 
-def fetch_document(source: str) -> dict:
+def fetch_document(source: str, published_only: bool = False) -> dict:
     """The document behind ``source`` (a DOI, arXiv id or URL) as
     ``{"url", "kind": "pdf"|"html", "title", "pages": [text per page],
-    "chars", "note"}`` — from the cache when it was fetched before. A web
-    page also carries ``links`` (the PDF-looking links on it) and, when it is
-    an article page whose PDF was out of reach, ``wall`` with ``open_url`` /
-    ``pdf_url``. Raises FetchError with a model-readable reason."""
+    "chars", "note", "version"}`` — from the cache when it was fetched
+    before. ``version`` is the resolver's (``resolve_source``): "publisher",
+    "preprint", "published", "accepted", "submitted" or "" (unknown);
+    ``published_only`` refuses to substitute an unpublished open-access
+    copy. A web page also carries ``links`` (its PDF-looking links with
+    their text, paper_links.pdf_links) and, when it is an article page whose
+    PDF was out of reach, ``wall`` with ``open_url`` / ``pdf_url``. Raises
+    FetchError with a model-readable reason."""
     source = (source or "").strip()
     if not source:
         raise FetchError("empty source — pass a DOI, an arXiv id or an http(s) URL")
     scope = publisher_sessions.cache_scope()
-    doc = cached(source, scope)
+    # A published-only read never gets the copy an any-version read cached.
+    alias = f"{source} [published]" if published_only else source
+    doc = cached(alias, scope)
     if doc:
         return doc
     if not _source_url(source):
         raise FetchError("source must be a DOI (10.…), an arXiv id (2301.12345) or an http(s) URL")
     # One cookie jar for the resolver's walk, the download and the fallback.
     with browsing_session():
-        return _remember(source, _fetch(source), scope)
+        return _remember(alias, _fetch(source, published_only), scope)
 
 
-def _fetch(source: str) -> dict:
+def identity(doc: dict, title: str) -> bool | None:
+    """Whether the fetched document is the paper titled ``title``: its
+    normalized title appears on the first pages (a PDF) or in the page
+    text. None when there is no title to check."""
+    want = re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+    if len(want) < 12:
+        return None
+    head = " ".join(doc.get("pages") or [])[:30_000] if doc.get("kind") == "html" else \
+        " ".join((doc.get("pages") or [])[:3])
+    return want in re.sub(r"[^a-z0-9]+", "", head.lower())
+
+
+def _fetch(source: str, published_only: bool = False) -> dict:
     from .routers.pdf import BROWSER_HEADERS, meta_refresh, resolve_source
 
-    reason = wall = source_note = referer = ""
+    reason = wall = source_note = referer = version = ""
     trace: dict = {}
     try:
-        resolved = resolve_source(source, trace=trace)
+        resolved = resolve_source(source, trace=trace, published_only=published_only)
         pdf_url = resolved["source_url"]
         source_note = resolved.get("note", "")
         referer = resolved.get("referer", "")
+        version = resolved.get("version", "")
     except HTTPException as e:
         reason, pdf_url = str(e.detail), ""
         wall = "denied" if trace.get("blocked") else ""
@@ -457,7 +557,7 @@ def _fetch(source: str) -> dict:
             raise FetchError(f"could not fetch the PDF at {pdf_url}: {e}")
         else:
             if "application/pdf" in ctype or data[:5] == b"%PDF-":
-                return pdf_document(pdf_url, data, source_note)
+                return pdf_document(pdf_url, data, source_note, version)
             wall = access_wall(final_url, headers, data)
             reason = (f"{pdf_url} is not a PDF ({ctype or 'no content type'})"
                       + (f" — it is {WALLS[wall]}" if wall else ""))
@@ -498,9 +598,9 @@ def _fetch(source: str) -> dict:
                          pdf_url=want_pdf)
     # PDF links the resolver has not tried already (those met the wall).
     tried = {pdf_url, *(trace.get("pdf_urls") or [])}
-    links = [u for u in pdf_links(data, final_url, ctype) if u not in tried]
+    links = [link for link in paper_links.pdf_links(_decode(data, ctype), final_url) if link["url"] not in tried]
     doc = {"url": final_url, "kind": "html", "title": title, "pages": [text],
-           "chars": len(text), "note": reason, "links": links}
+           "chars": len(text), "note": reason, "links": links, "version": ""}
     # An article page whose PDF was out of reach (it advertised one, or the
     # DOI's publisher refused): only a person with access gets the rest.
     if wall or trace.get("pdf_urls") or trace.get("doi"):

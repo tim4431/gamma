@@ -11,6 +11,7 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { EFFORT_ORDER } from "../chat/effort.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
+import { OnlineSearchSettings } from "./OnlineSearch";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
 import { IntegrationSettings } from "./SettingsIntegrations";
@@ -661,6 +662,10 @@ function AssistantSettings({ value, ai }) {
           hint={t("Gamma Connector tries in a minimized window and sends the PDF back")}
           title={t("When a publisher stops a chat's fetch with a sign-in or a bot check, the card hands it to Gamma Connector without a click: it opens the page in a minimized window, and when your browser gets the PDF without you (you're signed in, or the check passes by itself) the PDF comes back to the chat and the tab closes. When the page needs you — to sign in or solve a CAPTCHA — the card says so and shows you the tab. Needs Gamma Connector in this browser.")}
           checked={value.fetchInBackground} onChange={value.setFetchInBackground} />
+      </Section>
+      {/* The account's search services live on the server, not in the profile. */}
+      <Section title={t("Online search")}>
+        <OnlineSearchSettings />
       </Section>
     </>
   );

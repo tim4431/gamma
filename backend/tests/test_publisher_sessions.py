@@ -54,7 +54,7 @@ def ai_fetch(accounts, monkeypatch):
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *args: (0, ""))
-    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdfs", lambda doi: [])
     ai_web.clear_cache()
 
     def fetch(caller, *, stream=True, permissions=None, **kwargs):

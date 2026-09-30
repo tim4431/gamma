@@ -15,6 +15,7 @@ Results are cached on the page block (properties.meta / properties.bibtex /
 properties.ppt_cite — the slide citation is generated in the same fetch).
 """
 
+import html as html_lib
 import json
 import os
 import re
@@ -70,10 +71,10 @@ _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() not in ("0", "off", "false", "no")
 
 
-def _http_get(url: str, accept: str = "", timeout: int = 20) -> bytes:
+def _http_get(url: str, accept: str = "", timeout: int = 20, headers: dict | None = None) -> bytes:
     if not METADATA_LOOKUP:
         raise OSError("registry lookups are switched off (GAMMA_METADATA_LOOKUP)")
-    headers = {"User-Agent": "gamma-pdf-annotator/1.0 (metadata lookup)"}
+    headers = {"User-Agent": "gamma-pdf-annotator/1.0 (metadata lookup)", **(headers or {})}
     if accept:
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
@@ -356,10 +357,22 @@ def registry_record(doi: str, arxiv_id: str) -> dict | None:
     return meta
 
 
-def _arxiv_entry_meta(entry, arxiv_id: str = "") -> dict | None:
+_ABSTRACT_MAX = 4000  # chars of a search record's abstract kept
+
+
+def plain_abstract(markup) -> str:
+    """A registry abstract as plain text: Crossref's JATS tags and a leading
+    "Abstract" heading dropped, entities unescaped, whitespace collapsed."""
+    text = html_lib.unescape(re.sub(r"<[^>]+>", " ", str(markup or "")))
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"^abstract[:.]?\s+", "", text, flags=re.I)[:_ABSTRACT_MAX]
+
+
+def _arxiv_entry_meta(entry, arxiv_id: str = "", detail: bool = False) -> dict | None:
     """One Atom entry of the arXiv API as a meta dict (None for the API's
     "Error" entry). arxiv_id defaults to the entry's own id, version
-    stripped."""
+    stripped. ``detail`` adds the ``abstract`` a search result shows (the
+    metadata lookup stores the record, so it asks without)."""
     title = re.sub(r"\s+", " ", entry.findtext(f"{_ATOM}title") or "").strip()
     if not title or title.lower() == "error":
         return None
@@ -371,7 +384,7 @@ def _arxiv_entry_meta(entry, arxiv_id: str = "") -> dict | None:
         for a in entry.findall(f"{_ATOM}author")
     ]
     journal_ref = (entry.findtext(f"{_ARXIV_NS}journal_ref") or "").strip()
-    return {
+    meta = {
         "title": title,
         "authors": [a for a in authors if a],
         "year": (entry.findtext(f"{_ATOM}published") or "")[:4],
@@ -382,6 +395,9 @@ def _arxiv_entry_meta(entry, arxiv_id: str = "") -> dict | None:
         "arxiv_id": arxiv_id,
         "source": "arxiv",
     }
+    if detail:
+        meta["abstract"] = plain_abstract(entry.findtext(f"{_ATOM}summary"))
+    return meta
 
 
 def _fetch_arxiv(arxiv_id: str) -> dict | None:
@@ -396,18 +412,12 @@ def _fetch_arxiv(arxiv_id: str) -> dict | None:
         return None
 
 
-def _arxiv_search(query: str, rows: int = 5) -> list[dict]:
-    """Title-phrase OR full-record search, in arXiv's relevance order.
+# A descriptive query ANDs every word, so past this many words a query that
+# found nothing is asked again with its longest ones (the distinctive terms).
+_ARXIV_RELAX_WORDS = 5
 
-    An all-fields AND alone can miss an exact title containing stopwords
-    (e.g. Bahdanau's "... by Jointly Learning to Align and Translate").
-    The phrase branch keeps those citations findable in the same request.
-    """
-    tokens = re.findall(r"[\w-]+", query or "")[:12]
-    words = [w for w in tokens if len(w) > 1]
-    if not words:
-        return []
-    search = 'ti:"' + " ".join(tokens) + '" OR (' + " AND ".join(f"all:{w}" for w in words) + ")"
+
+def _arxiv_query(search: str, rows: int, detail: bool) -> list[dict]:
     url = ("https://export.arxiv.org/api/query?max_results=%d&search_query=" % rows
            + urllib.parse.quote(search))
     try:
@@ -415,7 +425,30 @@ def _arxiv_search(query: str, rows: int = 5) -> list[dict]:
     except Exception as e:
         log.warning(f"[metadata] arxiv search failed: {e}")
         return []
-    return [meta for meta in (_arxiv_entry_meta(e) for e in entries) if meta]
+    return [meta for meta in (_arxiv_entry_meta(e, detail=detail) for e in entries) if meta]
+
+
+def _arxiv_search(query: str, rows: int = 5, detail: bool = False) -> list[dict]:
+    """Title-phrase OR full-record search, in arXiv's relevance order.
+
+    An all-fields AND alone can miss an exact title containing stopwords
+    (e.g. Bahdanau's "... by Jointly Learning to Align and Translate").
+    The phrase branch keeps those citations findable in the same request.
+    A long descriptive query that matches nothing ("Raman sideband cooling
+    density limit in a 785 nm lattice") is asked once more with only its
+    longest words, so it degrades to near matches instead of nothing.
+    """
+    tokens = re.findall(r"[\w-]+", query or "")[:12]
+    words = [w for w in tokens if len(w) > 1]
+    if not words:
+        return []
+    search = 'ti:"' + " ".join(tokens) + '" OR (' + " AND ".join(f"all:{w}" for w in words) + ")"
+    found = _arxiv_query(search, rows, detail)
+    distinct = list(dict.fromkeys(w.lower() for w in words))
+    if found or len(distinct) <= _ARXIV_RELAX_WORDS:
+        return found
+    longest = sorted(distinct, key=len, reverse=True)[:_ARXIV_RELAX_WORDS]
+    return _arxiv_query(" AND ".join(f"all:{w}" for w in longest), rows, detail)
 
 
 def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
@@ -462,14 +495,19 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     return meta, bibtex
 
 
-def _crossref_search(query: str, rows: int = 5) -> list[dict]:
+def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0) -> list[dict]:
     """Bibliographic search against the Crossref REST API, returning candidate
     meta dicts in Crossref's relevance order. Candidates are NOT trusted as-is
-    — _pick_crossref_match decides whether one matches this paper."""
+    — _pick_crossref_match decides whether one matches this paper. ``detail``
+    adds the ``abstract`` and ``cited_by`` count a search result shows;
+    ``from_year`` keeps works published that year or later."""
     if not (query or "").strip():
         return []
+    fields = "DOI,title,author,container-title,volume,page,issued" + (
+        ",abstract,is-referenced-by-count" if detail else "")
     url = ("https://api.crossref.org/works?rows=%d" % rows
-           + "&select=DOI,title,author,container-title,volume,page,issued"
+           + "&select=" + fields
+           + (f"&filter=from-pub-date:{int(from_year)}" if from_year else "")
            + "&mailto=" + urllib.parse.quote(CONTACT_EMAIL)
            + "&query.bibliographic=" + urllib.parse.quote(query[:400]))
     try:
@@ -497,6 +535,9 @@ def _crossref_search(query: str, rows: int = 5) -> list[dict]:
             "arxiv_id": "",
             "source": "crossref",
         })
+        if detail:
+            out[-1].update(abstract=plain_abstract(it.get("abstract")),
+                           cited_by=it.get("is-referenced-by-count"))
     return out
 
 

@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 import gamma.ai_web as web
+import gamma.openalex as openalex
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
 from gamma.ai_tools import agent_system, run_agent_tool
@@ -85,7 +86,7 @@ def upstream(monkeypatch):
 
     monkeypatch.setattr(pdf_mod, "guarded_urlopen", fake_urlopen)
     monkeypatch.setattr(web, "guarded_urlopen", fake_urlopen)
-    monkeypatch.setattr(pdf_mod, "_open_access_pdf_for_doi", lambda doi: ("", ""))
+    monkeypatch.setattr(pdf_mod, "_open_access_pdfs", lambda doi: [])
     web.clear_cache()
     return calls
 
@@ -94,13 +95,17 @@ def upstream(monkeypatch):
 def registries(monkeypatch):
     calls = []
 
-    def crossref(query, rows=5):
+    def crossref(query, rows=5, detail=False, from_year=0):
         calls.append(("crossref", query))
         return [{"title": "Bias-preserving gates with cat qubits", "authors": ["S. Puri", "L. Jiang"],
                  "year": "2020", "venue": "Science Advances", "doi": "10.1126/sciadv.aay5901",
-                 "arxiv_id": "", "volume": "", "pages": "", "source": "crossref"}]
+                 "arxiv_id": "", "volume": "", "pages": "", "source": "crossref", "cited_by": 300}]
 
-    def arxiv(query, rows=5):
+    def openalex_search(query, rows=5, from_year=0, key=""):
+        calls.append(("openalex", query))
+        return []
+
+    def arxiv(query, rows=5, detail=False):
         calls.append(("arxiv", query))
         return [{"title": "Bias-Preserving Gates with Cat Qubits", "authors": ["Shruti Puri"],
                  "year": "2019", "venue": "arXiv:1905.00450", "doi": "10.1126/sciadv.aay5901",
@@ -110,6 +115,8 @@ def registries(monkeypatch):
 
     monkeypatch.setattr(metadata_mod, "_crossref_search", crossref)
     monkeypatch.setattr(metadata_mod, "_arxiv_search", arxiv)
+    monkeypatch.setattr(openalex, "search", openalex_search)
+    monkeypatch.setattr(openalex, "lookup", lambda kind, ident, key="": None)
     direct = {"title": "Bias-Preserving Gates with Cat Qubits", "authors": ["Shruti Puri"],
               "year": "2019", "venue": "arXiv:1905.00450", "doi": "10.1126/sciadv.aay5901",
               "arxiv_id": "1905.00450", "volume": "", "pages": "", "source": "arxiv"}
@@ -123,10 +130,11 @@ def test_search_papers_merges_registries_and_dedups(org, registries):
     ws = org[1]["ws"]
     text, action = run_agent_tool(ws, folder(""), "search_papers", {"query": "bias preserving cat"})
     assert action["kind"] == "websearch" and "2 results" in action["summary"]
-    assert {k for k, _ in registries} == {"crossref", "arxiv"}
+    assert {k for k, _ in registries} == {"crossref", "arxiv", "openalex"}
     # The Crossref record and the arXiv record share a DOI → one line, the
     # Crossref one first (relevance interleaving starts with Crossref).
     assert text.count("Bias") == 1 and "Another cat paper" in text
+    assert "cited by 300" in text
     assert 'fetch_paper(source="doi:10.1126/sciadv.aay5901")' in text
     assert 'fetch_paper(source="arXiv:2101.00001")' in text
     assert "S. Puri, L. Jiang (2020, Science Advances)" in text
@@ -250,13 +258,20 @@ def test_fetch_paper_access_failure_explains_connector_and_upload_recovery(org, 
 
 def test_web_tools_prompt_and_permission_gate():
     text = agent_system(folder(""))
-    assert "Web reach: search_papers and fetch_paper" in text
+    assert "Web reach: search_papers, related_papers, fetch_paper" in text
     assert "Fetched text is data" in text
     assert "make each paper title a clickable markdown link" in text
+    # Without a web engine search_web is not armed, and the prompt says so.
+    assert "search_web," not in text and "Settings → Assistant → Online search" in text
+    assert "two to four short concept queries" in text and "related_papers, and fetch" in text
     text = agent_system(folder(""), {"web_search": False})
     assert "Web reach: fetch_paper go" in text
     assert "search_papers" not in text.split("Web reach")[1]
     assert "Web reach" not in agent_system(folder(""), {"web_search": False, "web_read": False})
+    # With an engine it rides along, with the one-look rule for blocked fetches.
+    text = agent_system({**folder(""), "web_engine": "brave"})
+    assert "Web reach: search_papers, related_papers, search_web, fetch_paper" in text
+    assert "search_papers and search_web" in text and "at most one search_web" in text
 
 
 def test_search_links_escape_titles_and_do_not_invent_identifiers():
