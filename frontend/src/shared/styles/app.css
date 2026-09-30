@@ -3416,6 +3416,68 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
+/* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
+   would do, the change as a word diff, the four answers. It looks like a
+   fetch handoff's card, the other place the chat waits for the user. */
+.chatApproval {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-bg-light);
+  color: var(--text-primary);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatApprovalCaption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  font-weight: 600;
+}
+.chatApprovalCaption svg { flex: none; color: var(--accent); }
+.chatApprovalHead { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-weight: 600; }
+.chatApprovalHead svg { flex: none; margin-top: 0.2em; color: var(--accent); }
+.chatApprovalHead span { min-width: 0; overflow-wrap: anywhere; }
+.chatApprovalDiff {
+  margin-top: 8px;
+  max-height: 14em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chatApprovalDiff :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
+.chatApprovalDiff del {
+  background: var(--danger-bg);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.chatApprovalDiff ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
+.chatApprovalArg { color: var(--text-muted); }
+.chatApprovalActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.chatApprovalSpacer { flex: 1; }
+.chatApprovalStatus { margin-top: 8px; color: var(--text-secondary); }
+.chatApproval.sent { border-color: var(--border-subtle); background: transparent; }
+.chatApprovalError { margin-top: 6px; color: var(--danger); }
+.chatApprovalDecline .aiKeyInput {
+  margin: 10px 0 0;
+  padding: 6px 9px;
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+}
+.chatApprovalDecline .chatApprovalActions { margin-top: 8px; }
+/* "Allowed in this chat" in the composer's toolbar: click to ask again. */
+.chatGrantChip { padding: 2px 6px; cursor: pointer; }
+.chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
@@ -4585,7 +4647,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
 .chatSteps { align-self: flex-start; }
 .chatStepsFailed { flex: none; color: var(--danger); }
-.chatStepsFailed::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
+.chatStepsDeclined { flex: none; color: var(--text-secondary); }
+:is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
 .chatSteps .transferSpin.inline { flex: none; }
 .chatChanges {
   display: flex;
@@ -4849,7 +4912,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 9px;
 }
 @keyframes transferSpin { to { transform: rotate(360deg); } }
-/* Failed job, nothing running — same corner as the spinner. */
+/* A failure worth a look, nothing running — same corner as the spinner;
+   `.info` (accent): a finished export's file waits to be downloaded. The
+   task rows themselves are tasks/tasks.css. */
 .transferDot {
   position: absolute;
   top: 3px;
@@ -4859,49 +4924,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: 50%;
   background: var(--danger);
 }
-.downloadsPopover { min-width: 320px; max-width: 420px; }
-.transferRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 6px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-xs);
-}
-.transferRow:hover { background: var(--bg-block); }
-.transferStatus { display: inline-flex; width: 14px; justify-content: center; flex-shrink: 0; }
-.transferStatus.done { color: #4caf50; }
-.transferStatus.error { color: #e05c5c; }
-.transferStatus.cancelled { color: var(--text-dim); }
-.transferRow.cancelled .transferName { color: var(--text-muted); }
-/* name over an optional progress bar */
-.transferMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.transferBar { display: block; height: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
-.transferBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) ease; }
-/* the stop button keeps its slot when absent, so info texts line up */
-.transferStop, .transferStopSlot { flex-shrink: 0; width: 18px; }
-.transferStop { visibility: hidden; }
-.transferRow:hover .transferStop, .transferStop:focus-visible { visibility: visible; }
-.downloadsPopover .setEmpty { padding: 18px 12px; }
-.transferKind { display: inline-flex; color: var(--text-dim); flex-shrink: 0; }
-.transferName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-}
-.transferInfo {
-  flex-shrink: 1;
-  min-width: 0;
-  max-width: 62%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-}
-.searchToggle.transferClearBtn { width: auto; padding: 0 8px; }
+.transferDot.info { background: var(--accent); }
 
 /* --- global Back button (topbar) --- */
 @keyframes navBackIn {
@@ -5676,6 +5699,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferFooter { flex-shrink: 0; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; }
 .transferHelp { font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferHelp summary { cursor: pointer; padding: 6px 0; }
+/* The export step's finished file: its name and size. */
+.transferFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0 0 14px;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+.transferFile svg { flex-shrink: 0; color: var(--text-muted); }
+.transferFile strong { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.transferFile span { margin-left: auto; flex-shrink: 0; color: var(--text-muted); font-size: var(--fs-xs); }
 @media (max-width: 620px) {
   .transferModal { padding: 14px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .transferFormatRow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -5928,6 +5965,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 [data-scheme="light"] .pdfInkBar {
   box-shadow: var(--shadow-2);
 }
+/* The same strip over a page's notes, when no viewer is there to hold it
+   (pages among the notes, notebook/NoteSheet.jsx): stuck to the list's top. */
+.notesInkDock {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 6px 0;
+  pointer-events: none;
+}
+.notesInkDock .pdfInkBar { position: relative; top: auto; left: auto; transform: none; max-width: 100%; pointer-events: auto; }
 .pdfInkRow, .pdfInkSub {
   display: flex;
   align-items: center;
@@ -5990,6 +6039,30 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .blockInkPending { min-height: 28px; width: 100%; opacity: 0.5; }
+/* The card's replay button: in its corner, shown on hover (always on a
+   touch screen, and while a replay plays). */
+.blockInkCardWrap { position: relative; display: block; width: fit-content; max-width: 100%; }
+.inkReplayBtn {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.inkReplayBtn:hover { color: var(--text-primary); }
+.blockInkCardWrap:hover .inkReplayBtn, .inkReplayBtn:focus-visible, .inkReplayBtn[aria-pressed="true"] { opacity: 1; }
+@media (hover: none) { .inkReplayBtn { opacity: 1; } }
 /* The lasso selection: a dashed box the pointer drags to move. */
 .inkSelRect {
   fill: rgba(80, 140, 255, 0.06);

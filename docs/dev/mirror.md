@@ -72,6 +72,17 @@ the frontend changes: editing a mirror is editing a workspace.
     the trashed copy. So does an op inserting a block the trash still holds
     (a block the other side moved out of a page before deleting it).
 
+- **Drawings** merge by stroke, not by the last writer. A diff that
+  changes an ink group's `ink_url` carries the drawing it was edited from
+  (`base_props`, sync_tree `_set_op`). The remote's change applied here
+  merges into a drawing changed here (the local server's op path,
+  `ops.merge_ink`), and this copy's push merges there into one the remote
+  changed since. A push of a drawing whose answer was lost goes again
+  unless the remote shows it as sent (`_unlanded`): merging a change that
+  landed adds nothing, and one that never arrived would otherwise be
+  taken for landed and lost ([handwriting.md](handwriting.md) "Two
+  writers, one group").
+
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), chats, cover snapshots, search indexes (the
 copy rebuilds its own).
@@ -832,6 +843,21 @@ share host and a stand-in account server
 desktop's flow — the *keep offline* chip, the registry map, the
 *offline copy* / *original* cross-links, one copy per workspace — is a step
 of `desktop/test/e2e.js`.
+
+## A replica on a device: the iPad
+
+The iPad app keeps a copy without a server of its own ([ipad.md](ipad.md)
+"A replica"). To the remote it is a clone: the same whoami, feed, subtree
+reads, batches under ids with `client: "sync"`, page creation, deletion
+and files by name. Its rounds are this engine's rules, ported to
+JavaScript (`frontend/src/replica/`) and run in the app's JavaScriptCore.
+Shared fixtures pin the port to the pure half of this engine:
+`tests/shared/synctree.json` (diff, apply, moved, `_unlanded`),
+`textmerge.json` and `inkmerge.json`. `backend/tests/test_shared_fixtures.py`
+checks this side, and `frontend/tests/replica.test.mjs` the port. The
+browser suite's `replica` group runs the port's rounds against a real
+server. A change to a rule here changes the fixture, so the port fails
+until it follows.
 
 ## Limits and next steps
 

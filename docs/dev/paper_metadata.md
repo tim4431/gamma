@@ -161,11 +161,23 @@ does some to programs with a 406, is fetched from `export.arxiv.org`, arXiv's
 host for automated clients) → HTML pages inspected for the `citation_pdf_url`
 meta tag, a page that only redirects by `<meta http-equiv="refresh">` followed
 first (up to two hops; Elsevier's DOI landing, linkinghub, is one) → Unpaywall
-open-access fallback for DOIs
-(prefers published > accepted > submitted version; disabled when the request
-sends `allow_oa: false`; identifies itself with a fixed project email in
-`pdf.py` — no config). Non-published substitutions return a `note` the frontend
-surfaces.
+open-access fallback for DOIs (`_open_access_pdfs`: every location with a PDF,
+published before accepted before submitted, the publisher's copy before a
+repository's, each URL once). Up to four copies (`OA_TRIES`) are tried in that
+order and the first that answers with a PDF wins, so one broken repository
+link no longer ends the fallback; when none confirms, the best one is still
+handed on for the proxy to try, as before. The fallback is disabled when the
+request sends `allow_oa: false` and identifies itself with a fixed project
+email in `pdf.py` (no config). Non-published substitutions return a `note` the
+frontend surfaces.
+
+The answer also carries a `version` when the walk knows it: `publisher` (the
+article page's own PDF), `preprint` (an arXiv PDF), or an open-access copy's
+`published` / `accepted` / `submitted`; a PDF the link itself served is of
+unknown version. `resolve_source(published_only=True)` (the agent's
+`fetch_paper` with `version: "published"`) substitutes only published
+open-access copies; when the only copies are other versions it answers 400
+naming them.
 
 Resolution only picks a candidate URL — the download behind it can still fail
 (paywall, blocked server-side fetch, HTML behind the link). So `openPdf` in

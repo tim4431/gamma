@@ -8,9 +8,10 @@ typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imp
 `gamma/markdown_zip_import.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`; frontend dialogs in
+`gamma/pdf_image.py`, `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
-[App.jsx](../../frontend/src/app/App.jsx).
+[App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
+background jobs, which the dialogs follow ([tasks.md](tasks.md)).
 
 ## Importing annotations embedded in a PDF
 
@@ -43,7 +44,7 @@ rewrites the stored PDF without them (the View menu's "Import…" dialog can
 override that for one run; the auto-import on open always follows the
 preference); stripped blocks get `properties.annot_stripped`, which tells
 `/export-pdf` to write them again (it skips `imported_annot` blocks only while
-the original is still embedded).
+the original is still embedded, `pdf_export.still_embedded`).
 
 ## The Import dialog
 
@@ -67,26 +68,39 @@ share one review flow: Upload → Review → Import → Summary.
 - `POST /api/import/review` takes the file, its `source` (`zotero`,
   `markdown-zip`, `markdown-file`, `gamma`), an optional `folder` and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
-  plus a `review_id`. `POST /api/import/review/{id}` with
-  `{selected: [...]}` imports from the staged upload against the current
-  library; `DELETE` discards it.
-- Staging (`gamma/import_staging.py`): a directory per review under the data
-  directory, bound to the account and workspace, expiring after two hours
-  (`TTL`; expired ones are swept on the next upload). Commit takes a claim
-  (`running/` mkdir; 409 when held), writes `result.json` and deletes the
-  payload, so a repeated commit answers the saved report. Staging has its own
-  1 GB cap (`import_staging.MAX_BYTES`) and is not metered by the account quota.
+  plus a `review_id`; `DELETE` discards it.
+- The import itself is a background job ([tasks.md](tasks.md)):
+  `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
+  the staged upload against the current library, reporting each item; its
+  result is the import report. Asking again for the same review answers the
+  job already started (409 with another selection).
+- Each source is a request-free preview and commit in `routers/imports.py`
+  (`_review_source`), over the staged file and the review's metadata; the
+  plain endpoints (`/import/zotero`, `/import/markdown-zip`, …) run the
+  same functions in the request.
+- Staging (`gamma/import_staging.py`): a directory per review, bound to the
+  account and workspace, expiring after two hours (`TTL`; expired ones are
+  swept on the next upload). The import job holds a claim (`running/`
+  mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
+  removes the review when it ends — done, failed or stopped. Staging has
+  its own 1 GB cap (`import_staging.MAX_BYTES`) and is not metered by the
+  account quota.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
   (no field) imports everything, `[]` imports nothing.
+- A stopped import keeps what it wrote: the Zotero and Markdown imports
+  write the new pages whose files they already stored, then stop.
 - Frontend (`src/transfers/`): `ImportReviewDialog.jsx` owns the steps and
-  the report; `ImportTree.jsx` renders one tree with its checkboxes (a folder
-  toggles its descendants); `importReview.js` owns selection, filters and
-  tree construction (filters only hide rows; hidden selections stay
-  selected); `importApi.js` the adapter + the three calls;
-  `shared/lib/xhrUpload.js` the upload progress. Checking/importing show an
-  indeterminate bar.
+  the report. It uploads and reviews itself, then follows the import job
+  (`tasks.start("import", …)`) with its progress and Stop. It may close while
+  the job runs, and the job's row in Background tasks opens it again on that
+  job (`{jobId}`, no file: the summary then shows the library column only).
+  `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
+  its descendants); `importReview.js` owns selection, filters and tree
+  construction (filters only hide rows; hidden selections stay selected);
+  `importApi.js` the upload, the job's body and the discard;
+  `shared/lib/xhrUpload.js` the upload progress.
 
 Logseq and in-PDF annotations keep their own import controls.
 
@@ -274,26 +288,43 @@ size), attached to the item as image `z:Attachment`s when bundling, and
 replaced by a plain `(image: … — see item notes)` placeholder in annotation
 comments (`strip_image_md`) — comments come from the PDF's `/Contents` and can
 never render a picture, so a highlight whose notes carry images ALSO becomes
-its own Memo with a page+quote header (`highlight_memo_html`). `/api/folders/export` (all modes) reports per-page
-progress through `/api/folders/export-progress`, which the frontend polls into
-the status pill during folder exports. Highlights are not in the RDF
+its own Memo with a page+quote header (`highlight_memo_html`). An export job
+([tasks.md](tasks.md)) reports each page as it goes. Highlights are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
 copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
 omits the files entirely, `notes=0` the Memos).
 
 ## The export framework
 
-`/pages/{id}/export` and `/folders/export` share one driver (`_run_export` in
-`routers/export.py`): it walks the selected pages exactly once (subtree fetch
-→ `build_tree` → progress bookkeeping) and feeds each page to a per-format
-`_Builder` (`_MarkdownBuilder`, `_NotesPdfBuilder`, `_LogseqBuilder`,
-`_ZoteroBuilder`, `_GammaBuilder` — keyed by `?mode=`), which accumulates zip
-parts and names the download. `begin(conn, root_ids)` shows a builder the
-whole export set before the walk — the DB connection is closed by the time
-`response()` runs. Adding an export format = adding a builder; the
-endpoints, progress plumbing and `_zip_response` stay untouched. A builder
-whose download isn't a zip overrides `response()` instead (`_NotesPdfBuilder`
-returns one PDF, rendered by its `render()`).
+The export job (`POST /api/jobs/export`, what the Export dialog starts),
+`/pages/{id}/export` and `/folders/export` share one driver (`_run_export`
+in `routers/export.py`). It walks the selected pages exactly once (subtree
+fetch, `build_tree`, a progress report) and feeds each page to a per-format
+`_Builder` keyed by the mode: `_MarkdownBuilder`, `_ObsidianBuilder`,
+`_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_LogseqBuilder`,
+`_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
+`save(dest)` writes the download, returning its name and media type. The
+job saves to its file; `response()` saves to a temporary file and answers
+with it. `begin(conn, root_ids)` shows a builder the whole export set before
+the walk; the DB connection is closed by the time `save` runs. A generated
+part too big to hold (an annotated PDF) is `spool`ed to a temporary file
+and packed from there, and a bundled upload is packed straight from the
+uploads directory. `skip(page, reason)` leaves a page out, and `summary()`
+(the job's result) counts the pages and lists the skipped ones. Adding an
+export format means adding a builder; the endpoints, the job and the zip
+writer stay untouched. A builder whose download isn't a zip overrides
+`save`: `_NotesPdfBuilder` writes one PDF, `_MarkdownBuilder` a bare `.md`
+for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF.
+
+`annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
+highlights and handwriting as standard annotations and, with the notes
+switch, its notes printed on the page (`annotated_page_pdf`, what
+`/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
+is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
+folder labels below the exported folder (`obsidian_export.page_dir`). A
+page with sheets of paper and no PDF is exported as its sheets. A page with
+neither is left out, and the finished export lists it. A folder with no
+PDF at all fails with the reason.
 
 The single-page exports are also plain functions, for callers without a
 request: `page_builder` (one page through a mode's builder, what
@@ -317,10 +348,10 @@ deduped by block id / doc id / content hash, so re-importing adds nothing.
 A page it adds comes in whole and stamped now (the change feed sees it); a
 block whose id the workspace already uses on another page gets a fresh id
 ([workspaces.md](workspaces.md) "Export and backups"). The
-⋮ Import dialog's "Gamma export (.zip)" source feeds the zip to that endpoint
-via the same upload/progress path as Settings → Restore backup (guests can't
-import). A Gamma export is a complete copy, so the Export dialog has no
-switches for it.
+⋮ Import dialog's "Gamma export (.zip)" source reviews the zip like the
+other library sources, then merges the selected pages (`restore_zip` merge
+with a selection) as the import job; guests can't import. A Gamma export is
+a complete copy, so the Export dialog has no switches for it.
 
 ### Importing a shared page by link
 
@@ -328,9 +359,10 @@ The same pipeline, without the zip ever touching disk: `importSharedPage` in
 `app/App.jsx` takes a share URL (`https://other/?share=<token>`), resolves the
 token against that origin's `/api/share/{token}`, fetches the page as
 `/api/pages/{id}/export?mode=gamma&share=<token>`, and hands the blob to
-`runBackupImport(…, "merge")` with `after.openPage` set — block ids survive
-the export, so the reload lands on `?page=<id>` in the importer's own
-library. The fetch is browser-side on purpose: the browser reaches a Gamma on
+`runBackupImport(…, "merge")` with `after.openPage` set: a `restore` job
+([tasks.md](tasks.md)), after which the tab reloads. Block ids survive the
+export, so the reload lands on `?page=<id>` in the importer's own library.
+The fetch is browser-side on purpose: the browser reaches a Gamma on
 the LAN or at `localhost` that the server's SSRF guard (`net_guard.py`)
 refuses. That works because share GETs answer
 `Access-Control-Allow-Origin: *` ([api.md](api.md)); with `*` the browser
@@ -351,7 +383,7 @@ invite-only ones work too. Two entry points:
 
 The remote must be recent enough to serve `mode=gamma` and the CORS
 header; an older one surfaces as "couldn't reach …" / "too old" in the
-status line and the transfer row.
+status line and the task's row.
 
 ## The Export dialog
 
@@ -374,8 +406,26 @@ decides whether a review step is needed, and builds the one payload the
 preview and the download share. Zotero highlights
 live inside bundled PDFs, so turning bundling off disables Highlights without
 changing the saved preference. The chosen format and options are remembered
-in `localStorage` (`gamma-export-opts`). The switches are query flags on two
-endpoints:
+in `localStorage` (`gamma-export-opts`).
+
+Export starts the export as a background job ([tasks.md](tasks.md)).
+`exportJobBody` turns the payload into the job's body: the page or folder,
+the server's mode for the format (each format's `mode`: `annotated-pdf`,
+`notes-pdf`, `readable`, `obsidian`, `logseq-graph`, `zotero-rdf`, `gamma`)
+and the three flags. The dialog then shows its last step, the job's
+(`ExportJobStep`). While the job runs it shows its progress (pages, then
+the packing of the zip) with Stop, and says the window may close. The job
+goes on in Background tasks, whose row opens this step again. Once ready,
+the file downloads by itself when the window is open; a closed window's
+file is offered in the pill with a Download button, and waits in the tray.
+The finished step names the file and its size, counts the pages, lists the
+pages left out with the reason, and says what to do next: Zotero's steps,
+Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export. A failed or
+stopped export offers Start again. A share view has no background tasks:
+its Export downloads through the endpoints below, with the same mode and
+flags as query parameters.
+
+The switches mean, per endpoint:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
 highlight block's own text as a plain bullet; the front matter carries the
@@ -390,8 +440,10 @@ self-contained — and reads as plain text otherwise; a `![[embed]]`
 materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
-`/pages/{id}/export-pdf?highlights=&notes=`. "Annotated PDF" is the paper itself and is
-hidden when there is none (a note page or a folder). An unsaved proxy PDF can
+`mode=annotated-pdf` (`/pages/{id}/export-pdf?highlights=&notes=` answers the
+same). "Annotated PDF" is the paper itself and is hidden when there is none
+(a note page); a page with sheets of paper shows it too, and exports them
+([notebooks.md](notebooks.md)). An unsaved proxy PDF can
 export only its original file, so it skips the options page and exports directly.
 "PDF" in the Notes row (`?mode=notes-pdf`) takes over as the fallback format, and its
 Bundle switch is hidden because a document always embeds its images. Two
@@ -403,9 +455,11 @@ exists behind the proxy).
 
 The dialog can also target a whole folder: opened from home with a folder open
 (the ⋮ Export… entry) or from a folder card's context menu (`exportFolder`
-state in App.jsx), it drops the single-PDF format and sends the same
-format/switch flags to `/folders/export?name=` (readable, `obsidian`,
-`logseq-graph` or `zotero-rdf`).
+state in App.jsx), it exports every page filed there or below, in any
+format. There Annotated PDF sits in its own "Papers" row: each paper's
+annotated PDF, with the Highlights and Notes switches, in one zip whose
+directories are the subfolders; pages without a PDF are left out and
+listed once it is done.
 
 ## Obsidian vault export
 
@@ -537,6 +591,12 @@ mapped through the same rect → user-space conversion, `/BS /W` the mean
 drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
+
+A page with sheets of paper and no PDF has none to annotate:
+`annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
+size, painted with the paper, with the ink groups under it drawn as
+vectors in the content (the page is the drawing, so no `/Ink` layer). The
+switches do not apply.
 
 ### Notes drawn on the page
 

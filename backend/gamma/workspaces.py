@@ -44,7 +44,7 @@ import sqlite3
 import time
 import urllib.parse
 
-from . import collab
+from . import collab, jobs
 from .config import WORKSPACES_DIR
 from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
 from .logbuf import log
@@ -820,7 +820,8 @@ def delete_account(username: str, *, release_now: bool = False, by: str = "") ->
     list, refresh token revoked; in the background unless ``release_now``,
     which a CLI process that exits right after wants), integration tokens,
     publisher sessions, prefs, the workspaces ``delete_account_workspaces``
-    removes, its AI usage rows and the users row. Each of those workspaces
+    removes, its background jobs and their files, its AI usage rows and the
+    users row. Each of those workspaces
     is first copied to backups/deleted/ (``keep_final_copies``; a guest's
     keep nothing): FinalCopyError, and nothing deleted, when one cannot be.
     The one account deletion: the admin API, ``manage.py delete-user`` and
@@ -842,6 +843,7 @@ def delete_account(username: str, *, release_now: bool = False, by: str = "") ->
     if subject:
         (cloud_sync.release if release_now else cloud_sync.release_later)(subject, held)
     deleted = delete_account_workspaces(username)
+    jobs.forget_account(username)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
         conn.execute("DELETE FROM users WHERE username = ?", (username,))

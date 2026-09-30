@@ -810,4 +810,153 @@ export async function chatNavigationScenarios(env) {
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
+
+  await step("chat navigation: a change waits on its approval card; allowing for the chat, declining and always allowing", async () => {
+    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Approvals page" } });
+    const block = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Draft summary" } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    // The defaults: reading is allowed, a note edit asks.
+    const { agentPerms: _perms, ...rest } = profile || {};
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: rest } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      window.approvalAnswers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/approvals/")) {
+          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${notesPage.id}`);
+    const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
+    const finish = () => page.evaluate(() => window.chatStream.finish());
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const send = async (text, n) => {
+      await input.fill(text);
+      await input.press("Enter");
+      await until(() => page.evaluate((count) => window.chatBodies.length === count, n), { what: `message ${n} is sent` });
+      return page.evaluate(() => window.chatBodies.at(-1));
+    };
+    const card = page.locator(".chatApproval");
+    const answers = () => page.evaluate(() => window.approvalAnswers);
+    const edit = { block_id: block.id, mode: "append" };
+    const editCard = (id) => ({ id, call_id: `c-${id}`, tool: "edit_block", perm: "block_edit", args: edit, timeout: 600,
+      preview: { page_id: notesPage.id, title: "Approvals page", block_id: block.id, mode: "append",
+        diff: [["ctx", "Draft summary"], ["ins", "\nThe key result."]] } });
+    const edited = (approval) => ({ action: { kind: "edit", tool: "edit_block", summary: "Appended to a note in “Approvals page”",
+      page_id: notesPage.id, block_id: block.id, mode: "append", title: "Approvals page", args: edit, result: "ok", approval } });
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+
+      // 1. The note edit waits on its card; "Allow in this chat" runs it.
+      const first = await send("Add the key result to my notes", 1);
+      assertEq(first.permissions.block_edit, "ask", "a note edit asks by default");
+      assertEq(first.permissions.read, "allow");
+      assertEq(JSON.stringify(first.granted), "[]");
+      await push({ step: { id: "c-a1", tool: "edit_block", args: edit } });
+      await push({ approval: editCard("a1") });
+      await card.getByText("Add to a note in “Approvals page”").waitFor();
+      assert((await card.innerText()).includes("Approval needed · Edit note blocks"), "the card names the permission");
+      assertEq((await card.locator("ins").innerText()).trim(), "The key result.");
+      await page.locator(".chatSteps").getByText("Waiting for your approval").waitFor();
+      assertEq(await page.locator(".chatThinking").count(), 0, "no Thinking pill while the card waits");
+      if (flags.keep) {
+        await card.screenshot({ path: `${server.dir}/approval-card.png`, animations: "disabled" });
+        await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-panel.png`, animations: "disabled" });
+      }
+      await card.getByRole("button", { name: "Allow in this chat", exact: true }).click();
+      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await page.locator(".chatSteps").getByText("Appending to a note…").waitFor();
+      assertEq(JSON.stringify(await answers()), JSON.stringify([{ id: "a1", decision: "chat" }]));
+      await push(edited("chat"));
+      await until(async () => !(await card.count()), { what: "the card goes once the call ran" });
+      await push({ delta: "Added it." });
+      await finish();
+      const chip = page.getByRole("button", { name: "Allowed in this chat: Edit note blocks. Ask again", exact: true });
+      await chip.waitFor();
+      if (flags.keep) await page.locator(".chatComposer").screenshot({ path: `${server.dir}/approval-granted.png`, animations: "disabled" });
+
+      // 2. The conversation's grant rides along; a read set to ask is declined.
+      await page.locator('[title^="Chat settings"]').click();
+      const popover = page.locator(".chatSettingsPop");
+      await popover.getByRole("button", { name: "Fetch documents", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Ask", exact: true }).click();
+      await page.locator('[title^="Chat settings"]').click();
+      const second = await send("Fetch the paper it cites", 2);
+      assertEq(JSON.stringify(second.granted), JSON.stringify(["block_edit"]));
+      assertEq(second.permissions.web_read, "ask");
+      await push({ step: { id: "c-a2", tool: "fetch_paper", args: { source: "doi:10.1234/e2e.cited" } } });
+      await push({ approval: { id: "a2", call_id: "c-a2", tool: "fetch_paper", perm: "web_read",
+        args: { source: "doi:10.1234/e2e.cited" }, preview: {}, timeout: 600 } });
+      await card.getByText("Fetch doi:10.1234/e2e.cited").waitFor();
+      // Don't allow asks, optionally, what to do instead; Back returns to the choices.
+      await card.getByRole("button", { name: "Don't allow", exact: true }).click();
+      const instead = card.getByRole("textbox", { name: "What should the assistant do instead? (optional)" });
+      await instead.fill("Use the arXiv copy");
+      await card.getByRole("button", { name: "Back", exact: true }).click();
+      await card.getByRole("button", { name: "Allow once", exact: true }).waitFor();
+      await card.getByRole("button", { name: "Don't allow", exact: true }).click();
+      await instead.fill("Use the arXiv copy");
+      if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-decline.png`, animations: "disabled" });
+      await instead.press("Enter");
+      await card.getByText("Not allowed. The assistant goes on without it…").waitFor();
+      assertEq(JSON.stringify((await answers())[1]), JSON.stringify({ id: "a2", decision: "deny", note: "Use the arXiv copy" }));
+      await push({ action: { kind: "error", tool: "fetch_paper", summary: "Not allowed: fetch_paper", error: true,
+        declined: true, approval: "deny", args: { source: "doi:10.1234/e2e.cited" }, result: "declined: the user did not allow this call" } });
+      await push({ delta: "I left it unfetched." });
+      await finish();
+      await page.locator(".chatSteps").last().getByText("1 not allowed").waitFor();
+      assertEq(await page.locator(".chatStepsFailed").count(), 0, "a declined call is not a failure");
+      if (flags.keep) await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-declined.png`, animations: "disabled" });
+
+      // 3. Asking again for the chat, then "Always allow" sets it in Settings.
+      await chip.click();
+      await until(async () => !(await chip.count()), { what: "the chip goes once the chat asks again" });
+      const third = await send("Add one more line", 3);
+      assertEq(JSON.stringify(third.granted), "[]");
+      await push({ step: { id: "c-a3", tool: "edit_block", args: edit } });
+      await push({ approval: editCard("a3") });
+      await card.getByRole("button", { name: "Always allow", exact: true }).click();
+      await until(async () => (await alice.api("/api/prefs/profile")).value?.agentPerms?.notes?.block_edit === "allow",
+        { what: "Always allow sets the notes chat's note editing to Allow" });
+      assertEq(JSON.stringify((await answers()).map((a) => a.decision)), JSON.stringify(["chat", "deny", "always"]));
+      await push(edited("always"));
+      await push({ delta: "Done." });
+      await finish();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      // The final save queues behind the reply's checkpoints (one of which
+      // held the waiting card), so it can land after Stop goes.
+      const saved = await until(async () => {
+        const chat = await alice.api(`/api/chats/${notesPage.id}`);
+        return chat.messages.every((m) => !m.partial) && chat;
+      }, { what: "the finished reply is saved" });
+      assert(saved.messages.every((m) => !m.approval), "a waiting card is never saved with the reply");
+      assertEq(saved.messages.filter((m) => m.role === "ai").flatMap((m) => m.actions || []).map((a) => a.approval).join(),
+        "chat,deny,always");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
 }

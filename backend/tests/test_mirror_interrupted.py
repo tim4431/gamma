@@ -446,3 +446,31 @@ def test_a_receive_only_link_keeps_a_page_the_original_deleted():
     assert r.status_code == 201 and r.json()["mode"] == "pull", r.text
     _sync(local)
     assert local.texts(lost["id"]) == {"rp1": "kept here"} and lost["id"] not in remote.pages()
+
+
+def test_a_drawing_whose_push_never_arrived_is_merged_when_sent_again(monkeypatch):
+    """The push of a drawing was cut before it reached the remote, and the
+    remote drew in the same group meanwhile: the resend (sync_engine
+    _unlanded) goes again with its base, and the remote merges both
+    drawings by stroke instead of this copy taking the remote's for a
+    change that landed."""
+    from test_mirror import _ink_file, _strokes
+    remote, local, _ = _pair()
+    page = remote.page("Lost drawing")
+    u0 = _ink_file(remote, [("a", 100)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkL", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "pdf_page": 1, "ink_strokes": 1}}])
+    _sync(local)
+    ul = _ink_file(local, [("a", 100), ("b", 400)])
+    local.ops(page["id"], [{"op": "set", "id": "inkL", "props": {"ink_url": ul, "ink_strokes": 2},
+                            "base_props": {"ink_url": u0}}])
+    undo = _refuse(monkeypatch, lambda m, p: _drop_link(m, p) if m == "POST" and p.endswith("/ops") else None)
+    assert "connection reset" in _round(local)["last_error"]
+    undo()
+    assert _strokes(remote, "inkL") == (u0, ["a"])  # it never arrived
+    ur = _ink_file(remote, [("a", 100), ("x", 300)])
+    remote.ops(page["id"], [{"op": "set", "id": "inkL", "props": {"ink_url": ur, "ink_strokes": 2},
+                             "base_props": {"ink_url": u0}}])
+    _sync(local)
+    there, here = _strokes(remote, "inkL"), _strokes(local, "inkL")
+    assert there == here and sorted(here[1]) == ["a", "b", "x"]

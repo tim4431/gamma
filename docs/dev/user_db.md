@@ -67,7 +67,16 @@ All state is SQLite + files on disk under a data directory (env
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
-    status and the `page_filter` of a publication ([mirror.md](mirror.md)).
+    status and the `page_filter` of a publication ([mirror.md](mirror.md));
+  - `jobs` — background jobs (exports, backups, restores, imports, the
+    search indexer): owner (`''` for a workspace's own work), workspace,
+    kind, parameters, state, last progress, result, error, the produced
+    file's name, type and size, and the server process that runs it. Kept
+    24 hours after they end ([tasks.md](tasks.md)).
+- `jobs/` — the files background jobs produce (`<id>/artifact`, downloaded
+  through `/api/jobs/{id}/download`) and the uploads they read
+  (`incoming/`). Swept with their rows; not metered against any quota and
+  not part of server snapshots.
 - `workspaces/<id>/pages.db` — the core data model: the `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).

@@ -13,6 +13,8 @@ import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
+import { isSheet } from "../notebook/notebook";
+import { NoteSheet } from "../notebook/NoteSheet";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
@@ -39,7 +41,7 @@ import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
-import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import { pageKindLabel } from "../library/libraryUtils";
@@ -726,6 +728,7 @@ function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
 function BlockRow({
   block,
   depth,
+  sheetNumber = 0,
   focusedId,
   setFocusedId,
   flashingId,
@@ -780,6 +783,8 @@ function BlockRow({
   pages,
   rootId,
   view,
+  inlineSheets,
+  onInsertSheet,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -1123,6 +1128,9 @@ function BlockRow({
           setRefSelectedIdx(0);
         });
       },
+      // "/page": the block becomes a page when nothing else is in it, else
+      // a page goes in after it (App's onInsertSheet).
+      insertPage: () => onInsertSheet?.(block.id, value.slice(0, start) + value.slice(cursor)),
       // The file dialog blurs the editor (which exits edit mode), so the
       // upload appends to the value captured here, with "/image" removed.
       pickImage: () => {
@@ -1454,7 +1462,8 @@ function BlockRow({
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
-          if (e.target.closest("button, textarea, input, a")) return;
+          // (a page drawn in the notes is written on, not a place for the caret)
+          if (e.target.closest("button, textarea, input, a, .noteSheet")) return;
           setFocusedId(block.id);
           // Clicking anywhere on a highlight's card jumps the PDF to it —
           // not just the little colored dot. Ctrl+click appends the quote to
@@ -1523,7 +1532,7 @@ function BlockRow({
           // with its id, so the agent can edit it) — unless the gesture
           // selected text, which App's mouseup turned into a note chip.
           if (!(e.ctrlKey || e.metaKey) || !onAddToChat || block.highlightId || editing) return;
-          if (e.target.closest("button, textarea, input, a")) return;
+          if (e.target.closest("button, textarea, input, a, .noteSheet")) return;
           if (window.getSelection()?.toString().trim()) return;
           e.preventDefault();
           onAddToChat(block);
@@ -1795,6 +1804,9 @@ function BlockRow({
                   onTableEdit={readOnly ? undefined : stableTableEdit}
                   onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
                   onObjectAction={readOnly ? undefined : stableObjectAction} />
+              ) : sheetNumber ? (
+                // an untitled notebook sheet reads as the page it stands for
+                <div className="blockPlaceholder blockSheetLabel">{t("Page {n}", { n: sheetNumber })}</div>
               ) : (
                 <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
@@ -1811,6 +1823,7 @@ function BlockRow({
           {block.position?.area && captureArea ? (
             <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
+          {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
           {isInk ? <InkCard block={block} onJump={onInkJump} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
@@ -1960,6 +1973,20 @@ function SortableBlockRow({ block, ...rowProps }) {
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
             >{t("Add to chat")}</MenuItem>
           ) : null}
+          {block.properties?.ink_url !== undefined && rowProps.onTranscribe ? (
+            <MenuItem
+              icon={SparklesIcon}
+              title={t("Ask the chat to read this handwriting and write it out as text in the caption")}
+              onClick={() => { setHandleMenu(null); rowProps.onTranscribe(block); }}
+            >{t("Transcribe with AI")}</MenuItem>
+          ) : null}
+          {block.id !== "root" && rowProps.onAddSheetAfter && !rowProps.readOnly ? (
+            <MenuItem
+              icon={SheetIcon}
+              title={t("A page of paper to write on, right after this block")}
+              onClick={() => { setHandleMenu(null); rowProps.onAddSheetAfter(block.id); }}
+            >{t("Add page below")}</MenuItem>
+          ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
@@ -2069,15 +2096,21 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
     if (i >= 0) ghostAt = i + 1;
   }
   const ghostRow = ghost ? <AiGhostRow key="ai-ghost" content={ghost.content || ""} depth={depth} /> : null;
+  // Sheets (notebook/notebook.js) are numbered like the pages they are: in
+  // document order across the page (rowProps.sheetNumbers), else among
+  // these rows.
+  let sheets = 0;
   return (
     <>
       {ghostAt === 0 ? ghostRow : null}
-      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock); return (
+      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock);
+        const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(rawBlock.id) || 0
+          : depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>
           {!readOnly ? (
-            <SortableBlockRow block={block} depth={depth} {...rowProps} />
+            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
           ) : (
-            <BlockRow block={block} depth={depth} {...rowProps} />
+            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
           )}
           {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">

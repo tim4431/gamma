@@ -73,10 +73,11 @@ class OpenAIChat(Protocol):
             ("max_completion_tokens" if is_openai_platform(conf["base_url"]) else "max_tokens"): max_tokens,
             "messages": wire,
         }
-        if tools:
+        functions = [t for t in tools or [] if not t.get("hosted")]  # this wire hosts no tools
+        if functions:
             body["tools"] = [{"type": "function",
                               "function": {"name": t["name"], "description": t["description"],
-                                           "parameters": t["parameters"]}} for t in tools]
+                                           "parameters": t["parameters"]}} for t in functions]
         if effort:
             body["reasoning_effort"] = effort
         if cache_key and is_openai_platform(conf["base_url"]):

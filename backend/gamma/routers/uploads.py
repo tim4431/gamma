@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
 from .. import pdf_meta
 from ..db import connect_pages_db
+from ..ink import InkError, parse_ink
 from ..server_settings import workspace_quota
 from ..storage import (
     ALLOWED_IMAGE_TYPES,
@@ -100,6 +101,12 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     contents = file.file.read()
     if ext == ".pdf" and not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
+    if ext == ".ink":
+        # the path a mirror pushes a drawing by: stored only when it is one
+        try:
+            parse_ink(contents)
+        except InkError as e:
+            raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
     filename, already_existed = store_file(ws, contents, ext)
     return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
             "already_existed": already_existed}

@@ -1,7 +1,9 @@
 // Handwriting (docs/dev/handwriting.md): the tool strip and its presets,
 // mouse strokes becoming an ink block with an .ink upload, persistence
-// across a reload, the eraser, the lasso, the notes card's jump + flash.
-// /Ink in the annotated PDF is backend/tests/test_ink.py.
+// across a reload, the eraser, the lasso, the notes card's jump + flash,
+// and a group's Transcribe with AI. /Ink in the annotated PDF is
+// backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
+import { fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 async function drawLine(page, from, to) {
@@ -188,10 +190,16 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: the notes card jumps to the group and outlines it", async () => {
+  await step("ink: the notes card jumps to the group and outlines it; its replay plays on the PDF page", async () => {
     await page.click(".blockInkCard");
     await page.waitForSelector('[data-page="1"] .inkFlash', { timeout: 5000 });
     if (flags.keep) await page.screenshot({ path: `${server.dir}/ink-notes.png` });
+    const paths = '[data-page="1"] .inkLayer path';
+    const whole = (await page.$$(paths)).length;
+    await page.hover(".blockInkCardWrap");
+    await page.click(".blockInkCardWrap .inkReplayBtn");
+    await until(async () => (await page.$$(paths)).length < whole, { what: "the page draws the group stroke by stroke", every: 10 });
+    await until(async () => (await page.$$(paths)).length === whole, { what: "then whole again" });
     assertNoProblems(page);
   });
 
@@ -438,6 +446,98 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await page.locator(paths).count(), count + 2, "finger navigation adds no ink");
     await cdp.detach();
     assertNoProblems(page);
+  });
+
+  await step("ink: two tabs changing one group at once keep both changes (the save merges by stroke)", async () => {
+    // Tab A draws two strokes into a fresh group; tab B erases one of them
+    // while A draws a third. B's save is held until A's has landed, so it
+    // arrives with a base the server has moved past: the server merges
+    // (ops.py merge_ink) and both tabs end with A's new stroke and without
+    // the erased one.
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Handwriting tools']");
+    await page.keyboard.press("p");
+    const paths = '[data-page="1"] .inkLayer path';
+    const known = new Set((await account.api(`/api/blocks/${pageId}/subtree`)).block.children.map((b) => b.id));
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await drawLine(page, [box.x + 100, box.y + 600], [box.x + 250, box.y + 600]);
+    await drawLine(page, [box.x + 100, box.y + 650], [box.x + 250, box.y + 650]);
+    const group = await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      const g = d.block.children.find((b) => !known.has(b.id) && b.properties?.ink_url);
+      return g && g.properties.ink_strokes === 2 ? g : null;
+    }, { what: "a new group with two strokes saved" });
+    const firstY = (ink) => Math.min(...ink.strokes.map((st) => st.pts[1] / 100));
+    const erasedY = firstY(await account.api(group.properties.ink_url)); // the upper stroke, which B erases
+    const ctx2 = await account.context(browser);
+    try {
+      const other = await openPage(ctx2, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      await waitForPdf(other, 1);
+      const countA = await page.locator(paths).count();
+      await until(async () => await other.locator(paths).count() === countA, { what: "tab B shows the group" });
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      let holding = false;
+      const url = `**/api/blocks/${group.id}`;
+      await other.route(url, async (route) => {
+        if (route.request().method() === "PUT") { holding = true; await held; }
+        await route.continue();
+      });
+      await other.click("button[aria-label='Handwriting tools']");
+      await other.waitForSelector(".pdfInkBar");
+      await other.keyboard.press("e");
+      const b2 = await other.locator('[data-page="1"]').boundingBox();
+      await drawLine(other, [b2.x + 175, b2.y + 590], [b2.x + 175, b2.y + 610]); // through the first stroke
+      await until(async () => await other.locator(paths).count() === countA - 1, { what: "tab B erased a stroke" });
+      await until(() => holding, { what: "tab B's save held in flight" });
+      await drawLine(page, [box.x + 100, box.y + 700], [box.x + 250, box.y + 700]); // A's third stroke joins its group
+      await until(async () => (await account.api(`/api/blocks/${group.id}`)).properties.ink_strokes === 3,
+        { what: "tab A's save landed first" });
+      release();
+      await until(async () => {
+        const block = await account.api(`/api/blocks/${group.id}`);
+        if (block.properties.ink_strokes !== 2) return false;
+        return firstY(await account.api(block.properties.ink_url)) > erasedY + 5;
+      }, { what: "the merge kept A's new stroke and dropped the erased one" });
+      await until(async () => await page.locator(paths).count() === countA, { what: "tab A shows the merge" });
+      await until(async () => await other.locator(paths).count() === countA, { what: "tab B shows the merge" });
+      await other.unroute(url);
+      assertNoProblems(other);
+    } finally { await ctx2.close(); }
+    assertNoProblems(page);
+  });
+
+  await step("ink: Transcribe with AI asks the chat about the group, with the group attached", async () => {
+    const up = await account.api("/api/upload-ink", { method: "POST", body: {
+      format: "gamma-ink", version: 1, space: { kind: "pdf-page", page: 1, width: 612, height: 792 },
+      strokes: [{ id: "tr1", color: "#1f1f1f", size: 2, ch: "xy", pts: [10000, 60000, 3000, 400] }],
+    } });
+    const group = await account.api("/api/blocks", { method: "POST", body: {
+      parent_id: pageId, content: "", properties: { ink_url: up.url, pdf_page: 1, pdf_position: up.pdf_position, ink_strokes: 1 },
+    } });
+    const tctx = await account.context(browser);
+    try {
+      await fakeAiModels(tctx);
+      await tctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const sent = [];
+      await tctx.route("**/api/ai/chat", async (route) => {
+        sent.push(route.request().postDataJSON());
+        await route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"It says: hello."}\n' });
+      });
+      const tpage = await openPage(tctx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      const wrap = tpage.locator(`.sortableBlockWrap[data-block-id="${group.id}"]`).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").first().click();
+      await tpage.locator(".ctxMenuItem", { hasText: "Transcribe with AI" }).click();
+      await until(() => sent.length === 1, { what: "one chat request" });
+      assertEq(sent[0].prompt, "Transcribe this handwriting into its caption.", "the request's text");
+      assert(sent[0].context_blocks.includes(group.id), "the group rides with it as a chip");
+      await tpage.locator(".chatBubble.ai", { hasText: "It says: hello." }).waitFor();
+      await tpage.locator(".chatBubble.user", { hasText: "Transcribe this handwriting" }).waitFor();
+      assertEq(sent.length, 1, "sent once");
+      assertNoProblems(tpage);
+    } finally { await tctx.close(); }
   });
 
   if (ctx) await ctx.close();

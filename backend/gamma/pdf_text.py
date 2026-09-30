@@ -7,6 +7,7 @@ Used by the AI context builder, metadata lookup, /pdf-text-status, and the
 search indexer, so extraction fixes land once.
 """
 
+import base64
 import re
 import io
 import struct
@@ -338,3 +339,9 @@ def render_page(src, page_no: int, max_side: int = RENDER_MAX_SIDE, box=None):
         except Exception as e:
             log.warning(f"[pdf-text] page render failed: {e}")
             return None, 0
+
+
+def image_part(image) -> tuple[str, str]:
+    """A picture ``render_page`` made, as the ``(media type, base64)`` pair
+    a chat message or a tool result carries."""
+    return image[1], base64.standard_b64encode(image[0]).decode("ascii")

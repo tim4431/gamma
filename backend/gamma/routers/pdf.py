@@ -119,25 +119,50 @@ def _publisher_pdf_candidates(page_url: str, html: str) -> list[str]:
     return candidates
 
 
-def _open_access_pdf_for_doi(doi: str) -> tuple[str, str]:
-    """(pdf_url, version) of the best legal open-access copy for a DOI, via
-    Unpaywall. Prefers the published PDF over accepted manuscripts over
-    preprints — repositories often only hold the submitted version."""
+# Unpaywall's versions, best first, and how a resolved source names them.
+_OA_ORDER = {"publishedVersion": 0, "acceptedVersion": 1, "submittedVersion": 2}
+VERSION_LABELS = {"publishedVersion": "published", "acceptedVersion": "accepted", "submittedVersion": "submitted"}
+OA_TRIES = 4  # open-access locations tried before giving up on a DOI
+
+
+def _open_access_pdfs(doi: str) -> list[dict]:
+    """The legal open-access PDFs of a DOI via Unpaywall, best first, as
+    ``[{url, version, host}]``: the published PDF before accepted
+    manuscripts before preprints (repositories often hold only the
+    submitted version), the publisher's copy before a repository's. A copy
+    that fails is not the end — the resolver tries the next."""
     try:
         url = (f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}"
                f"?email={urllib.parse.quote(CONTACT_EMAIL)}")
         req = URLRequest(url, headers={"User-Agent": "gamma-pdf-annotator/1.0"})
         with guarded_urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
-        locs = [l for l in (data.get("oa_locations") or []) if l.get("url_for_pdf")]
-        order = {"publishedVersion": 0, "acceptedVersion": 1, "submittedVersion": 2}
-        locs.sort(key=lambda l: order.get(l.get("version"), 3))
-        if not locs:
-            return "", ""
-        return locs[0]["url_for_pdf"], locs[0].get("version") or ""
     except Exception as e:
         log.warning(f"[resolve-pdf] unpaywall lookup failed: {e}")
-        return "", ""
+        return []
+    locs = [loc for loc in data.get("oa_locations") or [] if isinstance(loc, dict) and loc.get("url_for_pdf")]
+    locs.sort(key=lambda loc: (_OA_ORDER.get(loc.get("version"), 3), loc.get("host_type") != "publisher"))
+    out, seen = [], set()
+    for loc in locs:
+        if loc["url_for_pdf"] not in seen:
+            seen.add(loc["url_for_pdf"])
+            out.append({"url": loc["url_for_pdf"], "version": loc.get("version") or "",
+                        "host": loc.get("repository_institution") or loc.get("host_type") or ""})
+    return out
+
+
+def _oa_source(url: str, copy: dict) -> dict:
+    """The resolver's answer for an open-access copy: its version, and a
+    note when it is not the published one."""
+    version = copy.get("version") or ""
+    note = ""
+    if version and version != "publishedVersion":
+        pretty = {"acceptedVersion": "accepted manuscript",
+                  "submittedVersion": "preprint (submitted version)"}.get(version, version)
+        note = (f"The publisher's PDF couldn't be fetched — loaded the open-access {pretty} instead. "
+                "For the published version, download it in your browser and replace the "
+                "source file via the page's source button.")
+    return {"source_url": url, "note": note, "version": VERSION_LABELS.get(version, "")}
 
 
 class ResolvePdfRequest(BaseModel):
@@ -153,16 +178,21 @@ def resolve_pdf(payload: ResolvePdfRequest, request: Request):
     return resolve_source(payload.source_url, payload.allow_oa)
 
 
-def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = None) -> dict:
+def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = None,
+                   published_only: bool = False) -> dict:
     """URL / bare identifier → ``{"source_url": <fetchable PDF url>, "note"?,
-    "referer"?}``, or an HTTPException(400) with a human-readable reason.
-    Shared by the resolve endpoint, the extension's /api/clip and the AI's
-    fetch_paper. ``referer`` is the article page a PDF link came from (the
-    download should send it, as the page's own link would). A ``trace`` dict
-    collects what the walk saw — ``page_url`` (the landing page after
-    redirects), ``pdf_urls`` (the PDF links it advertised), ``doi``,
-    ``blocked`` (the first request was refused) — so a caller can say where
-    a person could get the PDF instead."""
+    "referer"?, "version"?}``, or an HTTPException(400) with a human-readable
+    reason. Shared by the resolve endpoint, the extension's /api/clip and the
+    AI's fetch_paper. ``referer`` is the article page a PDF link came from
+    (the download should send it, as the page's own link would).
+    ``version`` says what the PDF is when the walk knows: "publisher" (the
+    article page's own PDF), "preprint" (arXiv), or an open-access copy's
+    "published" / "accepted" / "submitted". ``published_only`` substitutes
+    only published open-access copies. A ``trace`` dict collects what the
+    walk saw — ``page_url`` (the landing page after redirects), ``pdf_urls``
+    (the PDF links it advertised), ``doi``, ``blocked`` (the first request
+    was refused) — so a caller can say where a person could get the PDF
+    instead."""
     url = _identifier_to_url((source_url or "").strip())
     trace = {} if trace is None else trace
 
@@ -181,6 +211,12 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
             body = b"" if "application/pdf" in ctype else resp.read(600_000)
             return resp.geturl(), ctype, body
 
+    def direct(pdf: str) -> dict:
+        """A PDF the link itself served: arXiv's is a preprint, anyone
+        else's is of unknown version."""
+        host = urllib.parse.urlsplit(pdf).hostname or ""
+        return {"source_url": pdf, "version": "preprint" if host.endswith("arxiv.org") else ""}
+
     blocked = False
     content_type = ""
     final_url = url
@@ -188,7 +224,7 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
     try:
         final_url, content_type, body = try_resolve(url)
         if "application/pdf" in content_type:
-            return {"source_url": final_url}
+            return direct(final_url)
         trace["page_url"] = final_url
     except HTTPError as e:
         # arxiv.org refuses some PDFs to programs (406) that its export
@@ -198,7 +234,7 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
             try:
                 _, mirror_type, _ = try_resolve(mirror)
                 if "application/pdf" in mirror_type:
-                    return {"source_url": mirror}
+                    return direct(mirror)
             except Exception as mirror_error:
                 log.warning(f"[resolve-pdf] arXiv export host failed too: {mirror_error}")
         if e.code not in (401, 403, 418, 429):
@@ -231,7 +267,7 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
             log.warning(f"[resolve-pdf] following {hop} failed: {e}")
             break
         if "application/pdf" in content_type:
-            return {"source_url": final_url}
+            return direct(final_url)
         trace["page_url"] = final_url
         html = body.decode("utf-8", "replace") if body else ""
     trace["pdf_urls"] = _publisher_pdf_candidates(final_url, html)
@@ -242,7 +278,7 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
                 # Return the canonical URL, not the redirect target — hosts
                 # like nature.com append one-time tokens on redirect, and the
                 # doc id is a hash of this URL, so it must stay stable.
-                return {"source_url": pdf_url, "referer": final_url}
+                return {"source_url": pdf_url, "referer": final_url, "version": "publisher"}
         except Exception as e:
             log.warning(f"[resolve-pdf] publisher PDF fetch failed: {e}")
 
@@ -264,22 +300,26 @@ def resolve_source(source_url: str, allow_oa: bool = True, trace: dict | None = 
                        "Open-access fallback is disabled in your settings — download the PDF in "
                        "your browser and drop it onto Gamma.",
             )
-        oa_url, oa_version = _open_access_pdf_for_doi(doi)
-        if oa_url:
-            note = ""
-            if oa_version and oa_version != "publishedVersion":
-                pretty = {"acceptedVersion": "accepted manuscript",
-                          "submittedVersion": "preprint (submitted version)"}.get(oa_version, oa_version)
-                note = (f"The publisher's PDF couldn't be fetched — loaded the open-access {pretty} instead. "
-                        "For the published version, download it in your browser and replace the "
-                        "source file via the page's source button.")
+        copies = _open_access_pdfs(doi)
+        usable = [c for c in copies if not published_only or c["version"] == "publishedVersion"]
+        for copy in usable[:OA_TRIES]:
             try:
-                final_url, content_type, _ = try_resolve(oa_url)
-                if "application/pdf" in content_type:
-                    return {"source_url": final_url, "note": note}
-            except Exception:
-                pass
-            return {"source_url": oa_url, "note": note}  # let the proxy give it a try
+                oa_final, oa_type, _ = try_resolve(copy["url"])
+            except Exception as e:
+                log.warning(f"[resolve-pdf] open-access copy {copy['url']} failed: {e}")
+                continue
+            if "application/pdf" in oa_type:
+                return _oa_source(oa_final, copy)
+        if usable:
+            return _oa_source(usable[0]["url"], usable[0])  # let the proxy give it a try
+        if copies:
+            raise HTTPException(
+                status_code=400,
+                detail="The publisher's PDF isn't accessible server-side, and the open-access copies are "
+                       "not the published version (" + ", ".join(sorted({
+                           VERSION_LABELS.get(c["version"], "unknown") for c in copies})) + "). "
+                       "Open the link in your browser to get the published PDF, or allow another version.",
+            )
         raise HTTPException(
             status_code=400,
             detail="This leads to a publisher page whose PDF isn't accessible server-side "

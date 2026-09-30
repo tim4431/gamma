@@ -11,7 +11,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation") | API keys, ChatGPT OAuth, Google / Youdao translation keys |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest |
 
@@ -149,9 +149,25 @@ word (Not run yet, Queued, Running, Finished, Failed).
 
 `GET/POST /api/backup-tasks`, `PUT/DELETE /api/backup-tasks/{id}`,
 `POST /api/backup-tasks/{id}/run` and `POST /api/backup-tasks/preview`.
-Guests and integration tokens cannot manage tasks.
+Guests and integration tokens cannot manage tasks. While a task runs, it also
+shows as a read-only row in Background tasks ([tasks.md](tasks.md)).
 
 Runtime and storage: [docs/dev/workspaces.md](workspaces.md#backups).
+
+### Snapshots and restores as background jobs
+
+Under the tasks, the pane's saved snapshots are taken and restored as
+background jobs ([tasks.md](tasks.md)): Back up now and Back up all start a
+`snapshot` job (one job for all of them), and Restore → Replace… or Merge…
+starts a `restore-snapshot` job. The pane never waits on the request. A
+workspace with a job under way shows its progress under its heading and
+takes no second one. Its list reloads once the job ends, wherever the job
+was started. A restore into the open workspace reloads the tab that started
+it. Settings → Server's server backups work the same way (`server-backup`).
+Settings → Workspaces → Data exports a workspace (a `workspace-export` job
+whose zip downloads by itself once ready) and merges or restores a zip into
+one (a `restore` job over the uploaded file); Export all is one
+`workspace-export` job.
 
 ## Notices: the red dot
 
@@ -332,7 +348,11 @@ AI:
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   columns offer Read library / Read & search / All tools presets. Web search,
-  fetching and using connected journal sign-ins have separate switches.
+  fetching and using connected journal sign-ins have separate switches. Then
+  **Online search** (`OnlineSearch.jsx`): which service general web search
+  goes through (Automatic, your AI connection, Brave Search, SearXNG or Off)
+  and the Brave, SearXNG and optional OpenAlex settings, stored on the server
+  like the translation keys ([ai_tools.md](ai_tools.md) "search_web").
 - **Advanced**: tool limits and the context budgets (the section's action
   is the Standard / Larger / Custom preset).
 - **Prompts**: the accordion with one Cancel / Save pair.
@@ -485,10 +505,15 @@ tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
-chats of that kind. Settings compares all three kinds in a table; the chat
-popover shows grouped checkbox rows for its kind. They share the permission
-catalog and presets in `AssistantTools.jsx`. The journal-sign-in choice is
-disabled while fetching is off, with its value preserved.
+chats of that kind. Each is a state menu: Allow, Ask (an approval card before
+each call) or Off. Settings compares all three kinds in a table; the chat
+popover shows grouped rows for its kind. They share one catalog: the keys,
+groups, states, defaults and presets in `chat/chatSettings.js`, the labels and
+icons in `AssistantTools.jsx`. The journal-sign-in choice is disabled while
+fetching is off, with its value preserved. An approval card's **Always
+allow** writes the same preference. **Allow in this chat** is not a setting:
+it lasts for one conversation and stays in the browser
+([ai.md](ai.md#asking-before-a-call-approvals)).
 
 Reasoning effort, the context budgets, the tools switch and the permissions
 are account preferences: they live in the profile and follow the account to

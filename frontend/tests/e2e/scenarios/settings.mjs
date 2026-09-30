@@ -140,6 +140,70 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: online search services are set up in the Chat pane, and the engine choice survives a reload", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Chat").click();
+      const tools = row(page, "Search papers online");
+      assert((await tools.innerText()).includes("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web"));
+      const engine = row(page, "Search the web with").getByRole("button", { name: "Search the web with", exact: true });
+      assert((await engine.innerText()).includes("Automatic"));
+      const brave = row(page, "Brave Search");
+      const searxng = row(page, "SearXNG");
+      const openalex = row(page, "OpenAlex");
+      assert((await brave.innerText()).includes("Not set up"));
+      assert((await openalex.innerText()).includes("Optional — works without a key"));
+
+      await brave.getByRole("button", { name: "Set up", exact: true }).click();
+      let dialog = page.getByRole("dialog", { name: "Brave Search", exact: true });
+      await dialog.locator('input[autocomplete="new-password"]').fill("BSA-test-key-123456");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Key …3456")));
+      // Test answers in the row; the real service is not reached from here.
+      await page.route("**/api/ai/search-services/brave/test", (route) => route.fulfill({
+        json: { ok: false, error: "Brave Search answered HTTP 401 — check the key" } }));
+      await brave.getByRole("button", { name: "Test", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("HTTP 401 — check the key")));
+      // Saving with the key left empty keeps the stored one.
+      await brave.getByRole("button", { name: "Edit", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Brave Search", exact: true });
+      assertEq(await dialog.locator('input[autocomplete="new-password"]').inputValue(), "");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Key …3456")));
+
+      await searxng.getByRole("button", { name: "Set up", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "SearXNG", exact: true });
+      await dialog.locator("input.aiKeyInput").fill("https://search.example.org/");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => searxng.innerText().then((text) => text.includes("https://search.example.org")));
+      if (flags.keep) {
+        await row(page, "Online search").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${server.dir}/settings-online-search.png`, animations: "disabled" });
+      }
+      await brave.getByRole("button", { name: "Remove", exact: true }).click();
+      await until(() => brave.innerText().then((text) => text.includes("Not set up")));
+
+      await engine.click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Off", exact: true }).click();
+      await until(() => engine.innerText().then((text) => text.includes("Off")));
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      // Settings search reaches the services by name.
+      await search(page, "SearXNG", "Online search services");
+      assert((await row(page, "Search the web with").innerText()).includes("Off"));
+      assert((await row(page, "SearXNG").innerText()).includes("https://search.example.org"));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const service of ["brave", "searxng"]) {
+        await user.api(`/api/ai/search-services/${service}`, { method: "DELETE" });
+      }
+      await user.api("/api/ai/search-services/engine", { method: "PUT", body: { engine: "auto" } });
+    }
+  });
+
   await step("settings: Ctrl+, opens it; Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
     const { ctx, page } = await setup();
     try {
@@ -795,6 +859,52 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Settings → Workspaces → Data: the export and the merge are background
+  // jobs (docs/dev/tasks.md) — the export's file downloads by itself once
+  // it is ready, a merge into the open workspace reloads the library.
+  const openRow = (page) => page.locator(".settingsPane .aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "open" }) }).first();
+  await step("settings: a workspace export runs in Background tasks and downloads itself", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const download = page.waitForEvent("download", { timeout: 30000 });
+      await page.locator(".ctxMenuItem", { hasText: "Export databases only (.zip)" }).click();
+      const file = await download;
+      assert(/^gamma-export-db-.*\.zip$/.test(file.suggestedFilename()), `export name: ${file.suggestedFilename()}`);
+      assertEq(fs.readFileSync(await file.path()).subarray(0, 2).toString(), "PK");
+      await page.click("button[aria-label='Background tasks']");
+      const row = page.locator(".taskRow", { hasText: "Database export of" }).first();
+      await row.locator(".taskStatus.done").waitFor();
+      assert((await row.innerText()).includes("gamma-export-db-"), "the finished row names its file");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a backup merged in from Workspaces runs as a job and the library reloads with it", async () => {
+    const donor = await user.api("/api/workspaces", { method: "POST", body: { name: "Merge donor" } });
+    await user.api(`/api/blocks?ws=${donor.id}`, { method: "POST", body: { parent_id: "root", content: "Merged in by a job" } });
+    const zip = Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer());
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".ctxMenuItem", { hasText: "Merge a backup into it…" }).click();
+      await (await chooser).setFiles({ name: "donor.zip", mimeType: "application/zip", buffer: zip });
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await page.locator(".confirmModal").getByRole("button", { name: "Merge", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      await page.getByText("Merged in by a job", { exact: true }).first().waitFor();
+      const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "donor.zip");
+      assertEq(merged?.state, "done");
+      assertEq(merged.params.mode, "merge");
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: prompt and connection drafts have save, cancel, and dismissal protection", async () => {
     const { ctx, page } = await setup();
     try {
@@ -891,14 +1001,26 @@ export async function settingsScenarios(env) {
       await nav(page, "Chat").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
       // The matrix and chat popover edit the same per-kind permissions.
-      await page.getByRole("checkbox", { name: "Rename pages — Folder chat", exact: true }).uncheck();
-      await page.getByRole("checkbox", { name: "Use journal sign-ins — Folder chat", exact: true }).uncheck();
+      const pick = async (scope, name, state) => {
+        await scope.getByRole("button", { name, exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: state, exact: true }).click();
+      };
+      await pick(page, "Rename pages — Folder chat", "Off");
+      await pick(page, "Use journal sign-ins — Folder chat", "Off");
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
+      const state = (name) => popover.getByRole("button", { name, exact: true }).innerText();
       assertEq(await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).isChecked(), true);
-      assertEq(await popover.getByRole("checkbox", { name: "Rename pages", exact: true }).isChecked(), false);
-      assertEq(await popover.getByRole("checkbox", { name: "Read pages", exact: true }).isChecked(), true);
-      assertEq(await popover.getByRole("checkbox", { name: "Use journal sign-ins", exact: true }).isChecked(), false);
+      assertEq(await state("Rename pages"), "Off");
+      assertEq(await state("Read pages"), "Allow");
+      assertEq(await state("Move pages"), "Ask", "changes ask unless set otherwise");
+      assertEq(await state("Use journal sign-ins"), "Off");
+      // And back: the popover's choice is the one Settings shows.
+      await pick(popover, "Rename pages", "Allow");
+      await page.locator('[title^="Chat settings"]').click();
+      await openSettings(page);
+      await nav(page, "Chat").click();
+      assertEq(await page.getByRole("button", { name: "Rename pages — Folder chat", exact: true }).innerText(), "Allow");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -912,49 +1034,66 @@ export async function settingsScenarios(env) {
         await nav(page, "Chat").click();
         const master = page.getByRole("checkbox", { name: "Assistant tools", exact: true });
         const matrix = page.getByRole("group", { name: "Tool permissions by chat type" });
-        const permission = (tool, kind = "Folder chat") => matrix.getByRole("checkbox", { name: `${tool} — ${kind}`, exact: true });
+        // Each cell is a state menu (Allow / Ask / Off) named "<tool> — <chat kind>".
+        const permission = (tool, kind = "Folder chat") => matrix.getByRole("button", { name: `${tool} — ${kind}`, exact: true });
+        const stateOf = (tool, kind) => permission(tool, kind).innerText();
+        const menu = page.locator(".uiSelectMenu");
+        const choose = async (tool, kind, state) => {
+          await permission(tool, kind).click();
+          await menu.getByRole("button", { name: state, exact: true }).click();
+        };
         const preset = (kind) => matrix.getByRole("button", { name: `${kind} permissions`, exact: true });
         const choosePreset = async (kind, label) => {
           await preset(kind).click();
-          await page.locator(".uiSelectMenu").getByRole("button", { name: label, exact: true }).click();
+          await menu.getByRole("button", { name: label, exact: true }).click();
         };
         await master.check();
-        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "All tools");
+        for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "Allow all");
+        assertEq(await stateOf("Rename pages"), "Allow");
         assertEq(await permission("Rename pages", "PDF chat").count(), 0);
         assertEq(await permission("List pages", "Notes chat").count(), 0);
+        await choosePreset("Folder chat", "Ask before changes");
+        for (const tool of ["Rename pages", "Move pages", "Edit note blocks"]) {
+          assertEq(await stateOf(tool), "Ask", `${tool} asks before changes`);
+        }
+        assertEq(await stateOf("Fetch documents"), "Allow");
 
         await choosePreset("Folder chat", "Read library");
         for (const tool of ["Search papers online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
-          assertEq(await permission(tool).isChecked(), false, `${tool} is off in read-library mode`);
+          assertEq(await stateOf(tool), "Off", `${tool} is off in read-library mode`);
         }
-        assertEq(await permission("Read pages").isChecked(), true);
-        assertEq(await permission("Fetch documents", "PDF chat").isChecked(), true);
-        await permission("Fetch documents").check();
+        assertEq(await stateOf("Read pages"), "Allow");
+        assertEq(await stateOf("Fetch documents", "PDF chat"), "Allow");
+        await choose("Fetch documents", "Folder chat", "Allow");
         assertEq(await permission("Use journal sign-ins").isDisabled(), false);
-        await permission("Use journal sign-ins").check();
-        await permission("Fetch documents").uncheck();
+        // Journal sign-ins are part of fetching: on or off, nothing to ask.
+        await permission("Use journal sign-ins").click();
+        assertEq(JSON.stringify(await menu.locator(".ctxMenuItem").allInnerTexts()), JSON.stringify(["Allow", "Off"]));
+        await menu.getByRole("button", { name: "Allow", exact: true }).click();
+        await choose("Fetch documents", "Folder chat", "Off");
         assertEq(await permission("Use journal sign-ins").isDisabled(), true);
-        assertEq(await permission("Use journal sign-ins").isChecked(), true, "dependent choices are remembered");
-        await permission("Fetch documents").check();
-        await permission("Use journal sign-ins").uncheck();
+        assertEq(await stateOf("Use journal sign-ins"), "Allow", "dependent choices are remembered");
+        await choose("Fetch documents", "Folder chat", "Allow");
+        await choose("Use journal sign-ins", "Folder chat", "Off");
         assertEq(await preset("Folder chat").innerText(), "Custom");
         await choosePreset("PDF chat", "Read & search");
-        assertEq(await permission("Edit note blocks", "PDF chat").isChecked(), false);
-        assertEq(await permission("Search papers online", "PDF chat").isChecked(), true);
+        assertEq(await stateOf("Edit note blocks", "PDF chat"), "Off");
+        assertEq(await stateOf("Search papers online", "PDF chat"), "Allow");
 
         await master.uncheck();
         assertEq(await preset("Folder chat").isDisabled(), true);
         assertEq(await permission("Read pages").isDisabled(), true);
         await master.check();
-        assertEq(await permission("Use journal sign-ins").isChecked(), false);
-        assertEq(await permission("Use journal sign-ins", "PDF chat").isChecked(), true);
+        assertEq(await stateOf("Use journal sign-ins"), "Off");
+        assertEq(await stateOf("Use journal sign-ins", "PDF chat"), "Allow");
         const fits = await matrix.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
         assert(fits.scroll <= fits.width + 1, `tool permissions fit ${viewport.width}px: ${JSON.stringify(fits)}`);
-        // Every switch has a full accessible name and is reachable by keyboard.
-        await permission("Use journal sign-ins").focus();
-        await page.keyboard.press("Space");
-        assertEq(await permission("Use journal sign-ins").isChecked(), true);
-        await page.keyboard.press("Space");
+        // Every menu has a full accessible name and opens from the keyboard.
+        await permission("Rename pages").focus();
+        await page.keyboard.press("Enter");
+        await menu.waitFor();
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "detached" });
         if (flags.keep) {
           await row(page, "Tools").scrollIntoViewIfNeeded();
           await page.screenshot({ path: `${server.dir}/tool-permissions-${viewport.width}.png`, animations: "disabled" });

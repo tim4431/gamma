@@ -22,6 +22,37 @@ export function newInk(page, width, height) {
     space: { kind: "pdf-page", page, width, height }, strokes: [] };
 }
 
+// A notebook sheet's ink (notebook/notebook.js): the sheet is the canvas,
+// points from its top-left corner, y down, like a PDF page's frame.
+export function newCanvasInk(width, height) {
+  return { format: FORMAT, version: VERSION, space: { kind: "canvas", width, height }, strokes: [] };
+}
+
+// The upload bytes of an ink file: keys sorted at every level and no
+// whitespace, so the same strokes are the same file on every client (the
+// server stores an upload as it came and names it by its hash).
+export function serializeInk(ink) {
+  const canon = (v) => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === "object") {
+      const out = {};
+      for (const k of Object.keys(v).sort()) if (v[k] !== undefined && v[k] !== null) out[k] = canon(v[k]);
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(canon(ink));
+}
+
+// What a group's block carries for its file at `url`: the reference, the
+// stroke count and, on a PDF page, the page and the box in the highlight
+// shape. Every client writes these the same way; null clears a key.
+export function inkProps(ink, url) {
+  const pdf = ink.space?.kind === "pdf-page";
+  return { ink_url: url, ink_strokes: ink.strokes.length,
+    pdf_page: pdf ? ink.space.page : null, pdf_position: pdf ? pdfPositionOf(ink) : null };
+}
+
 const ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function strokeId() {
   let s = "";
@@ -276,6 +307,73 @@ export function duplicateStrokes(ink, ids, dx, dy) {
   return { ink: translateStrokes({ ...ink, strokes: [...ink.strokes, ...copies] }, copyIds, dx, dy), ids: copyIds };
 }
 
+// Two strokes are the same when every field and sample is.
+export function sameStroke(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const x = a[k] ?? null, y = b[k] ?? null;
+    if (k === "pts") {
+      if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    } else if (x !== y) return false;
+  }
+  return true;
+}
+
+const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStroke(s, b[i]));
+
+// Apply the change base → ours to theirs (the group as stored now), stroke
+// by stroke: stroke ids survive every edit, so they play the part text
+// offsets play in the text merge. → {ink, clean}. Where theirs left a
+// stroke as the base had it, ours' change applies in place; a stroke ours
+// added goes after the stroke before it that the result keeps, behind
+// strokes theirs added there; a stroke both changed keeps theirs' version,
+// and a stroke one side changed survives the other's erasure (either makes
+// the merge unclean). base null merges as a union by id. The same rule as
+// gamma/ink.py merge_ink; tests/shared/inkmerge.json pins both. Undo and
+// redo rebase through it too (the action's after → before onto now).
+export function mergeInk(base, ours, theirs) {
+  const bList = base?.strokes || [];
+  if (base && sameStrokes(theirs.strokes, bList)) return { ink: ours, clean: true };
+  if (sameStrokes(ours.strokes, bList) || sameStrokes(ours.strokes, theirs.strokes)) return { ink: theirs, clean: true };
+  const b = new Map(bList.map((s) => [s.id, s]));
+  const o = new Map(ours.strokes.map((s) => [s.id, s]));
+  let clean = true;
+  const out = [];
+  for (const t of theirs.strokes) {
+    const was = b.get(t.id), mine = o.get(t.id);
+    if (!was) {
+      if (mine && !sameStroke(mine, t)) clean = false;
+      out.push(t);
+    } else if (!mine) {
+      if (!sameStroke(t, was)) { clean = false; out.push(t); }
+    } else if (sameStroke(mine, was) || sameStroke(t, mine)) out.push(t);
+    else if (sameStroke(t, was)) out.push(mine);
+    else { clean = false; out.push(t); }
+  }
+  const present = new Set(out.map((s) => s.id));
+  let anchor = null;
+  for (const s of ours.strokes) {
+    if (present.has(s.id)) { anchor = s.id; continue; }
+    const was = b.get(s.id);
+    if (was) {
+      if (sameStroke(s, was)) continue;
+      clean = false;
+    }
+    let at = anchor ? out.findIndex((x) => x.id === anchor) + 1 : 0;
+    while (at < out.length && !b.has(out[at].id) && !o.has(out[at].id)) at++;
+    out.splice(at, 0, s);
+    present.add(s.id);
+    anchor = s.id;
+  }
+  // a merge that changes nothing is that file itself (a change sent again)
+  if (sameStrokes(out, theirs.strokes)) return { ink: theirs, clean };
+  if (sameStrokes(out, ours.strokes) && JSON.stringify(ours.space) === JSON.stringify(theirs.space)) return { ink: ours, clean };
+  return { ink: { format: FORMAT, version: VERSION, space: theirs.space, strokes: out }, clean };
+}
+
 export function appendStroke(ink, stroke) {
   return { ...ink, strokes: [...(ink.strokes || []), stroke].slice(-MAX_STROKES) };
 }
@@ -392,6 +490,78 @@ export function boundsOf(ink, ids) {
   let out = null;
   for (const s of ink?.strokes || []) if (want.has(s.id)) out = unionBox(out, strokeBounds(s));
   return out;
+}
+
+// --- replay ----------------------------------------------------------------
+// A drawing as it was written. A stroke starts at its wall-clock `t0` plus
+// its first sample's `t` (a run the partial eraser cut out of a longer
+// stroke keeps the times it had), and its samples follow their `t`. Pauses,
+// between strokes and inside one, shrink to `pause`, and a replay longer
+// than `max` plays faster, so a page written over an hour replays in
+// seconds. Strokes play in the order they were drawn: by that start, the
+// file's order breaking ties; a stroke without timing counts as drawn right
+// after the stroke before it in the file, its samples spread over UNTIMED_MS.
+export const REPLAY_PAUSE = 400;
+export const REPLAY_MAX = 15000;
+const UNTIMED_MS = 300;
+
+// → {duration, strokes: [{id, index, start, end, times}]} in ms from the
+// replay's start, in drawing order: `index` is the stroke's place in the
+// file, `times` each sample's time.
+export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}) {
+  let before = -Infinity;
+  const order = (ink?.strokes || []).map((stroke, index) => {
+    const samples = decodeStroke(stroke);
+    const timed = samples.length > 0 && samples.every((p) => p.t != null);
+    const wallStart = Number.isFinite(stroke.t0) ? stroke.t0 + (timed ? samples[0].t : 0) : null;
+    before = wallStart ?? before;
+    return { stroke, index, samples, timed, wallStart, key: before };
+  }).sort((a, b) => a.key - b.key || a.index - b.index);
+  const clamp = (v) => Math.max(0, Math.min(pause, v));
+  const strokes = [];
+  let clock = 0, lastEnd = null;   // lastEnd: the wall-clock end of the stroke before
+  for (const { stroke, index, samples, timed, wallStart } of order) {
+    if (!samples.length) continue;
+    const offsets = [0];
+    for (let i = 1; i < samples.length; i++) {
+      offsets.push(offsets[i - 1] + (timed ? clamp(samples[i].t - samples[i - 1].t) : UNTIMED_MS / (samples.length - 1)));
+    }
+    const gap = !strokes.length ? 0 : wallStart != null && lastEnd != null ? clamp(wallStart - lastEnd) : pause / 2;
+    const start = clock + gap;
+    const times = offsets.map((o) => start + o);
+    strokes.push({ id: stroke.id, index, start, end: times[times.length - 1], times });
+    clock = times[times.length - 1];
+    lastEnd = wallStart == null ? null : wallStart + (timed ? samples[samples.length - 1].t - samples[0].t : 0);
+  }
+  if (clock > max) {
+    const f = max / clock;
+    for (const item of strokes) {
+      item.start *= f;
+      item.end *= f;
+      item.times = item.times.map((v) => v * f);
+    }
+    clock = max;
+  }
+  return { duration: clock, strokes };
+}
+
+// The drawing at replay time `t` (ms): the strokes begun by then, in the
+// order they were drawn, the one being written cut to the samples it had
+// (a prefix of its delta-coded `pts` is its first samples). The file itself
+// once the replay has ended.
+export function inkAtTime(ink, timeline, t) {
+  if (!ink || t >= timeline.duration) return ink;
+  const strokes = [];
+  for (const item of timeline.strokes) {
+    if (item.start > t) break;
+    const stroke = ink.strokes[item.index];
+    if (!stroke) continue;
+    if (t >= item.end) { strokes.push(stroke); continue; }
+    let k = 1;
+    while (k < item.times.length && item.times[k] <= t) k++;
+    strokes.push({ ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) });
+  }
+  return { ...ink, strokes };
 }
 
 // --- rendering -------------------------------------------------------------

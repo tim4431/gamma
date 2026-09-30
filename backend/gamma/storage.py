@@ -154,6 +154,13 @@ def display_filename(name: str, fallback: str = "") -> str:
     return (leaf or fallback)[:500]
 
 
+def attachment_disposition(filename: str) -> str:
+    """A download's ``Content-Disposition``: an ASCII fallback name plus the
+    UTF-8 one (RFC 6266), so a Chinese or accented title survives."""
+    ascii_name = filename.encode("ascii", "ignore").decode().replace('"', "") or "download"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{urllib.parse.quote(filename)}"
+
+
 def url_filename(url: str) -> str:
     """The display name a URL suggests for the file behind it: its last path
     segment, unquoted, without query or fragment — "" when the URL has no

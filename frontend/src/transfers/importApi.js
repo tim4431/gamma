@@ -12,6 +12,11 @@ export function importFormat(source, file) {
   if (!format) throw new Error("Unsupported import source");
   return source === "markdown" && !/\.zip$/i.test(file.name) ? { ...format, endpoint: "markdown-file" } : format;
 }
+// The dialog's source of a staged review's (an import job's params.source).
+export function dialogSource(endpoint) {
+  return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
+    || (endpoint === "markdown-file" ? "markdown" : "zotero");
+}
 // `onProgress` gets {phase: "upload", loaded, total} while the bytes go up,
 // then {phase: "processing"} while the server reads the archive.
 export function requestImport({ source, file, folder = "", strip }, { signal, onProgress } = {}) {
@@ -28,10 +33,8 @@ export function requestImport({ source, file, folder = "", strip }, { signal, on
   });
 }
 
-export function commitImport(reviewId, selected, signal) {
-  return apiJson(`${API}/import/review/${encodeURIComponent(reviewId)}`, { method: "POST", signal,
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selected: [...selected] }) });
-}
+// The import itself is a background job: tasks.start("import", importJobBody(…)).
+export const importJobBody = (reviewId, selected) => ({ review_id: reviewId, selected: [...selected] });
 export function discardImport(reviewId) {
   if (reviewId) return apiJson(`${API}/import/review/${encodeURIComponent(reviewId)}`, { method: "DELETE" }).catch(() => {});
 }

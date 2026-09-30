@@ -1,7 +1,8 @@
 """The browser extension's endpoints (Gamma Connector).
 
-One fat endpoint, ``POST /api/clip``, runs the whole "save this page" ingest
-that the app's ``openPdf`` orchestrates client-side: dedup by identifier,
+One fat endpoint, ``POST /api/clip`` (``save_clip``, which the chat agent's
+save_paper calls too), runs the whole "save this page" ingest that the
+app's ``openPdf`` orchestrates client-side: dedup by identifier,
 resolve the link to a PDF, store a copy, create the page, file it, and kick
 off the metadata lookup. When no PDF can be resolved the clip still becomes a
 page — one carrying the tab's URL as ``properties.web_url`` (and the clipped
@@ -253,8 +254,13 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
 # Sync on purpose: resolving and downloading run in FastAPI's threadpool.
 @router.post("/clip")
 def clip(payload: ClipRequest, request: Request):
-    ws = require_ws(request, write=True)
-    actor = request.state.user or ""
+    return save_clip(require_ws(request, write=True), request.state.user or "", payload)
+
+
+def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
+    """The clip ingest for a writer of ``ws``, which the caller has checked:
+    ``POST /api/clip`` and the chat agent's save_paper (gamma/ai_tools.py).
+    Raises HTTPException like the route."""
     source_url = (payload.source_url or "").strip()
     pdf_url = (payload.pdf_url or "").strip()
     doi = norm_doi(payload.doi) or norm_doi(pdf_url) or norm_doi(source_url)

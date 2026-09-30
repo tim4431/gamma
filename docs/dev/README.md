@@ -67,9 +67,11 @@ These describe the implementation unless explicitly marked as plans.
 | Block operations, page sockets, reconciliation, and undo | [Collaboration](collab.md) |
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
-| Ink format, input, editing, and PDF ink import/export | [Handwriting](handwriting.md) |
+| Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
+| Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
+| Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folder labels, page cards, recents, and trash | [Home library](home_library.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
@@ -85,7 +87,7 @@ These describe the implementation unless explicitly marked as plans.
 | Tours, anchors, triggers, and seeded welcome content | [Onboarding](onboarding.md) |
 | Browser connector | [Extension](extension.md) |
 | Electron shell, local servers, packaging, and QA | [Desktop](desktop.md) |
-| Home-screen web app and device-specific checks | [iPad](ipad.md) |
+| The native iPad app (offline replica, Pencil) and the home-screen web app | [iPad](ipad.md) |
 | Gamma Cloud identity service and server sign-in | [Cloud accounts](cloud_accounts.md) |
 | Public website build and deployment | [Website](../../sites/README.md) |
 

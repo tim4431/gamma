@@ -20,6 +20,7 @@ demo (demo.gammapdf.com) runs a branch build of the server image:
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; dispatched from any branch for the demo (`update-demo-server` skill) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
+| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink, notebook or replica modules, or the frontend's dependencies; manual dispatch | pass/fail on macOS: the shared JavaScript bundled and run bare, the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `Codex plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
 The `desktop` workflow also builds the versioned Codex plugin ZIP, its setup
@@ -151,7 +152,8 @@ The Chrome Web Store upload stays manual
 Five parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
 backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 `-n auto` over pytest-xdist), the frontend unit tests + build (Node 22,
-`npm test` then `npm run build`), the browser suite
+`npm test` then `npm run build`, then the iPad app's JavaScript bundled and
+run in a bare context, `ipad/scripts/core.test.mjs`), the browser suite
 (`npm run e2e -- --continue` against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
@@ -165,6 +167,16 @@ skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`
 and `site.yml` check those. (A PR touching the brand artwork the site
 copies still runs `check`: its `branding` job owns those files.) The `merge` skill waits for it before merging; a
 red check is fixed on the branch as normal work.
+
+## `ipad.yml`
+
+One macOS job (`macos-15`) for the iPad app. It runs `npm ci` in
+`frontend/`, then `ipad/scripts/build-core.mjs` and its bare-context test.
+`xcodegen generate` makes the project from `ipad/project.yml`.
+`xcodebuild test` runs on the newest iPad simulator the image has.
+`xcodebuild build -sdk iphoneos` makes an unsigned device build, with
+`CODE_SIGNING_ALLOWED=NO`. Nothing is signed or uploaded: running on an
+iPad takes a developer's own team, set in Xcode.
 
 ## `docker.yml`
 

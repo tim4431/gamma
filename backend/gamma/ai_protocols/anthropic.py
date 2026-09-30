@@ -107,7 +107,8 @@ class Anthropic(Protocol):
         body = {"model": model, "max_tokens": max_tokens, "system": system,
                 "messages": _messages(messages)}
         if tools:
-            body["tools"] = [{"name": t["name"], "description": t["description"],
+            body["tools"] = [t["hosted"] if t.get("hosted") else
+                             {"name": t["name"], "description": t["description"],
                               "input_schema": t["parameters"]} for t in tools]
         if effort and effort != "none":
             # "none"/"minimal" are OpenAI's lowest levels; Anthropic's is
@@ -124,6 +125,13 @@ class Anthropic(Protocol):
             "anthropic-version": API_VERSION,
             "Content-Type": "application/json",
         })
+
+    def hosted_web_search(self, conf):
+        # Anthropic's server tool; a service speaking this API elsewhere
+        # is not known to run it.
+        if not is_anthropic_platform(conf.get("base_url", "")):
+            return None
+        return {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 
     def reply_text(self, data):
         text = "".join(item.get("text", "") for item in data.get("content", []) if item.get("type") == "text")
@@ -153,12 +161,22 @@ class Anthropic(Protocol):
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
                 state["tool"] = {"id": block.get("id") or "", "name": block.get("name") or "", "json": ""}
+            elif block.get("type") == "web_search_tool_result" and isinstance(block.get("content"), list):
+                # The hosted search's results arrive whole with the block.
+                found = [{"url": r["url"], "title": r.get("title") or ""} for r in block["content"]
+                         if isinstance(r, dict) and r.get("type") == "web_search_result" and r.get("url")]
+                if found:
+                    yield ("web_sources", found)
         elif kind == "content_block_delta":
             delta = event.get("delta") or {}
             tool = state.get("tool")
             if delta.get("type") == "input_json_delta" and tool is not None:
                 tool["json"] += delta.get("partial_json") or ""
                 yield ("tool_delta", dict(tool))
+            elif delta.get("type") == "citations_delta":
+                cite = delta.get("citation") or {}
+                if cite.get("url"):
+                    yield ("web_sources", [{"url": cite["url"], "title": cite.get("title") or ""}])
             elif delta.get("text"):
                 yield ("text", delta["text"])
         elif kind == "content_block_stop":

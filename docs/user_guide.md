@@ -37,6 +37,21 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 - A **stylus** (Apple Pencil, Surface Pen, Wacom) draws right away even with the strip closed, with pressure, while fingers keep scrolling and pinching; tap ink to select it. The mouse draws once the strip is open. Settings → Reading & editing → *Draws with* chooses pen only or pen and finger.
 - The strokes on a page become **one block in the notes**, with your caption under it; *New group* starts another block. Ink is exported and imported with the notes like any other block.
+- **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again on the page (it scrolls there) and in the card, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
+- **Transcribe with AI**: in a handwriting block's ⋮⋮ menu. The chat reads the strokes and writes them out as text in the block's caption; like any change, it asks first unless **Edit note blocks** is set to Allow. Math comes out as LaTeX, and a word it can't read is marked *[illegible]*. With **Edit note blocks** Off it answers in the chat instead. You can also ask the chat about your handwriting: it looks at the strokes where you wrote them.
+- Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
+
+### Notebooks
+
+A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
+
+- **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
+- **Two views.** The notes view draws each sheet right among your notes, with its tools under it: its pen, its **Paper**, a replay of what's written on it, **+** for another sheet after it, and **Notebook view**, which shows the sheets large in the viewer instead, with your notes beside them. **Notes view** in the viewer's side bar, or closing the viewer, goes back. Each page remembers its view in this browser.
+- Writing near the bottom of the last sheet adds the next one, so there is always paper below. **Add page** at the end of the notebook view adds one too. A new sheet takes the paper of the sheet before it.
+- **Paper** sets a sheet's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background; *Apply to all pages* gives every sheet that paper.
+- The notes list the sheets ("Page 1", or a title you type). A sheet's handwriting is folded under it; unfold it to see the drawings as cards. Notes you type under a sheet are about that page.
+- **Export → Annotated PDF** gives the sheets as a PDF.
+- On the iPad a page with sheets opens in the notebook view, with the notes beside them.
 
 ### Links inside the PDF
 
@@ -98,11 +113,25 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, compare findings, rename pages, file them into folders — *"rename these to AuthorYear style"*, *"which of these measure T1?"*. It can also search the web for papers (Crossref, arXiv) and read a document by DOI, arXiv id or URL.
 
-In a paper or a notes page it can also edit your notes when you ask — rewrite a block, add one, append to it, move it — if the **Edit note blocks** permission is on.
+- **Save papers**: when you ask, it adds the papers it found to your library, the way **Save to library** does (*"save the three most cited follow-ups into refs"*). A paper you already have is filed, not duplicated.
+- **Citations**: it builds references and BibTeX from the metadata your pages keep (*"BibTeX for everything in this folder"*). It says when a page has no metadata instead of making one up.
+- **Recently deleted**: in a folder chat it can find a page you deleted and put it back (*"bring back the page on Rydberg blockade I deleted last week"*).
+- **Handwriting**: it can look at your pen strokes and read or transcribe them.
 
-**Settings → Chat → Tools** compares permissions for folder, PDF and notes chats. Start with **Read library**, **Read & search**, or **All tools**, then adjust individual switches. Online paper search, document fetching and **Use journal sign-ins** are separate choices. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+In a paper or a notes page it can also edit your notes when you ask: rewrite a block, add one, append to it or move it. The **Edit note blocks** permission controls this.
 
-While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+**Asking before a change.** By default the assistant reads freely but asks before it changes anything. When it wants to rename a page, file it into a folder, save a paper, restore a deleted page or edit your notes, the reply shows a card with the change. Words it removes are struck through, and words it adds are highlighted. Pick one:
+
+- **Allow once**: make this change.
+- **Allow in this chat**: make it, and don't ask again for this kind of change in this conversation. The composer shows **Allowed in this chat**; click it to be asked again. A new chat asks again.
+- **Always allow**: make it, and stop asking for this kind of change in every chat of this kind (it sets the permission to Allow in Settings).
+- **Don't allow**: nothing changes. You can add a line on what to do instead ("file it under Reviews"), and the assistant follows it; left empty, it carries on without the change.
+
+So you can ask it to read a folder of papers and write what it finds into your notes. You approve the edits one by one, or once for the whole conversation. A card left unanswered for ten minutes, or a reply you stop, makes no change.
+
+**Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+
+While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
 
@@ -238,6 +267,7 @@ Account credentials and private AI keys are never part of an export.
 Gamma is a web app; install it from the browser so it opens from an icon, full screen, pointed at your server.
 
 - **iPad / iPhone**: open your Gamma address in Safari, Share → **Add to Home Screen**. You may be asked to sign in once more (the installed app keeps its own cookies). The Apple Pencil writes on papers right away, with pressure, while fingers scroll and pinch.
+- **The Gamma iPad app** keeps a copy of one workspace on the iPad, so PDFs and notebooks open and take handwriting with no connection. It syncs with your server whenever it can reach it, the way a desktop offline copy does. Sign in on your server's page, pick a workspace, and the first sync brings it over. Search, AI chat and sharing open Gamma on the web from inside the app. It is built from source for now ([ipad/README.md](../ipad/README.md)).
 - **Android**: Chrome → ⋮ → **Install app**.
 - **Windows / macOS / Linux**: in Chrome or Edge, the install icon at the right end of the address bar, or **Install Gamma** from the browser menu.
 
@@ -248,7 +278,7 @@ The installed web app still needs the server to be reachable. For a library that
 - The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
 - **Tabs** sync to your account across devices. Each shows whether it is a paper or a page; the tab you are on always scrolls into view, and a plain mouse wheel over the strip scrolls it sideways. When they don't all fit, **⌄** with the count lists every open tab, with a filter. Middle-click closes a tab; right-click pins it (pinned tabs move to the front, show a pin in place of × — click it to unpin — and can't be middle-closed); drag to reorder.
 - Closing the active tab returns to the page you were viewing before it, at its saved reading position, or to the folder or label view you opened it from. Closed tabs are skipped. Closing a background tab keeps your current page open.
-- **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
+- **Background tasks** (exports, backups, restores, imports, uploads, downloads) show in the top bar's Background tasks list with their progress. An export or import goes on there when you close its window; click its row to open the window again, and download a finished export from its row.
 - A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing. A link to a page in Recently deleted says so and offers **Restore**.
 - On a phone, and on a tablet held upright, everything becomes full-screen views behind one bottom bar: **Library** (home), the page's **PDF** and **Notes**, **Chat**, then **Add**, **Search**, a page's **Share** and **More** — your account and settings, background tasks (a spinner on More while something runs), Import/Export and the PDF window toggle. The top bar shows only while tabs are open. Turn the tablet sideways for the docked windows.
 

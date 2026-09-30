@@ -1,0 +1,8 @@
+# Generated: the bundle of the web app's JavaScript (scripts/build-core.mjs)
+# and the Xcode project (xcodegen generate, from project.yml).
+GammaIPad/Resources/gamma-core.js
+GammaIPad/Info.plist
+*.xcodeproj/
+build/
+DerivedData/
+*.xcresult/

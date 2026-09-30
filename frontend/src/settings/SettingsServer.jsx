@@ -43,7 +43,7 @@ export function ServerSettings({ value }) {
       <Section title={t("Databases")}>
         <DatabaseCheck setStatus={value.setStatus} />
       </Section>
-      <ServerBackups setStatus={value.setStatus} confirm={value.confirm} />
+      <ServerBackups setStatus={value.setStatus} confirm={value.confirm} tasks={value.tasks} />
       <Section title={t("Log")}>
         <ServerLogBox setStatus={value.setStatus} />
       </Section>

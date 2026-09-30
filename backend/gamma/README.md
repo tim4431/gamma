@@ -18,10 +18,13 @@ blocks_store.py    recursive-CTE tree helpers
 storage.py         uploads (content-addressed, written atomically) + the upload-reference grammar
 upload_gc.py       unreferenced uploads: recorded, kept 30 days, then purged (background thread)
 trash.py           Recently deleted: the trashed pages, their 30-day purge (background sweeper)
+ink.py             the gamma-ink stroke file: schema, codec, geometry, renderers, the three-way stroke merge
+notebook.py        notebook pages: paper rules, sheets, the notebook as a PDF (docs/dev/notebooks.md)
 ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)
 ai_client.py       provider-agnostic AI transport (open, read, stream, errors)
 ai_catalog.py      live model listings + context windows (provider, then models.dev)
 ai_context.py      PDF attachments, extraction, and chat context assembly
+ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 logseq_import.py   EDN / Markdown importers
 ratelimit.py       in-process fixed-window limits per key (bounded; the client address is the peer)
 compression.py     gzip for whole JSON answers only (never streams, files or ranges)

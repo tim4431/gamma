@@ -46,14 +46,21 @@ def test_admin_exports_another_account(root, alice):
     assert "bkalice" in r.headers["content-disposition"]
 
 
-def test_admin_export_progress_follows_the_target(root):
-    r = root.get("/api/export-progress?user=bkalice")
-    assert r.status_code == 200 and r.json()["active"] is False
+def test_admin_export_job_of_another_account(root, alice):
+    from gamma import jobs
+
+    r = root.post("/api/jobs/workspace-export", json={"user": "bkalice", "uploads": False})
+    assert r.status_code == 200, r.text
+    job = jobs.wait(r.json()["id"])
+    assert job["state"] == "done" and job["owner"] == "bkadmin"
+    z = zipfile.ZipFile(io.BytesIO(root.get(f"/api/jobs/{job['id']}/download").content))
+    assert json.loads(z.read("manifest.json"))["user"] == "bkalice"
+    assert "bkalice" in job["artifact"]["name"]
 
 
 def test_non_admin_cannot_export_another_account(alice):
     assert alice.get("/api/export?user=bkbob").status_code == 403
-    assert alice.get("/api/export-progress?user=bkbob").status_code == 403
+    assert alice.post("/api/jobs/workspace-export", json={"user": "bkbob"}).status_code == 403
     # naming yourself is always fine
     assert alice.get("/api/export?user=bkalice").status_code == 200
 

@@ -8,6 +8,12 @@ import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
+import { exportJobBody } from "../transfers/transferFormats";
+import { importSummary } from "../transfers/importReview";
+import { useTasks } from "../tasks/useTasks";
+import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
+import { kindOf, progressText, retryOf, taskTitle } from "../tasks/taskKinds.js";
+import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
@@ -42,8 +48,8 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
+  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
 } from "../shared/ui/Icons";
 
 
@@ -93,8 +99,15 @@ import { useNotices } from "./useNotices";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
-import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
+import { NoteSheetContext } from "../notebook/NoteSheet";
+import {
+  firstSheetId, inkBySheet, isSheet, newSheet, normalizePaper, paperBefore, sheetIdAfter, sheetOfBlock, sheetsOf,
+} from "../notebook/notebook";
+import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
+import * as inkReplay from "../ink/inkReplay";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -343,39 +356,6 @@ function CardCarousel({ label, children, className }) {
 
 // The share popover's invite box: the account directory as a picker, fetched
 // only while the popover is open (the box mounts with it).
-// One line of the background-tasks popover: status glyph, kind glyph, the
-// name (with a thin progress bar under it while the work can measure
-// itself), the info text, and a stop button while the work can be stopped.
-// The row clips long names and messages; hovering shows the whole thing
-// (a failed import's full reason, a long URL).
-function TransferRow({ status, icon, name, info, progress, onStop }) {
-  return (
-    <div className={`transferRow ${status}`} title={info ? `${name} — ${info}` : name}>
-      <span className={`transferStatus ${status}`}>
-        {status === "active" ? <span className="transferSpin inline" />
-          : status === "done" ? <CheckIcon size={14} />
-            : status === "cancelled" ? <XIcon size={14} />
-              : <AlertCircleIcon size={14} />}
-      </span>
-      <span className="transferKind">{icon}</span>
-      <span className="transferMain">
-        <span className="transferName">{name}</span>
-        {status === "active" && typeof progress === "number" ? (
-          <span className="transferBar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
-            aria-valuenow={Math.round(Math.max(0, Math.min(1, progress)) * 100)}>
-            <span style={{ width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` }} />
-          </span>
-        ) : null}
-      </span>
-      <span className="transferInfo">{info || ""}</span>
-      {onStop ? (
-        <button type="button" className="uiClose uiCloseSm transferStop" title={t("Stop")} aria-label={t("Stop {name}", { name: name })}
-          onClick={(e) => { e.stopPropagation(); onStop(); }}><XIcon size={14} /></button>
-      ) : <span className="transferStopSlot" />}
-    </div>
-  );
-}
-
 export default function App() {
   // Authorization must never mount library effects (saved-page restore,
   // autosave, navigation hotkeys). They can otherwise replace its URL.
@@ -691,91 +671,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setShareGate("signin");
   }
 
-  // Download an /api/export backup zip. Fetched by hand (not a plain link
-  // navigation) so the user sees the two slow parts: the server zipping a big
-  // library ("preparing", no byte counter) and the download itself (percent
-  // from content-length). Shows in the pill + a background-tasks row.
-  // `target` names another account (admins only, from Settings → Users);
-  // omitted it means your own data.
-  // Download a workspace as an /api/export zip (`wsId` — any of mine; the
-  // open one by default), or every personal workspace at once
-  // (/api/export-all, one export zip per workspace inside).
+  // Export a workspace as a backup zip (`wsId` — any of mine; the open one
+  // by default), or every personal workspace at once (one export zip per
+  // workspace inside): a background job (workspace-export) whose zipping
+  // shows in the pill and Background tasks, and whose file downloads by
+  // itself once it is ready — the browser's download manager fetches it,
+  // however big (docs/dev/tasks.md).
   function exportWorkspace(wsId, withUploads) {
-    const target = wsId && wsId !== getCurrentWorkspace() ? wsId : null;
-    const name = target ? workspaces.find((w) => w.id === target)?.name : workspace?.name;
-    return downloadWorkspaceExport({
-      url: `${API}/export?uploads=${withUploads ? 1 : 0}${target ? `&ws=${encodeURIComponent(target)}` : ""}`,
-      progressUrl: `${API}/export-progress${target ? `?ws=${encodeURIComponent(target)}` : ""}`,
-      label: `${withUploads ? "Export" : "Export database"}${name ? ` — ${name}` : ""}`,
-    });
+    return startWorkspaceExport({ ws: wsId || getCurrentWorkspace(), uploads: withUploads });
   }
   function exportAll(withUploads) {
-    return downloadWorkspaceExport({
-      url: `${API}/export-all?uploads=${withUploads ? 1 : 0}`,
-      label: withUploads ? t("Export all workspaces") : t("Export all databases"),
-    });
+    return startWorkspaceExport({ all: true, uploads: withUploads });
   }
-  async function downloadWorkspaceExport({ url, progressUrl, label }) {
-    const ctl = new AbortController();
-    const tid = addTransfer({ name: label, kind: "download", info: t("preparing…"), cancel: () => ctl.abort() });
-    postPill("backup", { msg: t("Preparing export — the server is zipping your data…"), spinner: true });
-    // The response only starts once the server finished zipping; until then,
-    // poll the zipping percent from the export-progress side-channel.
-    const zipPoll = progressUrl && setInterval(async () => {
-      try {
-        const p = await apiJson(progressUrl);
-        if (p.active && p.total) {
-          const pct = Math.min(99, Math.floor((p.done / p.total) * 100));
-          postPill("backup", { msg: t("Preparing export — zipping… {pct}% ({done} of {total})", { pct, done: fmtBytes(p.done), total: fmtBytes(p.total) }), spinner: true });
-          updateTransfer(tid, { info: `zipping… ${pct}%`, progress: p.done / p.total });
-        }
-      } catch {}
-    }, 500);
+  async function startWorkspaceExport(body) {
     try {
-      const res = await fetch(url, { credentials: "include", signal: ctl.signal });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-      clearInterval(zipPoll);
-      updateTransfer(tid, { progress: undefined });
-      const total = Number(res.headers.get("content-length")) || 0;
-      const reader = res.body.getReader();
-      const chunks = [];
-      let loaded = 0;
-      // Progress lands per ~64 KB network chunk and each pill/transfer update
-      // re-renders the whole app — coalesce to visible changes (1% / 200 ms).
-      let lastPct = -1, lastUiAt = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.length;
-        const pct = total ? Math.min(99, Math.floor((loaded / total) * 100)) : null;
-        const now = performance.now();
-        if (pct === lastPct && now - lastUiAt < 200) continue;
-        lastPct = pct;
-        lastUiAt = now;
-        postPill("backup", {
-          msg: total
-            ? t("Downloading backup… {pct}% ({loaded} of {total})", { pct, loaded: fmtBytes(loaded), total: fmtBytes(total) })
-            : t("Downloading backup… {loaded}", { loaded: fmtBytes(loaded) }),
-          spinner: true,
-        });
-        updateTransfer(tid, { info: total ? `${fmtBytes(loaded)} / ${fmtBytes(total)}` : fmtBytes(loaded), progress: total ? loaded / total : undefined });
-      }
-      const blob = new Blob(chunks, { type: "application/zip" });
-      const m = /filename="?([^";]+)/.exec(res.headers.get("content-disposition") || "");
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = m ? m[1] : "gamma-export.zip";
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-      updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
-      postPill("backup", null);
-      setStatus(t("Backup downloaded ({size}).", { size: fmtBytes(blob.size) }));
+      await tasks.start("workspace-export", body, { download: "auto", pill: true });
     } catch (err) {
-      clearInterval(zipPoll);
-      updateTransfer(tid, { status: "error", info: String(err.message || err) });
-      postPill("backup", null);
-      if (!ctl.signal.aborted) setStatus(t("Export failed: {message}", { message: err.message }));
+      setStatus(t("Export failed: {message}", { message: err.message }));
     }
   }
 
@@ -820,45 +732,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inp.click();
   }
 
-  // An XHR upload (shared/lib/xhrUpload.js): it reports upload progress, so
-  // a large zip shows a percent while the bytes go up, then an indeterminate
-  // "restoring/merging" hint while the server unzips and swaps the databases.
-  // after.openPage: reload into that page instead of the home library (a
-  // shared page imported by link keeps its block id, so it opens directly).
-  // `target`: another workspace of mine (null = the open one).
+  // Restore (replace) or merge a backup zip into a workspace as a
+  // background job (restore): the zip goes up as a row of its own with its
+  // percent, then the server unzips and swaps or merges while the pill and
+  // Background tasks show how far it got. Once it is done in the open
+  // workspace this tab reloads (every piece of in-memory state is stale) —
+  // into after.openPage when given (a shared page imported by link keeps
+  // its block id, so it opens directly). `target`: another workspace of
+  // mine (null = the open one), which is left alone here.
   function runBackupImport(f, mode, target, after = {}) {
-    const merging = mode === "merge";
-    const other = target && target !== getCurrentWorkspace() ? target : null;
-    const tid = addTransfer({ name: `${merging ? "Merge" : "Restore"} ${f.name}`.slice(0, 60), kind: "upload", info: t("uploading…") });
-    const fd = new FormData();
-    fd.append("file", f);
-    let lastPct = -1;
-    xhrUpload(`${API}/import-data?mode=${mode}${other ? `&ws=${encodeURIComponent(other)}` : ""}`, fd, {
-      onProgress: (loaded, total) => {
-        const pct = Math.min(99, Math.floor((loaded / total) * 100));
-        if (pct === lastPct) return; // only re-render on a visible change
-        lastPct = pct;
-        postPill("backup", { msg: `Uploading backup… ${pct}%`, spinner: true });
-        updateTransfer(tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)}` });
-      },
-      onProcessing: () => {
-        postPill("backup", { msg: merging ? t("Merging backup into your library…") : t("Restoring backup…"), spinner: true });
-        updateTransfer(tid, { info: merging ? t("merging…") : t("restoring…") });
-      },
-    }).then((d) => {
-      postPill("backup", null);
-      updateTransfer(tid, { status: "done", info: merging ? t("{pages_added} pages added", { pages_added: d?.pages_added ?? 0 }) : "restored" });
-      // Another workspace's data changed, not this one's — nothing here
-      // is stale, so stay put instead of throwing the session away.
-      if (other) setStatus(`${merging ? "Merged into" : "Restored"} ${workspaces.find((w) => w.id === other)?.name || "the workspace"}.`);
-      else if (after.openPage) window.location.href = withWorkspace(`${window.location.pathname}?page=${encodeURIComponent(after.openPage)}`);
-      else window.location.href = withWorkspace(window.location.pathname); // fresh state, no stale ?block=
-    }, (err) => {
-      postPill("backup", null);
-      const msg = err?.message || "failed";
-      updateTransfer(tid, { status: "error", info: String(msg) });
-      setStatus(t("Import failed: {msg}", { msg: msg }));
-    });
+    const into = target || getCurrentWorkspace();
+    const form = new FormData();
+    form.append("file", f);
+    form.append("mode", mode);
+    form.append("ws", into);
+    postPill("backup-upload", { msg: t("Uploading {file}…", { file: f.name }), spinner: true });
+    tasks.upload("restore", form, { name: `${mode === "merge" ? "Merge" : "Restore"} ${f.name}`.slice(0, 60),
+      meta: { pill: true, restoreInto: into, after } })
+      .catch((err) => { if (!err.aborted) setStatus(t("Import failed: {msg}", { msg: err.message || "failed" })); })
+      .finally(() => postPill("backup-upload", null));
   }
 
   // A guest account has no password, so logging out deletes it and its
@@ -1744,9 +1636,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // ONE pill, many sources. Each source posts into its own named channel
   // (status messages, the PDF load lifecycle, …) via postPill(channel, entry);
   // the pill renders a single winner, so messages can never overlap.
-  //   entry: { msg, spinner?, error?, retry?, final? }
+  //   entry: { msg, spinner?, error?, action?: {label, run}, final? }
   // Ongoing entries (spinner) hold their channel until the source posts again
-  // or clears it (entry = null). Final entries linger 1s, then fade out.
+  // or clears it (entry = null). Final entries linger 1s, then fade out. An
+  // action is the pill's one button (Retry a PDF, Download a finished export).
   // When several channels are active: error > lingering final > ongoing,
   // ties broken by recency.
   const [status, setStatusRaw] = useState(t("Ready."));
@@ -2312,46 +2205,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     tabLeftsRef.current = next;
   }, [openTabs]);
 
-  // Background tasks: client-side transfers (downloads/uploads) plus
-  // server-side work (library indexing), shown in one popover.
-  // [{id, name, kind, status, info, progress?, cancel?}] — progress is 0..1
-  // when the work can measure itself (bytes, pages, papers), cancel a
-  // function when it can be stopped (the row then shows a stop button).
-  const [transfers, setTransfers] = useState([]);
-  const [indexTask, setIndexTask] = useState(null); // {total, done, active} from /api/tasks
-  // The server remembers the last run's progress forever; this hides the
-  // finished row after "Clear" until a new indexing run starts.
-  const [indexTaskCleared, setIndexTaskCleared] = useState(false);
+  // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
+  // jobs — exports, backups, restores, imports, the search indexer — and
+  // this tab's own work — a PDF loading, an upload, an AI lookup — in one
+  // list; the tray in the topbar shows it. A local row is
+  // {kind, name, state, info, fraction (0..1 when the work can measure
+  // itself), cancel (a function when it can be stopped)}.
+  const tasks = useTasks({ enabled: !!authUser?.user && !shareMode, onFinished: (job, started) => onJobFinished(job, started) });
+  const { addLocal: addTask, updateLocal: updateTask } = tasks;
+  // The search indexer of the open workspace runs (Settings shows it).
+  const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id
+    && (job.state === "queued" || job.state === "running"));
   const transferByUrlRef = useRef({});
-  // Rows the user stopped: the work's own late reports (an abort error, a
-  // "done" that raced the stop) must not overwrite "stopped".
-  const cancelledTransfersRef = useRef(new Set());
-  function addTransfer(t) {
-    const id = makeId();
-    setTransfers((prev) => [{ id, status: "active", ...t }, ...prev].slice(0, 20));
-    return id;
-  }
-  function updateTransfer(id, patch) {
-    if (patch.status && cancelledTransfersRef.current.has(id)) return;
-    setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  }
-  // A row that starts over (a re-download of the same url) is a live row again.
-  function reviveTransfer(id, patch) {
-    cancelledTransfersRef.current.delete(id);
-    setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  }
-  function cancelTransfer(id) {
-    setTransfers((prev) => prev.map((t) => {
-      if (t.id !== id || t.status !== "active") return t;
-      cancelledTransfersRef.current.add(id);
-      try { t.cancel?.(); } catch {}
-      return { ...t, status: "cancelled", info: "stopped", cancel: null, progress: undefined };
-    }));
-  }
-  // The server's indexer: one per workspace, stoppable from the popover.
-  function cancelIndexing() {
-    apiJson(`${API}/tasks/indexing`, { method: "DELETE" }).then(() => setTasksNonce((n) => n + 1)).catch(() => {});
-  }
   // Byte-level download state reported by the PDF viewer (skips local uploads).
   // One row per URL: a re-download (LRU eviction, retry) reactivates the
   // existing entry instead of stacking duplicates.
@@ -2410,7 +2275,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } else if (st.phase === "measuring") {
       postPill("pdf-load", { msg: t("Preparing document — measuring page {done} of {total}…", { done: st.done + 1, total: st.total }), spinner: true });
     } else if (st.phase === "error") {
-      postPill("pdf-load", { msg: t("PDF load failed — {error}", { error: st.detail || t("unknown error") }), error: true, retry: true });
+      postPill("pdf-load", { msg: t("PDF load failed — {error}", { error: st.detail || t("unknown error") }), error: true,
+        action: { label: t("Retry"), run: () => pdfRetryRef.current?.() } });
     } else if (st.phase === "cancelled" || st.phase === "painted") {
       postPill("pdf-load", null);
     }
@@ -2440,34 +2306,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (url.startsWith("/api/uploads/")) return;
     if (st.phase === "cached") {
       const id = transferByUrlRef.current[url];
-      if (id) updateTransfer(id, { status: "done", info: "cached" });
+      if (id) updateTask(id, { state: "done", info: "cached" });
       return;
     }
     if (st.phase === "start") {
+      // One row per URL: a re-download (LRU eviction, retry) runs its row
+      // again, unless the row was cleared meanwhile.
       const prevId = transferByUrlRef.current[url];
-      if (prevId) {
-        reviveTransfer(prevId, { status: "active", info: t("downloading…"), cancel: st.cancel, progress: undefined });
-        return;
-      }
+      if (prevId && tasks.reviveLocal(prevId, { state: "running", info: t("downloading…"), cancel: st.cancel, fraction: undefined })) return;
       const name = (pageTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
-      transferByUrlRef.current[url] = addTransfer({ name, kind: "download", info: t("downloading…"), cancel: st.cancel });
+      transferByUrlRef.current[url] = addTask({ name, kind: "download", info: t("downloading…"), cancel: st.cancel });
     } else if (st.phase === "progress") {
       const id = transferByUrlRef.current[url];
-      if (id) updateTransfer(id, {
-        status: "active",
+      if (id) updateTask(id, {
+        state: "running",
         info: st.total ? `${fmtBytes(st.loaded)} / ${fmtBytes(st.total)}` : `${fmtBytes(st.loaded)}…`,
-        progress: st.total ? st.loaded / st.total : undefined,
+        fraction: st.total ? st.loaded / st.total : undefined,
       });
     } else {
       const id = transferByUrlRef.current[url];
       if (!id) return;
       if (st.phase === "cancelled") {
         delete transferByUrlRef.current[url];
-        setTransfers((prev) => prev.filter((t) => t.id !== id)); // aborted navigation — drop the entry
+        tasks.removeLocal(id); // aborted navigation — drop the entry
       } else {
-        updateTransfer(id, st.phase === "done"
-          ? { status: "done", info: fmtBytes(st.bytes) }
-          : { status: "error", info: st.detail || "failed" });
+        updateTask(id, st.phase === "done"
+          ? { state: "done", info: fmtBytes(st.bytes) }
+          : { state: "failed", info: st.detail || "failed" });
       }
     }
   }
@@ -2556,41 +2421,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     [],
   );
 
-  // Poll server-side task progress. Fast (2s) only while the popover is
-  // open or indexing is known to run; otherwise a slow heartbeat so the
-  // button still appears for work kicked off elsewhere (another tab, the
-  // extension). Nothing is fetched while the tab is hidden — a hidden tab
-  // refreshes once it comes back. Callers that start indexing bump
-  // `tasksNonce` (wakeTasks) so the first fast poll happens right away.
-  const [tasksNonce, setTasksNonce] = useState(0);
-  const wakeTasks = useCallback(() => setTasksNonce((n) => n + 1), []);
-  // Booleans, so other popovers and the first answer's `active: false`
-  // don't re-run the effect (each run fetches at once).
-  const tasksPopoverOpen = openPopover === "downloads";
-  const indexingActive = Boolean(indexTask?.active);
+  // A job started here from a menu (a workspace export, a restore) shows
+  // how far it got in the pill until it ends (onJobFinished clears it).
   useEffect(() => {
-    if (!authUser?.user || shareMode) return;
-    let cancelled = false;
-    const refresh = () => {
-      if (document.hidden) return;
-      apiJson(`${API}/tasks`)
-        .then((d) => {
-          if (cancelled) return;
-          setIndexTask(d.indexing || null);
-          if (d.indexing?.active) setIndexTaskCleared(false);
-        })
-        .catch(() => {});
-    };
-    refresh();
-    const t = setInterval(refresh, tasksPopoverOpen || indexingActive ? 2000 : 60000);
-    const onVisible = () => { if (!document.hidden) refresh(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [tasksPopoverOpen, authUser?.user, shareMode, indexingActive, tasksNonce]);
+    for (const job of tasks.jobs) {
+      if (!isActive(job) || !tasks.startedHere(job.id)?.pill) continue;
+      postPill(`job:${job.id}`, { msg: `${taskTitle(job)} — ${job.state === "queued" ? t("waiting for its turn…") : progressText(job)}`, spinner: true });
+    }
+  }, [tasks.jobs, tasks.startedHere, postPill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Every folder path in use (from page tags + manually created empties),
   // plus all ancestor prefixes — "readout" exists once "readout/destructive"
@@ -2727,6 +2565,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Report a problem" (account menu, Settings → Diagnostics): support/ReportProblem.jsx.
   const [reportOpen, setReportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // The import review dialog: {source, file, strip, folder} for a file just
+  // chosen, or {jobId} for an import job opened again from Background tasks.
   const [importReview, setImportReview] = useState(null);
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
   // here. Remembered across sessions — most people export the same way twice.
@@ -2735,6 +2575,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (set when the dialog is opened from home with a folder open, or from a
   // folder card's context menu).
   const [exportFolder, setExportFolder] = useState(null);
+  // The export job the dialog follows once Export was pressed (or that
+  // Background tasks opened it on); null while the format is chosen.
+  const [exportJobId, setExportJobId] = useState(null);
+  const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
     { format: "pdf", highlights: true, notes: true, bundle: true },
@@ -2987,12 +2831,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rewrites just that). Cleared on send, like pdfSelections; a page switch
   // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
+  const blockChip = (block) => ({ kind: "block", id: block.id, text: blockChipText(block).slice(0, 4000) });
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
+      ? prev : prev.length >= 12 ? prev : [...prev, blockChip(block)]);
     setStatus(t("Block attached to your next chat message."));
+  }
+  // "Transcribe with AI" on a handwriting block: the block goes to the chat
+  // as a chip (its picture rides with the message, ai_context) with the
+  // request, sent at once — the agent writes the text into its caption
+  // (view_ink, edit_block), or answers with it where it may not edit.
+  const [chatAsk, setChatAsk] = useState(null);
+  function transcribeInk(block) {
+    if (!block?.id) return;
+    // The block the request is about always goes: at 12 chips the oldest
+    // makes room.
+    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
+      ? prev : [...prev.slice(-11), blockChip(block)]);
+    showChat();
+    setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
   }
   // A Ctrl-selection inside one block's rendered view → its source range;
   // one that can't be pinned down (it spans blocks, or an end isn't the
@@ -3207,17 +3065,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function handleTranslateState(st) {
     setPdfTransState(st);
     if (st.running && !transTaskRef.current) {
-      transTaskRef.current = addTransfer({
-        name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", progress: 0,
+      transTaskRef.current = addTask({
+        name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", fraction: 0,
         cancel: () => pdfTranslateCtl.current?.halt(),
       });
     }
     if (transTaskRef.current) {
       if (st.running) {
-        updateTransfer(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%`, progress: st.progress });
+        updateTask(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%`, fraction: st.progress });
       } else {
         const full = st.progress >= 0.999;
-        updateTransfer(transTaskRef.current, { status: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
+        updateTask(transTaskRef.current, { state: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
         transTaskRef.current = null;
       }
     }
@@ -3271,7 +3129,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // failure (with the task already marked).
   async function fetchMetadataRequest(block, force = false) {
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `Metadata — ${(block.content || "paper").slice(0, 48)}`, kind: "ai", info: t("fetching…"), cancel: () => ctl.abort() });
+    const taskId = addTask({ name: `Metadata — ${(block.content || "paper").slice(0, 48)}`, kind: "ai", info: t("fetching…"), cancel: () => ctl.abort() });
     setMetaFetchingIds((prev) => new Set(prev).add(block.id));
     try {
       const data = await apiJson(`${API}/metadata/fetch`, {
@@ -3288,10 +3146,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           cite_model: chatSendModel || "",
         }),
       });
-      updateTransfer(taskId, { status: "done", info: data.cached ? "cached" : data.source === "ai" ? t("AI-extracted") : data.source || "" });
+      updateTask(taskId, { state: "done", info: data.cached ? "cached" : data.source === "ai" ? t("AI-extracted") : data.source || "" });
       return data;
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       throw err;
     } finally {
       setMetaFetchingIds((prev) => { const next = new Set(prev); next.delete(block.id); return next; });
@@ -3408,15 +3266,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Defaults to the Settings preference; the import dialog can override it for
   // one run (auto-import on open always follows the preference).
   async function importEmbeddedAnnots(blockId, targetDocId, silent, strip = embAnnots === "strip") {
-    const taskId = addTransfer({ name: "Importing embedded PDF annotations", kind: "import", info: t("scanning…") });
+    const taskId = addTask({ name: "Importing embedded PDF annotations", kind: "file", info: t("scanning…") });
     try {
       const res = await apiJson(`${API}/import/pdf-annotations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ block_id: blockId, doc_id: targetDocId, strip }),
       });
-      updateTransfer(taskId, {
-        status: "done",
+      updateTask(taskId, {
+        state: "done",
         info: res.imported > 0 ? `${res.imported} imported` : res.found > 0 ? t("already imported") : t("none found"),
       });
       if (res.imported > 0) {
@@ -3435,7 +3293,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       return res;
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       if (!silent) setStatus(t("Annotation import failed: {message}", { message: err.message }));
     }
   }
@@ -3445,17 +3303,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!targetId || pptCiteBusy) return;
     setPptCiteBusy(true);
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("generating…"), cancel: () => ctl.abort() });
+    const taskId = addTask({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("generating…"), cancel: () => ctl.abort() });
     try {
       const data = await apiJson(`${API}/metadata/cite`, {
         method: "POST", signal: ctl.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ block_id: targetId, prompt: citePrompt || "", model: chatSendModel || "", force }),
       });
-      updateTransfer(taskId, { status: "done", info: "" });
+      updateTask(taskId, { state: "done", info: "" });
       if (focusedBlockIdRef.current === targetId) setPptCite(data.citation || "");
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       if (!ctl.signal.aborted) setStatus(t("Citation failed: {message}", { message: err.message }));
     } finally {
       setPptCiteBusy(false);
@@ -3689,6 +3547,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const inkActiveRef = useRef(null);
   const inkTimerRef = useRef(0);
   const prevInkRef = useRef({ json: "", value: [] });
+  // Sheets: the open page's (for handlers that run after an await); in the
+  // notebook view the sheet under the middle of the view, the viewer's scroller.
+  const nbSheetsRef = useRef([]);
+  const nbScrollRef = useRef(null);
+  const [nbCurrent, setNbCurrent] = useState("");
+  const [paperMenu, setPaperMenu] = useState(false);
   // Stroke-level history for the strip's Ctrl+Z and Undo/Redo buttons
   // (entries: {changes: [{id, page, before, after}], label} per action;
   // inkHistoryState mirrors the lengths for the buttons) and the lasso
@@ -4489,6 +4353,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const a = ev.action;
     if (!a || a.error) return;
     if (a.page_id !== focusedBlockId && a.src_page_id !== focusedBlockId) return;
+    if (a.kind === "ink") {
+      if (a.block_id) markAiBlock(a.block_id, "read", 2500);
+      return;
+    }
     if (a.kind === "read") {
       if (a.block_id && a.block_id !== focusedBlockId) markAiBlock(a.block_id, "read", 2500);
       else {
@@ -4556,10 +4424,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       form.append("file", file, filename);
       // An XHR so the task row gets byte progress and a stop button.
       const data = await xhrUpload(`${API}/uploads`, form, {
-        onProgress: (loaded, total) => updateTransfer(taskId, {
-          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, progress: total ? loaded / total : undefined,
+        onProgress: (loaded, total) => updateTask(taskId, {
+          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
         }),
-        onAbortable: (abort) => updateTransfer(taskId, { cancel: abort }),
+        onAbortable: (abort) => updateTask(taskId, { cancel: abort }),
       });
       return { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename,
         viewerUrl: data.source_url, note: "" };
@@ -4575,7 +4443,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const doc_id = await getDocIdForUrl(source_url);
     const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
     if (!known) {
-      updateTransfer(taskId, { info: t("checking link…") });
+      updateTask(taskId, { info: t("checking link…") });
       await probePdfUrl(source_url);
     }
     const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
@@ -4609,15 +4477,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   async function uploadOnePdf(file, folder = "") {
-    const transferId = addTransfer({ name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
+    const transferId = addTask({ name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
     let src;
     try {
       src = await resolvePdfSource({ file }, transferId);
     } catch (err) {
-      updateTransfer(transferId, { status: "error", info: "failed" });
+      updateTask(transferId, { state: "failed", info: "failed" });
       throw err;
     }
-    updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
+    updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
     const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       const tags = parseFolderTags(block.properties?.folder);
@@ -4636,16 +4504,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function importOneMarkdown(file, folder = "") {
     const filename = uploadLeafName(file, "note.md");
-    const transferId = addTransfer({ name: filename, kind: "import", info: fmtBytes(file.size) });
+    const transferId = addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
     form.append("folder", folder);
     try {
       const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
-      updateTransfer(transferId, { status: "done", info: `${data.imported || 0} notes` });
+      updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
       return { data, kind: "markdown" };
     } catch (err) {
-      updateTransfer(transferId, { status: "error", info: "failed" });
+      updateTask(transferId, { state: "failed", info: "failed" });
       throw err;
     }
   }
@@ -4751,12 +4619,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  async function completeLibraryImport(data, summary) {
-    setStatus(t("Import: {summary}.", { summary: summary }));
-    refreshQuota?.();
-    await fetchHomeBlocks();
-  }
-
   // Open a PDF by URL: resolve it, find or create its page, open that page.
   async function openPdf(sourceUrl) {
     if (!sourceUrl || shareMode) return;
@@ -4770,18 +4632,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setLoading(true);
     setStatus(t("Opening PDF..."));
     // Visible from the moment Enter is pressed — resolve can take seconds.
-    const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: t("resolving…") });
+    const taskId = addTask({ name: sourceUrl.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       const src = await resolvePdfSource({ url: sourceUrl }, taskId);
       const block = await getOrCreateBlockForDoc(src);
-      updateTransfer(taskId, {
+      updateTask(taskId, {
         name: (block.content || t("Untitled")).slice(0, 60),
-        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { status: "done", info: t("local file") } : { info: t("downloading…") }),
+        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { state: "done", info: t("local file") } : { info: t("downloading…") }),
       });
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("Open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
@@ -4814,6 +4676,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // "New notebook": a page with one sheet of paper, opened in the notebook
+  // view with the title ready to type like a new page. The sheet's id
+  // follows from the page's (firstSheetId), as the iPad makes it too.
+  async function createNotebook(folder = folderFilter) {
+    if (shareMode) return;
+    setOpenPopover(null);
+    const json = { "Content-Type": "application/json" };
+    try {
+      const created = await apiJson(`${API}/pages`, { method: "POST", headers: json,
+        body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }) });
+      const sheet = newSheet(firstSheetId(created.id), null);
+      await apiJson(`${API}/pages/${created.id}/ops`, { method: "POST", headers: json, body: JSON.stringify({
+        client: "", ops: [{ op: "insert", id: sheet.id, parent: created.id, position: generateKeyBetween(null, null),
+          content: "", props: sheet.properties }] }) });
+      setNotebookView(created.id, true);
+      await fetchHomeBlocks();
+      await openBlock(created.id, { pushNav: true, focusTitle: true });
+      setTitleDraft("");
+      setTitleEditing(true);
+    } catch (err) {
+      setStatus(t("Create failed: {err}", { err: err.message || err }));
+    }
+  }
+
   // Attach a PDF to the open page (one that carries none): the same ingest
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
@@ -4834,12 +4720,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   async function attachPdfToPage({ file, url }) {
     const pageId = focusedBlockId;
-    if (!pageId || shareMode || pageAttach || (!file && !url)) return;
+    if (!pageId || shareMode || pageAttach || notebook || (!file && !url)) return;
     if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
     setLoading(true);
-    const taskId = addTransfer(file
+    const taskId = addTask(file
       ? { name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
       : { name: url.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
@@ -4849,7 +4735,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(src),
       });
-      updateTransfer(taskId, { status: "done", info: "attached" });
+      updateTask(taskId, { state: "done", info: "attached" });
       if (file) {
         refreshQuota();
         importEmbeddedAnnots(pageId, src.doc_id, true);
@@ -4863,13 +4749,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this PDF on another page — the page is
         // the unit, so open that one rather than duplicating the file.
-        updateTransfer(taskId, { status: "done", info: t("already in library") });
+        updateTask(taskId, { state: "done", info: t("already in library") });
         setStatus(t("That PDF is already attached to another page — opening it."));
         setLoading(false);
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("Attach failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
@@ -4953,7 +4839,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const dropPill = () => { if (pill.shown) { pill.shown = 0; postPill("upload", null); } };
     setUploadReporter({
       start: (file, abort) => ({
-        tid: addTransfer({ name: uploadLeafName(file, "file"), kind: "upload", info: fmtBytes(file.size), cancel: abort }),
+        tid: addTask({ name: uploadLeafName(file, "file"), kind: "upload", info: fmtBytes(file.size), cancel: abort }),
         name: uploadLeafName(file, "file"), size: file.size, at: Date.now(), lastPct: -1,
       }),
       progress: (u, loaded, total) => {
@@ -4961,14 +4847,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const pct = total ? Math.min(99, Math.floor((loaded / total) * 100)) : 0;
         if (pct === u.lastPct) return;
         u.lastPct = pct;
-        updateTransfer(u.tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)} — ${pct}%`, progress: total ? loaded / total : undefined });
+        updateTask(u.tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)} — ${pct}%`, fraction: total ? loaded / total : undefined });
         if (Date.now() - u.at > 400 || total > 2 * 1024 * 1024) showPill(`Uploading ${u.name}… ${pct}%`);
       },
       done: (u, ok, detail) => {
         if (!u) return;
-        updateTransfer(u.tid, ok ? { status: "done", info: fmtBytes(u.size) } : { status: "error", info: detail || "failed" });
+        updateTask(u.tid, ok ? { state: "done", info: fmtBytes(u.size) } : { state: "failed", info: detail || "failed" });
         dropPill();
-        if (!ok && !cancelledTransfersRef.current.has(u.tid)) setStatus(t("Upload of {name} failed: {refused}", { name: u.name, refused: detail || "refused" }));
+        if (!ok && !tasks.wasStopped(u.tid)) setStatus(t("Upload of {name} failed: {refused}", { name: u.name, refused: detail || "refused" }));
         else if (Date.now() - u.at > 400) setStatus(t("Uploaded {name}.", { name: u.name }));
       },
     });
@@ -5275,6 +5161,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try { pageLayoutsRef.current = JSON.parse(localStorage.getItem(`gamma-page-layouts:${authUser.user}@${wsId}`) || "{}"); }
     catch { pageLayoutsRef.current = {}; }
   }, [authUser?.user, wsId, shareMode]);
+  // The pages the notebook view is on for (docs/dev/notebooks.md): a page
+  // with sheets shows them in the viewer's place while it is. A view of the
+  // page, not part of it: remembered in this browser like its window
+  // layout, and saved the moment it changes.
+  const nbViewRef = useRef(new Set());
+  const [nbViewPages, setNbViewPages] = useState(nbViewRef.current);
+  useEffect(() => {
+    let ids = [];
+    if (authUser?.user && wsId && !shareMode) {
+      try { ids = JSON.parse(localStorage.getItem(`gamma-notebook-view:${authUser.user}@${wsId}`) || "[]"); } catch {}
+    }
+    nbViewRef.current = new Set(Array.isArray(ids) ? ids : []);
+    setNbViewPages(nbViewRef.current);
+  }, [authUser?.user, wsId, shareMode]);
+  function setNotebookView(pageId, on) {
+    if (!pageId || nbViewRef.current.has(pageId) === on) return;
+    const next = new Set(nbViewRef.current);
+    if (on) next.add(pageId); else next.delete(pageId);
+    while (next.size > 200) next.delete(next.values().next().value);
+    nbViewRef.current = next;
+    setNbViewPages(next);
+    try { if (prefsUserRef.current) localStorage.setItem(`gamma-notebook-view:${prefsUserRef.current}`, JSON.stringify([...next])); } catch {}
+  }
   const restoreTokenRef = useRef(0);   // bumped on navigation — kills in-flight restore loops
   const restoringForRef = useRef(null); // block whose restore hasn't landed yet
   const pdfRenderedUrlRef = useRef(""); // url of the document whose pages are in the DOM
@@ -5958,7 +5867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!token) { setStatus(t("That isn't a Gamma share link (no ?share= in it).")); return; }
     const local = origin === window.location.origin;
     const opts = { credentials: local ? "include" : "omit" };
-    const tid = addTransfer({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: t("resolving…") });
+    const tid = addTask({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       let r;
       try {
@@ -5975,100 +5884,141 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const info = await r.json();
       const pageId = info.page_id || linkedPage;
       if (!pageId) throw new Error(t("that link shares a folder — open one of its pages to add it"));
-      updateTransfer(tid, { info: t("downloading…") });
+      updateTask(tid, { info: t("downloading…") });
       r = await fetch(`${origin}${API}/pages/${encodeURIComponent(pageId)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
       if (!r.ok) throw new Error(r.status === 404 ? "that Gamma is too old to export pages for another Gamma" : `export failed (${r.status})`);
       const blob = await r.blob();
-      updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
+      updateTask(tid, { state: "done", info: fmtBytes(blob.size) });
       runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: pageId });
     } catch (err) {
-      updateTransfer(tid, { status: "error", info: String(err.message) });
+      updateTask(tid, { state: "failed", info: String(err.message) });
       setStatus(t("Import failed: {message}", { message: err.message }));
     }
   }
 
-  // Run what the export dialog was configured to do. Every format is one
-  // endpoint with flags, except a PDF with both switches off — that is the
-  // stored file itself, which the raw path serves without a round trip (and
-  // works for PDFs that only exist behind the proxy).
+  // Run what the export dialog was configured to do: a background job
+  // (export) the dialog then follows — it may close meanwhile, and the
+  // file downloads by itself while it watches (docs/dev/tasks.md). A PDF
+  // with both switches off is the stored file itself, which the raw path
+  // serves without a round trip (and works for PDFs that only exist behind
+  // the proxy). A share view has no background tasks: it downloads the
+  // same export through the download endpoints.
   async function runExport(o) {
+    const pageId = focusedBlock?.id;
+    if (!exportFolder && !pageId) { setExportOpen(false); setStatus(t("Open a page first to export it.")); return; }
+    if (!exportFolder && o.format === "pdf" && !o.highlights && !o.notes) { setExportOpen(false); await exportRawPdf(); return; }
+    const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
+    if (shareMode) {
+      setExportOpen(false);
+      const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0, notes: body.notes ? 1 : 0 });
+      await downloadExport(exportFolder
+        ? `/folders/export?name=${encodeURIComponent(exportFolder)}&${query}` : `/pages/${pageId}/export?${query}`, "export");
+      return;
+    }
+    if (exportStartingRef.current) return;
+    exportStartingRef.current = true;
+    try {
+      const job = await tasks.start("export", body, { download: "auto", dialog: "export" });
+      setExportJobId(job.id);
+    } catch (err) {
+      setStatus(t("Export failed: {message}", { message: err.message }));
+    } finally {
+      exportStartingRef.current = false;
+    }
+  }
+  // Closing the export dialog: a job still running goes on in Background
+  // tasks, and its file is offered once ready instead of downloaded.
+  function closeExport() {
+    const job = exportJobId ? tasks.byId(exportJobId) : null;
+    if (job && isActive(job)) tasks.setDownload(job.id, "offer");
     setExportOpen(false);
-    const flags = `highlights=${o.highlights ? 1 : 0}&notes=${o.notes ? 1 : 0}`;
-    const bundle = `pdf=${o.bundle ? 1 : 0}`;
-    if (exportFolder) {
-      const base = `/folders/export?name=${encodeURIComponent(exportFolder)}`;
-      // Per-page progress from the server while the download request runs
-      // (same polling pattern as the backup export).
-      const poll = setInterval(async () => {
-        try {
-          const p = await apiJson(`${API}/folders/export-progress`);
-          if (p.active && p.total) {
-            const pct = Math.round((p.done / p.total) * 100);
-            setStatus(t("Exporting “{exportFolder}” — {done}/{total} pages ({pct}%)…", { exportFolder: exportFolder, done: p.done, total: p.total, pct: pct }));
-          }
-        } catch { /* progress is best-effort */ }
-      }, 500);
-      try {
-        if (o.format === "logseq") {
-          await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
-        } else if (o.format === "obsidian") {
-          if (await downloadExport(`${base}&mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-            setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
-          }
-        } else if (o.format === "zotero") {
-          if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-            setStatus(t("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import)."));
-          }
-        } else if (o.format === "gamma") {
-          if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
-            setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
-          }
-        } else if (o.format === "notespdf") {
-          await downloadExport(`${base}&mode=notes-pdf&${flags}`, "notes.pdf");
+    setExportJobId(null);
+  }
+
+  // A row of Background tasks clicked: the export or import dialog on that
+  // job again, or the Settings pane where the work is managed.
+  function openTask(task) {
+    const open = kindOf(task).open;
+    setOpenPopover(null);
+    if (open === "export") {
+      if (isActive(task)) tasks.setDownload(task.id, "auto"); // watched again: fetch the file once ready
+      setExportFolder(task.params?.folder || null);
+      setExportJobId(task.id);
+      setExportOpen(true);
+    } else if (open === "import") {
+      setImportReview({ jobId: task.id });
+    } else if (open?.startsWith("settings:")) {
+      setSettingsOpen(open.slice("settings:".length));
+    }
+  }
+  // Start a task's work again (a row's retry button, the export dialog's
+  // Start again): the same route and body as the first time. `download`:
+  // "auto" when the file should come as soon as it is ready (the dialog
+  // watches, a workspace export was asked for from a menu), else offered.
+  async function retryTask(task, download = task.kind === "workspace-export" ? "auto" : "offer") {
+    const again = retryOf(task);
+    if (!again) return null;
+    try {
+      return await tasks.start(again[0], again[1], { download, pill: task.kind === "workspace-export" });
+    } catch (err) {
+      setStatus(t("{name} failed: {message}", { name: taskTitle(task), message: err.message }));
+      return null;
+    }
+  }
+
+  // A job ended while this tab looked (tasks/useTasks.js onFinished):
+  // `started` is what this tab started it with ({download, pill,
+  // restoreInto, after}), null for a job started elsewhere. Whatever its
+  // window shows is left to it; the rest is said here.
+  function onJobFinished(job, started) {
+    postPill(`job:${job.id}`, null);
+    const title = taskTitle(job);
+    // The export or import dialog shows it (one that ends as it starts
+    // comes here before the dialog knows its id).
+    const shownInDialog = (exportOpen && (job.id === exportJobId || (started?.dialog === "export" && !exportJobId)))
+      || (importReview && (job.id === importReview.jobId || (started?.dialog === "import" && !importReview.jobId)));
+    const here = job.workspace && job.workspace === workspace?.id;
+    if (job.kind === "restore") {
+      if (job.state === "done" && here) {
+        if (started) {
+          // Every piece of in-memory state is stale now: start fresh (in the page a shared link named).
+          const page = started.after?.openPage;
+          window.location.href = withWorkspace(page ? `${window.location.pathname}?page=${encodeURIComponent(page)}` : window.location.pathname);
         } else {
-          await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
+          postPill(`job:${job.id}`, { msg: t("{name} finished — this workspace changed.", { name: title }),
+            action: { label: t("Reload"), run: () => { window.location.href = withWorkspace(window.location.pathname); } } }, { after: [20000, null] });
         }
-      } finally {
-        clearInterval(poll);
+        return;
+      }
+      if (started) setStatus(job.state === "done" ? t("{name}: done.", { name: title }) : job.state === "failed"
+        ? t("Import failed: {msg}", { msg: t(job.error) }) : t("{name} was stopped.", { name: title }));
+      return;
+    }
+    if (job.kind === "import") {
+      if (job.state === "done" && here) {
+        refreshQuota?.();
+        fetchHomeBlocks();
+        if (!shownInDialog && started) {
+          tasks.fetchJob(job.id).then((full) => full?.result && setStatus(t("Import: {summary}.", { summary: importSummary(full.result) }))).catch(() => {});
+        }
+      } else if (!shownInDialog && started && job.state === "failed") {
+        setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
       }
       return;
     }
-    const id = focusedBlock?.id;
-    if (!id) { setStatus(t("Open a page first to export it.")); return; }
-    if (o.format === "pdf") {
-      if (!o.highlights && !o.notes) { await exportRawPdf(); return; }
-      await downloadExport(`/pages/${id}/export-pdf?${flags}`, "export.pdf");
-      return;
-    }
-    if (o.format === "notespdf") {
-      // The notes as their own PDF — no paper needed, so this works on note
-      // pages too (where the annotated-PDF format isn't offered).
-      await downloadExport(`/pages/${id}/export?mode=notes-pdf&${flags}`, "notes.pdf");
-      return;
-    }
-    if (o.format === "logseq") {
-      await downloadExport(`/pages/${id}/export?mode=logseq-graph&${bundle}`, "graph.zip");
-      return;
-    }
-    if (o.format === "obsidian") {
-      if (await downloadExport(`/pages/${id}/export?mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-        setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
+    if (!started || shownInDialog) return;
+    if (job.state === "done" && job.artifact) {
+      if (started.download === "auto") {
+        setStatus(t("{name}: downloading {file} ({size}).", { name: title, file: job.artifact.name, size: fmtBytes(job.artifact.size) }));
+      } else {
+        postPill(`job:${job.id}`, { msg: t("{name} is ready ({size}).", { name: title, size: fmtBytes(job.artifact.size) }),
+          action: { label: t("Download"), run: () => { tasks.download(job); postPill(`job:${job.id}`, null); } } }, { after: [30000, null] });
       }
-      return;
+    } else if (job.state === "done") {
+      setStatus(t("{name}: done.", { name: title }));
+    } else if (job.state === "failed") {
+      setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
     }
-    if (o.format === "zotero") {
-      if (await downloadExport(`/pages/${id}/export?mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-        setStatus(t("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself)."));
-      }
-      return;
-    }
-    if (o.format === "gamma") {
-      if (await downloadExport(`/pages/${id}/export?mode=gamma`, "gamma.zip")) {
-        setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
-      }
-      return;
-    }
-    await downloadExport(`/pages/${id}/export?mode=readable&${flags}&${bundle}`, "page.md");
   }
 
   // Download the PDF exactly as stored — no highlight annotations. Reuses the
@@ -6089,7 +6039,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiTitleBusy(true);
     setStatus(t("Asking AI for the title…"));
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("asking…"), cancel: () => ctl.abort() });
+    const taskId = addTask({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("asking…"), cancel: () => ctl.abort() });
     try {
       const data = await apiJson(`${API}/ai/chat`, {
         method: "POST", signal: ctl.signal,
@@ -6102,7 +6052,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }),
       });
       const title = (data.response || "").trim().replace(/^["'\s]+|["'\s]+$/g, "").split("\n")[0].slice(0, 200);
-      updateTransfer(taskId, { status: title ? "done" : "error", info: title ? "" : t("no title") });
+      updateTask(taskId, { state: title ? "done" : "failed", info: title ? "" : t("no title") });
       if (title) {
         await renameTitle(title);
         setStatus(t("Title filled in by AI."));
@@ -6110,7 +6060,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setStatus(t("AI returned no title."));
       }
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
+      updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("AI title failed: {message}", { message: err.message }));
     } finally {
       setAiTitleBusy(false);
@@ -6137,6 +6087,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // plus a properties PATCH through the block API (a server-side writer, so
   // the change fans out over the page socket and lands in this tree like a
   // remote op); only the group's block itself is inserted through the tree.
+  // The PATCH names the file the draft was edited from (base_properties):
+  // when someone else changed the drawing meanwhile the server merges both
+  // by stroke and answers with the merged file (gamma/ops.py merge_ink).
   // The pen preset a stylus writes with when nothing is armed: the last pen
   // armed on the strip, else the first pen in the row.
   const inkPen = useMemo(() => {
@@ -6179,20 +6132,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
     const json = { "Content-Type": "application/json" };
-    for (const { id, ink } of inkStore.dirtyDrafts()) {
+    for (const { id, ink, base } of inkStore.dirtyDrafts()) {
       try {
-        if (!ink.strokes.length) {
+        const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
+        // A group erased empty goes, unless its block holds a caption or
+        // notes: those stay, with an empty drawing an undo can refill.
+        if (!ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
           await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
           // Keep the empty draft until the tree observes the deletion; the
           // HTTP response can arrive before the corresponding socket op.
-          const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
           inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
           continue;
         }
-        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: JSON.stringify(ink) });
-        const properties = { ink_url: r.url, pdf_position: r.pdf_position, ink_strokes: r.strokes, pdf_page: ink.space.page };
-        await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: JSON.stringify({ properties }) });
-        inkStore.markSaved(id, ink, r.url);
+        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: serializeInk(ink) });
+        const saved = await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json,
+          body: JSON.stringify({ properties: inkProps(ink, r.url), base_properties: { ink_url: base || "" } }) });
+        inkStore.markSaved(id, ink, r.url, saved?.properties?.ink_url || r.url);
       } catch (err) {
         // The block's insert may still be queued (404): try again shortly.
         setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
@@ -6216,6 +6171,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
+    inkReplay.stop();
     inkHistRef.current = { undo: [], redo: [] };
     setInkHistoryState({ undo: 0, redo: 0 });
     setInkSelection(null);
@@ -6233,15 +6189,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // block back first.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
+    for (const c of changes) inkReplay.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
-      setBlocks((prev) => [...prev, ...missing.map((c) => ({
-        id: c.id, parentId: null, children: [], content: "",
-        properties: { ink_url: "", pdf_page: c.page, ink_strokes: 0 },
-      }))]);
+      // A PDF page's group goes at the page's top level; a sheet's under
+      // its sheet (`page` is then the sheet's id).
+      setBlocks((prev) => missing.reduce((tree, c) => {
+        const onSheet = typeof c.page === "string";
+        const node = { id: c.id, parentId: onSheet ? c.page : null, children: [], content: "",
+          properties: onSheet ? { ink_url: "", ink_strokes: 0 } : { ink_url: "", pdf_page: c.page, ink_strokes: 0 } };
+        return onSheet && findBlock(tree, c.page)
+          ? updateBlockTree(tree, c.page, (sheet) => ({ ...sheet, children: [...(sheet.children || []), node] }))
+          : [...tree, node];
+      }, prev));
     }
-    for (const c of changes) inkStore.setDraft(c.id, c.after);
+    const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
+    for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
     if (record) {
       const h = inkHistRef.current;
       h.undo.push({ changes, label });
@@ -6256,16 +6220,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const h = inkHistRef.current;
     const entry = (redo ? h.redo : h.undo).pop();
     if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
-    // Entries are stored forward (before → after); undo applies them backward.
-    applyInk(redo ? entry.changes : entry.changes.map((c) => ({ ...c, before: c.after, after: c.before })), { record: false });
+    // Entries are stored forward (before → after). Undo applies after →
+    // before, redo before → after, each onto the group as it is NOW by
+    // stroke id (mergeInk), so strokes someone else drew meanwhile stay.
+    applyInk(entry.changes.map((c) => {
+      const [from, to] = redo ? [c.before, c.after] : [c.after, c.before];
+      const now = inkOf(c.id) || from;
+      return { ...c, before: now, after: mergeInk(from, to, now).ink };
+    }), { record: false });
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${entry.changes[0].page}).`);
+    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${inkPageNumber(entry.changes[0].page)}).`);
     if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
 
+  // What a stroke's `page` is called in messages: a PDF page's number, a
+  // notebook sheet's place among the sheets.
+  function inkPageNumber(page) {
+    if (typeof page !== "string") return page;
+    const i = nbSheetsRef.current.findIndex((s) => s.id === page);
+    return i >= 0 ? i + 1 : "?";
+  }
+  // `page`: a PDF page number, or a notebook sheet's id.
   async function handleInkStroke(page, stroke, size) {
     if (readOnly || !focusedBlockId) return;
     let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
@@ -6276,8 +6254,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a stroke must never replace strokes that just have not arrived yet).
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const before = inkStore.draft(id)?.ink || loaded || newInk(page, size.width, size.height);
+    const onSheet = typeof page === "string";
+    const before = inkStore.draft(id)?.ink || loaded
+      || (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
+    if (onSheet) {
+      // Writing into the last quarter of the page's last sheet adds the next
+      // one right after it, so there is always paper below (Notability's
+      // continuous page) — once: a page after it already there is the one.
+      const last = nbSheetsRef.current.at(-1), box = strokeBounds(stroke);
+      if (last?.id === page && box && box[3] > last.paper.height * 0.75) addSheetAfter(last.id, { once: true });
+    }
     guideEvents.emit("ink.stroke");
   }
   function handleInkErase(page, blockId, ids) {
@@ -6362,6 +6349,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showInkOnPage(id) {
     const b = flattenBlocks(blocksRef.current).find((x) => x.id === id);
     if (!b) return;
+    const sheetId = sheetOfBlock(blocksRef.current, id);
+    if (sheetId && notebook) {
+      nbScrollRef.current?.(sheetId, inkBounds(inkOf(id)));
+      setInkFlash({ id, nonce: Date.now() });
+      return;
+    }
+    if (sheetId) {
+      // A page among the notes: unfold what hides it, then its drawing into view.
+      reveal(sheetId);
+      const box = inkBounds(inkOf(id));
+      requestAnimationFrame(() => {
+        const node = document.querySelector(`.noteSheet[data-sheet-id="${CSS.escape(sheetId)}"] .nbSheet`);
+        const scroller = node?.closest(".blockList");
+        if (!node || !scroller) return;
+        const r = node.getBoundingClientRect(), k = r.width / normalizePaper(findBlock(blocksRef.current, sheetId)?.properties?.sheet).width;
+        const y = r.top - scroller.getBoundingClientRect().top + (box ? box[1] * k : 0) - 120;
+        scroller.scrollBy({ top: y, behavior: "smooth" });
+      });
+      setInkFlash({ id, nonce: Date.now() });
+      return;
+    }
     const position = b.properties.pdf_position || { pageNumber: b.properties.pdf_page };
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
@@ -6372,6 +6380,75 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     scrollToBlock(id);
     reveal(id);
   }
+
+  // --- Sheets (docs/dev/notebooks.md) ---------------------------------------------
+  // A sheet is a block carrying `sheet` (its paper): adding one is a tree
+  // insert like any block's, so it syncs, merges and undoes like one. The
+  // rules are the same in the notes view and the notebook view: a new page
+  // goes right after a block, gets the paper of the page nearest before it
+  // and starts folded (it shows its drawings itself). After a sheet its id
+  // follows from that sheet's (sheetIdAfter), so two devices adding "the
+  // page after this one" at once add one page; `once` adds none when that
+  // page is there already (two strokes low on the last page add it once).
+  function addSheetAfter(afterId, { once = false } = {}) {
+    if (readOnly || !focusedBlockId) return "";
+    const tree = blocksRef.current;
+    const after = findBlock(tree, afterId);
+    if (!after) return "";
+    let id = isSheet(after) ? sheetIdAfter(afterId) : makeId();
+    if (findBlock(tree, id)) {
+      if (once) return id;
+      id = makeId();
+    }
+    const sheet = newSheet(id, paperBefore(tree, afterId));
+    setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
+    return id;
+  }
+  // The viewer's "Add page": after the last page.
+  function addPageAtEnd() {
+    const last = nbSheetsRef.current.at(-1);
+    return last ? addSheetAfter(last.id) : "";
+  }
+  // "/page" in a block's editor (`rest`: its text without the command): the
+  // block becomes the page when nothing else is in it, else a page goes in
+  // after it.
+  function insertSheetAt(blockId, rest) {
+    if (readOnly) return;
+    if ((rest || "").trim()) { addSheetAfter(blockId); return; }
+    const tree = blocksRef.current;
+    const block = findBlock(tree, blockId);
+    if (!block) return;
+    const sheet = normalizePaper(paperBefore(tree, blockId));
+    const fold = !block.children?.length;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
+      properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    saveNowRef.current = true;
+    setView((v) => closeEditing(v, blockId));
+  }
+  function setSheetPaper(sheetId, paper) {
+    if (readOnly) return;
+    const sheet = normalizePaper(paper);
+    setBlocks((prev) => updateBlockTree(prev, sheetId, (b) => ({ ...b, properties: { ...b.properties, sheet } })));
+  }
+  // Every sheet of the page gets `paper`.
+  function applyPaperToAll(paper) {
+    if (readOnly) return;
+    const sheet = normalizePaper(paper);
+    const each = (list) => {
+      let changed = false;
+      const out = list.map((b) => {
+        const kids = b.children?.length ? each(b.children) : b.children;
+        const next = isSheet(b) ? { ...b, properties: { ...b.properties, sheet }, children: kids }
+          : kids !== b.children ? { ...b, children: kids } : b;
+        if (next !== b) changed = true;
+        return next;
+      });
+      return changed ? out : list;
+    };
+    setBlocks((prev) => each(prev));
+  }
+  // Leaving the page closes its paper menu.
+  useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
   // The strip's keys while it is open: 1–9 arm the preset at that position,
   // P / H step through the pens / highlighters, E the eraser, L the lasso,
   // V the hand, Esc drops the selection then closes, Delete removes the
@@ -6581,6 +6658,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  // The page's sheets of paper (notebook/notebook.js, docs/dev/notebooks.md).
+  // The notes view draws them among the blocks (notebook/NoteSheet.jsx); on
+  // a page without a PDF the notebook view — `notebook`, switched per page
+  // (setNotebookView) — puts them in the viewer's place, with the same ink
+  // tools, and lists them in the notes as rows.
+  const nbSheets = useMemo(() => (focusedBlockId ? sheetsOf(blocks) : []), [focusedBlockId, blocks]);
+  const hasSheets = !pageAttach && nbSheets.length > 0;
+  const notebook = hasSheets && nbViewPages.has(focusedBlockId);
+  // The viewer is hidden: a PDF closed (never the notebook view's sheets).
+  const viewerHidden = !notebook && pdfHidden;
+  useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
+  const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
+  const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
+  nbSheetsRef.current = nbSheets;
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
@@ -6865,7 +6956,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
   // A page with no attachment — the owner's pages and shared pages alike —
   // puts the notes in the center instead of an empty viewer.
-  const pageOnly = !!focusedBlockId && !pageAttach;
+  const pageOnly = !!focusedBlockId && !pageAttach && !notebook;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
@@ -7559,6 +7650,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
+  // The pages among the notes (notebook/NoteSheet.jsx): the ink state and
+  // handlers a notebook's viewer gets, and the strip over the notes when no
+  // viewer is there to hold it.
+  const viewerInk = (!!pdfUrl || notebook) && !viewerHidden;
+  const openInkTools = () => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip());
+  const noteSheetCtx = notebook ? null : {
+    readOnly, inkBySheet: nbInk, tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure,
+    eraserMode: inkEraserMode, eraserSize: inkEraserSize, lassoMode: inkLassoMode, selection: inkSelection, flash: inkFlash,
+    inkOpen: inkUi.open,
+    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
+    onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInkInNotes,
+    onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
+    onNotebookView: hasSheets ? () => setNotebookView(focusedBlockId, true) : undefined,
+  };
+  const inkToolbar = (
+    <InkToolbar
+      tools={inkTools} active={inkUi.tool} options={inkUi.options}
+      eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
+      onPick={pickInkTool}
+      onUndo={() => inkUndo(false)} onRedo={() => inkUndo(true)}
+      canUndo={inkHistoryState.undo > 0} canRedo={inkHistoryState.redo > 0}
+      onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
+      onChangeTools={setInkTools}
+      onEraser={(patch) => {
+        if ("mode" in patch) setInkEraserMode(patch.mode);
+        if ("size" in patch) setInkEraserSize(patch.size);
+      }}
+      onLasso={setInkLassoMode}
+      onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
+    />
+  );
+  const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
+    ? <div className="notesInkDock">{inkToolbar}</div> : null;
+
   const notesWindow = notesVisible ? (
     <div className="sidebar" data-guide="dock.notes">
           {!homeMode && <div className="pageTitleRow">
@@ -7742,7 +7867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
-                {pageAttach || !readOnly ? (
+                {pageAttach || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
                       className={`pageActionBtn ${pageAttach ? "active" : ""}`}
@@ -8550,6 +8675,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   pages: pageBlocks, // the [[ link picker's page list
                   onJump: jumpToHighlightId,
                   onInkJump: showInkOnPage,
+                  // Sheets: numbered as pages; drawn in place unless a notebook's viewer draws them.
+                  sheetNumbers,
+                  inlineSheets: !notebook,
+                  onInsertSheet: readOnly ? undefined : insertSheetAt,
+                  onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
                   onOpenLinkTarget: (b) => {
@@ -8698,6 +8828,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
+                  // A handwriting block's "Transcribe with AI".
+                  onTranscribe: shareMode ? null : transcribeInk,
                   // `above` puts the copy before the original (Duplicate
                   // block above).
                   onDuplicate: (id, { above = false } = {}) => {
@@ -8857,8 +8989,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 rowPropsRef.current = rowProps;
                 return (
                   <>
+                    {notesInkStrip}
                     <FileChipContext.Provider value={fileChipCtx}>
-                      <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                      <NoteSheetContext.Provider value={noteSheetCtx}>
+                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                      </NoteSheetContext.Provider>
                     </FileChipContext.Provider>
                     {backlinksPanel}
                     {notesTail}
@@ -8874,7 +9009,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Slot the windows into dock columns / the bottom row. When no PDF is shown
   // (home, page-only, or PDF closed) the notes window takes the center instead.
-  const centerNotes = pdfHidden || homeMode || pageOnly;
+  const centerNotes = viewerHidden || homeMode || pageOnly;
   const winVisible = {
     notes: Boolean(notesWindow) && !centerNotes,
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
@@ -8929,6 +9064,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
           fetchInBackground={fetchInBackground}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
+          askSignal={chatAsk}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -8983,15 +9119,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // share views omit AI chat and the import actions. A phone's bottom tabs
   // already switch Notes and Chat, so there only the PDF toggle is a window.
   const viewMenuItems = (menuReadOnly) => {
-    const pdfRow = !homeMode && !!pageAttach;
+    const pdfRow = !homeMode && (!!pageAttach || hasSheets);
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
     const exportable = (focusedBlock && !homeMode) || (homeMode && folderFilter);
     return menuGroups(
       [
         (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
-        pdfRow && (
+        pdfRow && (pageAttach ? (
           <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
-        ),
+        ) : (
+          <MenuItem key="pdf" icon={NotebookIcon} trailing={shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
+        )),
         !homeMode && !isPhone && (
           <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
         ),
@@ -9056,17 +9194,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // spinner on More while something runs), the open folder's share link
   // and the View menu's rows. Their own buttons are not rendered, but their
   // popovers still open from these rows, spanning the bar like the others.
-  const tasksRunning = transfers.some((tr) => tr.status === "active") || !!indexTask?.active;
-  const tasksFailed = transfers.some((tr) => tr.status === "error" && tr.kind !== "ai");
   const folderShareable = homeMode && lib.organize && !!folderFilter && !categoryFilter;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   const phoneMoreRows = () => (
     <>
       <MenuDivider />
       <MenuItem icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
-        title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
-        trailing={tasksRunning ? <span className="transferSpin inline" aria-hidden="true" />
-          : tasksFailed ? <span className="noticeDot inline" aria-hidden="true" /> : null}>
+        title={t("Background tasks — exports, backups, imports, downloads and uploads")}
+        trailing={<TaskBadge badge={tasks.badge} inline />}>
         {t("Background tasks")}
       </MenuItem>
       {folderShareable ? (
@@ -9123,6 +9258,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
             <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={NotebookIcon} onClick={() => createNotebook()}
+              title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}
               type="file"
@@ -9142,71 +9279,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ) : null}
       </span>
       <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
-          {isPhone ? null : (
-          <button
-            className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
-            onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
-            data-guide="header.tasks"
-            title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
-            aria-label={t("Background tasks")}
-          >
-            <ActivityIcon size={16} />
-            {/* Spinner while anything runs, otherwise a red dot for a failed
-                transfer — a refused download no longer leaves a broken page
-                behind, so this is the only sign it happened. "ai" jobs are
-                excluded: a paper with no findable metadata is routine, and
-                the metadata popover says so itself. */}
-            {tasksRunning ? <span className="transferSpin" /> : tasksFailed ? <span className="transferDot" /> : null}
-          </button>
-          )}
-          {openPopover === "downloads" ? (
-            <div className="popover downloadsPopover">
-              <div className="popoverTitle citeSectionRow">
-                <span>{t("Background tasks")}</span>
-                <button
-                  className="searchToggle transferClearBtn"
-                  title={t("Clear finished")}
-                  onClick={() => {
-                    if (!indexTask?.active) setIndexTaskCleared(true);
-                    setTransfers((prev) => {
-                      const kept = prev.filter((t) => t.status === "active");
-                      const ids = new Set(kept.map((t) => t.id));
-                      for (const [u, id] of Object.entries(transferByUrlRef.current)) {
-                        if (!ids.has(id)) delete transferByUrlRef.current[u]; // cleared rows can be re-created later
-                      }
-                      return kept;
-                    });
-                  }}
-                >{t("Clear")}</button>
-              </div>
-              {!transfers.length && !(indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0))) ? (
-                <Empty icon={ActivityIcon}>{t("Nothing running")}</Empty>
-              ) : null}
-              {indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0)) ? (
-                <TransferRow
-                  status={indexTask.active ? "active" : indexTask.done < indexTask.total ? "cancelled" : "done"}
-                  icon={<SearchIcon size={14} />} name="Indexing PDFs for search"
-                  info={`${indexTask.done}/${indexTask.total}`}
-                  progress={indexTask.active && indexTask.total ? indexTask.done / indexTask.total : undefined}
-                  onStop={indexTask.active ? cancelIndexing : null}
-                />
-              ) : null}
-              {transfers.map((tr) => (
-                <TransferRow
-                  key={tr.id} status={tr.status} name={t(tr.name)} info={tr.info} progress={tr.progress}
-                  icon={tr.kind === "upload"
-                    ? <UploadIcon size={14} />
-                    : tr.kind === "ai"
-                      ? <SparklesIcon size={14} />
-                      : tr.kind === "import"
-                        ? <FileIcon size={14} />
-                        : <DownloadIcon size={14} />}
-                  onStop={tr.status === "active" && tr.cancel ? () => cancelTransfer(tr.id) : null}
-                />
-              ))}
-            </div>
-          ) : null}
-        </span>
+        {/* The spinner, a red dot for a failure worth a look (a refused
+            download leaves no broken page behind, so this is the sign it
+            happened; AI lookups are quiet) or an accent dot for a file
+            waiting to be downloaded (tasks/TasksTray.jsx). */}
+        {isPhone ? null : (
+          <TasksButton tasks={tasks} open={openPopover === "downloads"}
+            onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
+        )}
+        {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} /> : null}
+      </span>
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
@@ -9217,7 +9299,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openBlock={openBlock}
         pendingBlockScrollRef={pendingBlockScrollRef}
         pdfSearchRef={pdfSearchRef}
-        wakeTasks={wakeTasks}
+        wakeTasks={tasks.wake}
         scrollToRef={scrollToRef}
         cancelCoarseRestoreRef={cancelCoarseRestoreRef}
         setPdfHidden={setPdfHidden}
@@ -9290,7 +9372,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
             {isPhone ? <span className="barLabel">{t("More")}</span> : null}
-            {isPhone && tasksRunning ? <span className="transferSpin" aria-hidden="true" />
+            {isPhone && tasks.badge === "running" ? <span className="transferSpin" aria-hidden="true" />
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
@@ -9677,29 +9759,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <Panel id="slot-center" order={2} minSize={30} className="dockSlot">
       <PanelGroup direction="vertical" autoSaveId="gamma-work-v" ref={(h) => { panelGroupRefs.current["work-v"] = h; }}>
       <Panel id="slot-main" order={1} minSize={20} className="dockSlot">
-      <div className={`main ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`}>
+      <div className={`main ${(viewerHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`}>
         {pillShown ? (
           <div
-            className={"statusPill" + (pillShown.fading ? " fading" : "") + (pillShown.error ? " error" : "") + (pillShown.retry ? " interactive" : "")}
+            className={"statusPill" + (pillShown.fading ? " fading" : "") + (pillShown.error ? " error" : "") + (pillShown.action ? " interactive" : "")}
             role="status"
           >
             {pillShown.spinner ? <span className="pillSpin" aria-hidden="true" /> : null}
             <span className="pillText">{pillShown.msg}</span>
-            {pillShown.retry ? (
-              <button type="button" className="pillRetryBtn" onClick={() => pdfRetryRef.current?.()}>{t("Retry")}</button>
+            {pillShown.action ? (
+              <button type="button" className="pillRetryBtn" onClick={pillShown.action.run}>{pillShown.action.label}</button>
             ) : null}
           </div>
         ) : null}
-        <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
-          {pdfUrl && !pdfHidden ? (
+        <div className={`viewerWrap ${(viewerHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
+          {(pdfUrl || notebook) && !viewerHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
-              onClick={() => setPdfHidden(true)}
-              title={t("Close PDF")}
-              aria-label={t("Close PDF")}
+              onClick={() => (notebook ? setNotebookView(focusedBlockId, false) : setPdfHidden(true))}
+              title={notebook ? t("Back to the notes") : t("Close PDF")}
+              aria-label={notebook ? t("Back to the notes") : t("Close PDF")}
             ><XIcon size={16} /></button>
           ) : null}
-          {pdfUrl && !pdfHidden ? (
+          {(pdfUrl || notebook) && !viewerHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
               <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
                 <ZoomOutIcon size={16} />
@@ -9710,7 +9792,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
                 <FitWidthIcon size={16} />
               </button>
-              {translateEnabled && !shareMode ? (
+              {translateEnabled && !shareMode && pdfUrl ? (
                 <button
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
                   onClick={(e) => {
@@ -9755,14 +9837,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   className={inkUi.open ? "modeActive" : ""}
                   data-guide="pdf.inkButton"
-                  onClick={() => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip())}
+                  onClick={openInkTools}
                   title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
                   aria-label={t("Handwriting tools")}
                 >
                   <PenIcon size={16} />
                 </button>
               ) : null}
-              {isPhone && !shareMode ? (
+              {notebook && !readOnly ? (
+                <button
+                  className={paperMenu ? "modeActive" : ""}
+                  onClick={() => setPaperMenu((v) => !v)}
+                  title={t("Paper: size, pattern and colour of this page")}
+                  aria-label={t("Paper of this page")}
+                  aria-expanded={paperMenu}
+                >
+                  <SheetIcon size={16} />
+                </button>
+              ) : null}
+              {notebook ? (
+                <button
+                  onClick={() => setNotebookView(focusedBlockId, false)}
+                  title={t("Notes view: the pages among the notes")}
+                  aria-label={t("Notes view")}
+                >
+                  <FileTextIcon size={16} />
+                </button>
+              ) : null}
+              {isPhone && !shareMode && pdfUrl ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
@@ -9774,24 +9876,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
             </div>
           ) : null}
-          {pdfUrl && !pdfHidden && inkUi.open && !readOnly ? (
-            <InkToolbar
-              tools={inkTools} active={inkUi.tool} options={inkUi.options}
-              eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
-              onPick={pickInkTool}
-              onUndo={() => inkUndo(false)} onRedo={() => inkUndo(true)}
-              canUndo={inkHistoryState.undo > 0} canRedo={inkHistoryState.redo > 0}
-              onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
-              onChangeTools={setInkTools}
-              onEraser={(patch) => {
-                if ("mode" in patch) setInkEraserMode(patch.mode);
-                if ("size" in patch) setInkEraserSize(patch.size);
-              }}
-              onLasso={setInkLassoMode}
-              onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
-            />
-          ) : null}
-          {pdfUrl && !pdfHidden ? (
+          {notebook && paperMenu && !readOnly ? (() => {
+            const sheet = nbSheets.find((x) => x.id === nbCurrent) || nbSheets.at(-1);
+            if (!sheet) return null;
+            return (
+              <PaperMenu paper={sheet.paper} number={sheet.index + 1}
+                onChange={(paper) => setSheetPaper(sheet.id, paper)}
+                onApplyAll={() => applyPaperToAll(sheet.paper)}
+                onClose={() => setPaperMenu(false)} />
+            );
+          })() : null}
+          {viewerInk && inkUi.open && !readOnly ? inkToolbar : null}
+          {(pdfUrl || notebook) && !viewerHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox">
               <button
                 onPointerDown={fullscreenPointerDown}
@@ -9883,6 +9979,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 hideTip?.();
               }}
             />
+          ) : notebook ? (
+            <NotebookViewer sheets={nbSheets} inkBySheet={nbInk} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
+              onZoomTo={zoomTo} readOnly={readOnly} onAddSheet={readOnly ? undefined : addPageAtEnd}
+              onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef}
+              inkTool={inkTool} inkPenTool={inkPenTool} inkPenOnly={inkPenOnly} inkPressure={inkPressure}
+              inkEraserMode={inkEraserMode} inkEraserSize={inkEraserSize} inkLassoMode={inkLassoMode}
+              inkSelection={inkSelection} inkFlash={inkFlash}
+              onInkStroke={readOnly ? undefined : handleInkStroke}
+              onInkErase={readOnly ? undefined : handleInkErase}
+              onInkErasePartial={readOnly ? undefined : handleInkErasePartial}
+              onInkSelect={readOnly ? undefined : handleInkSelect}
+              onInkAction={readOnly ? undefined : handleInkAction}
+              onInkMoveSelection={readOnly ? undefined : handleInkMoveSelection}
+              onInkJump={showInkInNotes} />
           ) : (
             <div className="status">{t("No PDF open.")}</div>
           )}
@@ -9943,11 +10053,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`phoneTab ${phoneMainActive ? "active" : ""}`}
                 onClick={() => setPhonePanel(null)}
-                title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+                title={homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}
+                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}
               >
-                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
-                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
+                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : notebook ? <NotebookIcon size={16} /> : <FileIcon size={16} />}
+                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}</span>
               </button>
             ) : null}
             {!centerNotes ? (
@@ -9989,7 +10099,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onImport={runImport}
         />
       ) : null}
-      {importReview ? <ImportReviewDialog {...importReview} onClose={() => setImportReview(null)} onComplete={completeLibraryImport} /> : null}
+      {importReview ? <ImportReviewDialog {...importReview} tasks={tasks} onClose={() => setImportReview(null)} /> : null}
       {trashOpen ? (
         <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}
           onRestored={() => fetchHomeBlocks()} />
@@ -9998,11 +10108,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={!!pageAttach && !exportFolder}
-          pdfStored={!!docId}
+          hasPdf={(!!pageAttach || hasSheets) && !exportFolder}
+          pdfStored={!!docId || hasSheets}
           folder={exportFolder}
-          onCancel={() => setExportOpen(false)}
+          onCancel={closeExport}
           onExport={runExport}
+          job={exportJobId ? tasks.byId(exportJobId) : null}
+          fetchJob={tasks.fetchJob}
+          onDownload={() => { const job = tasks.byId(exportJobId); if (job) tasks.download(job); }}
+          onStop={() => { const job = tasks.byId(exportJobId); if (job) tasks.cancel(job).catch((err) => setStatus(err.message)); }}
+          onRetry={() => {
+            const job = tasks.byId(exportJobId);
+            if (job) retryTask(job, "auto").then((again) => { if (again) setExportJobId(again.id); });
+          }}
         />
       ) : null}
       {confirmBox ? (
@@ -10287,8 +10405,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           metaPrompt,
           metaFetchModel,
           metaContextChars,
-          indexTask,
-          wakeTasks,
+          indexing,
+          wakeTasks: tasks.wake,
           setStatus,
           // status-table row click: jump to the paper (closing the dialog)
           openPaper: (id) => { setSettingsOpen(null); openPage(id); },
@@ -10368,7 +10486,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             setStatus(t("AI context limits reset."));
           },
         }}
-        search={{ searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper, indexTask, setStatus }}
+        search={{ searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper, indexing, setStatus }}
         workspace={authUser?.user && !authUser.is_guest ? {
           workspace,
           me: authUser.user,
@@ -10384,10 +10502,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         } : null}
         backups={authUser?.user && !authUser.is_guest ? {
           workspace,
+          tasks,
           setStatus,
           confirm: setConfirmBox,
-          closeSettings: () => setSettingsOpen(null),
-          reloadWorkspace: () => { window.location.href = withWorkspace(window.location.pathname); },
         } : null}
         server={authUser?.is_admin ? {
           me: authUser.user,
@@ -10395,6 +10512,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           switchWorkspace,
           refreshSession: checkSession,
           refreshQuota,
+          tasks,
           setStatus,
           confirm: setConfirmBox,
           closeSettings: () => setSettingsOpen(null),

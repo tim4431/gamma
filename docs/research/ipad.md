@@ -5,6 +5,16 @@ Survey from 2026-09-18, when the upstream feature study
 ranked upstream's native iPad app first. Findings only; what was built is
 in [dev/ipad.md](../dev/ipad.md).
 
+**Revisited 2026-09-29.** The decision below held until two requirements
+came up: reading and writing with no connection, synced by the desktop
+mirror's rules, and native Pencil capture. Both needed a native app. The
+format argument still holds, so the app writes `gamma-ink`, never
+PencilKit's drawing. The reasoning against a second implementation of
+Gamma's rules also holds, so the app runs the web app's own JavaScript
+for ink, notebooks and the mirror's merges, and Swift only stores, draws
+and talks to the network ([dev/ipad.md](../dev/ipad.md) "The native app").
+The installed web app remains, for everything online.
+
 ## What upstream's app delivers
 
 `amogadget/Gamma` ships `ipad/`: a SwiftUI app (iPadOS 17+, built from

@@ -9,7 +9,15 @@ key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
 in-scope check (`_load_scoped_page`/`_scope_pages`: folder = tag prefix match
 via `foldertags.path_within`, page = id equality) is shared by every
-executor. When the request names a cursor block (`focus_block_id`) or attached block
+executor. A mutating entry also has a `preview`: what its approval card
+shows when the user set its permission to Ask. Each changer has three
+parts: a `_plan_*` function checks a call and works out the change, the
+executor applies the plan, and the preview describes it. So the card and
+the change come from one place ("Asking before a call" in
+[ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
+reading or changing: its tools share the `mutating` flag, which also sets its
+default (reading allowed, changes ask; `ai_permissions.permission_state`).
+When the request names a cursor block (`focus_block_id`) or attached block
 chips (`context_blocks`), `agent_system` adds one line each so "this block" /
 "these" resolve to ids without a `read_block` round-trip — their text is
 already in the context (see "Pointing the chat at notes" in [ai.md](ai.md)).
@@ -23,11 +31,12 @@ Folder semantics mirror
 [frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
-Pages in Recently deleted are out of every tool's reach, the MCP adapter's
+Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
 `blocks_store.page_root_id` find no page for them or their blocks
-([home_library.md](home_library.md) "Recently deleted"). The agent cannot
-delete pages.
+([home_library.md](home_library.md) "Recently deleted"). Two folder-chat
+tools are the exception: `list_deleted` lists them and `restore_page` brings
+one back. The agent cannot delete pages.
 
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
@@ -39,9 +48,9 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes its fixed allowlist of the seven read tools below that stay
-inside the library (everything but the web and write tools) and a
-non-writable workspace scope.
+set; MCP passes its fixed allowlist of seven read tools that stay inside
+the library (not the web and write tools, `view_ink`, `cite` or
+`list_deleted`) and a non-writable workspace scope.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -50,12 +59,19 @@ non-writable workspace scope.
 | `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
-| `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
+| `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
-| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records with the `doi:` / `arXiv:` string `fetch_paper` takes |
-| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, open-access fallback included) in `read_page`-style windows, else the web page's readable text; nothing is stored. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
+| `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
+| `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
+| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `save_paper` | Save papers | folder + page | Add a paper to the library by DOI, arXiv id or URL, through the ingest the reply's Save to library and the Connector use |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
+| `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
+| `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
@@ -205,32 +221,222 @@ an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
 
-### search_papers / fetch_paper (both scopes, one permission each)
+### view_ink (both scopes)
 
-The agent's reach outside the library, read-only (`gamma/ai_web.py`;
-executors in `ai_tools.py`). The use case is a work the user's pages cite or
-mention but do not hold: *"read reference 12 of this paper and tell me what
-it measures"*. The agent finds the reference entry with `search_library` /
-`read_page`, identifies the work with `search_papers` and reads it with
-`fetch_paper`. In a folder chat, *"find recent papers on X"* works the same
-way.
+The model's eyes on handwriting ([handwriting.md](handwriting.md)). An ink
+group's text is only its caption, so read_block labels the block
+("handwriting on p. N, K strokes" or "on the page of paper above") and
+view_ink shows the strokes. `block_id` names a handwriting block or a page
+of paper (a sheet). A group is drawn where it was written, cropped to its
+strokes with a margin (`ink_view.crop_box`: a tenth of the strokes' larger
+side or 18 pt, and at least 2 inches a side, so one word is seen with what
+surrounds it). `area: "page"` shows the whole PDF page or sheet with all its
+handwriting instead. A sheet's id always shows the whole sheet.
+
+Nothing is drawn by hand. Both paths reuse an export
+(`gamma/ink_view.py`):
+
+- **A sheet** (a `canvas` group, or the sheet itself) is the notebook
+  export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
+  strokes as vectors.
+- **A PDF page** is that page on its own with the groups written on it as
+  the annotated export's `/Ink` annotations
+  (`pdf_export.page_with_ink`). pdfium generates their appearance when it
+  renders, so highlighters stay translucent over the text. Ink imported
+  from the PDF and still embedded in it (`pdf_export.still_embedded`) is
+  not added twice. When the PDF
+  is missing or PyPDF2 cannot copy the page (an encrypted file), the
+  strokes are drawn on blank paper of the page's size, and the result says
+  so.
+
+`pdf_text.render_page` rasterizes either, whole at `RENDER_MAX_SIDE` or
+cropped under its 4× zoom cap, and `pdf_text.image_part` encodes the picture
+as every tool picture is. It rides on the chip's `images` like
+`view_pdf_page`'s and is never saved. The result names the block, the
+page and the stroke count, quotes the caption, and asks the model to mark a
+word it cannot read `[illegible]` rather than guess. Its chip is ✎
+"Looked at handwriting in …" (kind `ink`, with `block_id`), and the open
+page rings that block. It shares the View permission with `view_pdf_page`.
+
+With `edit_block` armed, the agent prompt also says how to transcribe:
+look with view_ink, then write the text into the group's caption, as an
+append when it has one. The notes' **Transcribe with AI** (a handwriting
+block's ⋮⋮ menu) sends exactly that request with the block attached as a
+chip, and an attached handwriting block's picture rides with the message
+(see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
+tools still answers with the transcription.
+
+### cite (both scopes)
+
+The citation records Gamma keeps with pages, so a bibliography is built
+from the records and not from the model's memory. `page_ids` takes up to
+50 pages; in a page chat the default is the open page. For each page the
+result gives:
+
+- the record from `properties.meta` (authors, year, venue, volume, pages,
+  publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
+  and the paper's own title when it differs from the page's;
+- the stored BibTeX, else one built from the record the way a hand edit
+  builds it (`routers/metadata._build_bibtex`);
+- the slide citation when one was made (`ppt_cite`). None is generated,
+  since that is an AI call.
+
+A record flagged `unverified` says so. A page without metadata says so
+too, and the model is told not to invent one. Nothing is looked up or
+stored. Pages outside the scope are refused one by one, and a call where
+every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
+`cite`), under the Read permission.
+
+### The web tools (both scopes)
+
+The agent's reach outside the library, read-only: `search_papers`,
+`related_papers` and `search_web` under **Search papers online**
+(`web_search`), `fetch_paper` under **Fetch documents** (`web_read`). The
+code is `gamma/ai_web.py` (registries, citation graph, fetching),
+`gamma/openalex.py`, `gamma/paper_links.py` and `gamma/search_services.py`
+(general web search); the executors are in `ai_tools.py`.
+
+Two uses shape them. A work the user's pages cite but do not hold: *"read
+reference 12 of this paper and tell me what it measures"*. The agent finds the
+reference entry with `search_library` / `read_page`, identifies the work with
+`search_papers` and reads it with `fetch_paper`. And discovery from a research
+question or an experimental setup: *"find papers on density-dependent loss in
+Raman sideband cooling of 85Rb in a 1D lattice"*. With the search tools armed,
+`agent_system` gives the model a researcher's recipe: two to four short concept
+queries (the phenomenon, the method, the system, not every parameter at once),
+each run through `search_papers` (and `search_web` when armed), relevance judged
+from the abstracts, the strongest match's citations followed with
+`related_papers`, and only the few decisive papers fetched. The answer says
+which papers match the user's case directly and which are analogies (another
+species, geometry or regime), and never presents one paper's number as a
+general limit. Without a web engine the prompt adds that general web search is
+off and where to turn it on.
+
+#### search_papers
 
 `search_papers` takes a free-text `query` (title, keywords, authors) and asks
-the keyless registries the metadata lookup already uses
-([paper_metadata.md](paper_metadata.md)): Crossref's bibliographic search
-(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`, a title phrase
-OR words ANDed over title/authors/abstract in one request). The phrase branch
-keeps exact cited titles containing stopwords findable. The two lists are
-interleaved in their own relevance order. A work both registries return (same
-DOI, arXiv id or normalized title) is one record that keeps both identifiers,
-so a journal record keeps its arXiv preprint. A record whose title is exactly
-the query (a cited reference) ranks first. A
-query that is itself a DOI or arXiv id (bare, `doi:`/`arXiv:`-prefixed, or a
-URL; `ai_web.identifier`) is looked up directly. `limit` defaults to 8 (max
-20). Each record is one line (title, up to three authors, year, venue, DOI,
-arXiv id with its PDF URL) ending with the `fetch_paper(source=…)` call that
-reads it — both calls, the arXiv version first, when it has both. The result
-reminds the model these are registry records, not the user's pages.
+three registries at once, in a thread pool: Crossref's bibliographic search
+(`metadata._crossref_search`) and the arXiv API (`_arxiv_search`), which the
+metadata lookup also uses ([paper_metadata.md](paper_metadata.md)), and
+OpenAlex (`openalex.search`). They are asked with `detail=True`, which adds
+each record's `abstract` (plain text, JATS stripped, `metadata.plain_abstract`)
+and Crossref's `cited_by` count; the metadata lookup stores the records it
+finds, so it asks without. arXiv's request is a title phrase OR words ANDed
+over title/authors/abstract; the phrase branch keeps exact cited titles
+containing stopwords findable. A query of more than five words that matches
+nothing is asked once more with its five longest words, so a descriptive query
+degrades to near matches instead of nothing.
+
+The three lists are interleaved in their own relevance order (`ai_web._merge`),
+OpenAlex's first: its relevance reads a topic best, where Crossref's puts
+loosely matching book chapters first.
+A work two registries return (same DOI, arXiv id or normalized title) is one
+record that takes the fields the first lacks — a journal record its arXiv
+preprint and an arXiv record its DOI, the abstract, OpenAlex's open-access PDF
+(`oa_pdf`) — and the larger citation count. `from_year` keeps works from that
+year on; it goes to Crossref and OpenAlex as a filter and is applied to the
+merged list for arXiv. `sort` is `relevance` (the default), `citations` or
+`recent`. The order is applied here, to the relevant candidates: Crossref's own
+citation sort discards relevance and returns unrelated highly cited papers. A
+record whose title is exactly the query (a cited reference) ranks first
+whatever the order. A query that is itself a DOI or arXiv id (bare,
+`doi:`/`arXiv:`-prefixed, or a URL; `ai_web.identifier`) is looked up directly,
+and OpenAlex's record of it (a lookup by id, which costs nothing) adds the
+abstract, citation count and open-access PDF.
+
+`limit` defaults to 8 (max 20). Each record is one line (title, up to three
+authors, year, venue, `cited by N`, DOI, arXiv id with its PDF URL, else the
+open-access PDF) ending with the `fetch_paper(source=…)` call that reads it —
+both calls, the arXiv version first, when it has both — and a second line with
+the first 400 characters of its abstract. The result reminds the model these
+are registry records, not the user's pages, and that an abstract says what a
+paper is about, not what it found. A registry that did not answer is named at
+the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
+paused searches without an API key (heavy load) — a free OpenAlex API key in
+Settings → Assistant → Online search avoids this.)".
+
+OpenAlex answers without an account on a small daily budget. A search costs a
+tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
+when its cluster is loaded (503). The account's optional key (Online search,
+below), else the server's `GAMMA_OPENALEX_API_KEY`, gives ten times the budget
+and uninterrupted search. The key travels in the `Authorization` header. The
+registry switch `GAMMA_METADATA_LOOKUP=off` applies to OpenAlex too.
+
+#### related_papers
+
+`related_papers(source, relation, sort, limit, from_year)` takes a DOI, an
+arXiv id or an exact title and returns the works it cites (`references`), the
+works citing it (`citations`, the default) or OpenAlex's related works
+(`similar`), as `search_papers` records. They come most cited first, or newest
+first with `sort: "recent"`: the most cited works citing a classic are mostly
+reviews, and the newest are its follow-up work. An arXiv paper is followed
+through its published DOI when the arXiv record has one, since the journal
+record carries the citations; else through its arXiv DOI, else by exact title
+(`openalex.find_title`). The lookup is free; the list is one filter request
+(`cites:W…`, or up to 50 of the work's `referenced_works` / `related_works` by
+id). The head names the relation and, for citations, the total count.
+
+#### search_web
+
+`search_web(query, limit)` searches the general web for what the registries
+miss: author and lab publication lists, institutional repositories, theses,
+and another copy of a paper whose publisher PDF is blocked. It is armed only
+when `search_services.web_engine` finds an engine for this chat (the TOOLS
+entry's `needs: "web_engine"`, met through `ai_tools.available(scope)`; the
+chat scope carries `web_engine`). Each result is a title link, the `doi:` /
+`arXiv:` string the URL carries when it carries one (a DOI or arXiv link, a
+publisher path with the DOI in it) with the `search_papers` call that gives its
+registry record, and the snippet. The head says these are leads, not verified
+papers, to be read with `fetch_paper(source=URL, title=…)`. Titles are capped
+at 300 characters and snippets at 400, HTML is stripped, non-http(s) and
+credentialed URLs are dropped, and duplicates are removed. One message may run
+`MAX_WEB_SEARCHES` (10) searches, since each is a paid query or a call on the
+chat's connection; the tool rounds cap everything else.
+
+The engines (`gamma/search_services.py`):
+
+- **Your AI connection** (`ai`): one short call on the chat's own connection
+  with its provider's hosted search tool, the way Codex and Claude search. The
+  adapters say which wires have one (`Protocol.hosted_web_search`): the
+  Responses wires (OpenAI's platform, the ChatGPT sign-in) send
+  `{"type": "web_search"}`, and Anthropic's own API sends
+  `web_search_20250305` (at most three searches per call). A Chat Completions
+  gateway has none. A tool spec with a `hosted` entry goes out as that entry
+  on every wire that has one. The call asks for one `title | url | summary`
+  line per page, at low effort when the chat's connection takes an effort. The
+  stream yields `("web_sources", …)` for the pages the provider reports (the
+  Responses `web_search_call` sources, which OpenAI's platform sends when asked
+  with `include`, its URL citations, and Anthropic's `web_search_tool_result`
+  and citations). When sources are reported, only lines for those pages are
+  kept, and reported pages the model did not list follow; a URL from the
+  model's memory never passes. The call counts as chat usage.
+- **Brave Search** (`brave`): the Brave Search API with the account's key in
+  the `X-Subscription-Token` header.
+- **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`. The
+  account's own URL goes through the SSRF guard, so it must be a public host.
+  The server's `GAMMA_SEARXNG_URL` serves accounts without their own and may
+  be on the private network, since the admin chose it.
+
+`engine` picks one: **Automatic** (the default) takes Brave or SearXNG when set
+up, else the AI connection; a named engine is used only when it is available,
+so a missing key never switches services silently; **Off** turns general web
+search off.
+
+#### Online search services
+
+Settings → Assistant → **Online search** (`settings/OnlineSearch.jsx`) holds
+**Search the web with** (the engine) and one row per service: Brave Search (API
+key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
+or Test, Edit and Remove. Test runs one small search with the stored settings.
+The settings are the account's, stored in `users.db` `user_prefs` under the
+reserved account-wide `search-services` key (`{"engine", "brave": {api_key},
+"searxng": {url}, "openalex": {api_key}}`, each with `updated_at`). Like
+`ai-settings` and `translate-engines`, the generic `/api/prefs` endpoints refuse
+the key. `GET /api/ai/search-services` masks secrets to their last four
+characters; a secret left empty on save keeps the stored one. Guests cannot
+store keys. The routes are in [api.md](api.md).
+
+#### fetch_paper
 
 `fetch_paper` takes a `source` (DOI, arXiv id or http(s) URL) and reads the
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
@@ -239,7 +445,7 @@ from the Read window preference, shared through `_window_args`), `pdf_page`,
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
-the Unpaywall open-access fallback, browser headers). The whole fetch — the
+up to four Unpaywall open-access copies, browser headers). The whole fetch — the
 resolver's walk, the download and the page fallback — runs in one
 `net_guard.browsing_session`: one cookie jar, so what a landing page sets (a
 session id, an institutional-access handshake) reaches the PDF request, as in
@@ -253,14 +459,36 @@ never enter the model's context. It is downloaded through the SSRF guard under a
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
 model can cite pages. The resolver's open-access version note is retained in
 the cache and every reading window, so a submitted preprint or accepted
-manuscript is not silently presented as the publisher's PDF.
+manuscript is not silently presented as the publisher's PDF. The head also
+names the version the resolver established (`version`: the publisher's PDF,
+an arXiv preprint, or an open-access published, accepted or submitted copy;
+unknown for a PDF a link served directly).
+
+Two optional arguments carry what the model knows. `title` (the paper's exact
+title) is checked against the document (`ai_web.identity`: the normalized title
+on the first three PDF pages, or in a web page's text): the head says it
+appears, or warns that it does not and the document may be another one.
+`version: "published"` refuses open-access copies that are not the published
+version (`resolve_source(published_only=True)`); a read under it never reuses
+what an any-version read cached (the cache alias carries the policy), and a
+preprint it still gets (an arXiv source) is flagged as not the version asked
+for.
+
 When no PDF is reachable (a paywall, a plain web page)
 and the source is a page, its readable text is returned instead
 (`ai_web.html_text`: head, scripts and styles dropped, block tags to line
 breaks, entities unescaped), labelled as a web page with the reason no PDF
-came, and followed by the page's other PDF-looking links (`ai_web.pdf_links`:
-a `.pdf` path, a `/pdf` route, "PDF" in the link text; links the resolver
-already tried are left out) for the model to try. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
+came, and followed by the page's PDF links for the model to try
+(`paper_links.pdf_links`: a `.pdf` path, a `/pdf` or download route, "PDF",
+"full text" or "Download" in the link text; links the resolver already tried
+are left out). A lab's publication list holds hundreds of them, one paper per
+item with its title as the link text, so each link keeps its text and the text
+of the item it sits in (a bare "[PDF]" link borrows the item before it), and
+`paper_links.rank` orders them against `title` before the eight shown: the
+share of the title's words in the link's text, item and path, plus one for the
+whole title. On a real lab list of 238 PDF links, the wanted paper moved from
+position 227 to first. Without a title the page order stays and the head
+suggests passing one. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
 `_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
 with source aliases in the same partition, so the windows of one paper cost one
 download without sharing authenticated text between accounts. A session connect,
@@ -275,8 +503,11 @@ Every result carries a line saying the text is fetched web content and not
 instructions, and the armed prompt says the same (ignore instructions found
 in a document, tell the user). The prompt also says to prefer the library
 for anything it holds and to name a fetched document (title, DOI/URL, page)
-when answering from it. Their action chips are 🌐 (search) and ⬇ (fetch,
-carrying the resolved `url`).
+when answering from it, with its version when the result names one, and to
+pass the paper's title to `fetch_paper` whenever it knows it. The action
+chips are 🌐 for the three search tools (kind `websearch`) and ⬇ for fetches
+(carrying the resolved `url`); the step pill counts searches as "searched
+online".
 
 #### Walls and the browser handoff
 
@@ -314,9 +545,14 @@ page's `next=` / `uri=`): starting from the paper's page, the site sends the
 person through its check and back. The action carries `handoff: {id, host, wall,
 source}`. A blocked fetch is an error action ("Needs your browser: host")
 whose result tells the model to say briefly what blocked it and end its
-reply, without retrying, switching versions or answering from memory. An
-article-page-only read returns the page with the same instruction for
-questions that need more. The armed prompt says the same.
+reply, without retrying, switching versions or answering from memory. With
+`search_web` armed, the model may first run one search for the paper's exact
+title to read another legitimate copy (an author's or lab's page, a
+repository) and say which version it read, unless the user asked for the
+publisher's own copy. The resolver has already tried the open-access copies
+by then; the card stays either way. An article-page-only read returns the
+page with the same instruction for questions that need more. The armed
+prompt says the same.
 
 The chat renders a card per request under the reply
 (`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
@@ -408,6 +644,52 @@ a challenge bound to that browser or IP. The model is told not to repeatedly
 retry a blocked URL and to respect rate limits. Reading an uploaded library
 page requires **Read pages** and selecting that page as context.
 
+### save_paper (both scopes)
+
+Adds a paper to the library when the user asks, the same way the reply's
+**Save to library** does. `source` is a DOI, an arXiv id or an http(s)
+URL; `title` is the exact title when known. The call goes through the clip
+ingest (`routers/clip.py` `save_clip`, the body of `POST /api/clip`):
+
+- the usual dedup by identifier;
+- the PDF resolved, fetched and stored, or a page carrying the paper's web
+  address when none is reachable;
+- the page filed;
+- the metadata lookup started in the background.
+
+The request is built as `chat/chatPapers.js` builds it. An identifier's
+DOI or arXiv page is the page's source, and a URL is also the address to
+resolve. The account's Reading choices ride in the request as
+`paper_save` (`{allow_oa, save_copy, fetch_metadata}`, missing means on),
+the same ones the pill uses. When the user's browser delivered this source
+through a fetch handoff, the held PDF is stored first (`storage.store_pdf`)
+and the clip uses it. Journal sign-ins are bound from the chat scope like
+`fetch_paper`'s.
+
+`folder` files the paper. A folder chat resolves it inside its folder
+(`move_page`'s rule); a page chat takes it as given, else the open page's
+first folder, which is where the pill files. A paper already in the
+library is only filed. When it is in that folder already, `_plan_save_paper`
+answers that nothing changed, so there is no card and the chip is a no-op.
+In a page chat the new page is outside the chat's reach, and the result
+says to read the paper with `fetch_paper`.
+
+The approval card's preview has the paper's `title` (the one passed, else
+the library page's, else the source), the folder it goes `to` and the source
+as its `diff`. A paper the library holds adds `existed` and its `page_id`,
+and the card reads "File … in …" instead of "Save … to …". Planning looks
+nothing up online; the PDF is fetched only once the call runs.
+
+One message saves at most `MAX_SAVES` (20) papers. The count lives in
+`scope["tally"]`, which `run_agent_tool` creates before it copies the scope
+for a mutation, so the copies share it. The action (kind `save`) carries
+`page_id`, `title`, `to` (the folder, `""` for the library root),
+`existed` and `pdf`. The chat lists it under "Changed in your library" as
+"Saved {page} to {folder}", or as filed there when it was already in the
+library. The agent prompt says to save only on request, never as a side
+effect of reading. The permission is **Save papers** (`save`), a change
+permission in every chat kind, Ask by default.
+
 ### rename_page / move_page (folder only)
 
 `rename_page` changes a page's title. `move_page` files a page into a
@@ -416,6 +698,28 @@ current folder are kept. Both are reversible with another call. Their
 actions name the change for the chat's change list: `title` (the page's
 title before the call), `from` / `to` (the old and new title; the old
 folder paths, comma-joined, and the new one, `""` for the library root).
+
+### list_deleted / restore_page (folder only)
+
+Recently deleted ([home_library.md](home_library.md)). A deleted page is in
+a folder chat's reach when it was filed under the chat's folder; at the
+library root, every deleted page is. A permission either reads or changes,
+so the two tools have one each:
+
+- `list_deleted`, under **List pages**, lists such pages, the last deleted
+  first: id, title, the folders a restore puts the page back in, when and
+  by whom it was deleted, and when it goes for good (`trash.list_trash`).
+  `title_contains` filters by title. Its chip is a `list` one.
+- `restore_page`, under **Restore deleted pages** (`restore`, Ask by
+  default), runs `ops.restore_page`, the route's restore. The page goes
+  back under the library root in its folders, with its notes, highlights,
+  files and chats. `_plan_restore_page` answers a page that is not deleted
+  (a no-op) or was filed outside the chat's folder (refused) without a card.
+
+The approval card's preview has the page's `title` and the folders it goes
+back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
+and `to` (its folders). The chat lists it under "Changed in your library".
+Deleting is not offered.
 
 ### edit_block / create_block / move_block (both scopes, one permission)
 
@@ -487,7 +791,10 @@ approaches"*, *"where did I note something about bias-preserving gates?"*
 (a notes hit with its block id), *"tidy my notes on this page into
 sections"* — and in a page chat, *"where does this paper define the
 protocol?"* (it searches inside the PDF and quotes page numbers) or *"add a
-summary block to my notes"*.
+summary block to my notes"*. Handwriting, citations, saving and Recently
+deleted: *"transcribe my handwriting on this page"*, *"BibTeX for everything
+in this folder"*, *"save the three most cited follow-ups into refs"*, *"bring
+back the page on Rydberg blockade I deleted last week"*.
 
 ## Guardrails
 
@@ -499,11 +806,14 @@ Deliberately not offered under any permission:
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads, share links, settings, or other users' data.
-- Adding a fetched paper to the library — `fetch_paper` reads, it never
-  creates a page; the user drops the PDF or uses the extension for that.
+- Adding a paper as a side effect of reading it: `fetch_paper` never
+  creates a page. Only `save_paper` does, under its own permission and on
+  the user's request.
 
-Disarmed tools are not offered to the model, and the server additionally
-refuses to execute them if called. Output/argument sizes are capped
+Tools whose permission is Off are not offered to the model, and the server
+additionally refuses to execute them if called. A tool whose permission is
+Ask is offered, but each call waits on an approval card and runs only once
+the user allows it. Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
@@ -513,10 +823,10 @@ rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
-`chat/ChatDock.jsx`: list, book, search, eye, globe, download, pencil,
-folder, plus). Each line expands to the arguments and the output the model
-got. Everything that changed is listed again under the pill: "Changed in
-your library" (renamed and filed pages, old → new) and "Changed in your
-notes" (edited, added and moved blocks), each entry a link to the page or
-block. The note tools' actions carry their page's `title` for that list; a
+`chat/ChatDock.jsx`: list, book, search, eye, pen, quote, globe, download,
+file-plus, history, pencil, folder, plus). Each line expands to the
+arguments and the output the model got. Everything that changed is listed
+again under the pill: "Changed in your library" (renamed, filed, saved and
+restored pages) and "Changed in your notes" (edited, added and moved
+blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.

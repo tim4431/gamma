@@ -1,13 +1,15 @@
 // The agent's tool calls as the chat shows them: every call counts as a
 // step, summed up in one pill ("6 steps · listed, read 1 page · 1 failed"),
 // and the calls that changed something are listed apart, grouped by where
-// the change landed — the library (renamed or filed pages) or the notes
-// (edited, added or moved blocks). While a reply streams, the {"step"} line
-// the server sends before each call names what is running now.
+// the change landed — the library (renamed, filed, saved or restored pages)
+// or the notes (edited, added or moved blocks). While a reply streams, the
+// {"step"} line the server sends before each call names what is running now.
+// A call the user did not allow on its approval card (`declined`) counts on
+// its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
-const CHANGE_KINDS = new Set(["rename", "move", "edit", "create"]);
-const LIBRARY_TOOLS = new Set(["rename_page", "move_page"]);
+const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "save", "restore"]);
+const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page"]);
 
 // A call that changed something (listed in the reply, and ChatDock refreshes
 // the home feed after one). Actions saved before `noop` existed mark a
@@ -16,7 +18,9 @@ export function isChange(a) {
   return !!a && !a.error && !a.noop && CHANGE_KINDS.has(a.kind) && !/^ok\b/.test(a.summary || "");
 }
 
-// Where a change landed: "library" (a page renamed or filed) or "notes".
+// Where a change landed: "library" (a page renamed, filed, saved or
+// restored) or "notes". Actions saved before they named their `tool` can
+// only be renames and moves.
 export function changePlace(a) {
   if (a.tool) return LIBRARY_TOOLS.has(a.tool) ? "library" : "notes";
   return a.kind === "rename" || (a.kind === "move" && !a.block_id) ? "library" : "notes";
@@ -25,7 +29,8 @@ export function changePlace(a) {
 export function splitActions(actions = []) {
   const library = [], notes = [];
   for (const a of actions) if (isChange(a)) (changePlace(a) === "library" ? library : notes).push(a);
-  return { library, notes, failed: actions.filter((a) => a.error).length };
+  return { library, notes, failed: actions.filter((a) => a.error && !a.declined).length,
+    declined: actions.filter((a) => a.declined).length };
 }
 
 // The pill's words for the reading steps, in the order they first ran.
@@ -33,8 +38,10 @@ const READ_VERBS = {
   list: () => t("listed"),
   read: (n) => tn("read {n} page", "read {n} pages", n),
   view: (n) => tn("looked at {n} PDF page", "looked at {n} PDF pages", n),
+  ink: (n) => tn("looked at handwriting", "looked at handwriting {n} times", n),
+  cite: (n) => tn("cited", "cited {n} times", n),
   search: (n) => tn("searched", "searched {n} times", n),
-  websearch: (n) => tn("searched papers online", "searched papers online {n} times", n),
+  websearch: (n) => tn("searched online", "searched online {n} times", n),
   fetch: (n) => tn("fetched {n} document", "fetched {n} documents", n),
 };
 
@@ -67,9 +74,16 @@ export function runningLabel(step, titleOf = () => "") {
     }
     case "read_chats": return title ? t("Reading the chat about “{title}”…", { title }) : t("Reading chats…");
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
+    case "view_ink": return t("Looking at handwriting…");
+    case "cite": return t("Looking up citation records…");
     case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
+    case "related_papers": return t("Following citations of {source}…", { source: args.source || t("a paper") });
+    case "search_web": return t("Searching the web for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
+    case "save_paper": return t("Saving {source} to your library…", { source: args.title || args.source || t("a paper") });
+    case "list_deleted": return t("Looking in Recently deleted…");
+    case "restore_page": return title ? t("Restoring “{title}”…", { title }) : t("Restoring a page…");
     case "rename_page":
       if (args.title) {
         return title ? t("Renaming “{title}” to “{to}”…", { title, to: args.title }) : t("Renaming to “{to}”…", { to: args.title });

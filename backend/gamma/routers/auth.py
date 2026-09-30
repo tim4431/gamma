@@ -1,153 +1,20 @@
-"""Login, logout, session inspection, guest login, and workspace backups as
-downloads / uploads (export, export-all, import-data — the zip itself is
-gamma/ws_backup.py)."""
+"""Login, logout, session inspection, the account directory and guest login.
+(Workspace backups as downloads and uploads — /export, /export-all,
+/import-data — are routers/ws_backups.py.)"""
 
-import os
 import secrets
-import shutil
-import tempfile
-import zipfile
-from pathlib import Path
 
 import bcrypt
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
-from .. import cloud_auth, guests, ratelimit, version, workspaces, ws_backup
-from ..auth import TOKEN_REFUSAL, is_token, require_user, requested_ws, set_session_cookie
+from .. import cloud_auth, guests, ratelimit, version, workspaces
+from ..auth import TOKEN_REFUSAL, is_token, require_user, set_session_cookie
 from ..ratelimit import client_ip
-from ..db import connect_users_db, page_now, ws_dir
+from ..db import connect_users_db, page_now
 
 router = APIRouter(prefix="/api", tags=["auth"])
-
-
-# Zipping a big library takes a while and the client sees no bytes until the
-# zip is done — this side-channel lets the UI poll a percent meanwhile. Plain
-# dict keyed by workspace: worker thread writes, poll requests read
-# (GIL-safe); a stale entry from a crashed export is simply overwritten.
-_export_progress: dict[str, dict] = {}
-
-
-def _target_ws(request: Request, ws: str | None, user: str | None, needed: str) -> str:
-    """The workspace a backup call applies to. ``?ws=`` names one (else the
-    request's usual workspace); ``?user=`` — admins only — means that
-    account's personal workspace (the Settings → Users rows). The caller
-    must hold ``needed`` (viewer / editor / owner) in it; server admins
-    pass every check, because a backup is how they rescue an account."""
-    me = require_user(request)
-    if user and user != me:
-        if not request.state.is_admin:
-            raise HTTPException(status_code=403, detail="admin privilege required")
-        target = workspaces.default_workspace(user)
-        if not target:
-            raise HTTPException(status_code=404, detail="no such user")
-        return target
-    target = ws or requested_ws(request) or request.state.default_ws
-    if not workspaces.get(target):
-        raise HTTPException(status_code=404, detail="workspace not found")
-    if request.state.is_admin:
-        return target
-    role = workspaces.role_of(target, me)
-    if not role:
-        raise HTTPException(status_code=404, detail="workspace not found")
-    if not workspaces.at_least(role, needed):
-        raise HTTPException(status_code=403, detail=f"only a workspace {needed} can do that")
-    return target
-
-
-@router.get("/export-progress")
-def export_progress(request: Request, ws: str | None = None, user: str | None = None):
-    target = _target_ws(request, ws, user, "viewer")
-    return _export_progress.get(target) or {"active": False, "total": 0, "done": 0}
-
-
-# Sync endpoint on purpose: zipping a large library runs in the threadpool.
-@router.get("/export")
-def export_data(request: Request, uploads: int = 1, ws: str | None = None, user: str | None = None):
-    """Full backup of a workspace as a zip (gamma/ws_backup.py): consistent
-    SQLite snapshots plus every uploaded file; `uploads=0` skips the files
-    for a small database-only backup. Restoring = /api/import-data into any
-    workspace. Defaults to the request's workspace; any member may export
-    it, and admins any workspace (?ws=) or account (?user=)."""
-    target = _target_ws(request, ws, user, "viewer")
-    if not ws_dir(target).exists():
-        raise HTTPException(status_code=404, detail="no data for this workspace yet")
-    prog = {"active": True, "total": 0, "done": 0}
-    _export_progress[target] = prog
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    tmp.close()
-    try:
-        ws_backup.write_zip(target, Path(tmp.name), uploads=bool(uploads), by=request.state.user, progress=prog)
-    except Exception:
-        os.unlink(tmp.name)
-        raise
-    finally:
-        prog["active"] = False
-    kind = "" if uploads else "-db"
-    return FileResponse(tmp.name, media_type="application/zip",
-                        filename=f"gamma-export{kind}-{_slug(target)}-{page_now()[:10]}.zip",
-                        background=BackgroundTask(os.unlink, tmp.name))
-
-
-def _slug(ws: str) -> str:
-    name = (workspaces.get(ws) or {}).get("name", "")
-    return "".join(c if c.isalnum() else "-" for c in name).strip("-")[:40] or ws
-
-
-# Sync on purpose, like /export.
-@router.get("/export-all")
-def export_all(request: Request, uploads: int = 1):
-    """Every personal workspace of the session account in one zip — one
-    /api/export zip per workspace inside (``<name>-<id>.zip``), each of
-    which restores on its own through /api/import-data."""
-    me = require_user(request)
-    if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="a guest account has nothing to export as a whole")
-    mine = workspaces.personal_workspaces(me)
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    tmp.close()
-    try:
-        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as bundle:  # the inner zips are compressed
-            for target in mine:
-                inner = Path(tmp.name + "." + target + ".zip")
-                try:
-                    ws_backup.write_zip(target, inner, uploads=bool(uploads), by=me)
-                    bundle.write(inner, f"{_slug(target)}-{target}.zip")
-                finally:
-                    inner.unlink(missing_ok=True)
-    except Exception:
-        os.unlink(tmp.name)
-        raise
-    kind = "" if uploads else "-db"
-    return FileResponse(tmp.name, media_type="application/zip",
-                        filename=f"gamma-export-all{kind}-{me}-{page_now()[:10]}.zip",
-                        background=BackgroundTask(os.unlink, tmp.name))
-
-
-# Sync on purpose: unzip + sqlite restore runs in the threadpool.
-@router.post("/import-data")
-def import_data(request: Request, file: UploadFile = File(...), mode: str = "replace",
-                ws: str | None = None, user: str | None = None):
-    """Restore an /api/export zip into a workspace (the request's, ``?ws=``,
-    or — admins only — the personal workspace of ``?user=``): mode=replace
-    (default, owners) swaps the databases, mode=merge (editors) adds what is
-    missing — gamma/ws_backup.restore_zip. Nothing can be imported into a
-    guest's workspace: it goes away with the guest (docs/dev/guests.md)."""
-    if mode not in ("replace", "merge"):
-        raise HTTPException(status_code=400, detail="mode must be 'replace' or 'merge'")
-    target = _target_ws(request, ws, user, "owner" if mode == "replace" else "editor")
-    if workspaces.is_guest_workspace(target):
-        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
-    with tempfile.TemporaryDirectory(prefix="gamma-import-") as td:
-        zpath = Path(td) / "backup.zip"
-        with open(zpath, "wb") as out:
-            shutil.copyfileobj(file.file, out)
-        try:
-            return {"ok": True, **ws_backup.restore_zip(target, zpath, mode, by=request.state.user)}
-        except ws_backup.BackupError as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
 
 class LoginRequest(BaseModel):

@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from ai_fixtures import ALL_PERMS, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
+from ai_fixtures import ALL_PERMS, ALLOW_ALL, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -54,7 +54,7 @@ def test_chat_agent_loop_streams_actions(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={
         "prompt": "rename the cavity paper to Ada2019 cavity",
-        "agent_scope": "folder", "folder": "readout", "stream": True,
+        "agent_scope": "folder", "folder": "readout", "stream": True, "permissions": ALLOW_ALL,
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -129,9 +129,11 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "what do my notes say?",
                                      "agent_scope": "page", "page_id": ids["a"], "stream": True})
     assert r.status_code == 200
+    # Anthropic's own API hosts a web search, so Automatic arms search_web.
     assert [t["name"] for t in seen["tools"]] == [
-        "read_page", "read_block", "read_chats", "view_pdf_page", "search_library", "search_papers",
-        "fetch_paper", "edit_block", "create_block", "move_block"]
+        "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "cite", "search_library",
+        "search_papers", "related_papers", "search_web", "fetch_paper", "save_paper", "edit_block",
+        "create_block", "move_block"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -453,12 +455,13 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     before = props(c, ids["a"])["content"]
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
                                      "folder": "readout", "stream": True,
-                                     "permissions": {"rename": False, "move": False,
-                                                     "block_edit": False}})
+                                     "permissions": {"rename": False, "move": False, "save": False,
+                                                     "restore": False, "block_edit": False}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
-        "search_library", "search_papers", "fetch_paper"]
+        "view_ink", "cite", "search_library", "search_papers", "related_papers", "search_web",
+        "fetch_paper", "list_deleted"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 

@@ -22,7 +22,9 @@ says whether a first sync waits for the person's choice (``cloud_choice``).
 The `ai-settings` key holds the user's AI provider API keys and is reserved:
 it is only reachable through /api/ai/settings, which masks the keys — these
 generic endpoints must never serve it raw. The same goes for
-`translate-engines` (the machine-translation keys, /api/translate/engines).
+`translate-engines` (the machine-translation keys, /api/translate/engines)
+and `search-services` (the web search and OpenAlex keys,
+/api/ai/search-services).
 
 Every endpoint here is a sync def: they read and write users.db (and
 data.db for the covers), which may wait on another connection's write lock
@@ -44,6 +46,7 @@ from pydantic import BaseModel
 
 from .. import cloud_sync
 from ..ai_settings import AI_SETTINGS_PREF_KEY
+from ..search_services import PREF_KEY as SEARCH_PREF_KEY
 from ..translate_engines import ENGINES_PREF_KEY
 from ..auth import require_user, require_ws
 from ..db import (
@@ -70,7 +73,8 @@ MAX_VALUE_BYTES = 64 * 1024
 
 
 def _check_key(key: str):
-    if not _KEY_RE.match(key or "") or key in (AI_SETTINGS_PREF_KEY, ENGINES_PREF_KEY, PROFILE_BASE_PREF_KEY):
+    if not _KEY_RE.match(key or "") or key in (AI_SETTINGS_PREF_KEY, ENGINES_PREF_KEY, SEARCH_PREF_KEY,
+                                               PROFILE_BASE_PREF_KEY):
         raise HTTPException(status_code=400, detail="invalid pref key")
 
 

@@ -180,8 +180,17 @@ class Protocol:
                 cache_key="") -> URLRequest:
         """The provider call. ``cache_key`` names the conversation (one
         opaque id per chat) for the provider's prompt cache: the wires that
-        take a routing hint send it, the others ignore it."""
+        take a routing hint send it, the others ignore it. A tool spec with
+        a ``hosted`` entry is the provider's own tool (hosted_web_search)
+        and goes out as that entry."""
         raise NotImplementedError
+
+    def hosted_web_search(self, conf) -> dict | None:
+        """The provider's own web-search tool on this wire, as the tools
+        entry to send, or None when it has none. A stream that used it
+        yields ``("web_sources", [{url, title}])`` for the pages it found
+        (gamma/search_services.py runs the search)."""
+        return None
 
     def reply_text(self, data) -> str:
         """The reply text of a non-streamed response body."""

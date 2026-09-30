@@ -1,11 +1,13 @@
 // node --test tests/  (from frontend/) — the pure stroke module.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
   inkBounds, newInk, normalizeTools, pdfPositionOf, removeStrokes, strokePath, strokeWidth, strokesInLasso, toolStyle,
   translateStrokes, transformStrokes, nearestInkStroke, restyleStrokes, duplicateStrokes, MAX_STROKES,
-  nearestInkColor, PEN_COLORS, HIGHLIGHTER_COLORS,
+  nearestInkColor, PEN_COLORS, HIGHLIGHTER_COLORS, mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
+  inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
 } from "../src/ink/ink.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
@@ -224,4 +226,111 @@ test("a custom colour takes the nearest palette colour's name; palette colours a
   assert.equal(nearestInkColor("#fef08a"), "#fde047");  // a paler yellow
   assert.equal(nearestInkColor("rgb(1, 2, 3)"), null);
   assert.equal(nearestInkColor(""), null);
+});
+
+// tests/shared/inkmerge.json: the same cases gamma/ink.py merge_ink passes
+// (backend/tests/test_shared_fixtures.py).
+const MERGE = JSON.parse(readFileSync(new URL("../../tests/shared/inkmerge.json", import.meta.url), "utf8"));
+const mergeFile = (strokes) => strokes === null ? null : { ...newInk(1, 612, 792),
+  strokes: strokes.map(([id, v]) => ({ id, tool: "pen", color: "#1f1f1f", size: 1.6, opacity: 1, pen: true, ch: "xy", pts: [100 + 100 * v, 100] })) };
+for (const c of MERGE.cases) {
+  test(`ink merge: ${c.note}`, () => {
+    const { ink, clean } = mergeInk(mergeFile(c.base), mergeFile(c.ours), mergeFile(c.theirs));
+    assert.deepEqual(ink.strokes.map((s) => [s.id, (s.pts[0] - 100) / 100]), c.result);
+    assert.equal(clean, c.clean);
+  });
+}
+
+test("the merged file keeps theirs' space and a stroke equals its copy", () => {
+  const a = encodeStroke({ id: "a", samples: samples() });
+  const theirs = { ...newInk(2, 500, 700), strokes: [a] };
+  const ours = { ...newInk(2, 612, 792), strokes: [a, encodeStroke({ id: "b", samples: samples(3) })] };
+  const { ink } = mergeInk({ ...newInk(2, 612, 792), strokes: [] }, ours, theirs);
+  assert.deepEqual(ink.space, theirs.space);
+  assert.ok(sameStroke(a, { ...a, pts: [...a.pts] }));
+  assert.ok(!sameStroke(a, { ...a, color: "#dc2626" }));
+  assert.ok(sameStroke({ ...a, t0: null }, { ...a, t0: undefined }));
+});
+
+test("serializeInk sorts keys at every level and drops empty ones, so equal strokes are equal bytes", () => {
+  const a = encodeStroke({ id: "a", samples: samples(2), t0: 5 });
+  const one = serializeInk({ ...newInk(1, 612, 792), strokes: [a] });
+  const shuffled = { strokes: [Object.fromEntries(Object.entries(a).reverse())], space: { height: 792, width: 612, page: 1, kind: "pdf-page" },
+    version: 1, format: "gamma-ink" };
+  assert.equal(serializeInk(shuffled), one);
+  assert.ok(one.startsWith('{"format":"gamma-ink","space":{"height":792,"kind":"pdf-page","page":1,"width":612},"strokes":[{"ch":"xyp",'));
+  assert.ok(!serializeInk({ ...newInk(1, 612, 792), strokes: [{ ...a, brush: undefined, t0: null }] }).includes("t0"));
+});
+
+test("inkProps derives what a group's block carries from its file", () => {
+  const ink = { ...newInk(3, 612, 792), strokes: [encodeStroke({ id: "a", samples: samples() })] };
+  assert.deepEqual(inkProps(ink, "/api/uploads/x.ink"), {
+    ink_url: "/api/uploads/x.ink", ink_strokes: 1, pdf_page: 3, pdf_position: pdfPositionOf(ink) });
+  const sheet = { ...newCanvasInk(595.28, 841.89), strokes: [encodeStroke({ id: "a", samples: samples() })] };
+  assert.deepEqual(sheet.space, { kind: "canvas", width: 595.28, height: 841.89 });
+  assert.deepEqual(inkProps(sheet, "/api/uploads/y.ink"), { ink_url: "/api/uploads/y.ink", ink_strokes: 1, pdf_page: null, pdf_position: null });
+});
+
+// --- replay ------------------------------------------------------------------
+const timedStroke = (id, t0, pts, y = 0) => encodeStroke({ id, t0, ch: "xyt", samples: pts.map(([x, t]) => ({ x, y, t })) });
+const canvas = (strokes) => ({ ...newCanvasInk(100, 100), strokes });
+
+test("replay: strokes play in the order drawn, each on its own clock, a long pause shortened", () => {
+  const a = timedStroke("a", 5000, [[0, 0], [10, 100], [20, 200]]);
+  const b = timedStroke("b", 1000, [[0, 0], [10, 50]], 10);          // drawn first, second in the file
+  const line = inkTimeline(canvas([a, b]));
+  assert.deepEqual(line.strokes.map((s) => [s.id, s.index, s.start, s.end]),
+    [["b", 1, 0, 50], ["a", 0, 50 + REPLAY_PAUSE, 250 + REPLAY_PAUSE]]);
+  assert.deepEqual(line.strokes[1].times, [50 + REPLAY_PAUSE, 150 + REPLAY_PAUSE, 250 + REPLAY_PAUSE]);
+  assert.equal(line.duration, 250 + REPLAY_PAUSE);
+});
+
+test("replay: a pause inside a stroke shortens too, a short gap between strokes stays", () => {
+  const a = timedStroke("a", 0, [[0, 0], [1, 10000], [2, 10010]]);
+  const b = timedStroke("b", 10110, [[0, 0], [1, 20]], 5);          // 100 ms after a lifted
+  const line = inkTimeline(canvas([a, b]));
+  assert.deepEqual(line.strokes[0].times, [0, REPLAY_PAUSE, REPLAY_PAUSE + 10]);
+  assert.deepEqual(line.strokes[1].times, [REPLAY_PAUSE + 110, REPLAY_PAUSE + 130]);
+});
+
+test("replay: a stroke without timing follows the one before it in the file; a cut run keeps its time", () => {
+  const t = timedStroke("t", 1000, [[0, 0], [1, 30]]);
+  const bare = encodeStroke({ id: "u", ch: "xy", samples: [{ x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }] });
+  const early = timedStroke("e", 10, [[0, 0], [1, 10]], 2);
+  const line = inkTimeline(canvas([t, bare, early]));
+  assert.deepEqual(line.strokes.map((s) => s.id), ["e", "t", "u"]);
+  const u = line.strokes[2];
+  assert.equal(u.start, line.strokes[1].end + REPLAY_PAUSE / 2);
+  assert.deepEqual(u.times.map((v) => v - u.start), [0, 150, 300]);
+  // the partial eraser's run from 500 ms into a stroke begun at 1000 was written at 1500, after a stroke at 1400
+  const run = encodeStroke({ id: "r", t0: 1000, ch: "xyt", samples: [{ x: 0, y: 0, t: 500 }, { x: 1, y: 0, t: 520 }] });
+  const mid = timedStroke("m", 1400, [[0, 0], [1, 50]], 3);
+  assert.deepEqual(inkTimeline(canvas([run, mid])).strokes.map((s) => [s.id, s.start, s.end]), [["m", 0, 50], ["r", 100, 120]]);
+});
+
+test("replay: a long drawing plays within REPLAY_MAX; an empty one takes no time", () => {
+  const many = Array.from({ length: 100 }, (_, i) => timedStroke(`s${i}`, i * 1000, [[0, 0], [1, 300]], i));
+  const line = inkTimeline(canvas(many));
+  assert.equal(line.duration, REPLAY_MAX);
+  assert.ok(Math.abs(line.strokes[99].end - REPLAY_MAX) < 1e-6);
+  assert.ok(line.strokes.every((s, i) => !i || s.start >= line.strokes[i - 1].end));
+  assert.deepEqual(inkTimeline(canvas([])), { duration: 0, strokes: [] });
+  assert.deepEqual(inkTimeline(null), { duration: 0, strokes: [] });
+});
+
+test("replay: the drawing at a moment holds the strokes begun, the one being written cut short", () => {
+  const a = timedStroke("a", 0, [[0, 0], [10, 100], [20, 200]]);
+  const b = timedStroke("b", 250, [[0, 0], [10, 100]], 10);
+  const ink = canvas([a, b]);
+  const line = inkTimeline(ink);                                    // a: 0–200, b: 250–350
+  assert.deepEqual(inkAtTime(ink, line, -1).strokes, []);
+  const first = inkAtTime(ink, line, 120);
+  assert.deepEqual(first.strokes.map((s) => s.id), ["a"]);
+  assert.deepEqual(decodeStroke(first.strokes[0]).map((p) => p.x), [0, 10]);
+  assert.equal(first.strokes[0].t0, 0);
+  const second = inkAtTime(ink, line, 260);
+  assert.equal(second.strokes[0], a);
+  assert.deepEqual(decodeStroke(second.strokes[1]).map((p) => p.x), [0]);
+  assert.equal(inkAtTime(ink, line, line.duration), ink);
+  assert.equal(ink.strokes[0], a);                                  // the file is untouched
 });

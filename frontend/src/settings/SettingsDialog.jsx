@@ -11,6 +11,7 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { EFFORT_ORDER } from "../chat/effort.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
+import { OnlineSearchSettings } from "./OnlineSearch";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
 import { IntegrationSettings } from "./SettingsIntegrations";
@@ -189,7 +190,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
-      ? t("Indexing is already running—see the tasks popover.") : result.scheduled
+      ? t("Indexing is already running — see Background tasks.") : result.scheduled
         ? tn("Re-indexing {n} paper {scheduledSuffix}", "Re-indexing {n} papers {scheduledSuffix}", result.scheduled, { scheduledSuffix })
         : t("No papers with PDFs to index."));
   } catch (err) {
@@ -236,11 +237,11 @@ function MaintenanceSettings({ value }) {
         <Row
           icon={RefreshIcon}
           label={t("PDF text index")}
-          hint={value.indexTask?.active ? t("Rebuilding — progress in the tasks popover") : t("Re-extract every paper if results look stale")}
+          hint={value.indexing ? t("Rebuilding — progress in Background tasks") : t("Re-extract every paper if results look stale")}
           title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
-          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
-            {value.indexTask?.active ? t("Indexing…") : t("Rebuild")}
+          <button className="uiBtn sm" disabled={value.indexing} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
+            {value.indexing ? t("Indexing…") : t("Rebuild")}
           </button>
         </Row>
       </Section>
@@ -387,7 +388,7 @@ function MetaStatusSection({ value }) {
   // Same rule for the index button: the selection's indexable papers, else
   // everything the index is missing or holds stale.
   const indexTargets = selected.size ? list.filter((p) => selected.has(p.id) && p.doc_id && p.has_file) : toIndex;
-  const indexing = !!value.indexTask?.active;
+  const indexing = !!value.indexing;
 
   const cell = (tone, text, title) => (
     <span className={`metaCell ${tone}`} title={title}><i className="setDot" />{text}</span>
@@ -661,6 +662,10 @@ function AssistantSettings({ value, ai }) {
           hint={t("Gamma Connector tries in a minimized window and sends the PDF back")}
           title={t("When a publisher stops a chat's fetch with a sign-in or a bot check, the card hands it to Gamma Connector without a click: it opens the page in a minimized window, and when your browser gets the PDF without you (you're signed in, or the check passes by itself) the PDF comes back to the chat and the tab closes. When the page needs you — to sign in or solve a CAPTCHA — the card says so and shows you the tab. Needs Gamma Connector in this browser.")}
           checked={value.fetchInBackground} onChange={value.setFetchInBackground} />
+      </Section>
+      {/* The account's search services live on the server, not in the profile. */}
+      <Section title={t("Online search")}>
+        <OnlineSearchSettings />
       </Section>
     </>
   );

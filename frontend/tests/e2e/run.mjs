@@ -41,6 +41,8 @@ import { mentionScenarios } from "./scenarios/mentions.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
+import { notebookScenarios } from "./scenarios/notebooks.mjs";
+import { replicaScenarios } from "./scenarios/replica.mjs";
 import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
 import { triggeredGuideScenarios } from "./scenarios/triggeredGuide.mjs";
@@ -69,6 +71,7 @@ const RUNNERS = {
   "ink-editing": inkEditingScenarios,
   "pdf-load": pdfLoadScenarios,
   "ink": inkScenarios,
+  "notebooks": notebookScenarios,
   "pdf-touch": pdfTouchScenarios,
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,
@@ -85,6 +88,7 @@ const RUNNERS = {
   "quick-open": quickOpenScenarios,
   "trash": trashScenarios,
   "ipad": ipadScenarios,
+  "replica": replicaScenarios,
 };
 
 const missing = GROUPS.filter((g) => !RUNNERS[g.id]).map((g) => g.id);

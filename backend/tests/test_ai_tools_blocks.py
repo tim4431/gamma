@@ -7,7 +7,7 @@ import re
 
 from gamma.ai_tools import agent_system, run_agent_tool
 
-from ai_fixtures import FakeResp, children, folder, notes, org, props  # noqa: F401  (fixtures)
+from ai_fixtures import ALLOW_ALL, FakeResp, children, folder, notes, org, props  # noqa: F401  (fixtures)
 
 
 def test_read_block_outline_with_ids(notes):
@@ -149,7 +149,7 @@ def test_chat_agent_streams_edit_preview(notes, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={
         "prompt": "rewrite the first idea", "agent_scope": "page",
-        "page_id": ids["page"], "stream": True,
+        "page_id": ids["page"], "stream": True, "permissions": ALLOW_ALL,
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -229,7 +229,7 @@ def test_chat_carries_notes_focus(notes, monkeypatch):
     other = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "chip block"}).json()["id"]
     r = c.post("/api/ai/chat", json={
         "prompt": "expand this", "agent_scope": "page", "page_id": ids["page"],
-        "focus_block_id": top, "context_blocks": [other],
+        "permissions": ALLOW_ALL, "focus_block_id": top, "context_blocks": [other],
         "note_selections": [{"block_id": other, "from": 0, "to": 5, "text": "chip "}]})
     assert r.status_code == 200, r.text
     user_turn = seen["messages"][-1]["content"]

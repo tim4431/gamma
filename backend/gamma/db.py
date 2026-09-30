@@ -28,7 +28,7 @@ from .config import USERS_DB, WORKSPACES_DIR
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 # How long a connection waits for another connection's write lock before
@@ -272,6 +272,37 @@ USERS_SCHEMA = [
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )""",
+    # Background jobs (gamma/jobs.py, docs/dev/tasks.md): exports, backups,
+    # restores, imports, the search indexer. owner: the account that started
+    # it, '' for a workspace's own work (the indexer). key: what makes two
+    # jobs of one owner and kind the same work (an import's review id).
+    # params / progress / result are JSON. The artifact_* columns describe
+    # the file a finished job produced (jobs/<id>/artifact); instance is the
+    # server process that runs it, so a restart can tell its own jobs from
+    # the ones a stopped process left behind.
+    """CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        params TEXT NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL,
+        progress TEXT NOT NULL DEFAULT '{}',
+        result TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        artifact_name TEXT NOT NULL DEFAULT '',
+        artifact_type TEXT NOT NULL DEFAULT '',
+        artifact_size INTEGER NOT NULL DEFAULT 0,
+        downloaded_at TEXT NOT NULL DEFAULT '',
+        instance TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT '',
+        finished_at TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
 ]
 
 PAGES_SCHEMA = [
@@ -392,7 +423,11 @@ class Connection(sqlite3.Connection):
     collector, so a connection a traceback holds keeps its file open (on
     Windows a workspace directory cannot be deleted under it). Never use a
     connection after its ``with`` block; one opened without ``with`` is
-    closed by its owner."""
+    closed by its owner. ``ws`` names the workspace whose database it is
+    ("" for users.db), for writers that reach the workspace's files through
+    the connection (the ink merge in gamma/ops.py)."""
+
+    ws = ""
 
     def __exit__(self, exc_type, exc, tb):
         try:
@@ -468,8 +503,8 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", PROFILE_PREF_KEY,
-                            PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
+USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
+                            PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:
@@ -663,6 +698,7 @@ def pdf_upload_path(ws: str, doc_id: str) -> Path:
 
 def _open_ws_db(ws: str, db_name: str, schema) -> Connection:
     conn = sqlite3.connect(ws_db_path(ws, db_name), timeout=BUSY_TIMEOUT_S, factory=Connection)
+    conn.ws = ws
     try:
         _wal(conn)
         for stmt in schema:

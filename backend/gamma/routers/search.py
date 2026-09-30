@@ -3,7 +3,7 @@
 Both indexes are SQLite FTS5 tables in the workspace's data.db. The PDF one is
 built here: each paper's text is extracted once, so searching ~1000 papers is
 a millisecond-range query instead of opening a thousand PDFs; missing papers
-are indexed lazily by a background thread the first time a search runs, and
+are indexed lazily by a background job the first time a search runs, and
 the response reports how many are still pending so the UI can hint that
 results are incomplete. The notes index lives in gamma.block_index (rebuilt
 per page when a page changed since its last build: by the search itself for
@@ -24,12 +24,10 @@ highlight rects always agree with what's on screen.
 frontend still uses.
 """
 
-import threading
-
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from .. import block_index, ops, pdf_index, pdf_meta
+from .. import block_index, jobs, ops, pdf_index, pdf_meta
 from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_ws
 from ..block_index import fts_query
@@ -46,11 +44,6 @@ router = APIRouter(prefix="/api", tags=["search"])
 ops.commit_listeners.append(block_index.page_changed)
 
 _MAX_PAGE_CHARS = 20000   # per page
-
-_index_threads: dict[str, threading.Thread] = {}
-_index_progress: dict[str, dict] = {}  # workspace -> {"total": n, "done": m}
-_index_stop: set[str] = set()          # workspaces whose running indexer was asked to stop
-_index_lock = threading.Lock()
 
 
 def _extract_pages(path) -> list[str]:
@@ -77,28 +70,28 @@ def _index_doc(ws: str, doc_id: str):
 
 
 def _index_missing_async(ws: str, doc_ids: list[str]) -> bool:
-    """One background indexer per workspace at a time, with visible progress.
-    Returns False if one is already running (the request is dropped, not
-    queued — the next search re-computes what's missing anyway)."""
-    with _index_lock:
-        t = _index_threads.get(ws)
-        if t and t.is_alive():
-            return False
+    """Index the papers in the background as the workspace's ``indexing``
+    job (gamma/jobs.py): one per workspace at a time, its progress in every
+    member's Background tasks, stoppable there (the papers it did not reach
+    stay stamped stale, so the next search finishes the work). Returns False
+    when one already runs — the request is dropped, not queued: the next
+    search computes again what is missing."""
+    doc_ids = list(doc_ids)
 
-        _index_stop.discard(ws)
+    def run(job):
+        for n, doc_id in enumerate(doc_ids):
+            job.progress(done=n, total=len(doc_ids), unit="papers")
+            _index_doc(ws, doc_id)
+        job.progress(done=len(doc_ids), total=len(doc_ids), unit="papers")
+        return {"papers": len(doc_ids)}
 
-        def run():
-            prog = _index_progress[ws] = {"total": len(doc_ids), "done": 0}
-            for d in doc_ids:
-                if ws in _index_stop:
-                    break  # the rest stays stamped stale: the next search finishes the job
-                _index_doc(ws, d)
-                prog["done"] += 1
-
-        t = threading.Thread(target=run, daemon=True)
-        _index_threads[ws] = t
-        t.start()
-        return True
+    try:
+        job = jobs.start("indexing", owner=jobs.WORKSPACE, ws=ws, key="indexing", run=run,
+                         title="Indexing PDFs for search", params={"papers": len(doc_ids)})
+    except jobs.Busy:
+        return False
+    jobs.prune(jobs.WORKSPACE, "indexing", ws, keep=job["id"])  # the workspace keeps its latest run
+    return True
 
 
 class ReindexRequest(BaseModel):
@@ -109,7 +102,8 @@ class ReindexRequest(BaseModel):
 def search_reindex(request: Request, payload: ReindexRequest | None = None):
     """Settings: re-extract papers into the FTS index. With doc_ids, just those
     papers (the Library pane's per-paper button — no global stale stamp);
-    without, the whole library. Progress is visible via /api/tasks either way."""
+    without, the whole library. Either way the work is the workspace's
+    indexing job (Background tasks, GET /api/jobs)."""
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         library = [info["doc_id"] for info in root_pages(conn).values() if info["doc_id"]]
@@ -130,31 +124,6 @@ def search_reindex(request: Request, payload: ReindexRequest | None = None):
         block_index.schedule(ws)
     return {"scheduled": len(doc_ids) if started else 0,
             "busy": bool(doc_ids) and not started}
-
-
-@router.get("/tasks")
-def background_tasks(request: Request):
-    """Server-side background work for the tasks popover (extensible)."""
-    ws = require_ws(request)
-    with _index_lock:
-        t = _index_threads.get(ws)
-        prog = _index_progress.get(ws) or {"total": 0, "done": 0}
-        return {"indexing": {**prog, "active": bool(t and t.is_alive())}}
-
-
-@router.delete("/tasks/indexing")
-def stop_indexing(request: Request):
-    """The tasks popover's stop button: the workspace's running indexer
-    finishes the paper it is on and skips the rest (they stay stamped stale,
-    so the next search picks them up). ``cancelled`` says whether one was
-    running."""
-    ws = require_ws(request, write=True)
-    with _index_lock:
-        t = _index_threads.get(ws)
-        running = bool(t and t.is_alive())
-        if running:
-            _index_stop.add(ws)
-    return {"cancelled": running}
 
 
 @router.get("/search")

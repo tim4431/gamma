@@ -167,4 +167,96 @@ Atypon's `epdf` reader), whether a stored User-Agent makes a transferred
 desktop app's path through the system browser, and whether real publishers'
 checks pass by themselves in a minimized window.
 
+## Discovery from a research question (2026-09-29)
+
+The earlier rounds started from a known title or DOI. This one started from a
+setup: an 85Rb 1D standing-wave lattice at 785 nm, a waist of about 100 µm and
+15 µK, asking what limits the density. Codex, given that question, found
+*Degenerate Raman Sideband Cooling of Trapped Cesium Atoms at Very High Atomic
+Densities* (Vuletić, Chin, Kerman and Chu, PRL 81, 5768) as a lab-hosted PDF
+and compared four other papers on loss mechanisms. It got there with the
+model provider's hosted web search: several rephrased queries in the field's
+vocabulary, abstracts read before answering, and the lab's publication list as
+the copy. Gamma then had two registries and no general web search.
+
+What the registries and pages did, measured the same day:
+
+- **OpenAlex relevance.** Its `search` put the PRL first for "degenerate raman
+  sideband cooling high density" in 0.4 s. Broad concept queries drifted to
+  highly cited reviews: "light-assisted collisions loss optical lattice high
+  density" returned a gold-nanoparticle review among its top five. Its
+  `title_and_abstract.search` filter timed out (504, "query took too long").
+- **OpenAlex without a key.** Keyless search was paused ("Anonymous search is
+  paused while the search cluster recovers from heavy load", 503), and after
+  about a dozen calls the keyless daily budget was gone (429). Lookups by id
+  kept working. Since February 2026 a free key gives ten times the keyless
+  budget; searches cost $1 per 1 000 and lookups nothing.
+- **Crossref's citation sort.** `sort=is-referenced-by-count` with a
+  bibliographic query returned a diabetic-retinopathy paper and an essay on
+  ChatGPT for "raman sideband cooling": the sort replaces relevance instead of
+  ordering the relevant hits.
+- **arXiv's AND.** Every word of a descriptive query is required, so a setup
+  description finds nothing.
+- **A lab's publication list.** The MIT group's "all publications" page holds
+  238 distinct PDF links; the PRL is at position 227. The old link list kept
+  the first eight URLs, without their text, so a fetch of the page could not
+  have led to the paper.
+- **Unpaywall.** The resolver took the best location only; when it failed the
+  other copies were never tried.
+
+What was built, with its reasoning:
+
+- **OpenAlex as a third registry**, asked in parallel with Crossref and arXiv,
+  merged per work, adding abstracts, citation counts and open-access PDFs. Its
+  citation graph backs `related_papers`, which follows a paper to the works it
+  cites or that cite it. The account can set an OpenAlex key in Settings, so
+  keyless pauses and budgets stop mattering. An outage is named in the result
+  rather than silently missing.
+- **Ordering applied locally.** `sort` (citations, recent) and `from_year`
+  reorder or filter the registries' relevant candidates, because the
+  registries' own citation sorts drop relevance.
+- **A relaxed arXiv retry** with the five longest words when a long query
+  finds nothing.
+- **General web search** (`search_web`) through the chat's own AI connection
+  (the provider's hosted search, what Codex uses), Brave Search or SearXNG.
+  The provider route needs no setup for OpenAI, ChatGPT sign-in and Anthropic
+  connections, so it is Automatic's fallback. Results are leads: when the
+  provider reports the pages its search returned, only those pass. The
+  registries stay the first step because they establish identity.
+- **Links with their text, ranked against the paper.** On the MIT list the PRL
+  moved from position 227 to first once `fetch_paper` was given its title.
+- **Several open-access copies**, up to four, tried in version order before the
+  browser handoff. With web search on, the model may make one search for
+  another legitimate copy before ending its reply.
+- **Identity and version in every fetch.** The result names the PDF's version
+  and says whether the expected title appears; `version: "published"` refuses
+  unpublished substitutes.
+- **A discovery recipe in the prompt**: short concept queries, abstracts
+  before fetching, citations followed, and analogies told apart from direct
+  evidence.
+
+Offline tests cover every piece (`test_paper_discovery.py`,
+`test_search_services.py`, the hosted-search wire tests in `test_ai_wire.py`).
+A live run of the pieces against the real services, from an isolated data
+directory, found:
+
+- "Raman sideband cooling high density" returned the PRL in the top five, with
+  its abstract and 214 citations, next to the 3D Raman sideband cooling PRL
+  and a 39K paper. Crossref's book chapters titled "Raman Sideband Cooling"
+  came first, so OpenAlex now leads the interleave.
+- Keyless OpenAlex ran out of budget between two queries, and the result named
+  it with the remedy. The other registries still answered.
+- The PRL's most cited citing works are reviews (single trapped ions, optical
+  dipole traps), so `related_papers` gained `sort: "recent"`.
+- Fetching the MIT list through `fetch_paper`'s path returned 238 links in
+  0.9 s, and the title ranked the PRL first.
+- Two DOIs with open-access copies resolved to the publisher's PDF and were
+  labelled `publisher`; Unpaywall listed the published copy before the arXiv
+  preprint for both.
+
+Not verified live: the hosted search call on a real OpenAI, ChatGPT or
+Anthropic connection (the request and stream shapes follow the providers'
+documentation and Codex CLI's tool spec), Brave and SearXNG with real
+accounts, and a full chat answering the 85Rb question end to end.
+
 Mechanics and permissions: [Agent tools](../dev/ai_tools.md).
