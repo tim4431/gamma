@@ -184,10 +184,11 @@ export const PREFS = {
 
   // --- PDF viewer (Settings → Reading) ---
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
-  // would render twice once imported as blocks — canvas + overlay. "hide"
-  // keeps them out of the canvas; "strip" removes them from the stored file
-  // at import time.
-  embAnnots: pref("gamma-embedded-annots", ACCOUNT, "hide", oneOf(["hide", "strip"])),
+  // would render twice once imported as blocks — canvas + overlay. "strip"
+  // removes them from the stored file at import time, so the blocks are the
+  // only copy and deleting one deletes it from the exports too; "hide" keeps
+  // the file as it came and leaves them out of the canvas.
+  embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
 
   // --- Translation (Settings → Translation) ---
   // Master switch: off removes the translate button from the viewer.

@@ -369,8 +369,9 @@ highlight, placed by the nearest-sheet rule.
   annotated PDF: a FreeText's `/Contents` must be the text it shows.
 - With `notes=1`, a painted note can overlap a box: free space comes from
   page objects, and annotations are not page objects.
-- A box imported from the file and deleted here leaves its embedded
-  original in the export: nothing records a deleted block.
+- With *Keep originals* (not the default), a box imported from the file and
+  deleted here leaves its embedded original in the export: nothing records
+  a deleted block. The default strips the original at import, so it goes.
 - Import drops a callout's line and arrow. A foreign text's blank lines and
   leading spaces take no room in a box and leave the next `/Contents`.
 - A reply's text is kept as written, as a highlight's comment is, so

@@ -64,10 +64,14 @@ twice in the .md stays twice), so running it again adds nothing. Into an
 existing page it logs one `reload` under the importing account.
 
 Because imported annotations would otherwise render twice (pdf.js paints them
-into the canvas AND the blocks draw as overlays), the Settings → Reading → PDF
-viewer → "Annotations inside the file" preference either hides them viewer-side
-(`annotationMode: DISABLE`, default) or sends `strip: true` so the import
-rewrites the stored PDF without them (the View menu's "Import…" dialog can
+into the canvas AND the blocks draw as overlays), the Settings → Reading &
+editing → PDFs → "Imported annotations" preference (`embAnnots`) either
+sends `strip: true` (the default) so the import rewrites the stored PDF
+without them, or keeps the file as it came and hides them viewer-side
+(`annotationMode: DISABLE`). Stripping makes the blocks the only copy, so
+deleting one in Gamma removes it from the exports too. A kept original
+outlives its block: delete the block and the annotated export still shows
+the original (the View menu's "Import…" dialog can
 override that for one run; the auto-import on open always follows the
 preference). The strip (`_strip_embedded_annotations`) removes the
 annotations the import makes blocks of, with their threads (the replies
