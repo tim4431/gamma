@@ -17,7 +17,7 @@ tour's sibling, so after one of them the other only recaps the buttons they
 share and shows the paper and Notes view buttons.
 
 Code: `gamma/notebook.py` (server: paper rules, the PDF), `frontend/src/notebook/notebook.js`
-(the same rules on the client, pure), `notebook/NotebookViewer.jsx`
+(the same rules and the sheet edits on the client, pure), `notebook/NotebookViewer.jsx`
 (the notebook view and the paper menu), `notebook/NoteSheet.jsx` (a sheet
 in the notes view), the sheets half of `app/App.jsx` ("Sheets"), and
 `ipad/GammaIPad/Reader/NotebookReader.swift`. Tests:
@@ -218,7 +218,10 @@ No schema change: sheets are blocks and properties.
     last child the same way (`markup/useTextBoxes.js` `onBoxCreate`).
   - `addSheetAfter` (right after a block), `addPageAtEnd` (after the last
     sheet), `insertSheetAt` ("/page"), `setSheetPaper` and
-    `applyPaperToAll` (every sheet, at any depth) are ordinary tree edits.
+    `applyPaperToAll` (every sheet, at any depth) are thin `setBlocks`
+    wrappers over `notebook.js`'s pure tree edits (`sheetAfterPlan` and
+    `insertSheetAfter`, `blockToSheet`, `withSheetPaper`,
+    `withAllSheetsPaper`), which `tests/notebook.test.mjs` covers.
   - `createNotebook` posts a page, then its first sheet as an op, and
     turns the notebook view on for it.
   - The notes' ink card, and a text box's marker, jump through

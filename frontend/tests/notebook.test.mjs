@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  DEFAULT_PAPER, firstSheetId, inkBySheet, newSheet, normalizePaper, paperBefore, paperLines, paperSizeKey,
-  sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper,
+  DEFAULT_PAPER, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperLines,
+  paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, withAllSheetsPaper, withSheetPaper,
 } from "../src/notebook/notebook.js";
 import { treeOf } from "../src/replica/tree.js";
 
@@ -89,4 +89,59 @@ test("paper sizes are recognised either way round", () => {
 test("a new sheet stores its whole paper and starts folded: it shows its drawings itself", () => {
   assert.deepEqual(newSheet("s9", { pattern: "grid" }),
     { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" }, collapsed: true }, children: [] });
+});
+
+// --- editing the sheets (what App's setBlocks wrappers apply) ---------------
+const ids = (() => { let n = 0; return () => `n${++n}`; })();
+
+test("a page after a sheet gets the id that follows from it; after another block a fresh one", () => {
+  assert.deepEqual(sheetAfterPlan(tree, "s1", ids), { id: sheetIdAfter("s1"), add: true });
+  const fresh = sheetAfterPlan(tree, "intro", ids);
+  assert.match(fresh.id, /^n\d+$/);
+  assert.equal(fresh.add, true);
+  assert.equal(sheetAfterPlan(tree, "missing", ids), null);
+  // the page after s1 is there already: `once` adds none, else a fresh id
+  const withNext = insertSheetAfter(tree, "s1", sheetIdAfter("s1"));
+  assert.deepEqual(sheetAfterPlan(withNext, "s1", ids, { once: true }), { id: sheetIdAfter("s1"), add: false });
+  const again = sheetAfterPlan(withNext, "s1", ids);
+  assert.notEqual(again.id, sheetIdAfter("s1"));
+  assert.equal(again.add, true);
+});
+
+test("a new page goes right after its block, folded, on the paper of the sheet before it", () => {
+  const out = insertSheetAfter(tree, "s1", "s1b");
+  assert.deepEqual(sheetsOf(out).map((s) => [s.id, s.paper.pattern]), [["s1", "ruled"], ["s1b", "ruled"], ["s2", "blank"]]);
+  assert.equal(out[2].id, "s1b");
+  assert.equal(out[2].properties.collapsed, true);
+  // after a block deep in the tree: a sibling of that block
+  const deep = insertSheetAfter(tree, "note", "x");
+  assert.equal(deep[1].children[0].children[1].id, "x");
+  assert.equal(sheetsOf(deep)[1].paper.pattern, "ruled");
+  // nothing to do: the same tree back
+  assert.equal(insertSheetAfter(tree, "s1", "s2"), tree);
+  assert.equal(insertSheetAfter(tree, "missing", "x"), tree);
+});
+
+test("'/page' turns an empty block into a sheet: text gone, the paper before it, folded unless it has children", () => {
+  const out = blockToSheet(tree, "intro");
+  assert.deepEqual(out[0], { id: "intro", content: "", properties: { sheet: DEFAULT_PAPER, collapsed: true }, children: [] });
+  const open = blockToSheet(tree, "g1");
+  const g1 = open[1].children[0];
+  assert.equal(g1.properties.sheet.pattern, "ruled");
+  assert.equal(g1.properties.collapsed, undefined);
+  assert.equal(g1.children.length, 1);
+  assert.equal(blockToSheet(tree, "missing"), tree);
+});
+
+test("paper changes: one sheet, or every sheet at any depth", () => {
+  const one = withSheetPaper(tree, "s2", { pattern: "grid", width: 9999 });
+  assert.deepEqual(sheetsOf(one).map((s) => [s.id, s.paper.pattern, s.paper.width]), [["s1", "ruled", 595.28], ["s2", "grid", 2000]]);
+  const nested = [{ id: "a", content: "", properties: {}, children: [
+    { id: "p1", content: "", properties: { sheet: { pattern: "grid" } }, children: [
+      { id: "p2", content: "", properties: { sheet: {} }, children: [] }] }] }];
+  const all = withAllSheetsPaper(nested, { pattern: "dots", spacing: 18 });
+  assert.deepEqual(sheetsOf(all).map((s) => [s.id, s.paper.pattern, s.paper.spacing]), [["p1", "dots", 18], ["p2", "dots", 18]]);
+  assert.equal(all[0].children[0].properties.sheet.width, DEFAULT_PAPER.width);
+  const none = [{ id: "a", content: "x", properties: {}, children: [] }];
+  assert.equal(withAllSheetsPaper(none, { pattern: "dots" }), none);
 });

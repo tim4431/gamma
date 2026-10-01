@@ -432,6 +432,17 @@ signed in to the same server works the same way.
   account/offline states, denied permission, footer keyboard navigation,
   removing/reconnecting servers, library results and saves that
   are interrupted by a server switch. Uses `frontend/`'s Playwright install.
+- `node extension/tests/handoff.e2e.mjs` — the same Chromium against a fake
+  Gamma server (the handoff endpoints and an app page the bridge content
+  script runs on) and a fake publisher whose PDF answers when the test says:
+  two requests fetched "in the background" open as unfocused tabs beside the
+  Gamma tab, in its window and with it as opener, while the Gamma tab stays
+  the active one; `watch` reports them as background; switching to one makes
+  it the user's (`background: false`), and when both PDFs arrive the tab
+  never switched to closes, the switched-to one stays open and the Gamma
+  tab comes forward. Tab activity is what is checked — headless Chromium
+  does not hide an inactive tab's document, so `visibilityState` says
+  nothing there.
 - `frontend/tests/themes.test.mjs` — `tokens.css` and `fonts/` equal their
   sources, and both pages load `theme.js`, then `tokens.css`, then
   `popup.css`.
@@ -455,8 +466,10 @@ signed in to the same server works the same way.
   passes by itself and one that does not (`check`, then Show the tab), an
   IEEE-like page framing its PDF behind a sign-in (`signin`, then the framed
   PDF), and four background requests delivered without a click, never more
-  than three tabs at once. Unchecked: what a real desktop shows of a
-  background tab (visible but unfocused, and staying open once switched to).
+  than three tabs at once. What a background tab does on the desktop
+  (opened without the focus, closed or kept with the delivery) is the
+  checked-in `handoff.e2e.mjs` above; only how a headed Chrome paints it is
+  left to the eye.
 
 ## Not done yet
 

@@ -84,7 +84,7 @@ export default function ReplyPapers({ actions, text, folder = "", options = {}, 
   const where = folder ? folder.split("/").pop() : "";
   return (
     <div className="chatPapersWrap">
-      <button type="button" className="chatPill chatPapersPill" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+      <button type="button" className="chatPill" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         title={open ? t("Hide the papers") : t("Choose papers from this reply to save to your library")}>
         <PaperIcon size={14} />
         <span className="chatPillText">

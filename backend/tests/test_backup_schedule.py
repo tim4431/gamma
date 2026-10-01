@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import login, make_user, workspace_of
+from conftest import login, make_user
 from gamma import backup_schedule as tasks, ws_backup
 from gamma.routers.backup_tasks import TaskInput
 

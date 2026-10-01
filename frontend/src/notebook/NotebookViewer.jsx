@@ -215,7 +215,7 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
           <NotebookSheet key={s.id} sheet={s} number={i + 1} scale={scale} marks={marks.get(s.id) || NO_MARKS} />
         ))}
         {!readOnly && onAddSheet ? (
-          <button type="button" className="nbAddSheet" style={{ width: `${lastWidth}px` }} onClick={onAddSheet}
+          <button type="button" className="uiBtn ghost nbAddSheet" style={{ width: `${lastWidth}px` }} onClick={onAddSheet}
             title={t("Add a page at the end")}>
             <PlusIcon size={16} /> {t("Add page")}
           </button>

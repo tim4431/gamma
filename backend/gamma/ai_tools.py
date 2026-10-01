@@ -1527,7 +1527,7 @@ def _run_search_web(conn, ws: str, scope: dict, args: dict):
         return "error: empty query", None
     engine = scope.get("web_engine") or ""
     if not engine:
-        return "error: general web search is not set up (Settings → Assistant → Online search)", None
+        return "error: general web search is not set up (Settings → AI → Chat → Online search)", None
     if not ensure_tally(scope).take("web_searches", MAX_WEB_SEARCHES):
         return (f"error: {MAX_WEB_SEARCHES} web searches is the limit for one message — work with "
                 "the results you have", None)
@@ -2901,7 +2901,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             if "search_web" not in names:
                 text += (" General web search (lab pages, repositories) is not set up for this "
                          "chat; if it would have helped, say that it can be turned on in "
-                         "Settings → Assistant → Online search.")
+                         "Settings → AI → Chat → Online search.")
         if "fetch_paper" in names:
             text += (
                 " Pass fetch_paper the paper's title whenever you know it; if it reports that "

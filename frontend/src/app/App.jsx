@@ -9,11 +9,10 @@ import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
-import { exportJobBody } from "../transfers/transferFormats";
-import { importSummary } from "../transfers/importReview";
 import { useTasks } from "../tasks/useTasks";
+import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
-import { kindOf, progressText, retryOf, taskTitle } from "../tasks/taskKinds.js";
+import { progressText, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
@@ -108,7 +107,8 @@ import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkPro
 import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
-  firstSheetId, inkBySheet, isSheet, newSheet, normalizePaper, paperBefore, sheetIdAfter, sheetOfBlock, sheetsOf,
+  blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, isSheet, newSheet, normalizePaper, sheetAfterPlan, sheetOfBlock,
+  sheetsOf, withAllSheetsPaper, withSheetPaper,
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
@@ -689,13 +689,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function exportAll(withUploads) {
     return startWorkspaceExport({ all: true, uploads: withUploads });
   }
-  async function startWorkspaceExport(body) {
-    try {
-      await tasks.start("workspace-export", body, { download: "auto", pill: true });
-    } catch (err) {
-      setStatus(t("Export failed: {message}", { message: err.message }));
-    }
-  }
 
   // Restore an exported zip into a workspace (`wsId` — any of mine; the open
   // one by default). mode "replace": pages + chats are replaced by the
@@ -736,27 +729,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
     };
     inp.click();
-  }
-
-  // Restore (replace) or merge a backup zip into a workspace as a
-  // background job (restore): the zip goes up as a row of its own with its
-  // percent, then the server unzips and swaps or merges while the pill and
-  // Background tasks show how far it got. Once it is done in the open
-  // workspace this tab reloads (every piece of in-memory state is stale) —
-  // into after.openPage when given (a shared page imported by link keeps
-  // its block id, so it opens directly). `target`: another workspace of
-  // mine (null = the open one), which is left alone here.
-  function runBackupImport(f, mode, target, after = {}) {
-    const into = target || getCurrentWorkspace();
-    const form = new FormData();
-    form.append("file", f);
-    form.append("mode", mode);
-    form.append("ws", into);
-    postPill("backup-upload", { msg: t("Uploading {file}…", { file: f.name }), spinner: true });
-    tasks.upload("restore", form, { name: `${mode === "merge" ? "Merge" : "Restore"} ${f.name}`.slice(0, 60),
-      meta: { pill: true, restoreInto: into, after } })
-      .catch((err) => { if (!err.aborted) setStatus(t("Import failed: {msg}", { msg: err.message || "failed" })); })
-      .finally(() => postPill("backup-upload", null));
   }
 
   // A guest account has no password, so logging out deletes it and its
@@ -2583,7 +2555,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The export job the dialog follows once Export was pressed (or that
   // Background tasks opened it on); null while the format is chosen.
   const [exportJobId, setExportJobId] = useState(null);
-  const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
+  // Starting, reopening and retrying jobs, and what to say when one ends
+  // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
+  const { startWorkspaceExport, runBackupImport, runExport, closeExport, openTask, retryTask, startResearch, onJobFinished } = useAppJobs({
+    tasks, postPill, setStatus, openBlock, setOpenPopover, setSettingsOpen,
+    exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
+    pageId: focusedBlock?.id, shareMode, exportRawPdf, downloadExport,
+    workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, folderFilter, chatModel, agentReadChars,
+  });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
     { format: "pdf", highlights: true, notes: true, bundle: true },
@@ -5925,176 +5904,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  // Run what the export dialog was configured to do: a background job
-  // (export) the dialog then follows — it may close meanwhile, and the
-  // file downloads by itself while it watches (docs/dev/tasks.md). A PDF
-  // with both switches off is the stored file itself, which the raw path
-  // serves without a round trip (and works for PDFs that only exist behind
-  // the proxy). A share view has no background tasks: it downloads the
-  // same export through the download endpoints.
-  async function runExport(o) {
-    const pageId = focusedBlock?.id;
-    if (!exportFolder && !pageId) { setExportOpen(false); setStatus(t("Open a page first to export it.")); return; }
-    if (!exportFolder && o.format === "pdf" && !o.highlights && !o.notes) { setExportOpen(false); await exportRawPdf(); return; }
-    const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
-    if (shareMode) {
-      setExportOpen(false);
-      const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0, notes: body.notes ? 1 : 0 });
-      await downloadExport(exportFolder
-        ? `/folders/export?name=${encodeURIComponent(exportFolder)}&${query}` : `/pages/${pageId}/export?${query}`, "export");
-      return;
-    }
-    if (exportStartingRef.current) return;
-    exportStartingRef.current = true;
-    try {
-      const job = await tasks.start("export", body, { download: "auto", dialog: "export" });
-      setExportJobId(job.id);
-    } catch (err) {
-      setStatus(t("Export failed: {message}", { message: err.message }));
-    } finally {
-      exportStartingRef.current = false;
-    }
-  }
-  // Closing the export dialog: a job still running goes on in Background
-  // tasks, and its file is offered once ready instead of downloaded.
-  function closeExport() {
-    const job = exportJobId ? tasks.byId(exportJobId) : null;
-    if (job && isActive(job)) tasks.setDownload(job.id, "offer");
-    setExportOpen(false);
-    setExportJobId(null);
-  }
-
-  // A row of Background tasks clicked: the export or import dialog on that
-  // job again, or the Settings pane where the work is managed.
-  function openTask(task) {
-    const open = kindOf(task).open;
-    setOpenPopover(null);
-    if (open === "export") {
-      if (isActive(task)) tasks.setDownload(task.id, "auto"); // watched again: fetch the file once ready
-      setExportFolder(task.params?.folder || null);
-      setExportJobId(task.id);
-      setExportOpen(true);
-    } else if (open === "import") {
-      setImportReview({ jobId: task.id });
-    } else if (open === "page") {
-      // A finished research job: the report page it filed. The listing
-      // leaves results out, so ask for this one job.
-      if (isActive(task)) setStatus(t("Still working — its page appears when it finishes."));
-      else {
-        tasks.fetchJob(task.id)
-          .then((full) => { if (full?.result?.page_id) openBlock(full.result.page_id); })
-          .catch(() => {});
-      }
-    } else if (open === "handoff") {
-      // A paper the chat could not download: its /go page leads on to the
-      // publisher, and Gamma Connector knows the tab by that address.
-      window.open(`${API}/ai/handoffs/${encodeURIComponent(task.params?.request || "")}/go`,
-                  "_blank", "noopener");
-    } else if (open?.startsWith("settings:")) {
-      setSettingsOpen(open.slice("settings:".length));
-    }
-  }
-  // Hand a question to the background researcher (gamma/paper_research.py):
-  // it searches and reads for minutes and files a report page in the folder
-  // being viewed. The tray follows it, and its row opens that page.
-  async function startResearch(question) {
-    if (!question) return;
-    try {
-      await tasks.start("research", { question, folder: folderFilter || "",
-                                      model: chatModel || "", read_char_limit: agentReadChars || 0 },
-                        { pill: true });
-      setStatus(t("Researching in the background — Background tasks has it."));
-    } catch (err) {
-      setStatus(err.message || t("Could not start the research"));
-    }
-  }
-  // Start a task's work again (a row's retry button, the export dialog's
-  // Start again): the same route and body as the first time. `download`:
-  // "auto" when the file should come as soon as it is ready (the dialog
-  // watches, a workspace export was asked for from a menu), else offered.
-  async function retryTask(task, download = task.kind === "workspace-export" ? "auto" : "offer") {
-    const again = retryOf(task);
-    if (!again) return null;
-    try {
-      return await tasks.start(again[0], again[1], { download, pill: task.kind === "workspace-export" });
-    } catch (err) {
-      setStatus(t("{name} failed: {message}", { name: taskTitle(task), message: err.message }));
-      return null;
-    }
-  }
-
-  // A job ended while this tab looked (tasks/useTasks.js onFinished):
-  // `started` is what this tab started it with ({download, pill,
-  // restoreInto, after}), null for a job started elsewhere. Whatever its
-  // window shows is left to it; the rest is said here.
-  function onJobFinished(job, started) {
-    postPill(`job:${job.id}`, null);
-    const title = taskTitle(job);
-    // The export or import dialog shows it (one that ends as it starts
-    // comes here before the dialog knows its id).
-    const shownInDialog = (exportOpen && (job.id === exportJobId || (started?.dialog === "export" && !exportJobId)))
-      || (importReview && (job.id === importReview.jobId || (started?.dialog === "import" && !importReview.jobId)));
-    const here = job.workspace && job.workspace === workspace?.id;
-    if (job.kind === "restore") {
-      if (job.state === "done" && here) {
-        if (started) {
-          // Every piece of in-memory state is stale now: start fresh (in the page a shared link named).
-          const page = started.after?.openPage;
-          window.location.href = withWorkspace(page ? `${window.location.pathname}?page=${encodeURIComponent(page)}` : window.location.pathname);
-        } else {
-          postPill(`job:${job.id}`, { msg: t("{name} finished — this workspace changed.", { name: title }),
-            action: { label: t("Reload"), run: () => { window.location.href = withWorkspace(window.location.pathname); } } }, { after: [20000, null] });
-        }
-        return;
-      }
-      if (started) setStatus(job.state === "done" ? t("{name}: done.", { name: title }) : job.state === "failed"
-        ? t("Import failed: {msg}", { msg: t(job.error) }) : t("{name} was stopped.", { name: title }));
-      return;
-    }
-    if (job.kind === "import") {
-      if (job.state === "done" && here) {
-        refreshQuota?.();
-        fetchHomeBlocks();
-        if (!shownInDialog && started) {
-          tasks.fetchJob(job.id).then((full) => full?.result && setStatus(t("Import: {summary}.", { summary: importSummary(full.result) }))).catch(() => {});
-        }
-      } else if (!shownInDialog && started && job.state === "failed") {
-        setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
-      }
-      return;
-    }
-    if (job.kind === "research") {
-      if (job.state !== "done") {
-        if (started && job.state === "failed") setStatus(t("Research failed: {msg}", { msg: t(job.error) }));
-        return;
-      }
-      if (here) fetchHomeBlocks();
-      // Its report is a page: offer to open it rather than open it over
-      // whatever the user is reading now.
-      tasks.fetchJob(job.id).then((full) => {
-        const pageId = full?.result?.page_id;
-        if (!pageId) return;
-        postPill(`job:${job.id}`, { msg: t("Research finished: {name}.", { name: full.result.title || title }),
-          action: { label: t("Open"), run: () => { openBlock(pageId); postPill(`job:${job.id}`, null); } } },
-        { after: [60000, null] });
-      }).catch(() => {});
-      return;
-    }
-    if (!started || shownInDialog) return;
-    if (job.state === "done" && job.artifact) {
-      if (started.download === "auto") {
-        setStatus(t("{name}: downloading {file} ({size}).", { name: title, file: job.artifact.name, size: fmtBytes(job.artifact.size) }));
-      } else {
-        postPill(`job:${job.id}`, { msg: t("{name} is ready ({size}).", { name: title, size: fmtBytes(job.artifact.size) }),
-          action: { label: t("Download"), run: () => { tasks.download(job); postPill(`job:${job.id}`, null); } } }, { after: [30000, null] });
-      }
-    } else if (job.state === "done") {
-      setStatus(t("{name}: done.", { name: title }));
-    } else if (job.state === "failed") {
-      setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
-    }
-  }
-
   // Download the PDF exactly as stored — no highlight annotations. Reuses the
   // viewer's own URL (uploads route or /pdf proxy), so it works in share views.
   async function exportRawPdf() {
@@ -6477,18 +6286,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page is there already (two strokes low on the last page add it once).
   function addSheetAfter(afterId, { once = false } = {}) {
     if (readOnly || !focusedBlockId) return "";
-    const tree = blocksRef.current;
-    const after = findBlock(tree, afterId);
-    if (!after) return "";
-    let id = isSheet(after) ? sheetIdAfter(afterId) : makeId();
-    if (findBlock(tree, id)) {
-      if (once) return id;
-      id = makeId();
-    }
-    const sheet = newSheet(id, paperBefore(tree, afterId));
-    setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
-    guideEvents.emit("sheet.created", { id });
-    return id;
+    const plan = sheetAfterPlan(blocksRef.current, afterId, makeId, { once });
+    if (!plan) return "";
+    if (!plan.add) return plan.id;
+    setBlocks((prev) => insertSheetAfter(prev, afterId, plan.id));
+    guideEvents.emit("sheet.created", { id: plan.id });
+    return plan.id;
   }
   // The viewer's "Add page": after the last page.
   function addPageAtEnd() {
@@ -6501,38 +6304,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function insertSheetAt(blockId, rest) {
     if (readOnly) return;
     if ((rest || "").trim()) { addSheetAfter(blockId); return; }
-    const tree = blocksRef.current;
-    const block = findBlock(tree, blockId);
-    if (!block) return;
-    const sheet = normalizePaper(paperBefore(tree, blockId));
-    const fold = !block.children?.length;
-    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
-      properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    if (!findBlock(blocksRef.current, blockId)) return;
+    setBlocks((prev) => blockToSheet(prev, blockId));
     guideEvents.emit("sheet.created", { id: blockId });
     saveNowRef.current = true;
     setView((v) => closeEditing(v, blockId));
   }
   function setSheetPaper(sheetId, paper) {
     if (readOnly) return;
-    const sheet = normalizePaper(paper);
-    setBlocks((prev) => updateBlockTree(prev, sheetId, (b) => ({ ...b, properties: { ...b.properties, sheet } })));
+    setBlocks((prev) => withSheetPaper(prev, sheetId, paper));
   }
   // Every sheet of the page gets `paper`.
   function applyPaperToAll(paper) {
     if (readOnly) return;
-    const sheet = normalizePaper(paper);
-    const each = (list) => {
-      let changed = false;
-      const out = list.map((b) => {
-        const kids = b.children?.length ? each(b.children) : b.children;
-        const next = isSheet(b) ? { ...b, properties: { ...b.properties, sheet }, children: kids }
-          : kids !== b.children ? { ...b, children: kids } : b;
-        if (next !== b) changed = true;
-        return next;
-      });
-      return changed ? out : list;
-    };
-    setBlocks((prev) => each(prev));
+    setBlocks((prev) => withAllSheetsPaper(prev, paper));
   }
   // Leaving the page closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);

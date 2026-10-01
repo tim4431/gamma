@@ -147,7 +147,7 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
 
     home_blocks = _flat(home)
     text = "\n".join(b["content"] for b in home_blocks)
-    did, hid = deep["id"], home["id"]
+    did = deep["id"]
     assert "hidden" not in text and "whole block comment" not in text.lower()
     assert "Intro paragraph with a comment  inside." in text
     assert f"See [[{did}]] and [[{did}]] and [[{method['id']}]]." in text

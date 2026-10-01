@@ -11,6 +11,7 @@
 // with `ink_url`, their file on a `canvas` space the sheet's size); other
 // blocks under a sheet are notes about that page. Stored papers are read
 // through normalizePaper, never trusted.
+import { findBlock, insertSibling, updateBlockTree } from "../shared/model/blockModel.js";
 
 export const DEFAULT_PAPER = Object.freeze({ width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank",
   spacing: 24, line: "#c8d1dc" });
@@ -172,4 +173,71 @@ export const sheetIdAfter = (sheetId) => stableId("s", "sheet-after", sheetId);
 // the sheet itself shows them.
 export function newSheet(id, paper) {
   return { id, content: "", properties: { sheet: normalizePaper(paper), collapsed: true }, children: [] };
+}
+
+// --- editing the sheets --------------------------------------------------
+// Adding a page is a tree insert like any block's, so it syncs, merges and
+// undoes like one; the rules are the same in the notes view and the
+// notebook view (App's thin setBlocks wrappers call these).
+
+// Which sheet "add a page right after block `afterId`" adds: {id, add}.
+// After a sheet the id follows from that sheet's (sheetIdAfter), so two
+// devices adding "the page after this one" at once add one page; after any
+// other block it is a fresh `makeId()`. When the page has that id already:
+// with `once` that page is the one (add: false), else a fresh id. null
+// when `afterId` is not in the tree.
+export function sheetAfterPlan(tree, afterId, makeId, { once = false } = {}) {
+  const after = findBlock(tree, afterId);
+  if (!after) return null;
+  let id = isSheet(after) ? sheetIdAfter(afterId) : makeId();
+  if (findBlock(tree, id)) {
+    if (once) return { id, add: false };
+    id = makeId();
+  }
+  return { id, add: true };
+}
+
+// The tree with a new sheet `id` right after block `afterId`, on the paper
+// of the sheet nearest before it (paperBefore), folded; the same tree when
+// the id is there already or the block is not.
+export function insertSheetAfter(tree, afterId, id) {
+  if (findBlock(tree, id) || !findBlock(tree, afterId)) return tree;
+  return insertSibling(tree, afterId, newSheet(id, paperBefore(tree, afterId)), true);
+}
+
+// The tree with block `blockId` turned into a sheet ("/page" in a block
+// with nothing else in it): its text goes, it takes the paper of the sheet
+// nearest before it, and it folds when it has no children. The same tree
+// when the block is not there.
+export function blockToSheet(tree, blockId) {
+  const block = findBlock(tree, blockId);
+  if (!block) return tree;
+  const sheet = normalizePaper(paperBefore(tree, blockId));
+  const fold = !block.children?.length;
+  return updateBlockTree(tree, blockId, (b) => ({ ...b, content: "",
+    properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } }));
+}
+
+// The tree with sheet `sheetId` on `paper` (normalized).
+export function withSheetPaper(tree, sheetId, paper) {
+  const sheet = normalizePaper(paper);
+  return updateBlockTree(tree, sheetId, (b) => ({ ...b, properties: { ...b.properties, sheet } }));
+}
+
+// The tree with every sheet, at any depth, on `paper`; the same tree (by
+// identity) when it has no sheet.
+export function withAllSheetsPaper(tree, paper) {
+  const sheet = normalizePaper(paper);
+  const each = (list) => {
+    let changed = false;
+    const out = list.map((b) => {
+      const kids = b.children?.length ? each(b.children) : b.children;
+      const next = isSheet(b) ? { ...b, properties: { ...b.properties, sheet }, children: kids }
+        : kids !== b.children ? { ...b, children: kids } : b;
+      if (next !== b) changed = true;
+      return next;
+    });
+    return changed ? out : list;
+  };
+  return each(tree);
 }

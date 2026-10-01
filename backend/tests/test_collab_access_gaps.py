@@ -5,6 +5,7 @@ handshake is in flight; a client gone while the hello is sent; a peer
 dropped on a failed send (the others must hear it left)."""
 
 import asyncio
+from contextlib import nullcontext
 
 import pytest
 from fastapi.testclient import TestClient
@@ -152,8 +153,9 @@ def test_a_client_gone_while_the_hello_is_sent_is_an_ordinary_close(monkeypatch)
         return "cag-ws", peer
 
     monkeypatch.setattr(rcollab, "_socket_access", admitted)
-    monkeypatch.setattr(rcollab, "_log_position", lambda ws, page_id: 0)
-    monkeypatch.setattr(rcollab, "_still_admitted", lambda ws, page_id, peer: True)
+    monkeypatch.setattr(rcollab, "connect_pages_db", lambda ws: nullcontext(None))
+    monkeypatch.setattr(rcollab, "latest_seq", lambda conn, page_id: 0)
+    monkeypatch.setattr(collab, "peer_access", lambda ws, page_id, account, is_guest, token: True)
     # no exception escapes the handler (uvicorn would log it as an ASGI error)
     asyncio.run(rcollab.page_socket(_Sock(fail_send=True), "cag-page"))
     assert collab.room_for("cag-ws", "cag-page") is None

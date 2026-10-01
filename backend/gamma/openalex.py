@@ -23,6 +23,8 @@ import re
 import urllib.parse
 from urllib.error import HTTPError
 
+from .paper_links import title_key
+
 API = "https://api.openalex.org"
 SERVER_KEY = os.environ.get("GAMMA_OPENALEX_API_KEY", "").strip()
 # What a record needs; a lookup also asks for the work's graph edges.
@@ -58,7 +60,7 @@ def _get(path: str, params: dict, key: str = "") -> dict:
     try:
         return json.loads(_http_get(f"{API}{path}?{query}", accept="application/json", headers=headers))
     except HTTPError as e:
-        remedy = "" if key else " — a free OpenAlex API key in Settings → Assistant → Online search avoids this"
+        remedy = "" if key else " — a free OpenAlex API key in Settings → AI → Chat → Online search avoids this"
         if e.code == 429:
             raise OpenAlexError("OpenAlex's daily budget is used up" + remedy, 429) from None
         if e.code == 503 and not key:
@@ -157,13 +159,13 @@ def search(query: str, rows: int = 5, from_year: int = 0, key: str = "", *,
 def find_title(title: str, key: str = "") -> dict | None:
     """The work whose title is exactly ``title`` (normalized), for a source
     without an identifier OpenAlex knows; None when there is none."""
-    want = re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+    want = title_key(title)
     if not want:
         return None
     data = _get("/works", {"filter": "title.search:" + title[:300].replace(",", " "),
                            "per-page": 5, "select": _WORK_SELECT}, key)
     return next((w for w in data.get("results") or []
-                 if re.sub(r"[^a-z0-9]+", "", _plain(w.get("display_name")).lower()) == want), None)
+                 if title_key(_plain(w.get("display_name"))) == want), None)
 
 
 def lookup(kind: str, ident: str, key: str = "") -> dict | None:

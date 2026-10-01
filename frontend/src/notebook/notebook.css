@@ -48,21 +48,9 @@
   color: #8a8f98; /* ds-allow: on the paper, which keeps its own colour in every theme */
   pointer-events: none;
 }
-.nbAddSheet {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 56px;
-  border: 1.5px dashed var(--border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-.nbAddSheet:hover { border-color: var(--accent); color: var(--text-primary); }
+/* "Add page" under the last sheet: a `uiBtn ghost` as wide as that sheet
+   (the width is inline); only its place in the column is set here. */
+.nbAddSheet { flex: none; }
 
 /* The paper menu: under the viewer's control column, like the ink strip. */
 .nbPaperMenu {

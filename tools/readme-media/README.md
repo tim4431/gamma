@@ -54,7 +54,7 @@ readback throttles input, and a scripted one-second stroke took three.
 $env:DEMO_EXPORT = (Resolve-Path artifacts/readme-media/demo.zip).Path
 $env:MEDIA_SCRATCH = Join-Path (Get-Location) 'artifacts/readme-media/annotate-and-ink'
 node tools/readme-media/record-ink.mjs --annotate
-backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py annotate-and-ink
+backend/venv/Scripts/python.exe tools/readme-media/render_feature_demos.py annotate-and-ink
 node tools/readme-media/check-media.mjs annotate-and-ink
 ```
 
@@ -81,7 +81,7 @@ Use the demo account's configured AI provider and a disposable workspace. Set
 $env:MEDIA_SCRATCH = Join-Path (Get-Location) 'artifacts/readme-media/revised'
 node tools/readme-media/suite-workspace.mjs
 node tools/readme-media/record-native-agentic.mjs
-backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py native-agentic
+backend/venv/Scripts/python.exe tools/readme-media/render_feature_demos.py native-agentic
 node tools/readme-media/check-media.mjs native-agentic
 node tools/readme-media/suite-workspace.mjs --remove
 Remove-Item Env:MEDIA_SCRATCH
@@ -110,7 +110,7 @@ each capture.
 $env:MEDIA_SCRATCH = Join-Path (Get-Location) 'artifacts/readme-media/agentic-notes'
 node tools/readme-media/suite-workspace.mjs
 node tools/readme-media/record-agentic-notes.mjs
-backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py agentic-notes
+backend/venv/Scripts/python.exe tools/readme-media/render_feature_demos.py agentic-notes
 node tools/readme-media/check-media.mjs agentic-notes
 node tools/readme-media/suite-workspace.mjs --remove
 Remove-Item Env:MEDIA_SCRATCH
@@ -164,7 +164,7 @@ two papers.
 
 ```powershell
 node tools/readme-media/record-collab.mjs
-backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py collab
+backend/venv/Scripts/python.exe tools/readme-media/render_feature_demos.py collab
 node tools/readme-media/check-media.mjs collab
 ```
 
@@ -246,7 +246,7 @@ commit cookies, passwords, exports, or raw recordings.
 ## Delivery and review
 
 `render-suite.py <name>` re-renders one published slot; `all` renders every
-slot, including the four feature demos (`render-feature-demos.py`:
+slot, including the four feature demos (`render_feature_demos.py`:
 `annotate-and-ink`, `native-agentic`, `agentic-notes`, `collab`). Notes,
 library, search, the connector and the feature demos are retina captures
 composed by `compose.py` (the connector's three captures under a toolbar,

@@ -83,7 +83,7 @@ def test_the_page_socket_reads_off_the_loop(writer, monkeypatch):
     from gamma.routers import collab as collab_router
     seen = []
     _off_loop_probe(monkeypatch, collab_router, "_socket_access", seen)
-    _off_loop_probe(monkeypatch, collab_router, "_log_position", seen)
+    _off_loop_probe(monkeypatch, collab_router, "latest_seq", seen)
     page = writer.post("/api/pages", json={"title": "Socket off the loop"}).json()["id"]
     with TestClient(app) as c:
         c.cookies.update(writer.cookies)

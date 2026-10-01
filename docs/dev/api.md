@@ -285,9 +285,9 @@ than `textnorm.INDEX_VERSION` (`ver` 0), or no longer matches the page root's
 `updated_at`; the writers that change a child without touching the root (`PUT
 /blocks/{id}/children` on a nested block, a cross-page `reorder`) call
 `block_index.mark_page_dirty`. A search rebuilds stale pages itself for up to
-`REFRESH_BUDGET_S` (0.2 s — so a page edited a moment ago is found) and hands
+`block_index.REFRESH_BUDGET_S` (0.2 s — so a page edited a moment ago is found) and hands
 the rest to the background refresher (one thread per process), which also
-re-indexes every page an op batch wrote once it has been quiet for `QUIET_S`
+re-indexes every page an op batch wrote once it has been quiet for `block_index.QUIET_S`
 (an `ops.commit_listeners` entry `search.py` registers). FTS5 finds rows only
 by rowid or MATCH, so `block_fts_rows` / `pdf_fts_rows` map each page / paper
 to its rows' rowids and every delete goes by rowid; an index written before

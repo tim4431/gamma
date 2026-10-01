@@ -124,8 +124,12 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2 and w not in _STOPWORDS]
 
 
-def _key(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+def title_key(text: str, limit: int | None = None) -> str:
+    """A title reduced to its lowercase letters and digits, the form the
+    paper modules compare titles in (``limit`` cuts it to that many
+    characters)."""
+    key = re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+    return key if limit is None else key[:limit]
 
 
 def score(link: dict, want: str) -> float:
@@ -138,8 +142,8 @@ def score(link: dict, want: str) -> float:
     hay = " ".join((link.get("text", ""), link.get("context", ""), urlsplit(link["url"]).path))
     have = set(_words(hay))
     value = sum(w in have for w in words) / len(words)
-    title = _key(want)
-    if len(title) >= 12 and title in _key(hay):
+    title = title_key(want)
+    if len(title) >= 12 and title in title_key(hay):
         value += 1.0
     if urlsplit(link["url"]).path.lower().endswith(".pdf"):
         value += 0.05

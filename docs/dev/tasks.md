@@ -139,7 +139,8 @@ arms no changing tool and no approval card, and a paper a publisher blocks
 is reported as blocked — its request shows as a `paper-handoff` row to
 finish by hand. Every action is a progress report, so the job stops at the
 next one. The page is written past the point where stopping is possible.
-Its row opens the report page once it exists, and `onJobFinished` offers it
+Its row opens the report page once it exists, and `onJobFinished`
+(`tasks/useAppJobs.js`) offers it
 in the pill rather than opening it over whatever the user is reading.
 
 The export driver reads a folder's pages again when the job runs, so a
@@ -189,7 +190,12 @@ actions, where a click opens it (`open`) and how to start it again
 - `TaskProgress` is the progress block the dialogs and the Backups pane
   show.
 
-`App.jsx` `onJobFinished` says what a window does not show:
+`useAppJobs.js` is App's side of the jobs, one instance over that store:
+starting what the menus and dialogs ask for (`startWorkspaceExport`,
+`runBackupImport`, the export dialog's `runExport` / `closeExport`,
+`startResearch`), opening a tray row again (`openTask`) and retrying one
+(`retryTask`). Its `onJobFinished`, which the store calls, says what a
+window does not show:
 
 - A file a closed dialog left behind is offered in the pill with a
   Download button.
