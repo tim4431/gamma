@@ -1,6 +1,7 @@
 // Resolve the existing frontend toolchain without a second node_modules tree.
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
@@ -25,18 +26,21 @@ export function readSession(dir = process.cwd()) {
 // 2× with a 1440×900 window gives the page its normal viewport at
 // devicePixelRatio 2, and its screencast frames are 2880×1800.
 export const VIEW = { width: 1440, height: 900, scale: 2 };
+// A browser's (or a persistent context's) second DevTools endpoint, which lets a
+// worker thread take the screencast (below).
 const cdpPorts = new WeakMap();
+const freePort = () => new Promise((resolve, reject) => {
+  const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  s.on('error', reject);
+});
+// Software compositing reads back and encodes every 2× frame so slowly that it
+// throttles input (a 1 s stroke took 3 s); with the GPU the capture keeps ~30 fps.
+const retinaArgs = (port, height = VIEW.height) => [
+  `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${height}`,
+  '--enable-gpu', '--ignore-gpu-blocklist', `--remote-debugging-port=${port}`];
 export async function launchRetina(options = {}) {
-  // A second DevTools endpoint lets a worker thread take the screencast (below).
-  const port = await new Promise((resolve, reject) => {
-    const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
-    s.on('error', reject);
-  });
-  // Software compositing reads back and encodes every 2× frame so slowly that it
-  // throttles input (a 1 s stroke took 3 s); with the GPU the capture keeps ~30 fps.
-  const browser = await chromium.launch({ headless: true, ...options, args: [
-    `--force-device-scale-factor=${VIEW.scale}`, `--window-size=${VIEW.width},${VIEW.height}`,
-    '--enable-gpu', '--ignore-gpu-blocklist', `--remote-debugging-port=${port}`, ...(options.args || [])] });
+  const port = await freePort();
+  const browser = await chromium.launch({ headless: true, ...options, args: [...retinaArgs(port), ...(options.args || [])] });
   cdpPorts.set(browser, port);
   // Tour offers would cover the demo; the e2e harness turns them off the same way.
   const newContext = browser.newContext.bind(browser);
@@ -50,20 +54,45 @@ export async function launchRetina(options = {}) {
 // Context options for launchRetina: the window is the viewport; light English UI.
 export const RETINA = { viewport: null, colorScheme: 'light', locale: 'en-US' };
 
+// The same 2× window with an unpacked extension loaded. Extensions need full
+// Chromium in a persistent context, so this returns the context. `height` is
+// the window's CSS height (a recorder that composites a toolbar above the page
+// leaves it room).
+export async function launchRetinaExtension(extension, { height = VIEW.height } = {}) {
+  const port = await freePort();
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-media-profile-'));
+  const context = await chromium.launchPersistentContext(profile, { ...RETINA, headless: false, args: [
+    ...retinaArgs(port, height), `--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--headless=new'] });
+  await context.addInitScript(() => { try { localStorage.setItem('gamma-suggest-tours', '0'); } catch {} });
+  cdpPorts.set(context, port);
+  // This window keeps room for a browser frame: grow it until the page area
+  // is the size asked for (tabs opened later share the window).
+  const page = context.pages()[0] || await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  const { windowId, bounds } = await cdp.send('Browser.getWindowForTarget');
+  const inner = await page.evaluate(() => [innerWidth, innerHeight]);
+  await cdp.send('Browser.setWindowBounds', { windowId, bounds: {
+    width: bounds.width + VIEW.width - inner[0], height: bounds.height + height - inner[1] } });
+  await cdp.detach();
+  const got = await page.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]);
+  if (got[0] !== VIEW.width || got[1] !== height || got[2] !== VIEW.scale) throw new Error(`Window is ${got.join(' x ')}`);
+  return context;
+}
+
 // Save the page's screencast as JPEG frames plus frames.json (seconds since the
 // capture started). `clock()` reads the same timeline for a recorder's marks.
 // Frames are about 1 MB each: a worker thread with its own DevTools connection
 // receives, acknowledges and writes them, so the recorder's pointer timing on
 // the main thread is not held up.
-export async function startCapture(page, dir, { quality = 90 } = {}) {
-  const port = cdpPorts.get(page.context().browser());
-  if (!port) throw new Error('startCapture needs a browser from launchRetina()');
+export async function startCapture(page, dir, { quality = 90, height = VIEW.height } = {}) {
+  const port = cdpPorts.get(page.context()) ?? cdpPorts.get(page.context().browser());
+  if (!port) throw new Error('startCapture needs a browser from launchRetina() or launchRetinaExtension()');
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const session = await page.context().newCDPSession(page);
   const { targetInfo } = await session.send('Target.getTargetInfo');
   await session.detach();
-  const size = { width: VIEW.width * VIEW.scale, height: VIEW.height * VIEW.scale };
+  const size = { width: VIEW.width * VIEW.scale, height: height * VIEW.scale };
   const t0 = Date.now();
   const worker = new Worker(CAPTURE_WORKER, { eval: true, workerData: {
     url: `ws://127.0.0.1:${port}/devtools/page/${targetInfo.targetId}`, dir, t0, quality, ...size } });

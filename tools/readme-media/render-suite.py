@@ -1,10 +1,12 @@
 """Re-render freshly captured README cases at 25 fps, as small animated WebP images.
 
 Raw captures and timing manifests stay in ignored artifacts/readme-media/suite.
-Notes and library are retina captures rendered by compose.py; the other cases
-are the earlier WebM recordings.
+Notes, library, search and the connector are retina captures rendered by
+compose.py; metadata, reference-links and the AI previews are the earlier WebM
+recordings.
 """
 import argparse
+from functools import lru_cache
 import json
 from pathlib import Path
 import re
@@ -12,6 +14,9 @@ import subprocess
 import sys
 
 from imageio_ffmpeg import get_ffmpeg_exe
+import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFilter
 from compose import Capture, Camera, FULL, focus, publish_demo, quiet
 from media_output import ROOT, FRAME, concat_segments, encode_webp, publish
 
@@ -37,26 +42,84 @@ def duration(source):
     return int(m[1])*3600 + int(m[2])*60 + float(m[3])
 
 
+class Browser:
+    """The connector's three captures as one capture-like timeline under a browser toolbar.
+
+    `pieces` are (state, capture, start, end) in that capture's seconds, played
+    back to back: the APS page, a beat with the pointer on the toolbar icon,
+    the popup over the page, the paper in Gamma. Frames are the 1440 x 900
+    card: the recorder's toolbar screenshot above the 860 px page, and in the
+    popup piece the popup's own capture cut to its height, hung under the icon.
+    """
+    def __init__(self, directory, marks, heights, toolbar, pieces):
+        self.dir, self.marks, self.toolbar = directory, marks, toolbar
+        self.heights = [(t, h) for t, h in heights if h]
+        self.scale = pieces[0][1].scale
+        self.pieces, self.starts, t = pieces, [], 0.0
+        for _, _, a, b in pieces:
+            self.starts.append(t)
+            t += b - a
+        self.duration = t
+        self.bars = {k: PIL.Image.open(directory / f'toolbar-{k}.png').convert('RGB') for k in ('page', 'hover', 'open', 'gamma')}
+        # The popup's resting place: right-aligned under the icon, as Chrome hangs it.
+        icon = marks['icon']
+        self.popup_at = (round(icon['x'] + icon['width'] + 4 - 360), toolbar + 4)
+
+    def at(self, name):
+        """Timeline seconds where piece `name` starts."""
+        return self.starts[[p[0] for p in self.pieces].index(name)]
+
+    def index(self, t):
+        k = max(i for i, s in enumerate(self.starts) if s <= max(t, 0)) if t > 0 else 0
+        state, capture, a, _ = self.pieces[k]
+        local = a + t - self.starts[k]
+        height = next((h for s, h in reversed(self.heights) if s <= local), self.heights[0][1]) if state == 'open' else 0
+        return (k, capture.index(local), height)
+
+    @lru_cache(maxsize=8)
+    def image(self, key):
+        k, i, height = key
+        state, capture, _, _ = self.pieces[k]
+        s = self.scale
+        card = PIL.Image.new('RGB', (1440 * s, 900 * s), 'white')
+        page = self.pieces[0][1].image(self.pieces[0][1].index(self.marks['aHidden'] + 0.2)) if state == 'open' else capture.image(i)
+        card.paste(page, (0, self.toolbar * s))
+        card.paste(self.bars[state], (0, 0))
+        if state == 'open':
+            popup = capture.image(i).crop((0, 0, 360 * s, height * s))
+            x, y = (v * s for v in self.popup_at)
+            radius = 8 * s
+            mask = PIL.Image.new('L', popup.size, 0)
+            PIL.ImageDraw.Draw(mask).rounded_rectangle((0, 0, popup.width - 1, popup.height - 1), radius, fill=255)
+            shadow = PIL.Image.new('L', card.size, 0)
+            PIL.ImageDraw.Draw(shadow).rounded_rectangle((x, y + 4 * s, x + popup.width, y + popup.height + 4 * s), radius, fill=70)
+            card = PIL.Image.composite(PIL.Image.new('RGB', card.size, (20, 24, 32)), card, shadow.filter(PIL.ImageFilter.GaussianBlur(10 * s)))
+            card.paste(popup, (x, y), mask)
+            PIL.ImageDraw.Draw(card).rounded_rectangle((x, y, x + popup.width - 1, y + popup.height - 1), radius, outline=(208, 214, 223), width=s)
+        return card
+
+
 def connector(directory):
-    m = read(directory, 'conn_marks.json')
-    a0, a1 = max(0, m['a0'] - 0.2), m['a1']
-    b0, b1 = max(0, m['b0'] - 0.2), m['b2'] + 0.1
-    c0 = max(0, m['cReady'] + 0.3)
-    # The real popup is composited over its actual arXiv tab, as in the original
-    # recipe. Only the popup is enlarged; the arXiv background stays fixed.
-    bg = directory / 'background.png'
-    run('-ss', a1-0.1, '-i', m['videoA'], '-frames:v', '1', bg)
-    h = (m['popupH'] + 1) // 2 * 2
-    enc = ['-an', '-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'yuv420p']
-    a, b, c = [directory / f'part-{s}.mkv' for s in 'abc']
-    run('-ss', a0, '-t', a1-a0, '-i', m['videoA'], '-vf', 'fps=25,setsar=1', *enc, a)
-    run('-loop', '1', '-framerate', '25', '-i', bg, '-ss', b0, '-t', b1-b0, '-i', m['videoB'],
-        '-filter_complex', f'[1:v]fps=25,crop=360:{h}:0:0,scale=504:-2:flags=lanczos,pad=iw+4:ih+4:2:2:0xd0d6df[p];[0:v][p]overlay=908:20:shortest=1,setsar=1',
-        '-t', b1-b0, *enc, b)
-    run('-ss', c0, '-t', min(2.8, m['c1']-c0), '-i', m['videoC'], '-vf', 'fps=25,setsar=1', *enc, c)
-    master = directory / 'composited.mkv'
-    run('-i', a, '-i', b, '-i', c, '-filter_complex', '[0:v][1:v][2:v]concat=n=3:v=1:a=0', *enc, master)
-    return master, 0, duration(master), None
+    m = read(directory, 'connector_marks.json')
+    marks, verified = m['marks'], m.get('verified', {})
+    if not (verified.get('saved') and verified.get('pdf') and verified.get('folder') and verified.get('labels')):
+        raise ValueError('Capture the paper saved with its PDF, a folder and a label first')
+    a, b, c = (Capture(directory / s) for s in 'abc')
+    browser = Browser(directory, marks, m['heights'], m['toolbar'], [
+        ('page', a, max(0, marks['a0'] - 0.3), marks['a1']),
+        ('hover', a, marks['aHidden'], marks['aHidden'] + 0.35),
+        ('open', b, marks['bReady'] + 0.1, marks['b1'] + 0.35),
+        ('gamma', c, max(0, marks['cReady'] - 0.5), marks['c1']),
+    ])
+    # Real speed throughout, the save's wait included. The camera closes in
+    # on the popup as it opens and pulls back as its link is clicked; the
+    # paper opening in Gamma dissolves in, in the full view.
+    cut = browser.at('gamma')
+    popup = {'x': browser.popup_at[0], 'y': browser.popup_at[1], 'width': 360, 'height': max(h for _, h in browser.heights)}
+    camera = (Camera()
+              .move(browser.at('hover') - 0.25, focus(popup, margin=30), 0.5)
+              .move(cut - 0.6, FULL, 0.5))
+    return publish_demo('connector', browser, [(0, cut), (cut, browser.duration)], camera, directory, loop_fade=0.4)
 
 
 def notes(directory):
@@ -97,8 +160,6 @@ def search(directory):
 
 
 def shot(name, directory):
-    if name == 'connector':
-        return connector(directory)
     filenames = {'metadata': 'video_meta_path.txt', 'agent': 'video_agent.txt',
                  'download-and-chat': 'video_path.txt', 'reference-links': 'video_links_path.txt'}
     source = Path((directory / filenames[name]).read_text().strip())
@@ -166,12 +227,12 @@ def render(name):
     print(json.dumps(report), flush=True)
 
 
-RETINA = {'notes': notes, 'library': library, 'search': search}
+RETINA = {'notes': notes, 'library': library, 'search': search, 'connector': connector}
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    features = ['annotate-and-ink', 'native-agentic', 'agentic-notes']   # render-feature-demos.py
+    features = ['annotate-and-ink', 'native-agentic', 'agentic-notes', 'collab']   # render-feature-demos.py
     parser.add_argument('cases', nargs='+', choices=NAMES+features+['all'])
     args = parser.parse_args()
     published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + features

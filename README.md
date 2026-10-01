@@ -90,6 +90,9 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 - **Workspaces** — keep separate personal libraries, or collaborate in a shared library created by a server administrator: owners manage members, editors change pages, viewers read.
 - **Share a page or a folder** — send a link to an annotated paper, or to a whole folder of them; invite people with view or edit rights, or open it to anyone with the link.
+
+<a href="./docs/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
+
 - **Edit together** — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.
 
 → Guide: [Sharing a page](./docs/user_guide.md#sharing-a-page) · [Workspaces](./docs/user_guide.md#workspaces)
@@ -99,6 +102,9 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 <a href="./docs/user_guide.md#assistants-codex-and-claude-code"><img alt="Gamma in the middle of an assistant prompt that mentions @Gamma and a paper, the Obsidian, Notion and Zotero import and export arrows, and the Gamma Connector saving a paper with the publisher sign-in kept per journal" src="./docs/assets/branding/gamma-connections-light.svg" width="100%"></a>
 
 - **Assistants** — the [Gamma plugin for Codex and Claude Code](./plugins/gamma/) lets either assistant search, read and export your papers, notes and highlights, read-only, for a workspace you approve in the browser: *"@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?"* Setup is one command copied from **Settings → AI → Integrations**; any other MCP client connects with the same URL.
+
+<a href="./docs/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
+
 - **Gamma Connector** — the browser extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
 - **Import** — Zotero libraries and Logseq exports with their annotations; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, or a Gamma zip another Gamma can merge.
 

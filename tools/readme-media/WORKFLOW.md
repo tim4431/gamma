@@ -17,7 +17,8 @@ library. Use its exported copy for recording, not synthetic replacement papers.
 | Metadata | Fetch a paper, watch fields fill, copy BibTeX and slide citation | `run-case.mjs metadata`; arXiv 2312.03982 removed first; never fill metadata by hand |
 | Q&A (scratch preview) | Paste Attention paper URL, select and highlight a sentence, ask for a short explanation | `run-case.mjs download-and-chat`; requires configured AI |
 | Reference links | Click citation 36, jump to its reference, fetch the linked paper | `run-case.mjs reference-links`; arXiv 0904.2557 removed so Fetch appears; fixed detail crop includes the citation and modal |
-| Connector | arXiv page, real extension popup, choose folder, save, open in Gamma | `run-case.mjs connector`; full Chromium with the unpacked extension; popup opened through its `?tab=` hook and composited over the arXiv frame; only the popup is enlarged |
+| Collaboration | A shared workspace's page seen by its owner: the owner and Maya type two questions into one block at once, Sam captions another block and pastes a figure under it | `record-collab.mjs`; isolated server; the others are real sessions in a second browser; typing pauses every two words so edits arrive live; both lines, caption and picture checked on the server |
+| Connector | A PRL paper's APS page, the toolbar badge, the real popup: folder, label, Save, open in Gamma | `run-case.mjs connector`; full Chromium at 2× with the unpacked extension; APS requests fetched with curl past its bot check, institution notices removed; popup opened through its `?tab=` hook and hung under a composited toolbar; PDF, folder and label checked |
 
 ## Details that matter
 
@@ -26,7 +27,8 @@ library. Use its exported copy for recording, not synthetic replacement papers.
   otherwise ask for the demo login.
 - AI configuration belongs to the account, not the exported workspace. AI cases
   use a disposable personal workspace on the existing demo account. Ink and
-  connector use isolated accounts because they need no AI.
+  connector use isolated accounts because they need no AI; so do notes and
+  collaboration.
 - Capture with `launchRetina()` and `startCapture()`, not `recordVideo`: Chrome's
   screencast is capped at the window's CSS size, so device-scale emulation still
   records 1×, and CSS zoom on `<html>` misplaces the app's popups (the rects are

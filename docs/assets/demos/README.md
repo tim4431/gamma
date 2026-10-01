@@ -12,17 +12,18 @@ delivery rules and regeneration steps are in
 | [native-agentic](demo-native-agentic.webp) | 41.1 s | 1600 x 900 | 3.05 MiB |
 | [agentic-notes](demo-agentic-notes.webp) | 18.9 s | 1600 x 900 | 0.59 MiB |
 | [search](demo-search.webp) | 15.4 s | 1600 x 900 | 2.05 MiB |
+| [collab](demo-collab.webp) | 19.2 s | 1600 x 900 | 1.58 MiB |
+| [connector](demo-connector.webp) | 17.6 s | 1600 x 900 | 2.27 MiB |
 | [library](demo-library.webp) | 17.8 s | 1600 x 900 | 3.32 MiB |
 | [metadata](demo-metadata.webp) | 13.2 s | 1120 x 714 | 1.10 MiB |
 | [reference-links](demo-reference-links.webp) | 15.2 s | 1040 x 662 | 4.58 MiB |
 
-The first five are the README's; annotate-and-ink, notes, native-agentic,
-library, metadata and reference-links appear on the website. The eight total
-about 17.6 MiB; each is below 5 MiB. The six 1600 × 900 animations are retina
-captures, and each that replaced a file is smaller than it: the README's five
-come to 8.62 MiB, against 10.34 MiB for the four it had before. The superseded
-connector animation was removed; the README uses the connections SVG instead.
-Its recording tools remain available for future captures.
+The first seven are the README's; annotate-and-ink, notes,
+native-agentic, library, metadata and reference-links appear on the website.
+The ten total about 21.5 MiB; each is below 5 MiB. The eight 1600 × 900
+animations are retina captures; the README's seven come to 12.47 MiB. Collab
+and connector sit beside the workspaces and connections illustrations: the
+pictures say what the features are, the recordings show them used.
 
 ## Abstract counterparts
 

@@ -74,6 +74,15 @@ test("a caret inside a link's URL goes to the end of the link text", () => {
   assert.deepEqual(hit, { index: text.indexOf("p. 5") + 4, end: true });
 });
 
+test("a caret after a trailing space lands at the end of the rendered line", () => {
+  // Typing is saved at the pauses, often right after a space the rendered
+  // view doesn't show.
+  assert.deepEqual(locateInRendered("Fig. 1c, d: the", "Fig. 1c, d: the ", 16), { index: 15, end: false });
+  assert.deepEqual(locateInRendered("Is atom\nWhy", "* Is atom \n* Why", 10), { index: 7, end: false });
+  // The space is still matched where the rendered view keeps it.
+  assert.deepEqual(locateInRendered("some bold", "some **bold**", 5), { index: 5, end: false });
+});
+
 test("a caret between markup characters goes to the text after it", () => {
   const src = "**bold** tail";
   assert.deepEqual(locateInRendered("bold tail", src, 1), { index: 0, end: false });

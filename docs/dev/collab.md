@@ -600,9 +600,11 @@ state in App instead of the tree.
   over its rendered view (`RenderedCarets` in `Presence.jsx`). The offset is
   placed by text, the reverse of how a click opens the editor
   (`locateInRendered` / `renderedCaretRect` in `editor/clickToSource.js`):
-  the plain run around it is looked up in the rendered text, and an offset
-  in markup that renders as nothing (a link's URL) goes to the end of the
-  text before it, one inside math to before the formula. It is re-placed
+  the plain run around it is looked up in the rendered text (again without
+  the whitespace at its ends when that fails: the rendered view drops a
+  line's trailing space, and typing is usually sent right after one), and
+  an offset in markup that renders as nothing (a link's URL) goes to the
+  end of the text before it, one inside math to before the formula. It is re-placed
   when the text, the caret or the view's size changes; a caret that can't be
   placed is not drawn.
 

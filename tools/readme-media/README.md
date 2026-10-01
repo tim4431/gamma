@@ -6,7 +6,7 @@ The production research is in [demo-production.md](../../docs/research/demo-prod
 | Location | Contents |
 |---|---|
 | This directory | Recorders, renderers, shared helpers and [shot recipes](WORKFLOW.md) |
-| `docs/assets/demos/` | Published WebP animations, including the retained connector demo |
+| `docs/assets/demos/` | Published WebP animations |
 | `docs/assets/screenshots/` | Documentation stills |
 | `artifacts/readme-media/` | Ignored workspace export, private build, frame captures, timing files, masters and QA frames |
 | `.claude/skills/readme-media/SKILL.md` | Agent entry point pointing here |
@@ -160,11 +160,63 @@ paper: Ctrl+F finds "rydberg" in this PDF and Enter steps to the second and
 third match; then Ctrl+P, "quantum comp", and the label row opens the label's
 two papers.
 
+## Share and work together
+
+```powershell
+node tools/readme-media/record-collab.mjs
+backend/venv/Scripts/python.exe tools/readme-media/render-feature-demos.py collab
+node tools/readme-media/check-media.mjs collab
+```
+
+An isolated server with the curated export in a shared workspace, "Quantum
+lab": Alex owns it, Maya and Sam edit. The shot needs `fig1cd.png` in
+`artifacts/readme-media/collab/`, Fig. 1c–d of the atom-arrays paper (pages
+render with the backend's pypdfium2). Only Alex's window is captured, at a 130%
+interface size; Maya and Sam are real sessions in a second browser, so their
+carets, name tags, row chips and avatars are Gamma's own. Alex and Maya type
+two questions into one list block, Maya on its first line so Maya's name tag sits
+above the block, not over Alex's line; meanwhile Sam types a caption into an empty
+block and pastes the figure under it. The typing pauses every two words: an
+edit is sent once its writer pauses (collabSession's typing debounce), so
+without the pauses the others' text would arrive in one piece. The recorder
+checks that the list block holds both lines and the other the caption and the
+picture. `--inspect` saves the prepared page.
+
+## Connect your research: the Gamma Connector
+
+```powershell
+node tools/readme-media/run-case.mjs connector
+backend/venv/Scripts/python.exe tools/readme-media/render-suite.py connector
+node tools/readme-media/check-media.mjs connector
+```
+
+The Connector saves a Physical Review Letters paper (Levine et al.,
+10.1103/PhysRevLett.123.170503) from its APS page: the badge has found it, the
+popup shows the registry's title and authors, a folder and a label are picked,
+Save, and the PDF opens in Gamma with both. The case starts an isolated server
+with registry lookups on and the atom-arrays paper filed under
+Quantum/Neutral atoms, so that folder is in the popup's list. Full Chromium at
+2× with the unpacked extension (`launchRetinaExtension`), its page 40 px
+shorter than the frame: the render puts a browser toolbar there, screenshots of
+the recorder's own toolbar page with the extension's real badge. The popup is
+opened as a page through its `?tab=` hook and hung under the toolbar icon.
+
+APS answers a headless browser with a Cloudflare check but serves curl the
+page, so the recorder fetches the site's requests with curl and hands them to
+the browser at their own address; the extension reads the real page. The page
+names the institution whose network fetched it ("Access Provided by …"): the
+recorder removes those notices before recording. The popup's capture ends with
+the pointer on *Open in Gamma*: the click closes the popup, as Chrome's does,
+and a screencast of a closed page never stops. The recorder checks the saved
+page's PDF, folder and label through the API. `--inspect` saves the APS page
+and the popup with its folder menu.
+
 ## Record the published suite cases
 
 The suite uses a disposable workspace on the curated demo account so AI shots
-can use its configured provider. The extension uses an isolated server/account
-because it targets the default workspace.
+can use its configured provider. Notes and the connector use an isolated
+server/account instead (the extension targets the default workspace), as do
+the feature demos above.
 
 Set `DEMO_PASSWORD` in the shell without committing or logging it; `BASE_URL`
 defaults to `http://127.0.0.1:9001`, and `DEMO_USER` to `demo`. Then:
@@ -194,12 +246,12 @@ commit cookies, passwords, exports, or raw recordings.
 ## Delivery and review
 
 `render-suite.py <name>` re-renders one published slot; `all` renders every
-slot, including the three feature demos (`render-feature-demos.py`:
-`annotate-and-ink`, `native-agentic`, `agentic-notes`). Notes, library, search
-and the feature demos are retina captures composed by
-`compose.py`. Metadata, reference-links and the connector are still 1× WebM
-recordings, rendered through FFmpeg (`encode_webp`). The connector animation is
-published but the README shows the connections SVG instead.
+slot, including the four feature demos (`render-feature-demos.py`:
+`annotate-and-ink`, `native-agentic`, `agentic-notes`, `collab`). Notes,
+library, search, the connector and the feature demos are retina captures
+composed by `compose.py` (the connector's three captures under a toolbar,
+`render-suite.py`'s `Browser`). Metadata and reference-links are still 1× WebM
+recordings, rendered through FFmpeg (`encode_webp`).
 
 `encode_master` writes the WebP itself: each frame re-encodes only the 16 px
 tiles that changed since that tile was last encoded, or that were last encoded

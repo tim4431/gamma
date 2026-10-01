@@ -1,8 +1,8 @@
-"""Render the annotation/ink and the two AI README stories from retina captures."""
+"""Render the annotation/ink, the two AI and the collaboration README stories from retina captures."""
 import argparse
 import json
 
-from compose import Capture, Camera, FULL, focus, publish_demo
+from compose import Capture, Camera, FULL, focus, publish_demo, quiet
 from media_output import ROOT
 
 SCRATCH = ROOT / 'artifacts/readme-media'
@@ -56,7 +56,28 @@ def agentic_notes():
     return publish_demo('agentic-notes', Capture(timeline['frames']), [ask, rest], Camera(), directory)
 
 
-CASES = {'annotate-and-ink': annotate_and_ink, 'native-agentic': native_agentic, 'agentic-notes': agentic_notes}
+def collab():
+    directory = SCRATCH / 'collab'
+    timeline = json.loads((directory / 'collab_marks.json').read_text(encoding='utf-8'))
+    m, f, verified = timeline['marks'], timeline['framing'], timeline.get('verified', {})
+    if not (verified.get('bothLines') and verified.get('picture')):
+        raise ValueError('Capture both lines typed into one block and the pasted picture first')
+    # The rows span the window but their text does not: close in on the
+    # avatars and the shared block while the two type, take in the picture
+    # once it lands, and end on the whole window the loop starts from.
+    top = f['presence']['y'] - 10
+    typing = {'x': 20, 'y': top, 'width': 1000, 'height': f['questions']['y'] + f['questions']['height'] + 40 - top}
+    content = {'x': 20, 'y': 60, 'width': 1090, 'height': f['figure']['y'] + f['figure']['height'] - 60}
+    camera = (Camera()
+              .move(m['alexIn'] - 0.4, focus(typing, margin=10), 0.6)
+              .move(m['picture'] + 0.3, focus(content, margin=10), 0.6)
+              .move(m['end'] - 1.0, FULL, 0.6))
+    capture = Capture(timeline['frames'])
+    return publish_demo('collab', capture, quiet(capture, m['start'], m['end']), camera, directory)
+
+
+CASES = {'annotate-and-ink': annotate_and_ink, 'native-agentic': native_agentic, 'agentic-notes': agentic_notes,
+         'collab': collab}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

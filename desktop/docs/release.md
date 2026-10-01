@@ -45,8 +45,11 @@ newest `v*` tag with the patch number + 1, unless `desktop/package.json`'s
 `"version"` is higher — raise that "floor" and merge to make a minor or
 major release. The number is pinned into the app on each runner
 (`npm version`, no git tag), so About, the update feed and the MSIX carry
-it while the repo file stays a floor. Release notes are the commit
-subjects since the previous tag. Dispatch inputs: `version` override,
+it while the repo file stays a floor. Release notes give each download
+(platform installers, Docker image, AI plugins) a shields.io button, keep
+the first-launch and update instructions in a collapsed section, and list
+the commit subjects since the previous tag (trailing punctuation trimmed,
+repeats dropped); `extension.yml` writes its notes the same way. Dispatch inputs: `version` override,
 `prerelease`, and `publish=false` for build-only artifacts (14 days). The
 publish job also dispatches `docker.yml` on the new tag so the server image
 gets a `<version>` tag, and the Windows job submits the MSIX to the
