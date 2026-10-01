@@ -52,6 +52,7 @@ from ..markdown_export import (
 )
 from ..logbuf import log
 from ..storage import attachment_disposition, upload_refs
+from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
 from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text
@@ -167,6 +168,30 @@ def _collect_ink(blocks, uploads_dir) -> list[dict]:
             continue
         groups.append({"ink": ink_file, "note": highlight_note_text(b, children_by_id), "id": b["id"]})
     return groups
+
+
+def _collect_text_boxes(blocks, page_id) -> tuple[list[dict], set]:
+    """Text boxes on the PDF's pages → ``annotate_pdf``'s text boxes (the
+    normalized box, the text, the page, the block id, when it last
+    changed) and its ``replaced`` keys. A box under a sheet is on the sheet
+    whatever its ``pdf_page`` says, and an empty one draws nothing. Unlike
+    the other marks, a box that came from the PDF and is still embedded in
+    it is written too, and its original leaves the copy (``replaced``, the
+    box's ``imported_annot``): the page shows the box as Gamma has it, so an
+    edit made here reaches the export."""
+    on_sheets = {b["id"] for sheet in notebook.sheets_of(blocks, page_id) for b in sheet["blocks"]}
+    boxes, replaced = [], set()
+    for b in blocks:
+        props = b["properties"]
+        if not is_text_box(props):
+            continue
+        if props.get("imported_annot") and not props.get("annot_stripped"):
+            replaced.add(props["imported_annot"])
+        page = box_page(props, on_sheet=b["id"] in on_sheets)
+        if page and b["content"].strip():
+            boxes.append({"box": normalize_text_box(props["text_box"]), "content": b["content"],
+                          "page": page, "id": b["id"], "modified": b.get("updated_at") or ""})
+    return boxes, replaced
 
 
 # Pasted images above this size stay attachments only — a data URI this big
@@ -805,10 +830,10 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
 
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, author="",
                   scope=None) -> tuple[bytes, str, int, int]:
-    """The page's PDF with its highlights (and ink) as standard annotations
-    and, with ``notes``, its notes painted on the pages: ``(pdf bytes, file
-    name, annotations written, notes drawn)``. Both off = the stored PDF as
-    is. Raises HTTPException like the routes."""
+    """The page's PDF with its highlights, ink and text boxes as standard
+    annotations and, with ``notes``, its notes painted on the pages: ``(pdf
+    bytes, file name, annotations written, notes drawn)``. Both off = the
+    stored PDF as is. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id) if page_root_id(conn, block_id) else []
@@ -827,16 +852,20 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
     if page_sheets:
         # A page without a PDF exports its sheets of paper: one PDF page
-        # each, the paper painted and the handwriting drawn on it
-        # (gamma/notebook.py).
+        # each, the paper painted, the text boxes typeset and the
+        # handwriting drawn on it (gamma/notebook.py).
         uploads = ws_uploads_dir(ws)
-        sheets, groups = [], 0
+        sheets, drawn = [], 0
         for sheet in page_sheets:
+            boxes = [(b["content"], box) for b in sheet["blocks"] if b["content"].strip()
+                     if (box := normalize_text_box((b["properties"] or {}).get("text_box"))) is not None]
             inks = [ink for b in sheet["blocks"] if (b["properties"] or {}).get("ink_url")
                     if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
-            groups += len(inks)
-            sheets.append((sheet["paper"], inks))
-        return notebook.notebook_pdf(sheets), f"{slugify(root.get('content'), block_id)}.pdf", groups, 0
+            drawn += len(boxes) + len(inks)
+            sheets.append((sheet["paper"], boxes, inks))
+        with connect_pages_db(ws) as conn:
+            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=_block_ref_resolver(conn))
+        return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
     try:
@@ -847,13 +876,21 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
 
     marks = _collect_marks(blocks)
+    boxes, replaced = _collect_text_boxes(blocks, block_id)
 
     written = 0
     pdf_bytes = pdf_path.read_bytes()
-    if highlights:
+    # A text box is part of the annotation layer and it is the user's own
+    # writing on the page, so either switch writes it: the notes-only PDF
+    # keeps the boxes with the painted notes. Both off: the stored file.
+    if highlights or (notes and (boxes or replaced)):
         try:
-            pdf_bytes, written = annotate_pdf(pdf_bytes, marks, author=author,
-                                              ink=_collect_ink(blocks, ws_uploads_dir(ws)))
+            # [[refs]] in a box read as the text they name, as in the notes PDF.
+            with connect_pages_db(ws) as conn:
+                pdf_bytes, written = annotate_pdf(
+                    pdf_bytes, marks if highlights else [], author=author,
+                    ink=_collect_ink(blocks, ws_uploads_dir(ws)) if highlights else (),
+                    text_boxes=boxes, replaced=replaced, resolve_ref=_block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 
@@ -900,7 +937,8 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     note onto the page itself, in the nearest free space with a leader line
     back to its highlight — readable without opening popups, and printable.
     ``highlights=0`` skips the annotation layer, so ``highlights=0&notes=1``
-    gives a clean PDF carrying only the written notes."""
+    gives a clean PDF carrying only the written notes: the notes painted
+    and the text boxes, the writing already placed on the page."""
     ws = resolve_ws(request)
     pdf_bytes, filename, written, drawn = annotated_pdf(
         ws, block_id, highlights=bool(highlights), notes=bool(notes),

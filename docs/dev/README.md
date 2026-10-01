@@ -69,6 +69,7 @@ These describe the implementation unless explicitly marked as plans.
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
+| Typed text boxes on PDF pages and sheets, and their PDF interchange | [Text boxes](text_boxes.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |

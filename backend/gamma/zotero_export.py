@@ -23,12 +23,16 @@ why the zip carries a README saying so.
 
 Highlights are deliberately absent here — like Zotero's own "Include
 Annotations", they travel embedded inside the exported PDF copies (the
-endpoint burns them in with ``pdf_export.annotate_pdf``).
+endpoint burns them in with ``pdf_export.annotate_pdf``). A text box is
+the user's writing, so it is a note: one placed on a PDF page opens with
+its page, as a highlight's memo does.
 """
 
 import html as html_mod
 import re
 import xml.etree.ElementTree as ET
+
+from .text_box import box_page
 
 _NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -108,7 +112,8 @@ def _content_html(text: str, resolve_image) -> str:
 
 def note_html(node, resolve_image=None) -> str:
     """One block subtree (a ``build_tree`` node) → one Zotero note's HTML:
-    the block itself as a paragraph, children as nested lists.
+    the block itself as a paragraph (after its page, for a text box on a
+    PDF page), children as nested lists.
     ``resolve_image(filename) -> (mime, base64) | None`` embeds pasted images
     into the note."""
 
@@ -126,6 +131,9 @@ def note_html(node, resolve_image=None) -> str:
     parts = ""
     content = (node.get("content") or "").strip()
     if content:
+        page_no = box_page(node.get("properties"))
+        if page_no:
+            parts += f"<p><strong>Text box on p.{page_no}</strong></p>"
         parts += f"<p>{_content_html(content, resolve_image)}</p>"
     kids = items(node.get("children") or [])
     if kids:

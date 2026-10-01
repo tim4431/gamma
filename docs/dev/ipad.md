@@ -184,6 +184,10 @@ Raw touches carry everything `gamma-ink` stores.
   page's notes (the PDF is that page's reader).
 - The lasso, the partial eraser, moving and restyling strokes, and
   editing presets beyond colour and width.
+- Text boxes ([text_boxes.md](text_boxes.md)). The app neither draws them
+  on a PDF page or a sheet nor makes them. A box shows as a note row with
+  its text, which edits like any note. The browser redraws the box at the
+  new text's size and stores that size at its next local edit of the box.
 - A per-page choice of what to keep offline: every file comes over, like
   a desktop clone.
 - Sync in the background, and resolving a conflict from the app (the

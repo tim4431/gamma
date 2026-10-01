@@ -21,7 +21,7 @@ extension UIColor {
 }
 
 /// The ink tools above a PDF or a notebook — the web's tool strip
-/// (ink/InkLayer.jsx InkToolbar) as the iPad shows it: the presets (pens and
+/// (markup/MarkupToolbar.jsx MarkupToolbar) as the iPad shows it: the presets (pens and
 /// highlighters, each its own colour and width; press and hold one to change
 /// them), the eraser, the hand (the Pencil scrolls), a new group, undo, redo.
 /// The Pencil's double tap switches between the pen and the eraser.

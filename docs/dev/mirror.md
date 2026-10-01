@@ -82,6 +82,14 @@ the frontend changes: editing a mirror is editing a workspace.
   landed adds nothing, and one that never arrived would otherwise be
   taken for landed and lost ([handwriting.md](handwriting.md) "Two
   writers, one group").
+- **Text boxes** merge key by key, the same way. A diff that changes a
+  box's `text_box` carries the box it was changed from (`base_props`), so
+  either side's server keeps the keys the other changed
+  (`text_box.merge_text_box`, [text_boxes.md](text_boxes.md) "Merge").
+- A push whose answer was lost is judged key by key for a text box
+  (`_unlanded`, `_box_again`). The keys of ours the remote still shows as
+  they were go again, onto the remote's box. A key it shows as ours, or
+  changed since, counts as landed.
 
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), chats, cover snapshots, search indexes (the

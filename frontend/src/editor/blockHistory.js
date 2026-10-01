@@ -7,8 +7,10 @@
 // previous committed tree:
 //   - trees that did not come from an edit here (`originOf(tree)`: "load",
 //     fetched from the server, or "remote", another client's ops — the
-//     caller marks them) and undo/redo applications are never recorded; a
-//     load also empties the stack — its snapshots predate what the fetch
+//     caller marks them) and undo/redo applications are never recorded, nor
+//     is an edit here marked "fold": it belongs to the entry before it (a
+//     text box's measured size, App's foldBlocks), which then restores both;
+//     a load also empties the stack — its snapshots predate what the fetch
 //     brought in (a note moved here from another page, an import), and
 //     restoring one would delete that (a remote op is folded into every
 //     snapshot instead, `rebase`);
@@ -19,11 +21,16 @@
 // Consecutive content-only edits of the same block merge into one entry
 // when they come quickly (TYPING_MERGE_MS while the block's editor is open —
 // a run of typing undoes as one chunk, like any editor — else
-// EDIT_MERGE_MS: a drag, a run of toggles).
+// EDIT_MERGE_MS: a drag, a run of toggles), and so do consecutive changes
+// of one text box's `text_box` alone (EDIT_MERGE_MS: a held arrow key, a
+// colour dragged in the picker). A fold that takes the tree back to the
+// newest entry's (a text box made and left empty) takes that entry back,
+// and brings back the redo steps it cleared.
 //
 // An entry is {tree, caret, mark}: the tree kept by reference (the helpers
 // never mutate in place), when the change came from an editor that
-// editor's selection before it, and the history's clock when it was pushed.
+// editor's selection before it, and the history's clock when it was pushed;
+// the newest also keeps the redo steps its push cleared (`redo`).
 // The open editor is not part of the tree (App's `view`, blockModel.js):
 // the caller passes `editingId` and takes `onEditing` back. Restoring while
 // an editor is open keeps the caret's block in edit mode and hands the caret
@@ -35,7 +42,8 @@
 // Collaborative undo: another client's ops are folded into every entry
 // (`rebaseHistory`) — structure and properties as they are, text as a
 // change carried over onto the entry's own text, so undoing our typing in a
-// block someone else typed in too takes out only ours. Undo never takes
+// block someone else typed in too takes out only ours, and a text box's
+// `text_box` as the keys they changed. Undo never takes
 // back what someone else changed after an entry was recorded
 // (`planRestore`): a block the restore would delete that they edited,
 // moved or made stays, as does text of theirs an entry's text couldn't be
@@ -47,6 +55,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { generateNKeysBetween } from "fractional-indexing";
 import { applyOps, diffTrees, indexTree } from "../shared/model/blockOps.js";
+import { isTextBox, mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
 const MAX_ENTRIES = 200;
@@ -88,6 +97,30 @@ export function classifyTransition(prev, next) {
   return only;
 }
 
+// The id of the one block whose `text_box` alone changed from `prev` to
+// `next` (no text, place or other property), else null. Exported for its
+// tests.
+export function boxChange(prev, next) {
+  let id = null;
+  const walk = (a, b) => {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i], y = b[i];
+      if (x === y) continue;
+      if (x.id !== y.id || x.content !== y.content) return false;
+      if (!propsEqual(x.properties, y.properties)) {
+        if (id !== null || !propsEqual(withoutBox(x.properties), withoutBox(y.properties))) return false;
+        id = x.id;
+      }
+      if (!walk(x.children || [], y.children || [])) return false;
+    }
+    return true;
+  };
+  return walk(prev, next) ? id : null;
+}
+const withoutBox = (props) => ({ ...(props || {}), text_box: null });
+
 // Describe the forward action, even when the caller is restoring it backward.
 // Compare rebased trees so a collaborator's edits are not named as our undo.
 export function describeTransition(before, after) {
@@ -103,22 +136,40 @@ export function describeTransition(before, after) {
     return text ? `: “${text.length > 48 ? text.slice(0, 47) + "…" : text}”` : "";
   };
   if (added.length && removed.length) return t("note replacement ({n} removed, {n2} added)", { n: removed.length, n2: added.length });
+  if (added.length === 1 && isTextBox(added[0])) return t("text box creation{added}", { added: preview(added[0]) });
   if (added.length) return added.length === 1 ? t("note creation{added}", { added: preview(added[0]) }) : t("creation of {n} notes", { n: added.length });
+  if (removed.length === 1 && isTextBox(removed[0])) return t("text box deletion{removed}", { removed: preview(removed[0]) });
   if (removed.length) return removed.length === 1 ? t("note deletion{removed}", { removed: preview(removed[0]) }) : t("deletion of {n} notes", { n: removed.length });
   const moved = [...b.values()].filter((n) => a.get(n.id)?.parent !== n.parent || a.get(n.id)?.order !== n.order);
   if (moved.length) return t("note move");
   const text = [...b.values()].filter((n) => a.get(n.id)?.content !== n.content);
   const props = [...b.values()].filter((n) => !propsEqual(a.get(n.id)?.properties, n.properties));
+  // Typing in a text box also stores the size it then measured at.
+  const boxText = text.length === 1 && isTextBox(text[0]) && props.every((n) => n.id === text[0].id
+    && propsEqual(withoutBox(a.get(n.id)?.properties), withoutBox(n.properties)));
+  if (boxText) return t("text box text edit{text}", { text: preview(text[0]) });
   if (text.length && props.length) return t("note text and properties edit");
   if (text.length) return text.length === 1 ? t("note text edit{text}", { text: preview(text[0]) }) : t("text edits in {n} notes", { n: text.length });
   if (props.length) {
     if (props.every((n) => n.properties?.ink_url !== undefined)) return t("handwriting note update");
+    if (props.every(isTextBox)) return textBoxChange(props.map((n) => [a.get(n.id)?.properties?.text_box, n.properties.text_box]));
     if (props.every((n) => n.properties?.highlight_id)) {
       return props.every((n) => a.get(n.id)?.properties?.color !== n.properties.color) ? t("highlight color change") : t("highlight edit");
     }
     return t("note properties change");
   }
   return t("note edit");
+}
+
+// What a change of text boxes (pairs of their `text_box` before and after)
+// did: a move when `x` or `y` changed, else a style change when `size`,
+// `color` or `bg` did, else a resize. A move or a restyle also stores the
+// size the box then measured at; it is named for what the user did.
+function textBoxChange(pairs) {
+  const changed = (key) => pairs.some(([before, after]) => normalizeTextBox(before)?.[key] !== normalizeTextBox(after)?.[key]);
+  if (changed("x") || changed("y")) return t("text box move");
+  if (changed("size") || changed("color") || changed("bg")) return t("text box style change");
+  return t("text box resize");
 }
 
 function hasBlock(list, id) {
@@ -194,12 +245,16 @@ export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
   const stamp = ++s.tick;
   const was = indexTree(before, pageId);
   const texts = new Map(); // id → [text before the batch, after it]
+  const boxes = new Map(); // id → [text_box before the batch, after it]
   const shaped = [];
   for (const op of ops || []) {
     if (op.op === "set") {
       const props = Object.keys(op.props || {}).some((k) => k !== "collapsed");
       if (op.content !== undefined || props) s.touched.set(op.id, stamp);
       const had = was.get(op.id)?.node;
+      if (had && op.props && "text_box" in op.props) {
+        boxes.set(op.id, [boxes.has(op.id) ? boxes.get(op.id)[0] : had.properties?.text_box, op.props.text_box]);
+      }
       if (op.content !== undefined && had) {
         texts.set(op.id, [texts.get(op.id)?.[0] ?? (had.content || ""), op.content]);
         if (op.props) shaped.push({ op: "set", id: op.id, props: op.props });
@@ -210,14 +265,20 @@ export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
   }
   const ids = [...new Set((ops || []).map((op) => op.id))];
   const rebase = (e) => {
-    const mine = !e.hit || texts.size ? indexTree(e.tree, pageId) : null;
+    const mine = !e.hit || texts.size || boxes.size ? indexTree(e.tree, pageId) : null;
     const hit = e.hit || ids.some((id) => {
       const a = mine.get(id), b = was.get(id);
       if (!a || !b) return !!a !== !!b;
       return a.parent !== b.parent || (a.node.content || "") !== (b.node.content || "")
         || !propsEqual(a.node.properties, b.node.properties);
     });
-    let tree = shaped.length ? applyOps(e.tree, shaped, pageId, pos) : e.tree;
+    // A text box, which every change sends whole, takes only the keys
+    // they changed: undoing our move never takes back their restyle, nor
+    // their measured size, and theirs never blocks ours.
+    const theirs = boxes.size ? shaped.map((op) => (op.op === "set" && boxes.has(op.id) && op.props && "text_box" in op.props
+      ? { ...op, props: { ...op.props, text_box: mergeTextBox(mine.get(op.id)?.node.properties?.text_box,
+        boxes.get(op.id)[1], boxes.get(op.id)[0]) } } : op)) : shaped;
+    let tree = theirs.length ? applyOps(e.tree, theirs, pageId, pos) : e.tree;
     let contested = e.contested;
     const changed = new Map();
     for (const [id, [from, to]] of texts) {
@@ -228,7 +289,7 @@ export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
       else if (text !== (node.content || "")) changed.set(id, text);
     }
     if (changed.size) tree = withTexts(tree, changed);
-    return { ...e, tree, hit, contested };
+    return { ...e, tree, hit, contested, ...(e.redo ? { redo: e.redo.map(rebase) } : {}) };
   };
   if (s.undo.length) s.undo = s.undo.map(rebase);
   if (s.redo.length) s.redo = s.redo.map(rebase);
@@ -302,12 +363,28 @@ export function observeTree(s, blocks, o, editingId = null) {
     if (prev === blocks) return;
     const origin = o.originOf?.(blocks);
     if (origin === "load") { clearHistory(s); return; }
+    if (origin === "fold") {
+      // Back to the newest entry's tree (a text box made and left empty):
+      // the entry goes, and the redo steps it cleared come back.
+      const top = s.undo[s.undo.length - 1];
+      if (top && classifyTransition(top.tree, blocks) === null) {
+        s.undo.pop();
+        if (top.redo) s.redo = top.redo;
+        s.lastEdit = null;
+      }
+      return;
+    }
     if (origin) return;
     if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced, mark: s.tick }); return; }
     if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced, mark: s.tick }); return; }
     const kind = classifyTransition(prev, blocks);
     if (kind === null) return;
     const now = Date.now();
+    const box = kind === true ? boxChange(prev, blocks) : null;
+    if (box && s.lastEdit?.box === box && now - s.lastEdit.at < EDIT_MERGE_MS) {
+      s.lastEdit.at = now;
+      return;
+    }
     const editing = kind !== true && editingId === kind;
     if (kind !== true && s.lastEdit?.id === kind
         && now - s.lastEdit.at < (editing && s.lastEdit.editing ? TYPING_MERGE_MS : EDIT_MERGE_MS)) {
@@ -315,11 +392,14 @@ export function observeTree(s, blocks, o, editingId = null) {
       s.lastEdit.editing = editing;
       return;
     }
-    s.lastEdit = kind === true ? null : { id: kind, at: now, editing };
+    s.lastEdit = box ? { box, at: now } : kind === true ? null : { id: kind, at: now, editing };
     // A content change from an editor carries the selection it started from.
     const before = o.caretBeforeRef?.current;
     const caret = kind !== true && before?.id === kind ? { ...before } : caretOf(s, prevEditing, o);
-    s.undo.push({ tree: prev, caret, mark: s.tick });
+    // Only the newest entry keeps the redo steps it cleared (a fold may take it back).
+    const top = s.undo[s.undo.length - 1];
+    if (top?.redo) delete top.redo;
+    s.undo.push({ tree: prev, caret, mark: s.tick, ...(s.redo.length ? { redo: s.redo } : {}) });
     if (s.undo.length > MAX_ENTRIES) s.undo.shift();
     s.redo = [];
   } finally {
@@ -362,7 +442,8 @@ export function undoStep(s, o, redo = false, inEditor = false) {
 
 // Options:
 //   originOf(tree) — "load" for a tree fetched from the server, "remote" for
-//                 one with another client's ops applied, else undefined
+//                 one with another client's ops applied, "fold" for an edit
+//                 that joins the entry before it, else undefined
 //   pageId      — the stack is cleared when it changes
 //   enabled     — false while read-only / no page
 //   caretRef    — {id, from, to} the open editor's live selection (App keeps

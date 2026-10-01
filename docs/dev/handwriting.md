@@ -5,11 +5,15 @@ block in the page's notes. The survey behind the shape, and how Notability
 does the same things, is in
 [research/handwriting.md](../research/handwriting.md). Code:
 `gamma/ink.py` + `gamma/routers/ink.py` (server), `frontend/src/ink/ink.js`,
-`ink/inkStore.js`, `ink/InkLayer.jsx`, `ink/inkInput.js` (client), tests `backend/tests/test_ink.py`,
+`ink/inkStore.js`, `ink/InkLayer.jsx`, `ink/inkInput.js` (client), with the
+tool strip and the page plumbing it shares with text boxes in
+`markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
+`markup/PageTools.jsx`; tests `backend/tests/test_ink.py`,
 `frontend/tests/ink.test.mjs`, `frontend/tests/inkInput.test.mjs`,
 e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`. The same files are
 written on notebook sheets ([notebooks.md](notebooks.md)) and by the iPad
-app ([ipad.md](ipad.md)).
+app ([ipad.md](ipad.md)). Typed text on a page is
+[text_boxes.md](text_boxes.md).
 
 ## What the user sees
 
@@ -17,8 +21,10 @@ app ([ipad.md](ipad.md)).
   the top of the page, laid out like Notability's: a row of **tool
   presets** — each a pen or a highlighter with its own colour and width,
   shown as the icon over a colour bar (four pens and three highlighters
-  to start) — then the eraser, the lasso, a hand (nothing armed: scroll
-  and select text), *New group* (+) and close. One tap arms a tool;
+  to start) — then the eraser, the lasso, the Text tool (typed text
+  boxes, [text_boxes.md](text_boxes.md)), a hand (nothing armed: scroll
+  and select text), close, and Undo / Redo. Its accessible name is
+  "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
   For a preset that row is the palette (14 pen / 8 highlighter colours
   plus a custom colour through the browser's picker), eight widths as
@@ -32,10 +38,13 @@ app ([ipad.md](ipad.md)).
   (`nearestInkColor` in `ink.js`, redmean distance). Keys while the strip
   is open: `1`–`9` arm the preset
   at that position, `P` / `H` step through the pens / highlighters, `E`
-  `L` `V` the eraser / lasso / hand, `Esc`, `Delete` (the lasso
-  selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step the strokes** (each
-  stroke or selection edit is one entry; the history is per visit
-  of the page). Opening the strip arms the last pen used.
+  `L` `T` `V` the eraser / lasso / Text tool / hand, `Esc`, `Delete` (the
+  lasso selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step the strokes**
+  (each stroke or selection edit is one entry; the history is per visit
+  of the page). While the Text tool is armed or a text box is selected or
+  edited, `Ctrl+Z` is left to the block history, and `Esc` to a selected
+  or edited box.
+  Opening the strip arms the last pen used.
 - The **eraser**'s options row: *whole strokes* removes anything it
   touches, *partial* cuts through them (the pieces on either side become
   their own strokes), and three sizes. The
@@ -58,7 +67,9 @@ app ([ipad.md](ipad.md)).
   entry. The menu follows scrolling and resizing, flips above or below the
   selection and hides while the selection is off-screen. It keeps inside
   the scroller the ink is seen through: the PDF viewer, the notebook
-  view, or the notes for a sheet among them. A blank tap or Escape
+  view, or the notes for a sheet among them, and below the strip when the
+  strip floats over the top of that scroller. A text box's menu is placed
+  the same way (`useSelectionMenuAnchor`). A blank tap or Escape
   dismisses it.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside it
@@ -74,9 +85,16 @@ app ([ipad.md](ipad.md)).
   around a centre mark. Pen and highlighter widths follow the zoom; the
   eraser radius stays in screen pixels, like the erasure. Tool and menu
   buttons show their description on hover or keyboard focus.
-- **Undo / Redo buttons** on the strip step the stroke history; their
-  disabled state follows it and resets on leaving the page. Selecting alone
-  is not an entry.
+- **Undo / Redo buttons** on the strip (*Undo ink* / *Redo ink*) step the
+  stroke history; their disabled state follows it and resets on leaving
+  the page. Selecting alone is not an entry.
+  - While the Text tool is armed or a text box is selected or edited, they
+    read *Undo* / *Redo* and step the page's block history. They stay
+    enabled, since the block history keeps no count, and a step with
+    nothing to undo says "Nothing to undo in notes."
+  - A press on them never takes the focus from an open editor, a box's or
+    a note's. In the block-history mode the step is then that editor's, as
+    Ctrl+Z in it would be.
 - **A stylus draws right away** even with the strip closed (Settings →
   Reading & editing → Handwriting; on by default), with the last pen
   preset armed on the strip. **Fingers never draw**
@@ -229,7 +247,9 @@ itself:
   meanwhile stay.
 
 `tests/shared/inkmerge.json` pins the Python and JavaScript versions to
-the same cases. Keys other than `ink_url` stay last-writer-wins.
+the same cases. Keys other than `ink_url` stay last-writer-wins, except a
+text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
+"Merge").
 
 ## Client
 
@@ -271,15 +291,21 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
   on a block with nothing unsaved drops the draft.
-- `ink/InkLayer.jsx`: `InkLayer` (per `PdfPage`, a sibling of the highlight
-  layer) is the retained SVG plus a `desynchronized` canvas for the stroke
-  in progress. `InkSelectionMenu` is a portalled `ContextMenu` (its controls
-  sit outside the page's pointer listeners) that measures its own height for
-  placement; `InkTransformHandles` are the resize/rotate buttons;
-  `InkTooltips` shows a button's title on hover or focus for the strip and
-  the menu, since native titles are unreliable under Pencil hover. `InkCard`
-  is the picture in the notes; `InkToolbar` the strip. Edit callbacks are
-  absent on read-only pages and shares.
+- `ink/InkLayer.jsx`: `InkLayer` (one per surface: a PDF page, a sheet in
+  the notebook view, a sheet among the notes; it draws after the
+  highlights and the text boxes) is the retained SVG plus a
+  `desynchronized` canvas for the stroke in progress. `InkSelectionMenu`
+  is a portalled `ContextMenu` (its controls sit outside the page's pointer
+  listeners); `useSelectionMenuAnchor` places it, measuring its height, and
+  places a text box's menu too. `InkTransformHandles` are the resize/rotate
+  buttons; `InkTooltips` shows a button's title on hover or focus for the
+  strip and the menus, since native titles are unreliable under Pencil
+  hover. `InkCard` is the picture in the notes. For `markup/` the file
+  exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
+  palette's swatches plus a custom colour, for a pen preset's row and a
+  text box's colours) and `swallowClick` (eats the click a handled
+  pointer-up would deliver). Imports run from `markup/` to `ink/`, never
+  back.
   - Claiming input: a capture-phase `pointerdown` listener on the page
     wrapper takes the pointer when a tool is armed or a stylus touches the
     page (`pointerType === "pen"` with *Stylus draws right away*), so text
@@ -309,13 +335,35 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
   - Canvas: `shared/lib/canvasSize.js` caps the live bitmap (8 Mi pixels /
     4096 per edge) and the context transform uses the real backing-to-page
     ratio; lift and cancel release the bitmap. Canvas and SVG share the
-    dark-page colour filter.
+    dark-page colour filter, and so does a text box's body.
   - Selection: the lasso draws its polygon on the same canvas. A drag inside
     the selection box moves the selected strokes (previewed as a translated
     copy, committed on pointer-up). A pending tap/hold state, separate from
     the drawing, lets a native scroll cancel a touch selection without ink.
+- `markup/` ([text_boxes.md](text_boxes.md) "Client"):
+  - `MarkupToolbar.jsx` `MarkupToolbar` is the strip: the presets, the
+    eraser, the lasso, the Text tool and their options rows, the hand,
+    close and the history buttons, whose labels follow its `blockHistory`
+    flag.
+  - `MarkupLayers.jsx` `<MarkupLayers>` is the one place a surface's layers
+    mount (`PdfPage`, the notebook view's sheet, `NoteSheet`). It maps the
+    tools and the surface's marks onto `InkLayer`'s props. A read-only
+    surface gets no edit callbacks, and one with no ink mounts no layer.
+    While the Text tool is armed the layer only draws.
+  - `useMarks` (same file) builds App's marks per surface: its ink groups,
+    and the lasso selection and the flash when they are on it. A surface's
+    slice is kept while its parts are unchanged, so a memoized page
+    re-renders only for its own ink.
+  - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
+    `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
+    eraserSize, lassoMode}, text, actions}`. The actions are the stroke,
+    erase, select, action, move and jump handlers (and the text boxes'),
+    ref-backed through `useStableActions`, so their identity never changes.
+    `armedClasses(tools)` gives a surface's container its armed-tool
+    classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
 - `app/App.jsx` owns the tool state: `inkUi` (`open`, the armed `tool` — a
-  preset id, `eraser`, `select` or `null` for the hand — its `options` row,
+  preset id, `eraser`, `select`, `text` (the Text tool) or `null` for the
+  hand — its `options` row,
   and `pen`, the last pen preset, which a stylus writes with when nothing
   is armed) plus the prefs (`inkTools`, the preset list validated by
   `ink/ink.js` `normalizeTools`; the eraser's mode and size; the lasso mode),
@@ -349,8 +397,12 @@ the same cases. Keys other than `ink_url` stay last-writer-wins.
 - With the strip open, Ctrl+Z is the stroke history (a capture-phase key
   handler, so the page's block undo never sees it); with it closed, Ctrl+Z
   is the page's block history, which knows the group's block but not its
-  strokes. An undo or redo applies its entry onto the group as it is now,
-  by stroke id (`mergeInk`), so strokes someone else drew meanwhile stay.
+  strokes. Text boxes are blocks: while the Text tool is armed or a box is
+  selected or edited (App's `boxUndo`), the handler leaves Ctrl+Z to the
+  block history, and the strip's buttons step it (`undoBlocks`). Escape
+  goes to a selected or edited box. An undo or redo applies its entry onto the
+  group as it is now, by stroke id (`mergeInk`), so strokes someone else
+  drew meanwhile stay.
   Two clients drawing into one group keep both drawings (see "Two
   writers, one group"). Each client keeps a fresh group after
   *New group*.

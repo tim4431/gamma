@@ -147,10 +147,10 @@ def _paint(el):
                    else b"S" if stroke else b"n")
 
 
-def header(drawing: Drawing) -> bytes:
+def header(drawing: Drawing, color=TEXT_COLOR) -> bytes:
     """Colour + the translate that puts the drawing's top-left at (0, 0)."""
-    return b"\n".join([b"%s %s %s rg" % tuple(_fmt(c) for c in TEXT_COLOR),
-                       b"%s %s %s RG" % tuple(_fmt(c) for c in TEXT_COLOR),
+    return b"\n".join([b"%s %s %s rg" % tuple(_fmt(c) for c in color),
+                       b"%s %s %s RG" % tuple(_fmt(c) for c in color),
                        b"1 0 0 1 %s %s cm" % (_fmt(-drawing.vx), _fmt(-drawing.vy))])
 
 

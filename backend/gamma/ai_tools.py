@@ -52,7 +52,7 @@ from fractional_indexing import generate_key_between
 
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         page_report_section, pdf_path, render_area_crops)
+                         page_report_section, pdf_path, render_area_crops, under_sheet)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import connect_data_db, connect_pages_db, page_now
 from .ops import after_commit, apply_ops, note_reload, record_ops
@@ -60,6 +60,7 @@ from .foldertags import add_tag, clean_path, parse_tags, path_within
 from .logbuf import log
 from .pdf_index import pdf_missing, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, render_page
+from .text_box import box_page, is_text_box
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
@@ -549,7 +550,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     areas: list = []  # (page, box) of the area highlights whose picture goes along
     per_page: dict = {}
 
-    def line(block_id, content, props, depth, full=False):
+    def line(block_id, content, props, depth, on_sheet, full=False):
         quote = (props.get("quote") or "").strip()
         text = (content or "").strip()
         if not full and len(text) > _NOTE_SNIPPET:
@@ -557,7 +558,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         bits = [f"[{block_id}]"]
         if quote:
             bits.append(f'(highlight: "{quote[:200]}")')
-        elif props.get("highlight_id") and (area := area_highlight(props)):
+        elif area := area_highlight(props):
             page, box = area
             per_page[page] = per_page.get(page, 0) + 1
             if per_page[page] <= MAX_AREA_CROPS:
@@ -569,6 +570,11 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         if props.get("ink_url"):
             where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the page of paper above"
             bits.append(f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)")
+        elif is_text_box(props):
+            # The nearest sheet above the box holds it, whatever its pdf_page says.
+            page = box_page(props, on_sheet)
+            bits.append(f"(text box on p. {page})" if page else "(text box on the page of paper above)"
+                        if on_sheet else "(text box, not placed on a page)")
         elif is_sheet(props):
             bits.append("(a page of paper: the handwriting under it is written on it)")
         bits.append(text or "(empty)")
@@ -581,14 +587,14 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     lines, used, skipped = [], 0, 0
     seen = notes_seen(scope)
 
-    def walk(parent, depth):
+    def walk(parent, depth, on_sheet):
         nonlocal used, skipped
         for row in by_parent.get(parent, []):
             try:
                 props = json.loads(row[4] or "{}")
             except ValueError:
                 props = {}
-            entry = line(row[0], row[3], props, depth)
+            entry = line(row[0], row[3], props, depth, on_sheet)
             if used + len(entry) > budget:
                 skipped += len(fetch_subtree(conn, row[0]))  # block + descendants
                 continue
@@ -596,16 +602,17 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
             lines.append(entry)
             if len((row[3] or "").strip()) <= _NOTE_SNIPPET:  # shown whole, not snipped
                 seen[row[0]] = row[3] or ""
-            walk(row[0], depth + 1)
+            walk(row[0], depth + 1, on_sheet or is_sheet(props))
 
     is_page = block["parent_id"] == "root"
+    on_sheet = not is_page and under_sheet(conn, block["id"])
     if is_page:
         head = f'Note outline of page "{page_title}" (page_id {page_id}):'
     else:
         head = (f'Block [{block["id"]}] in page "{page_title}" (page_id {page_id}):\n'
-                + line(block["id"], block["content"], block["properties"], 0, full=True))
+                + line(block["id"], block["content"], block["properties"], 0, on_sheet, full=True))
         seen[block["id"]] = block["content"]
-    walk(block["id"], 0 if is_page else 1)
+    walk(block["id"], 0 if is_page else 1, on_sheet or is_sheet(block["properties"]))
     if not lines and is_page:
         lines = ["(no notes on this page yet)"]
     tail = (f"\n(+{skipped} more block(s) not shown — read_block a nested id to continue)"
@@ -1050,6 +1057,11 @@ def _plan_move_block(conn, scope: dict, args: dict):
         if any("highlight_id" in (row[4] or "") for row in rows):
             return None, ("error: highlight blocks are anchored to their paper — "
                           "they can only move within the same page")
+        # So is a text box's place, on its PDF page or its sheet, unless the
+        # sheet it is on moves along.
+        if _loose_text_box(rows, block["id"]):
+            return None, ("error: text boxes are placed on their page — they can only move "
+                          "within the same page, or with the page of paper they are on")
     position, error = _sibling_position(conn, parent["id"], args.get("after_id"),
                                         block["id"])
     if error:
@@ -1059,6 +1071,32 @@ def _plan_move_block(conn, scope: dict, args: dict):
         return None, "ok — the block is already there"
     return {"block": block, "src_page_id": src_page_id, "src_title": src_title, "parent": parent,
             "page_id": page_id, "page_title": page_title, "position": position}, None
+
+
+def _loose_text_box(rows, root_id: str) -> bool:
+    """Whether a subtree (``fetch_subtree`` rows) holds a text box that no
+    sheet within it carries: moved to another page, its place would name a
+    spot on the wrong paper."""
+    parent_of, props_of = {}, {}
+    for row in rows:
+        parent_of[row[0]] = row[1]
+        try:
+            props_of[row[0]] = json.loads(row[4] or "{}")
+        except ValueError:
+            props_of[row[0]] = {}
+    for bid, props in props_of.items():
+        if not is_text_box(props):
+            continue
+        cur = parent_of[bid] if bid != root_id else None
+        carried = False
+        while cur in props_of:
+            if is_sheet(props_of[cur]):
+                carried = True
+                break
+            cur = parent_of[cur] if cur != root_id else None
+        if not carried:
+            return True
+    return False
 
 
 def _preview_move_block(conn, scope: dict, args: dict):

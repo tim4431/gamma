@@ -26,6 +26,9 @@
 //     dropped; structure and properties the other way round: remote
 //     batches applied here after our edits but ordered before them on the
 //     server get our batch put back on top when it comes by (`reassert`);
+//     a text box, which every change sends whole, is merged key by key on
+//     the server, and here a remote box meets our changes still on their
+//     way the same way (`ahead`);
 //   - catches up after a reconnect from the op log (GET …/ops?since=), or
 //     asks for a reload when the log no longer reaches back;
 //   - heals a batch the server refused for naming a block it doesn't have
@@ -47,6 +50,7 @@
 // advances it; remote ops advance it too. Positions live in one Map shared
 // with blockOps.
 import { applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions } from "../shared/model/blockOps.js";
+import { mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
 export const TYPING_DEBOUNCE_MS = 350;
@@ -64,6 +68,7 @@ function pageSession(pageId = "") {
   return {
     pageId, base: [], pos: new Map(), queue: [], timer: null, sending: null,
     out: null, // the batch out ({id, ops, cursor}), kept until the server answers it
+    acked: 0, // the seq of our newest answered batch: an own batch after it is the one out
     inflight: new Map(), deferred: new Map(), retries: 0, rescues: 0, seq: 0,
     remote: 0, // remote batches applied so far; `queueMark`: the count when the queue last started
     queueMark: 0,
@@ -109,6 +114,40 @@ function saveProblem(err) {
 }
 
 const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
+
+// Our changes of text boxes the server has not applied yet: the queue, and
+// the batch out unless its own fan-out came by (`landed`).
+const unappliedBoxes = (s) => [...(s.out && !s.out.landed ? s.out.ops : []), ...s.queue]
+  .filter((q) => q.op === "set" && q.props && "text_box" in q.props);
+
+// A remote set of a text box: as the box will be once our changes of it
+// still on their way land after it. The server merges each key by key
+// (gamma/text_box.py merge_text_box), so theirs alone would take our
+// change off the screen until the ack, and out of the next edit's diff.
+function ahead(s, op) {
+  const box = op.props?.text_box;
+  if (op.op !== "set" || !box || typeof box !== "object") return op;
+  const ours = unappliedBoxes(s).filter((q) => q.id === op.id);
+  if (!ours.length) return op;
+  const next = ours.reduce((v, q) => (q.base_props && "text_box" in q.base_props
+    ? mergeTextBox(v, q.props.text_box, q.base_props.text_box) : q.props.text_box), box);
+  return { ...op, props: { ...op.props, text_box: next } };
+}
+
+// Our batch in its place in the order: the boxes it set as the server
+// stored them (merged onto someone else's change), where this tab holds
+// something else and no newer change of ours to them is on its way (the
+// server merges that one onto these, and its answer brings the result).
+// This tab holds something else after a refetch, for one: `overlay` lays
+// our batch over the fetched box whole.
+function storedBoxes(s, ops) {
+  const here = indexTree(s.base, s.pageId);
+  const newer = new Set(unappliedBoxes(s).map((q) => q.id));
+  const same = (a, b) => JSON.stringify(normalizeTextBox(a)) === JSON.stringify(normalizeTextBox(b));
+  return ops.filter((op) => op.op === "set" && op.props?.text_box && typeof op.props.text_box === "object"
+      && !newer.has(op.id) && here.has(op.id) && !same(here.get(op.id).node.properties?.text_box, op.props.text_box))
+    .map((op) => ({ op: "set", id: op.id, props: { text_box: op.props.text_box } }));
+}
 
 // Split `ops` into those that no longer apply now that the blocks in
 // `gone` vanished (their own ops, and inserts under them — whose ids join
@@ -415,6 +454,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           if (op.op === "insert") found.set(op.id, op);
         }
         const ackSeq = res.seq || 0;
+        s.acked = Math.max(s.acked, ackSeq);
         // An ack proves only that this batch committed; earlier remote
         // batches may still be missing. Use the same ordered inbox as WS.
         if (s === st.session) await receive({ ...res, client: clientId, mark: batch.mark });
@@ -628,7 +668,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       if (typeof op.content !== "string" || op.content.length <= MAX_CONTENT) { ops.push(op); continue; }
       held.set(op.id, { text: op.content, base: op.op === "insert" ? "" : op.base ?? "" });
       if (op.op === "insert") ops.push({ ...op, content: "" });
-      else if (op.props) ops.push({ op: "set", id: op.id, props: op.props });
+      else if (op.props) ops.push({ op: "set", id: op.id, props: op.props, ...(op.base_props ? { base_props: op.base_props } : {}) });
     }
     const wasLong = s.tooLong.size;
     s.tooLong = held;
@@ -756,13 +796,18 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         // Ours, in its place in the order (its ack, or its fan-out while it
         // is still out): remote batches applied here since its edits were
         // made were ordered before it — ours goes back on top of them.
+        // (Its fan-out: what comes after it already holds it. An older
+        // batch read late, after a refetch or from the log, is not the one out.)
+        if (s.out && m.seq > s.acked) s.out.landed = true;
         const mark = m.mark ?? s.out?.mark;
         if (mark != null && s.remote > mark) reassert(s, m.ops || []);
+        else land(s, storedBoxes(s, m.ops || []));
         continue;
       }
       const now = [];
       let held = false;
-      for (const op of m.ops || []) {
+      for (const sent of m.ops || []) {
+        const op = ahead(s, sent);
         if (op.op === "reload") { s.reloading = true; o().onReload?.(page); return; }
         if (op.op === "set" && op.content !== undefined && s.inflight.has(op.id)) {
           // Defer only competing content. Every property patch still applies.

@@ -17,6 +17,7 @@
 // breaks the app. Plain strings need no codec.
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
 
@@ -307,6 +308,9 @@ export const PREFS = {
   inkEraserSize: pref("gamma-ink-eraser-size", BROWSER, 1, { ...intIn(0, 2), serialize: String }),
   // The lasso draws a freeform loop or a box.
   inkLassoMode: pref("gamma-ink-lasso", BROWSER, "free", oneOf(["free", "box"])),
+  // The size, colour and background of new text boxes (markup/textBox.js
+  // textStyle), set from the Text tool's options row like a pen preset.
+  textBoxStyle: pref("gamma-text-box-style", BROWSER, textStyle({}), json(textStyle)),
 };
 
 export const setterName = (name) => `set${name[0].toUpperCase()}${name.slice(1)}`;

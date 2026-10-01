@@ -6,6 +6,7 @@ previewed (``/import/review``), then the chosen items are imported by a
 background job (``POST /api/jobs/import``, gamma/jobs.py)."""
 
 import hashlib
+import html
 import io
 import json
 import os
@@ -31,6 +32,9 @@ from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, note_reload, pro
 from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
+from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
+                          drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
+from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
 from ..storage import display_filename, is_pdf, store_file, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
@@ -40,7 +44,7 @@ from ..logseq_import import (
     parse_edn,
     parse_logseq_md,
 )
-from ..zotero_import import plan_zotero_archive
+from ..zotero_import import html_note_text, plan_zotero_archive
 from ..import_review import parse_selection, selected_warnings, validate_selection
 from ..workspaces import is_guest_workspace
 
@@ -406,10 +410,13 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
 
 # --- Annotations embedded in the PDF file itself ------------------------------
 # SumatraPDF ("save annotations"), Acrobat, Preview etc. write standard PDF
-# annotation objects. Convert markup annotations to Gamma highlight blocks.
+# annotation objects. Convert them to Gamma blocks: markup annotations to
+# highlights, and the kinds below to their own blocks.
 
 _MARKUP_TYPES = {"/Highlight", "/Underline", "/Squiggly", "/StrikeOut"}
-_NOTE_TYPES = {"/Text", "/FreeText"}
+# Typed text and sticky notes → text boxes (gamma/text_box.py), the inverse
+# of the /FreeText pdf_export.py writes.
+_NOTE_TYPES = TEXT_BOX_TYPES
 # Rectangle/ellipse drawings → area highlights (position carries area: true),
 # the inverse of what pdf_export.py writes for Gamma's own area notes.
 _AREA_TYPES = {"/Square", "/Circle"}
@@ -456,6 +463,141 @@ def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
             "position": ink_position(ink), "kind": "ink", "ink": ink}
 
 
+def _pdf_hex(values) -> str | None:
+    """A PDF colour array (gray, RGB or CMYK) → ``#rrggbb``; None for
+    anything else, the empty array of "no colour" among them."""
+    try:
+        v = [min(1.0, max(0.0, float(_resolve(c)))) for c in values or ()]
+    except (TypeError, ValueError):
+        return None
+    if len(v) == 1:
+        v *= 3
+    elif len(v) == 4:
+        v = [(1 - c) * (1 - v[3]) for c in v[:3]]
+    elif len(v) != 3:
+        return None
+    return "#%02x%02x%02x" % tuple(round(c * 255) for c in v)
+
+
+def _da_style(da: str) -> dict:
+    """The font size and colour a /DA string sets ("/Helv 12 Tf 0 0 1 rg"):
+    the operand of ``Tf`` (0 means fit-to-box, so none) and the last colour
+    operator's."""
+    style, operands = {}, []
+    for token in da.split():
+        try:
+            operands.append(float(token))
+            continue
+        except ValueError:
+            pass
+        n = {"g": 1, "rg": 3, "k": 4}.get(token)
+        if token == "Tf" and operands and operands[-1] > 0:
+            style["size"] = operands[-1]
+        elif n and len(operands) >= n:
+            style["color"] = _pdf_hex(operands[-n:])
+        operands = []
+    return style
+
+
+def _newlines(text: str) -> str:
+    """Line breaks as \\n: Acrobat writes \\r in /Contents."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _gamma_text_box(value):
+    """``(markdown, box, text)`` from a Gamma export's /GammaTextBox, or
+    None: ``text`` the /Contents that export wrote (its references read as
+    their labels), else the Markdown's plain text."""
+    if value is None:
+        return None
+    try:
+        data = json.loads(str(_resolve(value)))
+    except ValueError:
+        return None
+    if (not isinstance(data, dict) or data.get("v") != 1 or not isinstance(data.get("md"), str)
+            or not isinstance(data.get("box"), dict)):
+        return None
+    text = data.get("text") if isinstance(data.get("text"), str) else plain_text(data["md"])
+    return data["md"], data["box"], _newlines(text).strip()
+
+
+def _rc_text(value) -> str:
+    """/RC rich text (XHTML) → Markdown: paragraphs, list items, bold and
+    italic as ``zotero_import.html_note_text`` keeps them, and the text
+    between the tags escaped (``text_box.escape_markdown``, each run as if
+    it began a line), so a "$" or a "*" another app typed reads as typed."""
+    value = _resolve(value)
+    xhtml = value.get_data().decode("utf-8", "replace") if hasattr(value, "get_data") else str(value or "")
+    return html_note_text("".join(
+        part if part.startswith("<") else html.escape(escape_markdown(html.unescape(part)), quote=False)
+        for part in re.split(r"(<[^>]*>)", xhtml)))
+
+
+def _text_area(obj, rect):
+    """A /FreeText's text area: its /Rect less the /RD margins, since a
+    callout's /Rect also holds its line; the /Rect itself without a usable
+    /RD."""
+    try:
+        left, bottom, right, top = (float(_resolve(v)) for v in _resolve(obj.get("/RD")) or ())
+    except (TypeError, ValueError):
+        return rect
+    x0, y0, x1, y1 = rect[0] + left, rect[1] + bottom, rect[2] - right, rect[3] - top
+    return (x0, y0, x1, y1) if min(left, bottom, right, top) >= 0 and x1 > x0 and y1 > y0 else rect
+
+
+def _on_page(box: dict, disp_w: float, disp_h: float) -> dict:
+    """The box kept inside the page, as the client keeps a moved box: no
+    wider or taller than the page, its corner moved in."""
+    w, h = min(box["w"], disp_w), min(box["h"], disp_h)
+    return normalize_text_box({**box, "w": w, "h": h, "x": min(max(box["x"], 0), disp_w - w),
+                               "y": min(max(box["y"], 0), disp_h - h)})
+
+
+def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str):
+    """A /FreeText or /Text annotation → an importer record carrying a text
+    box (``kind: "text_box"``), placed from its /Rect through the page's
+    view box and rotation, the inverse of the export's mapping, and kept
+    inside the page. A Gamma export's /GammaTextBox restores the Markdown
+    and the box; the place still comes from /Rect, so a move in another
+    viewer holds, and /Contents wins when another viewer changed the text
+    that export wrote. Text from anywhere else is plain text, escaped into
+    Markdown that shows it as written (``text_box.markdown_of``). A foreign
+    /FreeText is a fixed-width box over its text area (``_text_area``),
+    with the /DA size and colour and the /C fill; its text is /Contents, or
+    /RC reduced to text. A /Text sticky note becomes a note-yellow box at
+    its icon's top-left, as wide as its text."""
+    rect = first_rect(obj)
+    if not rect:
+        return None
+    crop, rotation = page_frame(page)
+    disp_w, disp_h = display_size(crop, rotation)
+    # Keyed from the whole /Rect: the key these kinds had as highlight
+    # blocks, so a PDF imported as such adds nothing twice.
+    key = annotation_key(pnum, subtype, rect)
+    x0, y0, x1, y1 = _text_area(obj, rect) if subtype == "/FreeText" else rect
+    corners = [pdf_point_to_viewer(px, py, rotation, crop) for px, py in ((x0, y0), (x1, y1))]
+    left, right = sorted(u * disp_w for u, _v in corners)
+    top, bottom = sorted(v * disp_h for _u, v in corners)
+    private = _gamma_text_box(obj.get("/GammaTextBox"))
+    if private:
+        md, box, written = private
+        if written != contents:
+            md = markdown_of(contents)
+        box = {**box, "x": left, "y": top}
+    else:
+        md = markdown_of(contents) if contents else _rc_text(obj.get("/RC"))
+        if subtype == "/Text":
+            box = normalize_text_box({"x": left, "y": top, "bg": "#fff4b8"})
+            box["w"], box["h"] = measure(md, box, disp_w)
+        else:
+            box = {"x": left, "y": top, "w": right - left, "h": bottom - top, "auto": False,
+                   **_da_style(str(_resolve(obj.get("/DA")) or "")), "bg": _pdf_hex(_resolve(obj.get("/C")))}
+    if not md.strip():
+        return None
+    return {"key": key, "page": pnum, "content": md, "kind": "text_box",
+            "box": _on_page(normalize_text_box(box), disp_w, disp_h)}
+
+
 def _page_text_chunks(page):
     """(x, y, text) per text chunk in PDF user space — best-effort, used to
     recover the quoted text under a markup annotation."""
@@ -473,13 +615,20 @@ def _page_text_chunks(page):
     return chunks
 
 
-def _resolve(obj):
-    """PyPDF2 dict access can hand back unresolved IndirectObject references."""
-    return obj.get_object() if hasattr(obj, "get_object") else obj
-
-
-def _extract_pdf_annotations(reader):
-    found = []
+def _extract_pdf_annotations(reader, quotes=True):
+    """The annotations of ``reader``'s pages that become blocks, as records
+    in page order: ``key`` (the ``imported_annot``), ``page``, ``content``
+    and the kind's fields, ``annot`` (the annotation's dictionary) and
+    ``replies``. Only what the page shows counts (``annotation_shown``: no
+    Hidden or NoView annotation, no review-state stamp). A reply (/IRT) is
+    no block of its own but a note under the annotation it answers, in
+    ``replies`` in page order: ``{key, legacy, content, annot, replies}``,
+    ``legacy`` the key it had when replies were imported as annotations of
+    their own, ``key`` that with its /NM (or its place in /Annots), since a
+    reply shares its parent's rectangle. A reply to something not imported
+    is left out. ``quotes=False`` skips reading the text under highlights,
+    for a caller that only needs which annotations make blocks."""
+    found, replies, records = [], [], {}
     for pnum, page in enumerate(reader.pages, start=1):
         try:
             annots = _resolve(page.get("/Annots")) or []
@@ -489,109 +638,141 @@ def _extract_pdf_annotations(reader):
             continue
         mb = page.mediabox
         pw, ph = float(mb.width), float(mb.height)
-        chunks = None  # lazily extracted once per page
-        for ref in annots:
+        page_text = {} if quotes else {"chunks": []}  # read once, when a quote needs it
+        for index, ref in enumerate(annots):
             try:
                 obj = ref.get_object()
                 subtype = str(obj.get("/Subtype", ""))
-                if subtype not in _IMPORT_TYPES:
+                if subtype not in _IMPORT_TYPES or not annotation_shown(obj):
                     continue
-                contents = str(_resolve(obj.get("/Contents")) or "").strip()
+                contents = _newlines(str(_resolve(obj.get("/Contents")) or "")).strip()
+                parent = reply_parent(obj)
+                if parent is not None:
+                    # A comment in its parent's thread: kept as written, like
+                    # the comment on a highlight.
+                    text, rect = contents or _rc_text(obj.get("/RC")), first_rect(obj)
+                    if text and rect:
+                        legacy = annotation_key(pnum, subtype, rect)
+                        nm = str(_resolve(obj.get("/NM")) or "").strip()
+                        replies.append((parent, {"key": f"{legacy}:{nm or f'#{index}'}", "legacy": legacy,
+                                                 "content": text, "annot": obj, "replies": [],
+                                                 "at": (pnum, index)}))
+                    continue
                 if subtype in _INK_TYPES:
                     record = _ink_from_annotation(obj, pnum, pw, ph, contents)
-                    if record:
-                        found.append(record)
-                    continue
-                # Quad rects in PDF space (origin bottom-left)
-                quads = []
-                qp = _resolve(obj.get("/QuadPoints"))
-                rect = _resolve(obj.get("/Rect"))
-                if qp:
-                    nums = [float(_resolve(v)) for v in qp]
-                    for i in range(0, len(nums) - 7, 8):
-                        xs, ys = nums[i:i + 8:2], nums[i + 1:i + 8:2]
-                        quads.append((min(xs), min(ys), max(xs), max(ys)))
-                elif rect:
-                    r = [float(_resolve(v)) for v in rect]
-                    quads.append((min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])))
-                if not quads:
-                    continue
-                quote = ""
-                if subtype in _MARKUP_TYPES:
-                    if chunks is None:
-                        chunks = _page_text_chunks(page)
-                    picked = [t for (x, y, t) in chunks
-                              if any(qx1 - 2 <= x <= qx2 + 2 and qy1 - 3 <= y <= qy2 + 3
-                                     for (qx1, qy1, qx2, qy2) in quads)]
-                    quote = re.sub(r"\s+", " ", " ".join(picked)).strip()[:1000]
-                # Flip to top-left origin (what the viewer stores)
-                rects = [{"x1": q[0], "y1": ph - q[3], "x2": q[2], "y2": ph - q[1],
-                          "width": pw, "height": ph, "pageNumber": pnum} for q in quads]
-                bounding = {
-                    "x1": min(r["x1"] for r in rects), "y1": min(r["y1"] for r in rects),
-                    "x2": max(r["x2"] for r in rects), "y2": max(r["y2"] for r in rects),
-                    "width": pw, "height": ph, "pageNumber": pnum,
-                }
-                color = "rgba(255, 226, 143, 0.65)"
-                c = _resolve(obj.get("/C"))
-                try:
-                    # /CA is the annotation's own opacity — honoring it makes a
-                    # Gamma export → re-import round-trip the exact shade.
-                    alpha = 0.45
-                    ca = _resolve(obj.get("/CA"))
-                    if ca is not None:
-                        alpha = min(max(float(ca), 0.05), 1.0)
-                    if c is not None and len(c) == 3:
-                        color = (f"rgba({int(float(_resolve(c[0])) * 255)}, {int(float(_resolve(c[1])) * 255)}, "
-                                 f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})")
-                except Exception:
-                    pass
-                key = f"{pnum}:{subtype}:{round(quads[0][0])}:{round(quads[0][1])}:{round(quads[0][2])}"
-                position = {"pageNumber": pnum, "boundingRect": bounding, "rects": rects}
-                if subtype in _AREA_TYPES:
-                    position["area"] = True
-                found.append({
-                    "key": key, "page": pnum, "content": contents, "quote": quote, "color": color,
-                    "position": position,
-                })
+                elif subtype in _NOTE_TYPES:
+                    record = _text_box_from_annotation(obj, subtype, pnum, page, contents)
+                else:
+                    record = _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
+                if record:
+                    record.update(annot=obj, replies=[])
+                    found.append(record)
+                    records[id(obj)] = record
             except Exception as e:
                 log.warning(f"[pdf-annots] skipping annotation on p.{pnum}: {e}")
+    # A reply may answer one listed after it, or another reply.
+    while replies:
+        left = []
+        for parent, reply in replies:
+            if id(parent) in records:
+                records[id(parent)]["replies"].append(reply)
+                records[id(reply["annot"])] = reply
+            else:
+                left.append((parent, reply))
+        if len(left) == len(replies):
+            break
+        replies = left
+    for record in records.values():
+        record["replies"].sort(key=lambda reply: reply["at"])
     return found
 
 
-def _strip_embedded_annotations(pdf_path) -> int:
-    """Rewrite the stored PDF with the annotation types we import (plus their
-    /Popup companions) removed, so the viewer's canvas doesn't paint them under
-    Gamma's own highlight overlays. Link annotations and anything else stay
-    untouched. Returns the number of annotations removed.
+def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text):
+    """A markup, square or circle annotation → a highlight record, or None
+    without a rectangle. ``page_text`` caches the page's text for the quote
+    (``_page_text_chunks``, read once per page under ``"chunks"``)."""
+    # Quad rects in PDF space (origin bottom-left)
+    quads = []
+    qp = _resolve(obj.get("/QuadPoints"))
+    rect = _resolve(obj.get("/Rect"))
+    if qp:
+        nums = [float(_resolve(v)) for v in qp]
+        for i in range(0, len(nums) - 7, 8):
+            xs, ys = nums[i:i + 8:2], nums[i + 1:i + 8:2]
+            quads.append((min(xs), min(ys), max(xs), max(ys)))
+    elif rect:
+        r = [float(_resolve(v)) for v in rect]
+        quads.append((min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])))
+    if not quads:
+        return None
+    quote = ""
+    if subtype in _MARKUP_TYPES:
+        if "chunks" not in page_text:
+            page_text["chunks"] = _page_text_chunks(page)
+        picked = [t for (x, y, t) in page_text["chunks"]
+                  if any(qx1 - 2 <= x <= qx2 + 2 and qy1 - 3 <= y <= qy2 + 3
+                         for (qx1, qy1, qx2, qy2) in quads)]
+        quote = re.sub(r"\s+", " ", " ".join(picked)).strip()[:1000]
+    # Flip to top-left origin (what the viewer stores)
+    rects = [{"x1": q[0], "y1": ph - q[3], "x2": q[2], "y2": ph - q[1],
+              "width": pw, "height": ph, "pageNumber": pnum} for q in quads]
+    bounding = {
+        "x1": min(r["x1"] for r in rects), "y1": min(r["y1"] for r in rects),
+        "x2": max(r["x2"] for r in rects), "y2": max(r["y2"] for r in rects),
+        "width": pw, "height": ph, "pageNumber": pnum,
+    }
+    color = "rgba(255, 226, 143, 0.65)"
+    c = _resolve(obj.get("/C"))
+    try:
+        # /CA is the annotation's own opacity — honoring it makes a
+        # Gamma export → re-import round-trip the exact shade.
+        alpha = 0.45
+        ca = _resolve(obj.get("/CA"))
+        if ca is not None:
+            alpha = min(max(float(ca), 0.05), 1.0)
+        if c is not None and len(c) == 3:
+            color = (f"rgba({int(float(_resolve(c[0])) * 255)}, {int(float(_resolve(c[1])) * 255)}, "
+                     f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})")
+    except Exception:
+        pass
+    position = {"pageNumber": pnum, "boundingRect": bounding, "rects": rects}
+    if subtype in _AREA_TYPES:
+        position["area"] = True
+    return {"key": annotation_key(pnum, subtype, quads[0]), "page": pnum, "content": contents,
+            "quote": quote, "color": color, "position": position}
+
+
+def _strip_embedded_annotations(pdf_path) -> tuple[int, set]:
+    """Rewrite the stored PDF without the annotations the import turns into
+    blocks (``_extract_pdf_annotations``, folded replies included), with
+    their threads and /Popup windows (``pdf_export.drop_annotations``), so
+    the viewer's canvas doesn't paint them under Gamma's own. Everything
+    else stays: links, kinds not imported, hidden ones, and those that make
+    no block (a note with no text). Returns the number of annotations
+    removed and the keys of the blocks they make (a reply's legacy key too).
 
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived."""
     from PyPDF2 import PdfReader, PdfWriter
-    from PyPDF2.generic import ArrayObject, NameObject
 
-    strip_types = _IMPORT_TYPES | {"/Popup"}
     reader = PdfReader(str(pdf_path))
+    doomed, keys = set(), set()
+
+    def take(record):
+        doomed.add(id(record["annot"]))
+        keys.update(k for k in (record["key"], record.get("legacy")) if k)
+        for reply in record["replies"]:
+            take(reply)
+
+    for record in _extract_pdf_annotations(reader, quotes=False):
+        take(record)
+    # Off the reader's pages, before the copy: PdfWriter.append clones each
+    # page's /Annots as the reader holds them.
+    removed = sum(drop_annotations(page, doomed) for page in reader.pages) if doomed else 0
+    if not removed:
+        return 0, set()
     writer = PdfWriter()
     writer.append(reader)
-    removed = 0
-    for page in writer.pages:
-        annots = _resolve(page.get("/Annots"))
-        if not annots:
-            continue
-        kept = ArrayObject()
-        for ref in annots:
-            try:
-                subtype = str(_resolve(ref).get("/Subtype", ""))
-            except Exception:
-                subtype = ""
-            if subtype in strip_types:
-                removed += 1
-            else:
-                kept.append(ref)
-        page[NameObject("/Annots")] = kept
-    if not removed:
-        return 0
     # Atomic swap so a concurrent download never sees a half-written file.
     fd, tmp_name = tempfile.mkstemp(suffix=".pdf", dir=str(pdf_path.parent))
     try:
@@ -604,7 +785,19 @@ def _strip_embedded_annotations(pdf_path) -> int:
         except OSError:
             pass
         raise
-    return removed
+    return removed, keys
+
+
+def _imported_blocks(conn, block_id: str) -> list:
+    """``(id, imported_annot, annot_stripped)`` of the blocks an import made
+    under ``block_id``, at any depth: a reply's note sits under its
+    parent's block, and a block may have been moved in since."""
+    return conn.execute(
+        "WITH RECURSIVE sub(id) AS (SELECT id FROM unified_blocks WHERE parent_id = ? "
+        "UNION ALL SELECT b.id FROM unified_blocks b JOIN sub ON b.parent_id = sub.id) "
+        "SELECT b.id, json_extract(b.properties, '$.imported_annot'), "
+        "json_extract(b.properties, '$.annot_stripped') FROM unified_blocks b JOIN sub ON b.id = sub.id "
+        "WHERE json_extract(b.properties, '$.imported_annot') IS NOT NULL", (block_id,)).fetchall()
 
 
 class PdfAnnotsRequest(BaseModel):
@@ -617,14 +810,21 @@ class PdfAnnotsRequest(BaseModel):
 
 def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, actor: str = "") -> dict:
     """Extract the annotations embedded in the stored PDF and add the missing
-    ones as highlight blocks under ``block_id`` (idempotent via the stable
-    ``imported_annot`` key), then optionally strip the originals from the file.
-    Shared by the per-paper endpoint below and the Zotero library import."""
+    ones as highlight, handwriting and text-box blocks under ``block_id``,
+    each reply a note under the block of the annotation it answers
+    (idempotent via the stable ``imported_annot`` key: a reply is there
+    under its own key or the legacy one, from before replies were notes),
+    then optionally strip the originals from the file. ``found`` counts the
+    annotations that make blocks, replies included. Shared by the per-paper
+    endpoint below and the Zotero library import."""
     from PyPDF2 import PdfReader
     reader = PdfReader(str(pdf_path))
     found = _extract_pdf_annotations(reader)
     if not found:
         return {"found": 0, "imported": 0, "stripped": 0}
+
+    def count(records):
+        return sum(1 + count(r.get("replies") or ()) for r in records)
 
     now = page_now()
     inserted = 0
@@ -637,14 +837,37 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
         # Idempotent: each embedded annotation carries a stable key, looked
         # up under the write lock (two imports of one PDF add each once)
         write_lock(conn)
-        existing = {r[0] for r in conn.execute(
-            "SELECT json_extract(properties,'$.imported_annot') FROM unified_blocks WHERE parent_id=?",
-            (block_id,)).fetchall() if r[0]}
+        existing = {}
+        for bid, key, _stripped in _imported_blocks(conn, block_id):
+            existing.setdefault(key, bid)
+        made = {}  # id(record) → the block made for it now
+
+        def insert(record, parent, position, props):
+            nonlocal inserted
+            bid = props.get("highlight_id") or secrets.token_urlsafe(9)
+            conn.execute(
+                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (bid, parent, position, record["content"], json.dumps(props), now, now),
+            )
+            made[id(record)] = bid
+            inserted += 1
+
+        def add_replies(parent, replies):
+            new = [r for r in replies if r["key"] not in existing and r["legacy"] not in existing]
+            if new:
+                positions = generate_n_keys_between(last_child_position(conn, parent), None, n=len(new))
+                for reply, pos in zip(new, positions):
+                    insert(reply, parent, pos, {"imported_annot": reply["key"]})
+            for reply in replies:
+                bid = made.get(id(reply)) or existing.get(reply["key"]) or existing.get(reply["legacy"])
+                if bid and reply["replies"]:
+                    add_replies(bid, reply["replies"])
+
         todo = [f for f in found if f["key"] not in existing]
         if todo:
             positions = generate_n_keys_between(last_child_position(conn, block_id), None, n=len(todo))
             for f, pos in zip(todo, positions):
-                bid = secrets.token_urlsafe(9)
                 if f.get("kind") == "ink":
                     # The strokes live in an .ink upload like any drawn group.
                     filename, _ = store_file(ws, ink_dumps(f["ink"]), ".ink")
@@ -653,18 +876,19 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                         "pdf_position": f["position"], "ink_strokes": len(f["ink"].strokes),
                         "color": f["color"], "imported_annot": f["key"],
                     }
+                elif f.get("kind") == "text_box":
+                    props = {"text_box": f["box"], "pdf_page": f["page"], "imported_annot": f["key"]}
                 else:
                     props = {
-                        "highlight_id": bid, "color": f["color"], "quote": f["quote"],
+                        "highlight_id": secrets.token_urlsafe(9), "color": f["color"], "quote": f["quote"],
                         "pdf_page": f["page"], "pdf_position": f["position"],
                         "imported_annot": f["key"],
                     }
-                conn.execute(
-                    "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (bid, block_id, pos, f["content"], json.dumps(props), now, now),
-                )
-                inserted += 1
+                insert(f, block_id, pos, props)
+        for f in found:
+            if f.get("replies"):
+                add_replies(made.get(id(f)) or existing[f["key"]], f["replies"])
+        if inserted:
             conn.commit()
             note_reload(ws, conn, page_id, actor)  # stamps the page root as it logs
 
@@ -672,8 +896,9 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     # untouched and the import still stands; a re-run can strip again.
     stripped = 0
     if strip:
+        keys = set()
         try:
-            stripped = _strip_embedded_annotations(pdf_path)
+            stripped, keys = _strip_embedded_annotations(pdf_path)
         except Exception as e:
             log.warning(f"[pdf-annots] could not strip annotations from {pdf_path.name}: {e}")
         if stripped:
@@ -681,15 +906,11 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
             # start writing these blocks again (it skips imported ones only
             # while the original annotation still lives in the PDF).
             with connect_pages_db(ws) as conn:
-                ids = [r[0] for r in conn.execute(
-                    "SELECT id FROM unified_blocks WHERE parent_id=? "
-                    "AND json_extract(properties,'$.imported_annot') IS NOT NULL "
-                    "AND json_extract(properties,'$.annot_stripped') IS NULL",
-                    (block_id,)).fetchall()]
+                ids = [bid for bid, key, done in _imported_blocks(conn, block_id) if key in keys and not done]
             for i in range(0, len(ids), MAX_OPS):
                 commit_ops(ws, page_id, [{"op": "set", "id": bid, "props": {"annot_stripped": True}}
                                          for bid in ids[i:i + MAX_OPS]], actor=actor)
-    return {"found": len(found), "imported": inserted, "stripped": stripped}
+    return {"found": count(found), "imported": inserted, "stripped": stripped}
 
 
 # Sync endpoint: PyPDF2 parsing is CPU-bound; the threadpool keeps the loop free.

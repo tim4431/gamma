@@ -851,9 +851,11 @@ function keepUnderPointer(view, pos, y) {
   document.scrollingElement?.scrollBy(0, delta);
 }
 
+// `pinScroll`: opening scrolls nothing (keepUnderPointer), for an editor
+// drawn where its text was, in the same type (a text box's).
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
-  placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
+  placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
   onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
   const hostRef = useRef(null);
@@ -962,7 +964,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
     }
     if (clickPos?.insertLine) view.dispatch({ changes: { from: pos, insert: "\n" }, selection: { anchor: pos } });
     else view.dispatch({ selection: { anchor: pos } });
-    if (clickPos) keepUnderPointer(view, pos, clickPos.y);
+    if (clickPos && !pinScroll) keepUnderPointer(view, pos, clickPos.y);
     // Opened by a press on the rendered text: while the button stays down
     // the drag selects, as in any editor — the press landed on the rendered
     // view, so CodeMirror never saw it start and follows it from here.

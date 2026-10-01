@@ -1,5 +1,6 @@
 """Markdown export: the readable flavour, the .md-vs-.zip decision, folder
-export, and the Logseq file-graph export (hls page + EDN + area images)."""
+export, text boxes written as notes, and the Logseq file-graph export (hls
+page + EDN + area images)."""
 
 import io
 import zipfile
@@ -115,6 +116,37 @@ def test_export_switches_drop_highlights_or_notes(guest):
     assert "quoted passage" not in neither and "free-standing note" not in neither
 
 
+def _text_box(bid, text, page=None):
+    props = {"text_box": {"x": 40, "y": 60, "w": 180, "size": 12}}
+    if page:
+        props["pdf_page"] = page
+    return {"id": bid, "content": text, "properties": props, "children": []}
+
+
+def test_readable_export_writes_a_text_box_as_a_note_with_its_page():
+    """A text box is your own writing placed on a page: a note bullet, with
+    the `p.N` line a highlight carries when it is on a PDF page — never a
+    quote. The switches treat it as a note."""
+    page = {"id": "tb", "content": "Boxes", "properties": {}, "children": [
+        _text_box("tb1", "typed on the paper\nsecond line", page=4),
+        {"id": "tbs", "content": "", "properties": {"sheet": {}}, "children": [
+            _text_box("tb2", "typed on the sheet"),
+            # moved under the sheet in the notes: the nearest sheet wins over its stale page
+            {"id": "tbn", "content": "a note on the sheet", "properties": {}, "children": [
+                _text_box("tb3", "moved onto the sheet", page=2)]}]},
+        _text_box("tb4", "on no page"),
+    ]}
+    md = render_readable(page)
+    assert "- typed on the paper\n  second line\n  `p.4`\n" in md
+    assert "- typed on the sheet\n" in md and md.count("`p.") == 1
+    assert "  - moved onto the sheet\n" in md and "- on no page\n" in md
+    assert "> typed" not in md
+    no_hl = render_readable(page, highlights=False)
+    assert "- typed on the paper\n  second line\n  `p.4`\n" in no_hl
+    no_notes = render_readable(page, notes=False)
+    assert "typed on" not in no_notes and "`p.4`" not in no_notes
+
+
 def test_folder_md_export_links_papers_inside_the_export(guest):
     """[[refs]], ![[embeds]] and link regions whose target page is part of the
     same export resolve to relative .md links, so the zip is self-contained."""
@@ -223,6 +255,8 @@ def test_logseq_graph_export(guest):
         _positioned("th", "a text quote", note="my thought"),
         _positioned("ah", "", area=True),
         {"id": "free", "content": "a free note", "properties": {}, "children": []},
+        # No quote, like an area highlight, but a note placed on the page.
+        _text_box("lg-box", "a typed box", page=1),
     ])
 
     r = guest.get(f"/api/pages/{page['id']}/export", params={"mode": "logseq-graph"})
@@ -246,6 +280,7 @@ def test_logseq_graph_export(guest):
     assert "my thought" in page_md
     assert "a free note" in page_md
     assert f"../assets/{stem}.pdf" in page_md
+    assert "\n- a typed box\n" in page_md
 
     hls_md = z.read(f"pages/hls__{stem}.md").decode()
     assert f"file-path:: ../assets/{stem}.pdf" in hls_md
@@ -253,6 +288,8 @@ def test_logseq_graph_export(guest):
     assert f"id:: {text_uuid}" in hls_md
     assert "hl-color:: green" in hls_md
     assert "hl-type:: area" in hls_md and "hl-stamp::" in hls_md
+    assert hls_md.count("ls-type:: annotation") == 2 and "a typed box" not in hls_md
+    assert str(hl_uuid("lg-box")) not in page_md + hls_md
 
     edn = z.read(f"assets/{stem}.edn").decode()
     assert ":highlights" in edn and ":bounding" in edn
@@ -262,6 +299,7 @@ def test_logseq_graph_export(guest):
     # The area highlight's crop got rendered as a real PNG under assets/<stem>/.
     pngs = [n for n in names if n.startswith(f"assets/{stem}/") and area_uuid in n]
     assert pngs, names
+    assert len([n for n in names if n.startswith(f"assets/{stem}/")]) == 1  # no crop for the text box
     assert z.read(pngs[0]).startswith(b"\x89PNG")
 
     # Round-trip the Logseq EDN back through Gamma's own importer parser.

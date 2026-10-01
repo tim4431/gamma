@@ -79,7 +79,8 @@ class UBPutChildrenRequest(BaseModel):
 
 def _block_kind(parent_id: str, properties: str) -> str:
     """Classify a search hit for the UI: page title, PDF link region,
-    highlight, or plain note."""
+    highlight, or plain note. A text box is a note: the search panel lists
+    it with the notes and has no kind of its own for one."""
     if parent_id == "root":
         return "page"
     try:
@@ -436,8 +437,9 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     edit is merged into a block that changed meanwhile instead of replacing
     it — the answer's ``content`` is the text actually stored. Likewise
     ``base_properties``: an ink group's ``ink_url`` whose base is not the
-    stored one is merged by stroke, and the answer's ``properties`` is the
-    patch actually applied (it names the merged file)."""
+    stored one is merged by stroke, a text box's ``text_box`` key by key,
+    and the answer's ``properties`` is the patch actually applied (it names
+    the merged file or box)."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:

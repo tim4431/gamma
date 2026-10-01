@@ -64,13 +64,17 @@ def test_block_search_reports_kinds(guest):
     r = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a linky region"})
     guest.put(f"/api/blocks/{r.json()['id']}",
               json={"properties": {"highlight_id": "h2", "link_page_id": page["id"]}})
+    # A text box on a PDF page has no quote, but it is a note, not a highlight.
+    guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a boxy text",
+                                    "properties": {"text_box": {"x": 10, "y": 20}, "pdf_page": 1}})
 
     kinds = {b["content"]: b["kind"]
-             for q in ("plaino", "hilite", "linky")
+             for q in ("plaino", "hilite", "linky", "boxy")
              for b in guest.get("/api/block-search", params={"q": q, "limit": 50}).json()["blocks"]}
     assert kinds["a plaino note"] == "note"
     assert kinds["a hilite quote"] == "highlight"
     assert kinds["a linky region"] == "link"
+    assert kinds["a boxy text"] == "note"
 
 
 def test_delete_purges_chats(guest):

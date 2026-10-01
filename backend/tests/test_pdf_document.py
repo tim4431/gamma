@@ -204,6 +204,29 @@ def test_render_document_switches_drop_highlights_or_notes():
     assert "Switches" in no_notes          # the title always stays
 
 
+def test_render_document_names_a_text_box_by_its_page():
+    """A text box on a PDF page is a note under a "text box, p. N" line,
+    never a quoted passage; on a sheet it is a plain note. The switches
+    treat it as a note."""
+    box = {"x": 40, "y": 60, "w": 180}
+    page = _page("Boxes", None, [
+        _block("t1", "typed on the **paper**", {"text_box": box, "pdf_page": 4}),
+        _block("s1", "", {"sheet": {}}, [
+            _block("t2", "typed on the sheet", {"text_box": box}),
+            # a stale pdf_page under a sheet: the nearest sheet wins
+            _block("n1", "a note", {}, [_block("t3", "moved onto the sheet", {"text_box": box, "pdf_page": 2})]),
+        ]),
+    ])
+    text = _text(render_document([page]))
+    assert "text box, p. 4" in text and "typed on the paper" in text and text.count("p. 4") == 1
+    assert text.index("text box, p. 4") < text.index("typed on the paper")
+    assert "typed on the sheet" in text and "moved onto the sheet" in text and text.count("text box") == 1
+    assert "**" not in text
+    assert "text box, p. 4" in _text(render_document([page], highlights=False))
+    no_notes = _text(render_document([page], notes=False))
+    assert "typed on" not in no_notes and "text box" not in no_notes
+
+
 def test_render_document_starts_each_page_on_a_fresh_sheet():
     pdf = render_document([_page("First", None, [_block("a", "alpha note")]),
                            _page("Second", None, [_block("b", "beta note")])])

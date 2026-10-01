@@ -8,7 +8,7 @@ typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imp
 `gamma/markdown_zip_import.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/routers/export.py`; frontend dialogs in
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
 [App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
 background jobs, which the dialogs follow ([tasks.md](tasks.md)).
@@ -16,7 +16,7 @@ background jobs, which the dialogs follow ([tasks.md](tasks.md)).
 ## Importing annotations embedded in a PDF
 
 `/api/import/pdf-annotations` converts annotations embedded in the PDF file
-(SumatraPDF/Acrobat/Gamma-export highlights, notes, and /Square//Circle → area
+(SumatraPDF/Acrobat/Gamma-export highlights, and /Square//Circle → area
 highlights) into highlight blocks — idempotent via `properties.imported_annot`
 keys; opacity honors the annotation's `/CA` so a Gamma export → re-import
 round-trips exact colors; PyPDF2 dict access returns `IndirectObject`s, always
@@ -25,9 +25,33 @@ export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `pdf_page` /
 `pdf_position`; a Gamma export's private `/GammaInk` key restores pressure
 and time, foreign ink is polylines at the annotation's width
-([handwriting.md](handwriting.md)). The blocks land under the `block_id`
-asked for, which may be a block inside the page; the reload and the log
-entry go to the page.
+([handwriting.md](handwriting.md)). `/FreeText` (typed text) and `/Text`
+(a sticky note) become text-box blocks (`text_box`, `pdf_page`), not
+highlights, by the rules in
+[text_boxes.md](text_boxes.md#server-and-interchange). Their place comes
+from `/Rect` through the page's view box and `/Rotate`
+(`pdf_export.page_frame`, `pdf_point_to_viewer`), the exact inverse of the
+export's mapping. The highlight, area and ink import does a plain
+media-box flip. A text box's `imported_annot` key
+(`pdf_export.annotation_key`) is the one a highlight block made from the
+same annotation carries, so such a block counts as there and nothing comes
+twice.
+
+Only what the page shows is imported (`pdf_export.annotation_shown`): an
+annotation flagged Hidden or NoView, or a review-state stamp (`/State`,
+`/StateModel`), makes nothing. A reply (`/IRT`, not a `/RT /Group` member)
+to an annotation of any imported kind is a note under that annotation's
+block, in page order, its text as written. A reply to a reply goes under
+that reply, and one answering something not imported is left out. A
+reply's key is its rectangle's plus its `/NM` (or its place in `/Annots`).
+A block holding the rectangle's key alone also counts as the reply, so a
+thread whose replies were stored as annotations of their own adds nothing
+twice. The keys are looked up under the `block_id` at any depth
+(`_imported_blocks`), so a reply's note, or a block moved deeper since, is
+found. The blocks land
+under the `block_id` asked for, which may be a block inside the page; the
+reload and the log entry go to the page. `found` counts the annotations
+that make blocks, replies included.
 
 The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
 .md) goes into the page carrying that PDF, made when there is none, under
@@ -42,9 +66,16 @@ viewer → "Annotations inside the file" preference either hides them viewer-sid
 (`annotationMode: DISABLE`, default) or sends `strip: true` so the import
 rewrites the stored PDF without them (the View menu's "Import…" dialog can
 override that for one run; the auto-import on open always follows the
-preference); stripped blocks get `properties.annot_stripped`, which tells
-`/export-pdf` to write them again (it skips `imported_annot` blocks only while
-the original is still embedded).
+preference). The strip (`_strip_embedded_annotations`) removes the
+annotations the import makes blocks of, with their threads (the replies
+and review states that answer them) and their `/Popup` windows
+(`pdf_export.drop_annotations`). Links, kinds not imported, hidden ones
+and those that make no block (a note with no text) stay. The blocks whose
+originals it removed get `properties.annot_stripped`, which tells
+`/export-pdf` to write them again. The export skips `imported_annot`
+highlights and ink only while the original is embedded. A text box it
+writes either way, replacing the embedded original
+([below](#annotated-pdf-export)).
 
 ## The Import dialog
 
@@ -292,7 +323,8 @@ its own Memo with a page+quote header (`highlight_memo_html`). An export job
 ([tasks.md](tasks.md)) reports each page as it goes. Highlights are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
 copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
-omits the files entirely, `notes=0` the Memos).
+omits the files entirely, `notes=0` the Memos). The copies carry no ink or
+text boxes; a text box is a Memo ([below](#text-boxes-in-the-exports)).
 
 ## The export framework
 
@@ -317,8 +349,8 @@ writer stay untouched. A builder whose download isn't a zip overrides
 for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF.
 
 `annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
-highlights and handwriting as standard annotations and, with the notes
-switch, its notes printed on the page (`annotated_page_pdf`, what
+highlights, handwriting and text boxes as standard annotations and, with
+the notes switch, its notes printed on the page (`annotated_page_pdf`, what
 `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 folder labels below the exported folder (`obsidian_export.page_dir`). A
@@ -531,7 +563,9 @@ Each block's markdown is parsed twice: into chunks (headings, paragraphs,
 `![alt|300]` or legacy Logseq `{:width N}`, capped at the column —
 `![[embed]]` synced blocks, `$$…$$` math) and each
 chunk's text into styled inline spans (bold, italic, `code`, strike,
-`==mark==`, `[[refs]]`, links, `$…$` math). Highlights become quoted passages
+`==mark==`, `[[refs]]`, links, `$…$` math; a backslash before ASCII
+punctuation is that character, as CommonMark and the screen read it, so an
+escaped `*` or `$` prints as typed). Highlights become quoted passages
 with a bar in the highlight's own colour and a `p. N` marker, and the
 Highlights/Notes switches mean exactly what they do in the Markdown export
 (drop highlights and a highlight block keeps its own writing as a plain
@@ -553,6 +587,41 @@ line (nested embeds degrade to refs so transclusion can't recurse).
 Pagination is per line, not per block: the canvas breaks a page between lines
 so nothing is ever clipped, and code lines carry their leading whitespace as an
 x offset because wrapping drops spaces at the start of a line.
+
+## Text boxes in the exports
+
+A text box ([text_boxes.md](text_boxes.md)) is the user's writing placed on
+a page, so every text export writes it as a note, and none takes it for a
+highlight: it has no `highlight_id`. A box on a PDF page also says which
+page (`text_box.box_page`); a box on a sheet says nothing more, and neither
+does a box on no page. The nearest sheet wins, as on screen: the recursive
+writers pass down whether they walked through a sheet, so a box under one
+names no page whatever its `pdf_page` says. The Highlights switch leaves
+boxes in, the Notes switch takes them out with the other notes. The
+annotated PDF writes them with either switch on (below).
+
+- **Markdown** (`markdown_export.py`): a note bullet, then the page line a
+  highlight carries (two-space indent, `` `p.N` ``).
+- **Obsidian** (`obsidian_export.py`): the text as a note, never a
+  highlight's `[!quote]` callout, followed by the page link
+  `[[Paper.pdf#page=N|p. N]]` (`p. N`
+  without the bundle). At the top level the link is a paragraph of its
+  own, since a line straight after a list, a quote or a table would run
+  into it; in a list it is a line under the bullet.
+- **Logseq graph** (`logseq_graph_export.py`): a plain block with no page.
+  Logseq keeps a page (`hl-page`) only on annotation blocks, and
+  `collect_highlights` needs `highlight_id`, so a box never reaches the
+  hls page, the EDN file or the area crops.
+- **Zotero RDF** (`zotero_export.py`): a note (`bib:Memo`). A box on a PDF
+  page opens with a bold "Text box on p.N" line, as a highlight's memo
+  opens with its page. The bundled PDF copies carry highlights only, so a
+  box reaches Zotero once, as the note.
+- **Notes as PDF** (`pdf_document.py`): a small grey "text box, p. N" line,
+  like the "handwriting, p. N" line and kept with the text, then the text
+  in the normal note style.
+- **Annotated PDF**: a `/FreeText` (below), with either switch on, since
+  `notes=0`, that format's default, means "don't paint the notes on the
+  page". The sheet export draws a sheet's boxes as page content.
 
 ## The shared typesetting engine
 
@@ -585,6 +654,15 @@ alpha under a 2pt border — because a viewer synthesizing the box from
 `/Rect` + `/C` + `/BS` draws only the outline. No `/IC`: a viewer that
 regenerates from it would fill at the full `/CA` and hide the figure.
 
+Every writer here maps through the page's view box (`page_frame`), the frame
+the viewer stores positions in: the crop box clipped to the media box, as
+pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
+meet. `pdf_notes` places its notes in the same frame. A popup's text
+(`highlight_note_text`) is the annotation's comment and the notes under it.
+A text box on a PDF page among them is left out with the notes under it,
+since the box is written as its own `/FreeText`. A box under a sheet stays
+a line: the nearest sheet wins.
+
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
 bucket (colour × tool × size × opacity) of the group, `/InkList` polylines
 mapped through the same rect → user-space conversion, `/BS /W` the mean
@@ -592,11 +670,30 @@ drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
 
+Text boxes on the PDF's pages (`_collect_text_boxes`: a positive-integer
+`pdf_page`, held by no sheet, with text) become `/FreeText` annotations.
+They are written before the ink and the highlights, so they sit under
+them, as on screen. The appearance (`/AP /N`) typesets the box's Markdown
+with the shared engine (`text_box.pdf_ops`), upright on a turned page.
+`/Contents` is the plain text, references read through the notes PDF's
+`_block_ref_resolver`. A private `/GammaTextBox` holds the Markdown and the
+box for a lossless re-import. Each key, and why, is in
+[text_boxes.md](text_boxes.md#server-and-interchange).
+
+Unlike the other kinds, a box imported from the file and still embedded in
+it is written as Gamma has it. Its original (matched by its
+`imported_annot` key, `annotate_pdf`'s `replaced`) leaves the copy with its
+popup and thread, so an edit made here reaches the export. A box deleted
+here leaves its original, since nothing records the deletion. The boxes
+are written with either switch on: `highlights=0&notes=1` keeps them with
+the painted notes, and only both off (the stored file) leaves them out.
+
 A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
-size, painted with the paper, with the ink groups under it drawn as
-vectors in the content (the page is the drawing, so no `/Ink` layer). The
-switches do not apply.
+size, painted with the paper, its text boxes typeset on it as real,
+selectable text, and the ink groups under it drawn over them as vectors
+in the content (the page is the drawing, so no `/FreeText` or `/Ink`
+layer). The switches do not apply.
 
 ### Notes drawn on the page
 
@@ -651,7 +748,11 @@ allocated as indirect objects up front so pages (including the overlays
 `pdf_notes` merges mid-way) can reference them, and `finalize()` fills them
 in before the writer serialises — both writers call it last. Glyph programs
 use `d1` (shape-only), so they take the fill colour in force where they are
-shown. Nothing is rasterised and no font file is shipped; compared with
+shown. `vector_text.header` sets it to the caller's colour
+(`draw(drawing, color)`, which `pdf_typeset.draw_spans` passes on), by
+default the engine's near-black (`TEXT_COLOR`). So math and CJK in a
+coloured text box, a quote or a muted line take that line's colour.
+Nothing is rasterised and no font file is shipped; compared with
 drawing every occurrence as filled paths the file shrinks (a repeated glyph
 costs two bytes) and the text layer appears; every writer that draws MATH
 spans owns a `GlyphFonts`, there is no path-only fallback.

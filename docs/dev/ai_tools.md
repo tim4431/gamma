@@ -114,7 +114,9 @@ picture 1 attached)" — and the crop of that region rides on the result as
 a picture (`ai_context.area_highlight` turns the stored pixel rectangle
 into page fractions, `render_area_crops` renders it like a selection
 crop; the chip's `images`, which the loop moves onto the tool message like
-`view_pdf_page`'s page). At most `MAX_AREA_CROPS` (4) per page per read;
+`view_pdf_page`'s page). `area_highlight` answers only for a block with
+`highlight_id`, never for a text box, which has no quote either. At most
+`MAX_AREA_CROPS` (4) per page per read;
 the rest say "no picture: more than the limit on this page". `read_block`
 does the same on its outline lines, and the chat context does it for the
 notes of a context page (the pictures go with the message's images; the
@@ -166,7 +168,10 @@ subtree). Highlight blocks show their quoted passage inline, handwriting
 blocks a "handwriting on p. N" label before their caption; long child
 contents are snipped per line with an explicit "read_block this id for the
 full text" marker, and the listing stops at the read-window budget naming how
-many blocks were left out. (`read_page` shows the same notes without ids —
+many blocks were left out. A text box ([text_boxes.md](text_boxes.md)) shows
+"(text box on p. N)", "(text box on the page of paper above)" or "(text
+box, not placed on a page)" before its text. The nearest sheet above a box
+wins over its `pdf_page`. (`read_page` shows the same notes without ids —
 context for answering; `read_block` is the editing view.)
 
 ### read_chats (both scopes)
@@ -635,6 +640,8 @@ under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and
 cross-page moves (allowed when both pages are in scope) refuse subtrees
 containing highlight blocks, whose PDF anchors are tied to their own paper.
+They also refuse a text box, placed on its own page's PDF or sheet, unless
+the sheet it is on moves with it (`_loose_text_box`).
 All three go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
 logged, fanned out to anyone on the page, and the page root's `updated_at`
 stamped so the home feed reorders. Their UI actions carry `page_id` (moves across

@@ -238,3 +238,74 @@ def test_chat_carries_notes_focus(notes, monkeypatch):
     assert f'S1 (in block [{other}]):\n"""\nchip \n"""' in user_turn
     assert 'mode "selection"' in seen["system"] and f'S1 in block "{other}"' in seen["system"]
     assert f'cursor is on note block "{top}"' in seen["system"]
+
+
+def _block(c, parent, content, properties):
+    r = c.post("/api/blocks", json={"parent_id": parent, "content": content, "properties": properties})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_text_boxes_are_labelled_with_their_page(notes):
+    """A text box (typed text placed on a page) has no quote, like an area
+    highlight, but is a note: read_block and the focus section name it as a
+    text box with where it sits, and never as an area highlight."""
+    from types import SimpleNamespace
+    from gamma.ai_context import notes_focus_section
+    c, ids = notes
+    box = {"x": 40, "y": 60, "w": 180}
+
+    page = _block(c, "root", "boxes playground", {"folder": "sandbox"})
+    on_pdf = _block(c, page, "typed on the paper", {"text_box": box, "pdf_page": 3})
+    sheet = _block(c, page, "", {"sheet": {}})
+    on_sheet = _block(c, sheet, "typed on the sheet", {"text_box": box})
+    # Moved under the sheet in the notes: the nearest sheet wins over its stale page.
+    note = _block(c, sheet, "a note on the sheet", {})
+    stale = _block(c, note, "moved onto the sheet", {"text_box": box, "pdf_page": 7})
+    loose = _block(c, page, "on no page", {"text_box": box})
+
+    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": page})
+    assert f"[{on_pdf}] (text box on p. 3) typed on the paper" in text
+    assert f"[{on_sheet}] (text box on the page of paper above) typed on the sheet" in text
+    assert f"[{stale}] (text box on the page of paper above) moved onto the sheet" in text
+    assert f"[{loose}] (text box, not placed on a page) on no page" in text
+    assert "area highlight" not in text and "(highlight:" not in text and "p. 7" not in text
+    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": on_pdf})
+    assert "(text box on p. 3) typed on the paper" in text
+    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": stale})
+    assert "(text box on the page of paper above) moved onto the sheet" in text and "p. 7" not in text
+
+    section = notes_focus_section(ids["ws"], SimpleNamespace(
+        focus_block_id=on_pdf, page_id=page, pages=[], context_blocks=[on_sheet, note, loose]))
+    assert f"- [{on_pdf}] (text box on p. 3) typed on the paper" in section
+    assert f"- [{on_sheet}] (text box on a page of paper) typed on the sheet" in section
+    assert f"- [{stale}] (text box on a page of paper) moved onto the sheet" in section
+    assert f"- [{loose}] (text box, not placed on a page) on no page" in section
+    c.delete(f"/api/blocks/{page}")
+
+
+def test_move_block_keeps_text_boxes_on_their_page(notes):
+    """A text box's place belongs to its page's PDF or its sheet, as a
+    highlight's anchor does: a box, or a note holding one, moves within its
+    page only; a sheet takes its boxes along."""
+    c, ids = notes
+    scope = folder("sandbox")
+    box = {"x": 40, "y": 60, "w": 180}
+
+    page = _block(c, "root", "boxes to move", {"folder": "sandbox"})
+    other = _block(c, "root", "another page", {"folder": "sandbox"})
+    on_pdf = _block(c, page, "typed on the paper", {"text_box": box, "pdf_page": 1})
+    holder = _block(c, page, "a note", {})
+    _block(c, holder, "typed under the note", {"text_box": box, "pdf_page": 1})
+    sheet = _block(c, page, "", {"sheet": {}})
+    _block(c, sheet, "typed on the sheet", {"text_box": box})
+    for moved in (on_pdf, holder):
+        text, _ = run_agent_tool(ids["ws"], scope, "move_block", {"block_id": moved, "parent_id": other})
+        assert text.startswith("error: text boxes are placed on their page"), text
+    text, _ = run_agent_tool(ids["ws"], scope, "move_block", {"block_id": on_pdf, "parent_id": holder})
+    assert text.startswith("ok"), text
+    text, _ = run_agent_tool(ids["ws"], scope, "move_block", {"block_id": sheet, "parent_id": other})
+    assert text.startswith("ok"), text
+    assert children(c, other) == [sheet]
+    c.delete(f"/api/blocks/{page}")
+    c.delete(f"/api/blocks/{other}")

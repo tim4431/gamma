@@ -287,6 +287,44 @@ def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     assert "[!quote]" not in md and "\n- my note\n  - under the note\n" in md
 
 
+def test_obsidian_export_writes_text_boxes_as_notes_with_their_page(guest):
+    """A text box is a note, never a [!quote]: on a PDF page it is followed
+    by the page link (its own paragraph at the top level, a line under the
+    bullet in a list); on a sheet it is just the note."""
+    up = guest.post("/api/uploads", files={"file": ("boxes.pdf", _blank_pdf_bytes(), "application/pdf")})
+    assert up.status_code == 200, up.text
+    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], "folder": "ovb"}
+    page_id = make_page(guest, "Boxed", properties=props)["id"]
+    box = {"x": 40, "y": 60, "w": 180}
+    _put_children(guest, page_id, [
+        {"id": "ob-1", "content": "- typed list\n- on the paper", "children": [],
+         "properties": {"text_box": box, "pdf_page": 2}},
+        {"id": "ob-2", "content": "a thread", "properties": {}, "children": [
+            {"id": "ob-2a", "content": "moved under it", "children": [],
+             "properties": {"text_box": box, "pdf_page": 4}},
+        ]},
+        {"id": "ob-s", "content": "", "properties": {"sheet": {}}, "children": [
+            {"id": "ob-3", "content": "typed on the sheet", "children": [],
+             "properties": {"text_box": box}},
+            # a stale pdf_page under a sheet: the sheet holds it
+            {"id": "ob-4", "content": "moved onto the sheet", "children": [],
+             "properties": {"text_box": box, "pdf_page": 5}},
+        ]},
+    ])
+    r = guest.get(f"/api/pages/{page_id}/export", params={"mode": "obsidian"})
+    assert r.status_code == 200, r.text
+    md = zipfile.ZipFile(io.BytesIO(r.content)).read("ovb/Boxed.md").decode()
+    assert "- typed list\n- on the paper\n\n[[Boxed.pdf#page=2|p. 2]]\n" in md
+    assert "- a thread\n  - moved under it\n    [[Boxed.pdf#page=4|p. 4]]\n" in md
+    assert "typed on the sheet\n" in md and "#page=" not in md.split("typed on the sheet")[1]
+    assert "moved onto the sheet" in md and "page=5" not in md
+    assert "[!quote]" not in md
+
+    r = guest.get(f"/api/pages/{page_id}/export", params={"mode": "obsidian", "pdf": 0, "highlights": 0})
+    md = zipfile.ZipFile(io.BytesIO(r.content)).read("ovb/Boxed.md").decode()
+    assert "- on the paper\n\np. 2\n" in md and "    p. 4\n" in md
+
+
 def test_obsidian_export_disambiguates_same_titles(guest):
     a = make_page(guest, "Twin", properties={"folder": "ovt/one"})
     b = make_page(guest, "Twin", properties={"folder": "ovt/two"})

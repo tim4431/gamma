@@ -189,6 +189,8 @@ def _render_block(node, depth, lines, has_pdf):
             _render_block(child, depth + 1, lines, has_pdf)
         return
     elif content:
+        # A note, a text box included: Logseq keeps a page (hl-page) only on
+        # annotation blocks, and a text box is not one.
         lines.append(f"{tabs}- {_oneline(content)}")
     else:
         for child in node["children"]:

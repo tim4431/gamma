@@ -62,9 +62,12 @@ the shared cases in `tests/shared/paper.json`, and e2e
   or the title typed into it. A note typed under a sheet is a note about
   that page. A handwriting card jumps to its drawing and outlines the
   group, like on a PDF.
+- **Text boxes** go on a sheet as on a PDF page, in both views: the
+  strip's Text tool places them, and each is a row under its sheet whose
+  marker shows it on the sheet ([text_boxes.md](text_boxes.md)).
 - **Export → Annotated PDF** on a page without a PDF that has sheets gives
-  them as a PDF: one page per sheet, the paper painted and the
-  handwriting drawn as vectors.
+  them as a PDF: one page per sheet, the paper painted, the text boxes
+  typeset as real text and the handwriting drawn over them as vectors.
 - On the iPad a page with sheets opens in the notebook view, and a
   toolbar button shows its notes alone.
 
@@ -76,6 +79,7 @@ No schema change: sheets are blocks and properties.
 |---|---|
 | A sheet: any block of a page | `sheet: <paper>`, its paper, and `collapsed: true` when it is made. Its content is its title (empty: "Page N") |
 | An ink group: any block under a sheet | `ink_url`, `ink_strokes`. Its file's `space` is `{kind: "canvas", width, height}`, the sheet's frame (points from its top-left) |
+| A text box: any block under a sheet | `text_box`, in the sheet's frame, and no `pdf_page`. Its content is its text ([text_boxes.md](text_boxes.md)) |
 
 - **Sheets are blocks** because adding a page must never lose a page.
   Two devices that each add a page while apart insert two blocks, and
@@ -85,13 +89,13 @@ No schema change: sheets are blocks and properties.
 - **The order of the sheets is document order**: every block carrying
   `sheet`, at any depth, parents before children. Other blocks are notes
   and are listed like any note.
-- **Ink belongs to the nearest sheet above it**, at any depth: the tree
-  says which page a drawing is on, so there is no property to keep in
-  step. A sheet nested under another sheet holds its own drawings.
-  Moving a group under another sheet in the notes moves the drawing to
-  that page. Deleting a sheet deletes its drawings with it, and the
-  mirror's rule that an edit beats a delete keeps a sheet that someone
-  else drew on meanwhile ([mirror.md](mirror.md)).
+- **Ink and text boxes belong to the nearest sheet above them**, at any
+  depth: the tree says which page a drawing is on, so there is no
+  property to keep in step. A sheet nested under another sheet holds its
+  own drawings. Moving a group or a box under another sheet in the notes
+  moves it to that page. Deleting a sheet deletes its drawings and boxes
+  with it, and the mirror's rule that an edit beats a delete keeps a
+  sheet that someone else drew on meanwhile ([mirror.md](mirror.md)).
 - **The view is not in the document.** Whether a page shows the notebook
   view is the reader's choice, kept per page and browser. Collaborators
   and devices each choose their own.
@@ -119,13 +123,13 @@ No schema change: sheets are blocks and properties.
   a line every `spacing`. Grid paper has the verticals, then the
   horizontals. Dot paper has a dot at each crossing, row by row. All
   offsets are `k × spacing`, strictly inside the page.
-- The browser draws it as an SVG under the ink layer (`PaperBackground`),
-  the export as PDF operators (`paper_ops`), and the iPad as shape layers.
-  All three draw from the same geometry, which `tests/shared/paper.json`
-  pins for Python and JavaScript.
-- A sheet's paper changing leaves its handwriting where it is: points
-  from the top-left corner. A smaller page may crop a drawing on screen,
-  and the strokes stay in the file.
+- The browser draws it as an SVG under the text boxes and the ink layer
+  (`PaperBackground`), the export as PDF operators (`paper_ops`), and the
+  iPad as shape layers. All three draw from the same geometry, which
+  `tests/shared/paper.json` pins for Python and JavaScript.
+- A sheet's paper changing leaves its handwriting and its text boxes
+  where they are: points from the top-left corner. A smaller page may crop
+  a drawing on screen, and the strokes stay in the file.
 
 ## Server
 
@@ -137,12 +141,16 @@ No schema change: sheets are blocks and properties.
 - `routers/export.py` `annotated_pdf`: a page without a `doc_id` that has
   sheets becomes `notebook_pdf`. Each sheet is a PDF page of its paper's
   size, in the top-left frame the notes PDF uses (`q 1 0 0 -1 0 h cm`):
-  the paper, then every ink group on the sheet through
-  `ink.pdf_path_ops`. `X-Annotations-Written` counts the groups drawn. A
-  page with neither is refused (400, "page has no PDF").
+  the paper, then the sheet's text boxes with text as real, selectable
+  text (`text_box.pdf_ops`, with the page's font resources), then every
+  ink group on the sheet through `ink.pdf_path_ops`. `notebook_pdf` takes
+  `(paper, [(content, text_box)], [InkFile])` per sheet.
+  `X-Annotations-Written` counts the boxes and groups drawn. A page with
+  neither is refused (400, "page has no PDF").
 - The agent's `read_block` outline names a sheet ("a page of paper: the
-  handwriting under it is written on it") and a group on one
-  ("handwriting on the page of paper above").
+  handwriting under it is written on it"), a group on one ("handwriting
+  on the page of paper above") and a text box on one ("text box on the
+  page of paper above").
 
 ## Client
 
@@ -152,19 +160,25 @@ No schema change: sheets are blocks and properties.
   a sheet added after a block gets), `stableId`, `firstSheetId`,
   `sheetIdAfter`, `newSheet` (folded), `PAPER_SIZES`.
 - `notebook/NotebookViewer.jsx`: `NotebookViewer` draws the notebook view,
-  each sheet a `PaperBackground` under an `InkLayer` keyed by the sheet's
-  id instead of a page number, with the stroke handlers held stable so a
-  sheet re-renders only for its own ink. It sizes to fit the widest sheet
+  each sheet a `PaperBackground` under `<MarkupLayers>`
+  (`markup/MarkupLayers.jsx`: the text boxes, then the ink) keyed by the
+  sheet's id instead of a page number. The layers read the tools from
+  `PageToolsContext` and each sheet takes its own marks from App's
+  `marks`, so a memoized sheet re-renders only for its own ink and boxes.
+  It sizes to fit the widest sheet
   at `page-width`, else follows the viewer's zoom (`pdfScale`,
   Ctrl+wheel), and keeps the top of the view in place across a zoom. It
   reports the sheet under the middle of the view and scrolls to a sheet
   and box on request. `PaperMenu` is the paper panel.
 - `notebook/NoteSheet.jsx`: `NoteSheet`, a sheet in the notes view, and
-  `NoteSheetContext`, the ink state and handlers App gives it (the ones
-  the notebook view gets, plus the pen, paper and add-after actions). It
-  measures its row, draws `PaperBackground` and an `InkLayer` keyed by its
-  id, and swaps the layer for a plain SVG of the replay's frame while its
-  replay plays.
+  `NoteSheetContext`, what App gives it besides the tools (which come
+  through `PageToolsContext`): `{marks, inkOpen, onPen, onPaper,
+  onPaperAll, onAddAfter, onNotebookView}`, the Map of every surface's
+  marks, whether the strip is open, and the sheet actions. It measures its
+  row, draws `PaperBackground` and `<MarkupLayers>` keyed by its id, and
+  hands the layers the replay's frame, drawn as a plain SVG in the ink's
+  place, while its replay plays. The context is a new object on each App
+  render, so the sheets among the notes re-render with App.
 - `app/App.jsx`:
   - `nbSheets` are the open page's sheets. `hasSheets`: it has some and
     no PDF, so the notebook view can show them. `notebook`: the notebook
@@ -179,15 +193,17 @@ No schema change: sheets are blocks and properties.
   - `handleInkStroke` takes a sheet id where a PDF page number goes: the
     group's file is `newCanvasInk`, and a new group's block is inserted
     under its sheet. Writing low on the last sheet calls `addSheetAfter`
-    with `once`.
+    with `once`. A text box made on a sheet is inserted as the sheet's
+    last child the same way (`markup/useTextBoxes.js` `onBoxCreate`).
   - `addSheetAfter` (right after a block), `addPageAtEnd` (after the last
     sheet), `insertSheetAt` ("/page"), `setSheetPaper` and
     `applyPaperToAll` (every sheet, at any depth) are ordinary tree edits.
   - `createNotebook` posts a page, then its first sheet as an op, and
     turns the notebook view on for it.
-  - The notes' ink card jumps through `showInkOnPage` to the drawing: in
-    the notebook view on the viewer, in the notes view on the sheet in the
-    notes (unfolded into view).
+  - The notes' ink card, and a text box's marker, jump through
+    `showOnPage` to the mark: in the notebook view on the viewer
+    (`nbScrollRef`), in the notes view on the sheet in the notes (unfolded
+    into view).
 - `editor/BlockTree.jsx` numbers the sheets in the notes (an untitled
   sheet reads "Page N"), draws a `NoteSheet` in a sheet's row when
   `inlineSheets`, keeps a press on it from opening the editor, and offers
@@ -200,7 +216,8 @@ No schema change: sheets are blocks and properties.
   and inserting a sheet between two others there (in the notes, Add page
   below does).
 - Drawing a sheet in the Markdown export and the notes PDF as a page: its
-  groups export as drawings, like any group's.
+  groups export as drawings, like any group's, and its text boxes as
+  notes.
 - Templates beyond the four patterns (music staves, Cornell margins),
   and a paper image.
 - Virtualizing a long notebook's sheets. Every sheet mounts, which suits

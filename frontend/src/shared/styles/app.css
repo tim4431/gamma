@@ -5873,8 +5873,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* --- Handwriting (ink/InkLayer.jsx, docs/dev/handwriting.md) ------------------ */
 /* While a tool is armed the page is a drawing surface (PdfPage turns the
    text layer's user-select off): a crosshair; touch-action stays until
-   fingers are meant to draw too. The retained strokes sit with the
-   highlight overlays (z 2), the in-progress canvas above everything. */
+   fingers are meant to draw too. The markup layers (markup/MarkupLayers.jsx)
+   stack at z-index 6, over the page's own marks (highlights 2, note badges
+   4, link boxes 5), in their order: the text boxes, the retained strokes,
+   the lasso's hit area, the in-progress canvas; the handles and the cursor
+   above. So ink is drawn over everything, yet a stroke takes no click from
+   what lies under it on a read-only page (InkLayer resolves those taps
+   itself, below the page's clickable marks), and a text box takes its own
+   click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
 .inkLayer, .inkCanvas {
@@ -5885,8 +5891,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 100%;
   pointer-events: none;
 }
-.inkLayer { z-index: 2; overflow: visible; }
-.inkCanvas { z-index: 5; display: none; }
+.inkLayer { z-index: 6; overflow: visible; }
+.inkCanvas { z-index: 6; display: none; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -5910,14 +5916,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
   color: var(--text-primary); font-size: var(--fs-xs); line-height: var(--lh-ui); box-shadow: var(--shadow-2); }
-.inkSelectionHit { position: absolute; z-index: 4; touch-action: none; cursor: move; }
+.inkSelectionHit { position: absolute; z-index: 6; touch-action: none; cursor: move; }
 .inkEditMenu { width: 310px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
 .inkEditRow, .inkEditOptions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; }
 .inkEditRow .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
 .inkEditRow .inkDeleteBtn { color: var(--danger); }
 .inkEditOptions { align-items: center; border-top: 1px solid var(--border); margin-top: 4px; }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas) { filter: invert(1) hue-rotate(180deg); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -5944,9 +5950,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   .pdfPageWrap [data-hl-id].pdfHlFlash { box-shadow: 0 0 0 3px var(--hl-line, var(--hl)); }
 }
 
-/* The tool strip: top-centre of the viewer, the control-box surface laid
-   flat. Row one is the tools (presets, eraser, lasso, hand, close,
-   undo/redo); the options row of the armed tool opens under it. */
+/* The tool strip (markup/MarkupToolbar.jsx): top-centre of the viewer,
+   the control-box surface laid flat. Row one is the tools (presets,
+   eraser, lasso, text, hand, close, undo/redo); the options row of the armed
+   tool opens under it. */
 .pdfInkBar {
   position: absolute;
   z-index: calc(var(--z-dock) + 1);
@@ -6013,11 +6020,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
 .pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+/* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */
+.pdfInkBar .inkTextSize { width: auto; min-width: 24px; padding: 0 4px; font-size: var(--fs-xs); }
+.textNoBackground { background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%), var(--bg-elevated); }
 
-/* The notes: a rounded-square pen marker in the dot slot, the strokes as a
-   picture above the caption (on white: the card is a piece of the page,
-   the same rule as .pdfAreaMarquee). */
-.inkMarker {
+/* The notes: a rounded-square pen marker in the dot slot (a text box's is
+   a T), the strokes as a picture above the caption (on white: the card is
+   a piece of the page, the same rule as .pdfAreaMarquee). */
+.inkMarker, .textBoxMarker {
   display: inline-flex;
   align-items: center;
   justify-content: center;

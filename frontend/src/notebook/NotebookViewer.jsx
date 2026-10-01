@@ -1,12 +1,13 @@
 // The notebook view (docs/dev/notebooks.md): a page's sheets in the
 // viewer's place, as paper, one under the other — the background and
-// pattern drawn from each sheet's paper — with the ink layer a PDF page has
-// (ink/InkLayer.jsx, keyed by the sheet's id instead of a page number) and
+// pattern drawn from each sheet's paper — with the layers a PDF page has
+// (markup/MarkupLayers.jsx, keyed by the sheet's id instead of a page number) and
 // an "Add page" sheet after the last. The scale follows the viewer's zoom ("page-width"
 // fits the widest sheet). App owns the tree, the tools, the stroke history
 // and the commits; PaperMenu edits a sheet's paper.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { InkLayer } from "../ink/InkLayer";
+import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
+import { armedClasses, usePageTools } from "../markup/PageTools";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { Segmented } from "../settings/SettingsKit";
 import { t, T } from "../shared/i18n/i18n.js";
@@ -16,7 +17,6 @@ import {
 import "./notebook.css";
 
 const PAD = 24; // css px around the column at fit-width
-const EMPTY = [];
 
 // A sheet's paper: the background, then the pattern as two paths (lines,
 // and dots drawn as round-capped zero-length segments).
@@ -37,7 +37,7 @@ export function PaperBackground({ paper }) {
   );
 }
 
-const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, blocks, ink, selection, flash }) {
+const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, marks }) {
   const wrapRef = useRef(null);
   const { paper } = sheet;
   return (
@@ -45,27 +45,20 @@ const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, 
       style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }}
       aria-label={t("Page {n}", { n: number })}>
       <PaperBackground paper={paper} />
-      {blocks.length || ink.onStroke ? (
-        <InkLayer pageNumber={sheet.id} wrapRef={wrapRef} width={paper.width} height={paper.height}
-          blocks={blocks} tool={ink.onStroke ? ink.tool : null} penTool={ink.onStroke ? ink.penTool : null}
-          penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode} eraserSize={ink.eraserSize}
-          lassoMode={ink.lassoMode} selection={selection} flash={flash}
-          onStroke={ink.onStroke} onErase={ink.onErase} onErasePartial={ink.onErasePartial}
-          onSelect={ink.onSelect} onAction={ink.onAction} onMoveSelection={ink.onMoveSelection} onJump={ink.onJump} />
-      ) : null}
+      <MarkupLayers surface={sheet.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks} />
       <span className="nbSheetNo" aria-hidden="true">{number}</span>
     </div>
   );
 });
 
-// sheets: notebook.js sheetsOf; inkBySheet: sheet id → its ink blocks;
-// scaleValue: "page-width" or a number (string); scrollRef.current(sheetId,
-// box?) scrolls a sheet (and a box on it, in points) into view;
-// onCurrentSheet(id) reports the sheet under the middle of the view.
-export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", onEffectiveScale, onZoomTo, readOnly,
-  onAddSheet, onCurrentSheet, scrollRef, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true,
-  inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null,
-  onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+// sheets: notebook.js sheetsOf; marks: sheet id → what its layers draw
+// (markup/MarkupLayers.jsx useMarks); scaleValue: "page-width" or a number
+// (string); scrollRef.current(sheetId, box?) scrolls a sheet (and a box on
+// it, in points) into view; onCurrentSheet(id) reports the sheet under the
+// middle of the view.
+export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEffectiveScale, onZoomTo, readOnly,
+  onAddSheet, onCurrentSheet, scrollRef }) {
+  const tools = usePageTools();
   const boxRef = useRef(null);
   const [boxW, setBoxW] = useState(0);
   useLayoutEffect(() => {
@@ -140,33 +133,12 @@ export function NotebookViewer({ sheets, inkBySheet, scaleValue = "page-width", 
     return () => { scrollRef.current = null; };
   }, [scrollRef]);
 
-  // Stable handlers, so a memoized sheet re-renders only for its own ink.
-  const cbRef = useRef(null);
-  cbRef.current = { onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump };
-  const stable = useMemo(() => {
-    const out = {};
-    for (const k of Object.keys(cbRef.current)) out[k] = (...a) => cbRef.current[k]?.(...a);
-    return out;
-  }, []);
-  const ink = useMemo(() => ({
-    tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
-    eraserSize: inkEraserSize, lassoMode: inkLassoMode,
-    onStroke: onInkStroke ? stable.onInkStroke : undefined, onErase: onInkErase ? stable.onInkErase : undefined,
-    onErasePartial: onInkErasePartial ? stable.onInkErasePartial : undefined, onSelect: onInkSelect ? stable.onInkSelect : undefined,
-    onAction: onInkAction ? stable.onInkAction : undefined, onMoveSelection: onInkMoveSelection ? stable.onInkMoveSelection : undefined,
-    onJump: onInkJump ? stable.onInkJump : undefined,
-  }), [inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, stable,
-    !onInkStroke, !onInkErase, !onInkErasePartial, !onInkSelect, !onInkAction, !onInkMoveSelection, !onInkJump]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const lastWidth = (sheets.at(-1)?.paper.width || DEFAULT_PAPER.width) * scale;
   return (
-    <div ref={boxRef} className={"nbViewer" + (inkTool ? " inkArmed" : "") + (inkTool && !inkPenOnly ? " inkTouchDraw" : "")}
->
+    <div ref={boxRef} className={"nbViewer" + armedClasses(tools)}>
       <div className="nbColumn" style={{ padding: `${PAD}px` }}>
         {sheets.map((s, i) => (
-          <NotebookSheet key={s.id} sheet={s} number={i + 1} scale={scale} blocks={inkBySheet.get(s.id) || EMPTY} ink={ink}
-            selection={inkSelection && inkSelection.page === s.id ? inkSelection : null}
-            flash={inkFlash && (inkBySheet.get(s.id) || EMPTY).some((b) => b.id === inkFlash.id) ? inkFlash : null} />
+          <NotebookSheet key={s.id} sheet={s} number={i + 1} scale={scale} marks={marks.get(s.id) || NO_MARKS} />
         ))}
         {!readOnly && onAddSheet ? (
           <button type="button" className="nbAddSheet" style={{ width: `${lastWidth}px` }} onClick={onAddSheet}

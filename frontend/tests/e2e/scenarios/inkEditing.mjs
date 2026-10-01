@@ -287,7 +287,10 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const view = await openPage(viewCtx, `${server.base}/?share=${token}`);
     await waitForPdf(view, 1);
     await view.waitForSelector(paths);
-    await view.locator(paths).first().tap();
+    // (a read-only page's strokes take no pointer themselves: the ink
+    // layer answers a tap near one, below the page's own marks)
+    const stroke = await view.locator(paths).first().boundingBox();
+    await view.touchscreen.tap(stroke.x + stroke.width / 2, stroke.y + stroke.height / 2);
     assertEq(await view.locator(".inkEditMenu").count(), 0);
     assertEq(await view.getByRole("button", { name: "Handwriting tools", exact: true }).count(), 0);
     assertNoProblems(view);

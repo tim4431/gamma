@@ -6,15 +6,18 @@
 // diff(base, target, pageId) is sync_tree.diff: inserts for ids only the
 // target has, moves for a changed parent or key, sets for changed content
 // (with `base`, the text it was edited from) or a props patch (with
-// `base_props` naming the ink_url a changed drawing was edited from), and
-// deletes of the top-most removed subtrees last; inserts and moves in tree
-// order. apply(snapshot, ops) is sync_tree.apply (keys as sent, no merge).
+// `base_props` naming the ink_url a changed drawing was edited from and the
+// text_box a changed text box was changed from), and deletes of the
+// top-most removed subtrees last; inserts and moves in tree order.
+// apply(snapshot, ops) is sync_tree.apply (keys as sent, no merge).
 // applyLocal(snapshot, ops, ink) is what a server does with ops — the
 // replica has no server of its own: a text edited from an older base is
 // merged (replica/textmerge.js), a drawing edited from an older ink_url is
-// merged by stroke (ink/ink.js mergeInk), an insert of a known id changes
-// nothing.
+// merged by stroke (ink/ink.js mergeInk), a text box changed from an older
+// box key by key (markup/textBox.js mergeTextBox), an insert of a known id
+// changes nothing.
 import { inkProps, mergeInk } from "../ink/ink.js";
+import { mergeTextBox } from "../markup/textBox.js";
 import { merge as textMerge } from "./textmerge.js";
 
 // Deep equality of JSON values, blind to object key order (Python's ==).
@@ -127,7 +130,11 @@ function setOp(bid, b, t, withBase) {
   }
   if (Object.keys(patch).length) {
     op.props = patch;
-    if (withBase && b && "ink_url" in patch) op.base_props = { ink_url: b.props.ink_url || "" };
+    const baseProps = {};
+    if (withBase && b && "ink_url" in patch) baseProps.ink_url = b.props.ink_url || "";
+    const box = b?.props.text_box;
+    if (withBase && "text_box" in patch && box && typeof box === "object" && !Array.isArray(box)) baseProps.text_box = box;
+    if (Object.keys(baseProps).length) op.base_props = baseProps;
   }
   return Object.keys(op).length > 2 ? op : null;
 }
@@ -228,6 +235,9 @@ export async function applyLocal(snapshot, ops, ink) {
         if (!(patch && "auto_title" in patch)) delete b.props.auto_title;
       }
       if (patch && op.base_props && ink) patch = await mergeDrawing(b.props, patch, op.base_props, ink);
+      if (patch && "text_box" in patch && "text_box" in (op.base_props || {})) {
+        patch.text_box = mergeTextBox(b.props.text_box, patch.text_box, op.base_props.text_box);
+      }
       if (patch) { applyPatch(b.props, patch); echo.props = patch; }
       if (Object.keys(echo).length > 2) applied.push(echo);
     } else if (op.op === "delete") {

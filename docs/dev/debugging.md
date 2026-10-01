@@ -135,8 +135,10 @@ see each other's pages or provider entries.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), folder-label paths (`gamma/foldertags.py` ↔
-`frontend/src/library/libraryUtils.js`) and published pages' slugs
-(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) — are pinned by ONE
+`frontend/src/library/libraryUtils.js`), published pages' slugs
+(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) and text boxes
+(`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
+`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) — are pinned by ONE
 set of cases both sides read: `tests/shared/*.json` at the repository root,
 run by `backend/tests/test_shared_fixtures.py` (the slugs by
 `test_publish.py`) and the matching node tests. Add a case there when a rule
@@ -227,7 +229,10 @@ those before adding workers.
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
 left `ref`. `RULES` in `select.mjs` maps each source path (first matching
 glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
-three tour groups, `backend/gamma/ink.py` to the ink groups, docs, desktop,
+three tour groups, `backend/gamma/ink.py` to the ink groups,
+`frontend/src/markup/**` (the page layers and the tool strip, whose
+anchors the ink tour uses) to the ink, ink-editing, pdf-touch, notebooks,
+triggered-guide and textbox groups, docs, desktop,
 extension and backend tests to none, and what every scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed
@@ -327,6 +332,22 @@ The scenarios live in `tests/e2e/scenarios/`:
   placement on a small screen, view/edit shares. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
   ink` runs both files.
+- `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
+  page and on a sheet in both views. It covers the Text tool's click and
+  drag, typing, the stored block after a reload, the notes marker's jump,
+  and the box's and the row's editors never open at once. An empty box goes
+  without an undo entry. Select, move, nudge, the width handle, the menu's
+  restyle, Duplicate and Delete each undo. Another client's edit shows
+  unclipped and is never measured back, and Ctrl+Z follows the armed tool.
+  Then come a finger's tap, drag, scroll and pinch, a stylus on the handle,
+  band and editor, a box over a PDF link, a stale `pdf_page` under a sheet,
+  and two people on one box. `--group textbox`. Chromium's touch emulation
+  shapes the touch step:
+  - after a touch scroll dispatched through CDP, taps produce no click,
+    even seconds later, so the step taps before it scrolls;
+  - a touch pointer is captured by the element under the finger, so taking
+    the capture on another element fires `lostpointercapture` on that
+    child, and the box's handler checks which element lost it.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an

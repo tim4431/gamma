@@ -9,8 +9,10 @@ browsers signed into the same account also work. Backend: `gamma/ops.py`, `gamma
 
 Block undo/redo returns a description of the action (`describeTransition`):
 note creation/deletion/move, a text edit with a short preview, a properties
-or highlight edit. It is derived from the before/after trees, so a rebased
-remote change is never named as ours. The status pill shows it. Undo never
+or highlight edit, a text box's creation, deletion, text edit, move, style
+change or resize ([text_boxes.md](text_boxes.md)). It is derived from the
+before/after trees, so a rebased remote change is never named as ours.
+The status pill shows it. Undo never
 takes back what someone else changed after the step was recorded (see
 "reconciliation" below): what it had to leave alone is said ("Undone: … —
 kept what someone else changed since"), a step with nothing of ours left
@@ -38,7 +40,7 @@ operation batches are broadcast but never written to the operation log.
 
 | op | fields | notes |
 |---|---|---|
-| `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), other keys stay last-writer-wins |
+| `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), a text box's `text_box` into the stored box key by key ("same-box merge" below), other keys stay last-writer-wins |
 | `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
@@ -316,8 +318,10 @@ focus, and `peers` / `me` as React state. The session owns:
   `commit(tree)`: a load (a fetched tree, marked by App's `loaded()`) makes
   the tree the new base; any other transition is diffed against the base
   (`diffTrees`) and the ops queued. The mark sits on the tree value itself
-  (a `WeakMap` of tree → `"load"` / `"remote"`), read once by the
-  transition that commits it — never a flag set beside `setBlocks`: such a
+  (a `WeakMap` of tree → `"load"` / `"remote"` / `"fold"`), read once by
+  the transition that commits it. `"fold"` (`foldBlocks`, a text box's
+  measured size) is diffed and sent like any edit but joins the undo
+  entry before it. It is never a flag set beside `setBlocks`: such a
   flag outlived a load React skipped (nothing changed) or was set by an
   effect running before the autosave one, and the edit committed with it
   was taken for a load and never sent. A view change (unfolding to reveal a
@@ -404,6 +408,26 @@ focus, and `peers` / `me` as React state. The session owns:
   draft was edited from, and the server merges it into a drawing someone
   else saved meanwhile. The answer's `properties` names the merged file,
   and the draft takes it ([handwriting.md](handwriting.md) "Client").
+- **same-box merge**: every change of a text box sends its whole
+  `text_box`, since a keystroke stores the size the box measured at. So the
+  set carries `base_props: {text_box}`, the box it was changed from
+  (`diffTrees` reads it off the base; `pushOp` keeps the base of a key's
+  first change in a run). The server merges it key by key into the box it
+  holds (`text_box.merge_text_box`), and the echo names the result, so a
+  move survives someone typing ([text_boxes.md](text_boxes.md) "Merge").
+  - A remote set of a box with changes of ours still on their way lands
+    merged with them, as the server will merge them (`ahead`). Theirs alone
+    would take our change off the screen until the ack, and a keystroke
+    folded into the queued set would then send the box without it.
+  - On their way means queued, or in the batch out until its own fan-out
+    comes by (`landed`). An own message marks the batch out as landed only
+    when its seq is newer than `s.acked`, the seq of our newest answered
+    batch. An older batch read late, after a refetch or from the log on
+    return, is not the one out.
+  - Our batch, in its place in the order, lands the boxes as the server
+    stored them where this tab holds something else and nothing newer of
+    ours is on its way (`storedBoxes`). The main case is a refetch, whose
+    overlay lays our batch over the box whole.
 - **same-block merge**: a content `set` carries `base`, the text the change
   was made from (`diffTrees` reads it off the base tree; `pushOp` keeps the
   first base of a run of keystrokes). When the server finds the block
@@ -478,7 +502,10 @@ focus, and `peers` / `me` as React state. The session owns:
   snapshot's own text as the change `before → after` (`rebaseText`, one
   replaced span each side), so undoing our typing in a block someone else
   typed in takes out only ours; where the two spans overlap the snapshot
-  keeps its text and marks the block `contested`. Every block a remote batch
+  keeps its text and marks the block `contested`. A remote `text_box` is
+  carried over key by key the same way (`mergeTextBox(snapshot's box,
+  theirs, before's)`), so their measured size or restyle never blocks
+  undoing our move, nor comes undone with it. Every block a remote batch
   changes is stamped (`touched`), and a step (`undoStep` → `planRestore`)
   never deletes a block, with what it holds, that someone else edited,
   moved or made after the step was recorded, nor reverts contested text:
@@ -590,6 +617,9 @@ state in App instead of the tree.
   surrogates, a tab reconnecting on its client id, a stale room, the hello
   counting a batch committed while joining, revoked shares and removed or
   re-roled members closing or re-announcing open sockets.
+- `backend/tests/test_text_box_merge.py`: the same-box merge through the
+  op endpoint and `PUT /blocks/{id}`; its rule's cases are
+  `tests/shared/textboxmerge.json`.
 - `backend/tests/test_textmerge.py`: the same-block merge — different spans,
   insertions at one caret keeping both (through the op endpoint too), an
   insertion in front of a replaced word, an insertion inside the other
@@ -602,11 +632,14 @@ state in App instead of the tree.
   text, undo taking out only our typing in a block someone else wrote in,
   never deleting a note they wrote in or under, contested text kept while
   the rest of the step applies, a step emptied by them said so, a step that
-  changes nothing passed over.
+  changes nothing passed over, a text box rebased key by key.
 - `frontend/tests/collabSession.test.mjs`: `createCollabSession` over fake
   HTTP, socket and timers — ack/socket ordering and catch-up, content versus
   property reconciliation, the merged text on an ack (landed at once, or
-  held while a newer set of ours is queued), retries and their backoff, rejection, navigation
+  held while a newer set of ours is queued), a text box's change meeting
+  someone else's (queued, out, after our fan-out, as stored, the next
+  keystroke on a queued move, a refetch's overlay, an older batch read
+  late), retries and their backoff, rejection, navigation
   during a save, presence messages, the caret throttle, reconnect backoff,
   read-only sessions; browser behavior is covered separately below.
 - `frontend/tests/collabRobustness.test.mjs`: the refused-batch paths
@@ -640,7 +673,8 @@ state in App instead of the tree.
   the restore, a
   highlight made by the other person; `share.mjs` covers the invited editor on a share link and
   the stranger typing through an anyone-with-the-link edit share under a
-  renamed display name.
+  renamed display name, and `textBoxes.mjs` a text box one person moves
+  while the other types in it.
 
 ## Limits and next steps
 

@@ -11,6 +11,7 @@
 //   is pushed, the rest is put back as the remote has it;
 // - unlanded: one op of a push whose answer was lost, split into what the
 //   remote shows and what goes again.
+import { normalizeTextBox } from "../markup/textBox.js";
 import { contains } from "./textmerge.js";
 import { ancestors, diff, moved, same, subtreeIds, treeOrder } from "./tree.js";
 
@@ -198,14 +199,32 @@ export function unlanded(op, base, remote) {
     target.content = op.content;
     if ("base" in op) target.base = op.base;
   }
-  const props = op.props || {};
-  const ink = "ink_url" in props && "ink_url" in (op.base_props || {}) && now.props.ink_url !== props.ink_url;
+  const props = op.props || {}, baseProps = op.base_props || {};
+  const ink = "ink_url" in props && "ink_url" in baseProps && now.props.ink_url !== props.ink_url;
+  // A text box merged key by key is judged key by key (_box_again).
+  const box = "text_box" in props && "text_box" in baseProps ? boxAgain(props.text_box, baseProps.text_box, now.props.text_box) : false;
   for (const [k, v] of Object.entries(props)) {
     if (ink && INK_KEYS.includes(k)) { (rest.props ||= {})[k] = v; continue; }
+    if (k === "text_box" && box !== false) {
+      if (box === null) (landed.props ||= {})[k] = v;
+      else (rest.props ||= {})[k] = box;
+      continue;
+    }
     const unchanged = same(now.props[k] ?? null, was.props?.[k] ?? null) && !same(now.props[k] ?? null, v);
     ((unchanged ? rest : landed).props ||= {})[k] = v;
   }
   if (ink) rest.base_props = op.base_props;
+  if (box) rest.base_props = { ...(rest.base_props || {}), text_box: now.props.text_box };
   const size = (o) => Object.keys(o).length - ("base_props" in o ? 1 : 0);
   return [size(landed) > 2 ? landed : null, size(rest) > 2 ? rest : null];
+}
+
+// _box_again: the box to send again (the remote's, with the keys of ours it
+// still shows as they were), null when it shows each as ours or changed
+// since, false when one of them is no box (the plain rule).
+function boxAgain(mine, base, now) {
+  const m = normalizeTextBox(mine), b = normalizeTextBox(base), n = normalizeTextBox(now);
+  if (!m || !b || !n) return false;
+  const pending = Object.fromEntries(Object.entries(m).filter(([k, v]) => v !== b[k] && n[k] === b[k]));
+  return Object.keys(pending).length ? { ...n, ...pending } : null;
 }

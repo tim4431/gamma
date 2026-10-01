@@ -7,7 +7,8 @@ block, so sheets two devices add while apart both survive a merge, and
 nothing counts pages. A sheet's handwriting is the ink groups under it that
 no nearer sheet holds — blocks with an ``ink_url`` whose file
 (gamma/ink.py) is drawn on a ``canvas`` space the sheet's size, points from
-its top-left corner. Other blocks under a sheet are notes about that page.
+its top-left corner — and its text boxes are the ones placed the same way
+(gamma/text_box.py). Other blocks under a sheet are notes about that page.
 
 A paper is ``{width, height, color, pattern, spacing, line}``: the size in
 points, the background colour, ``blank`` / ``ruled`` / ``grid`` / ``dots``
@@ -123,28 +124,39 @@ def paper_ops(paper: dict) -> bytes:
     return b"\n".join(ops)
 
 
-def notebook_pdf(sheets: list[tuple[dict, list]]) -> bytes:
-    """A PDF of a page's sheets: one PDF page per ``(paper, [InkFile])`` in
-    order (at least one), the paper painted and the handwriting drawn on it
-    as vectors (the page is the drawing, so every viewer and printer shows
-    it as written)."""
+def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> bytes:
+    """A PDF of a page's sheets: one PDF page per ``(paper, [(content,
+    text_box)], [InkFile])`` in order (at least one), the text boxes
+    normalized. The paper is painted, the text boxes typeset on it as real
+    text (``resolve_ref`` reads their references, ``text_box.pdf_ops``),
+    and the handwriting drawn over them as vectors (the page is the
+    drawing, so every viewer and printer shows it as written)."""
     from PyPDF2 import PdfWriter
     from PyPDF2.generic import DecodedStreamObject, NameObject
 
     from . import ink as inkmod
+    from . import text_box
+    from .pdf_glyphs import GlyphFonts
     from .pdf_typeset import num
 
     writer = PdfWriter()
-    for paper, inks in sheets:
+    glyphs = GlyphFonts(writer)
+    for paper, boxes, inks in sheets:
         w, h = paper["width"], paper["height"]
         writer.add_blank_page(w, h)
         page = writer.pages[-1]  # add_blank_page's return value is not the page the writer keeps
-        body = [b"q 1 0 0 -1 0 %s cm" % num(h), paper_ops(paper)]
+        body, fonts = [b"q 1 0 0 -1 0 %s cm" % num(h), paper_ops(paper)], set()
+        for content, box in boxes:
+            ops, _w, _h = text_box.pdf_ops(content, box, w, glyphs, fonts, resolve_ref)
+            body.append(b"q 1 0 0 1 %s %s cm\n%s\nQ" % (num(box["x"]), num(box["y"]), ops))
         body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y)) for ink in inks]
         body.append(b"Q")
         stream = DecodedStreamObject()
         stream.set_data(b"\n".join(body))
         page[NameObject("/Contents")] = writer._add_object(stream.flate_encode())
+        if boxes:
+            page[NameObject("/Resources")] = text_box.pdf_resources(fonts, glyphs)
+    glyphs.finalize()
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

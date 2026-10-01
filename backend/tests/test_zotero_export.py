@@ -151,6 +151,28 @@ def test_zotero_export_note_images(guest):
     assert "“quoted”" in hl_note and "see" in hl_note
 
 
+def test_zotero_export_writes_a_text_box_as_a_note(guest):
+    """A text box is the user's writing: a Zotero note headed by its page
+    (the highlight memo's convention), never an annotation burned into the
+    PDF copy, and gone with the Notes switch like any note."""
+    page = _paper(guest, "zxt")
+    _put_children(guest, page["id"], [
+        _positioned("zxth", "the quoted passage"),
+        {"id": "zxtb", "content": "typed on the **paper**", "children": [],
+         "properties": {"text_box": {"x": 40, "y": 60, "w": 180}, "pdf_page": 1}},
+    ])
+    z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf"}))
+    it = _rdf_items(z)[0]
+    notes = [n["text"] for n in it["notes"]]
+    assert len(notes) == 1 and "Text box on p.1" in notes[0] and "typed on the **paper**" in notes[0]
+    base = next(n for n in z.namelist() if n.endswith(".rdf")).rsplit("/", 1)[0]
+    pdf = z.read(f"{base}/{it['pdf_paths'][0]}")
+    assert pdf.count(b"/Highlight") == 1 and b"/Square" not in pdf and b"/FreeText" not in pdf
+
+    z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", "notes": 0}))
+    assert _rdf_items(z)[0]["notes"] == []
+
+
 def test_zotero_export_switches(guest):
     page = _paper(guest, "zxb")
     # notes=0: no Memo; highlights=0: bare PDF copy; pdf=0: no files at all

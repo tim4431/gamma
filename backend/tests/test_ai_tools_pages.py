@@ -317,6 +317,50 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
     c.delete(f"/api/blocks/{page}")
 
 
+def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
+    """A text box has no quote, like an area highlight, but is a note:
+    area_highlight never takes it for a rectangle (not even with a stray
+    position), and read_page and the chat context list it with the notes,
+    labelled with its page, with no picture."""
+    from gamma import ai_context
+    from gamma.ai_context import area_highlight
+    from gamma.routers.ai import AIChatRequest
+
+    c, ids = org
+    rendered = []
+    monkeypatch.setattr(ai_context, "render_page", lambda *a, **kw: rendered.append(a))
+    monkeypatch.setattr(ai_context, "pdf_path", lambda ws, doc: "fake.pdf")
+    monkeypatch.setattr(ai_context, "extract_text_pages", lambda *a, **kw: ("(page 1) text", 1))
+    monkeypatch.setattr(ai_context, "ensure_indexed", lambda *a: None)
+
+    rect = {"x1": 80, "y1": 100, "x2": 400, "y2": 300, "width": 800, "height": 1000, "pageNumber": 2}
+    box = {"text_box": {"x": 40, "y": 60, "w": 180}, "pdf_page": 2}
+    stray = {**box, "pdf_position": {"pageNumber": 2, "boundingRect": rect, "rects": [rect], "area": True}}
+    assert area_highlight(box) is None and area_highlight(stray) is None
+    assert area_highlight({**stray, "highlight_id": "h-stray"}) is None
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "boxed paper",
+                                       "properties": {"folder": "readout", "doc_id": "b" * 24}}).json()["id"]
+    c.post("/api/blocks", json={"parent_id": page, "content": "typed on the figure", "properties": stray})
+    # Under a sheet the sheet holds a box whatever its pdf_page says; with neither it is on no page.
+    sheet = c.post("/api/blocks", json={"parent_id": page, "content": "",
+                                        "properties": {"sheet": {}}}).json()["id"]
+    c.post("/api/blocks", json={"parent_id": sheet, "content": "moved onto the sheet", "properties": box})
+    c.post("/api/blocks", json={"parent_id": page, "content": "on no page", "properties": {"text_box": {}}})
+
+    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": page})
+    assert "User's notes:\n- (text box on p. 2) typed on the figure" in text
+    assert "  - (text box on a page of paper) moved onto the sheet" in text
+    assert "- (text box, not placed on a page) on no page" in text
+    assert "Area highlight" not in text and not chip.get("images") and not rendered
+
+    payload = AIChatRequest(prompt="what did I write?", page_id=page, include_notes=True)
+    crops = []
+    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    assert "- (text box on p. 2) typed on the figure" in context
+    assert "Area highlight" not in context and not crops and "area_pictures" not in coverage[0]
+    c.delete(f"/api/blocks/{page}")
+
+
 def test_document_map_starts_after_the_excerpt(org):
     """The map lists the pages the excerpt doesn't show in full — the
     model picks the next page to read from it, not one it already has."""

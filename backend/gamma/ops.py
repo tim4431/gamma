@@ -15,7 +15,10 @@ can edit one page at once and only the touched rows move:
   group's new ``ink_url`` whose base is not the stored one is merged into
   the stored drawing by stroke (``gamma/ink.py`` ``merge_ink``, the applied
   op names the merged file), so two people drawing in one group both keep
-  their strokes. Other keys stay last-writer-wins.
+  their strokes, and a text box's ``text_box`` is merged key by key
+  (``gamma/text_box.py`` ``merge_text_box``, the applied op carries the
+  merged box), so one person's move survives another's typing. Other keys
+  stay last-writer-wins.
 - ``insert {id, parent, position?, content, props}`` — the client mints the
   id and the fractional position; a position that collides with a sibling is
   re-keyed here and the applied op carries the final value. Re-inserting a
@@ -61,6 +64,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from . import block_index, collab, textmerge, upload_gc
 from . import ink as inkmod
+from .text_box import merge_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, free_position,
     last_child_position, subtree_refs, trashed_page, valid_block_id, write_lock)
@@ -141,7 +145,7 @@ class SetOp(BaseModel):
     content: str | None = None
     base: str | None = None  # the text `content` was edited from (three-way merge)
     props: dict | None = None
-    base_props: dict | None = None  # the values `props` was computed from (an ink group's merge)
+    base_props: dict | None = None  # the values `props` was computed from (an ink group's, a text box's merge)
 
 
 class InsertOp(BaseModel):
@@ -293,8 +297,12 @@ class _Batch:
                 cur["head"] = textmerge.map_offset(content, merged, cur.get("head", -1)) if cur.get("head", -1) >= 0 else -1
             content = merged
         props = json.loads(row[1] or "{}")
-        if patch and op.get("base_props"):
-            patch = self.merge_ink(props, patch, op["base_props"])
+        base_props = op.get("base_props")
+        if patch and base_props:
+            patch = self.merge_ink(props, patch, base_props)
+            if "text_box" in patch and "text_box" in base_props:
+                patch = {**patch, "text_box": merge_text_box(props.get("text_box"), patch["text_box"],
+                                                              base_props["text_box"])}
         echo = {"op": "set", "id": block_id}
         sets, values = ["updated_at = ?"], [self.now]
         if content is not None:

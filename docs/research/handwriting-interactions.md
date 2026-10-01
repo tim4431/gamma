@@ -107,7 +107,7 @@ The findings shaped that work; the code they describe has changed since.
    stroke within a radius. Direct selection needs a deliberate nearest/topmost
    choice, a screen-space touch tolerance, and a policy for overlapping ink.
 2. **The click action is navigation.** `Strokes` calls `onJump(g.id)`;
-   `showInkInNotes` scrolls the outliner. Preserve that useful action as an
+   `showInNotes` scrolls the outliner. Preserve that useful action as an
    explicit “Show note” command when introducing edit selection.
 3. **Finger editing is gated out.** `setup` rejects touch for `penOnly`
    before testing lasso or moving the selection. “Fingers never draw” needs

@@ -66,6 +66,20 @@ test("applying another side's ops here merges text and drawings the way the serv
   assert.equal(here.n1.content, "hello world!", "the input is not changed");
 });
 
+test("applying another side's change of a text box here keeps the keys this copy changed", async () => {
+  const box = { x: 10, y: 10, w: 60, h: 23, auto: true, size: 12, color: "#1f1f1f", bg: null };
+  const here = { [P]: b("root", "a0", "Page"), t: b(P, "a0", "Hello", { text_box: { ...box, x: 200 }, pdf_page: 1 }) };
+  // the other side typed from the box as it was: its measured width comes over, the move made here stays
+  const ops = [{ op: "set", id: "t", content: "Hello world", base: "Hello", props: { text_box: { ...box, w: 101.5 } },
+    base_props: { text_box: box } }];
+  const { snapshot, applied } = await applyLocal(here, ops, inkStore());
+  assert.deepEqual(snapshot.t.props.text_box, { ...box, x: 200, w: 101.5 });
+  assert.deepEqual(applied[0].props.text_box, { ...box, x: 200, w: 101.5 }, "the echo names the merged box");
+  // and one that names no base box replaces it, as the server does
+  const whole = await applyLocal(here, [{ op: "set", id: "t", props: { text_box: { ...box, w: 101.5 } } }], inkStore());
+  assert.deepEqual(whole.snapshot.t.props.text_box, { ...box, w: 101.5 });
+});
+
 test("an edit beats a delete, both ways, and only this copy's edits are pushed", () => {
   const base = { [P]: b("root", "a0", "Page"), a: b(P, "a0", "alpha"), s: b(P, "a1", "sub"), s1: b("s", "a0", "under") };
   const local = { ...base, a: b(P, "a0", "alpha, edited here") };

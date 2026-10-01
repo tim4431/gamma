@@ -31,7 +31,7 @@ On open, each paper's title, authors and venue are filled in automatically (arXi
 
 ### Draw with a pen
 
-The pen button in the viewer's zoom column opens the tool strip: pens and highlighters with their own colors and widths, an eraser (whole strokes or partial), a lasso to move, resize, rotate, recolor, duplicate or delete strokes, and Undo / Redo.
+The pen button in the viewer's zoom column opens the tool strip: pens and highlighters with their own colors and widths, an eraser (whole strokes or partial), a lasso to move, resize, rotate, recolor, duplicate or delete strokes, the **Text** tool for [typed text](#type-on-the-page), and Undo / Redo.
 
 Tap an active pen preset again to choose **Pen** (width follows stylus pressure) or **Monoline** (an even line at every pressure). Each preset remembers its style, color, and width. Highlighters stay translucent and constant-width.
 
@@ -40,9 +40,22 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - **Replay**: the play button in the corner of a handwriting card in the notes shows the strokes being written again on the page (it scrolls there) and in the card, in the order and at the pace you wrote them (long pauses are shortened). Press it again to stop.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
+### Type on the page
+
+The strip's **Text** tool (**T** while the strip is open) puts typed text on a PDF page or a notebook sheet, like a text box in Acrobat.
+
+- **Add a box**: arm Text and tap where the text should start, then type. Drag instead to set the box's width first; the text then wraps inside it. Esc or a click elsewhere finishes. A box you leave empty goes away.
+- **Type**: Enter starts a new line in the box. The note formatting keys work (Ctrl+B, Ctrl+I, Ctrl+K…), and so does Markdown: lists, headings, math.
+- **Select and move**: with the hand (or the strip closed), click a box to select it and click it again to edit it. Drag a box to move it. On a touch screen, tap a box first, then drag it; a finger on a box that isn't selected scrolls the page. A selected box's keys: the arrows nudge it (Shift for bigger steps), Delete removes it, Enter edits it, Esc lets go.
+- **Resize**: drag the handle on the right edge of a selected box to set its width.
+- **Style**: a selected box has a menu with its **Size**, **Color** and **Background**, **Duplicate**, **Show note** and **Delete**. Tap the armed Text tool again for its options: the size, color and background of new boxes, which also restyle the selected box or the one you are typing in.
+- **In the notes** each box is a note with a **T** marker; click the marker to see the box on its page. Edit the text in either place.
+- **Undo**: while Text is armed or a box is selected, Ctrl+Z and the strip's Undo take back changes to the boxes (and your notes), a run of nudges in one step; with a pen armed they take back strokes. On a shared page, someone moving a box while you type in it keeps both, and your undo takes back only yours.
+- Boxes export with your notes, a box on a PDF page with its page number, and as real text boxes in **Annotated PDF**. Text boxes and sticky notes made in other PDF apps come in as boxes.
+
 ### Notebooks
 
-A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
+A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF, and type on them with the Text tool.
 
 - **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
 - **Two views.** The notes view draws each sheet right among your notes, with its tools under it: its pen, its **Paper**, a replay of what's written on it, **+** for another sheet after it, and **Notebook view**, which shows the sheets large in the viewer instead, with your notes beside them. **Notes view** in the viewer's side bar, or closing the viewer, goes back. Each page remembers its view in this browser.
@@ -235,7 +248,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 **Import…**
 
-- **Annotations embedded in the open PDF** (Acrobat, Preview, SumatraPDF…) as highlight blocks; the *strip* switch rewrites the stored PDF without them so nothing renders twice.
+- **Annotations embedded in the open PDF** (Acrobat, Preview, SumatraPDF…) as highlight blocks, handwriting as ink, and typed text and sticky notes as text boxes; the *strip* switch rewrites the stored PDF without them so nothing renders twice.
 - **Zotero library**: File → Export Library as Zotero RDF with files and notes, zipped — collections become folders, tags become labels, reader annotations become highlights.
 - **Logseq**: a `.pdf + .edn` pair with its highlights.
 - **Markdown notes**: one `.md`, or a `.zip` of a folder — an **Obsidian vault** (wikilinks, block embeds, tags and image sizes survive) or a **Notion export** — comes in as note pages, folders included.
@@ -243,7 +256,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 **Export…**
 
-- **Annotated PDF**: highlights become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
+- **Annotated PDF**: highlights, handwriting and text boxes become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
 - **Notes as PDF** or **Markdown** (highlights as quotes, images bundled or linked).
 - **Obsidian vault** (wikilinks, `^id` block anchors, highlights as quote callouts linking the PDF page), **Logseq graph**, **Zotero library** (RDF with PDFs and annotations, ready to import), or a **Gamma zip** another Gamma can merge.
 - Switches choose the layers (highlights, notes, bundle the files); the last choice is remembered.
