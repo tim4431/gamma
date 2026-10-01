@@ -143,9 +143,12 @@ The Connector now takes a PDF from a frame too. Three requests followed:
 - **No Gamma page on the way.** The card now asks the Connector to open the
   publisher's tab itself; `/go` remains only for the desktop app and a
   Connector that has not answered yet, and goes on without delay.
-- **In the background.** A setting (off by default) lets a card hand its
-  request to the Connector without a click. The Connector opens the page in
-  a minimized window, three at a time, and closes the tab after delivery.
+- **In the background.** A setting lets a card hand its request to the
+  Connector without a click. The Connector opens the page in a tab beside
+  the Gamma one, three at a time, and closes the tab after delivery. (As
+  built it was off by default and used a minimized window of its own; both
+  changed on 2026-09-30 — the window was easy to lose track of, and the
+  setting earns its keep — see [extension.md](../dev/extension.md).)
   It does not solve CAPTCHAs; it finishes what the browser gets unasked,
   which is a lot: a paper the user's session or institution network already
   has access to, and checks that pass a real browser on their own. When the

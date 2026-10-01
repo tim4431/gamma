@@ -629,6 +629,10 @@ export async function chatNavigationScenarios(env) {
     ] } });
     let request = { ...handoff, url: "https://www.science.org/doi/10.1126/e2e.handoff", pdf_url: "", detail: "",
       status: "waiting", watched: false, pages: 0, from_url: "" };
+    // This is the by-hand path: "Fetch blocked papers in the background" is
+    // on by default, and would hand the request over before the user clicks.
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { fetchInBackground: false } } });
     const uploads = [], prompts = [], libraryUploads = [];
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
@@ -726,6 +730,7 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
@@ -787,7 +792,7 @@ export async function chatNavigationScenarios(env) {
         { what: "the card hands the request to the Connector without a click" });
       assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
       request = { ...request, watched: true, background: true };
-      await card.getByText("Gamma Connector is getting it in a minimized window").waitFor({ timeout: 8000 });
+      await card.getByText("Gamma Connector is getting it in a tab of its own").waitFor({ timeout: 8000 });
       // The page wants the user: the card says so and offers the tab.
       request = { ...request, note: "check" };
       await card.getByText("The site is showing a bot check or CAPTCHA").waitFor({ timeout: 8000 });
@@ -963,6 +968,57 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  await step("chat navigation: the history popover ticks conversations and deletes them in one call", async () => {
+    // Its own page: earlier steps left conversations in the other buckets.
+    const histPage = await alice.api("/api/pages", { method: "POST", body: { title: "History page" } });
+    const bucket = histPage.id;
+    const archived = {};
+    for (const title of ["Alpha talk", "Beta talk", "Gamma talk"]) {
+      const r = await alice.api("/api/chat-history/archive",
+        { method: "POST", body: { bucket, title, messages: [{ role: "user", text: title }] } });
+      archived[title] = r.id;
+    }
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${bucket}`);
+    try {
+      await page.getByRole("button", { name: "Chat history", exact: true }).click();
+      const rows = page.locator(".chatHistRow:not(.active)");
+      await until(async () => (await rows.count()) === 3, { what: "the three archived conversations list" });
+      const bulk = page.locator(".chatHistBulk");
+      assertEq(await bulk.count(), 0, "no bar until something is ticked");
+      const tick = (text) => page.locator(".chatHistRow", { hasText: text }).locator(".chatHistPick");
+      // The box comes up on hover; from the first tick on, every row has one.
+      await page.locator(".chatHistRow", { hasText: "Alpha talk" }).hover();
+      await tick("Alpha talk").check();
+      await tick("Beta talk").check();
+      assert((await bulk.innerText()).includes("2 selected"), "the bar counts the ticks");
+      // A search that hides a ticked row drops its tick, so Delete never
+      // takes a conversation the user cannot see.
+      await page.locator(".chatHistoryPop .searchInput").fill("Beta");
+      await until(async () => (await bulk.innerText()).includes("1 selected"), { what: "the hidden row's tick is dropped" });
+      await page.locator(".chatHistoryPop .searchInput").fill("");
+      await until(async () => (await rows.count()) === 3);
+      await bulk.getByRole("button", { name: "Select all", exact: true }).click();
+      await until(async () => (await bulk.innerText()).includes("3 selected"), { what: "Select all takes the listed rows" });
+      await tick("Alpha talk").uncheck();
+      await bulk.getByRole("button", { name: "Delete", exact: true }).click();
+      const confirm = page.locator(".confirmModal");
+      await confirm.waitFor();
+      assert((await confirm.innerText()).includes("2 conversations"), "the dialog says how many");
+      await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+      await until(async () => (await rows.count()) === 1, { what: "the ticked rows go" });
+      assertEq(await bulk.count(), 0, "the bar goes with the selection");
+      const left = (await alice.api(`/api/chat-history?bucket=${bucket}`)).sessions;
+      assertEq(left.map((e) => e.id).join(), archived["Alpha talk"], "only the unticked conversation is left");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/blocks/${histPage.id}`, { method: "DELETE" });
     }
   });
 }

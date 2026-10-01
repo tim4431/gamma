@@ -1372,6 +1372,13 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     never sends a title, so it can't roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
+  - Several at once: each archived row carries a tick box (on hover, and on
+    every row while anything is ticked). The bar under the list says how
+    many, offers **Select all** (the rows the search leaves listed) and
+    **Clear**, and its **Delete** confirms once and sends them in one call
+    (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
+    popover: closing it, or a search that hides a ticked row, drops them, so
+    Delete never takes a row the user cannot see.
 - History follows its bucket: `POST /folders/rename` rewrites entry
   buckets along with the active rows (a folder delete leaves them), and
   `purge_page_data` drops the entries of a page deleted for good (a page in

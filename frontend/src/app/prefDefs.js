@@ -220,8 +220,11 @@ export const PREFS = {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
-  // The "Linked from N pages" section under a page's notes, folded or open
-  // (editor/BacklinksPanel.jsx): a view state of this browser.
+  // The "Linked from N pages" section under a page's notes
+  // (editor/BacklinksPanel.jsx): off by default — a page's own notes end
+  // the page unless the links into it are asked for. `backlinksCollapsed`
+  // is the shown section's fold, a view state of this browser.
+  backlinksVisible: flag("gamma-backlinks", ACCOUNT, false),
   backlinksCollapsed: flag("gamma-backlinks-collapsed", BROWSER, false),
   // Keyboard shortcuts (Settings → Keyboard, docs/dev/hotkeys.md): command
   // id → chord ("Mod-Shift-k") or null for unbound; a command not named
@@ -264,10 +267,11 @@ export const PREFS = {
   agentEnabled: flag("gamma-ai-agent-enabled", ACCOUNT, true),
   agentPerms: pref("gamma-ai-agent-perms", ACCOUNT,
     Object.fromEntries(CHAT_KINDS.map((k) => [k, { ...TOOL_PERMS_DEFAULT }])), AGENT_PERMS),
-  // Off by default: a chat fetch a publisher stopped waits for the user to
-  // open the page. On, the card hands it to Gamma Connector by itself, which
-  // tries in a minimized window (chat/FetchHandoffCards.jsx).
-  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, false),
+  // On by default: a chat fetch a publisher stopped is handed to Gamma
+  // Connector by the card itself, which tries in an unfocused tab beside
+  // the Gamma one (chat/FetchHandoffCards.jsx). Off leaves the fetch waiting
+  // for the user to open the page.
+  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, true),
   // On by default: a chat may give a long document to a helper that reads
   // it and hands back a short cited answer (the read_paper tool), so the
   // conversation carries the answer and not the paper. Off makes the chat

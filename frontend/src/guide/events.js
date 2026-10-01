@@ -25,6 +25,7 @@ export const EVENTS = [
   "ink.undone",       // a handwriting change was undone
   "sheet.created",    // {id}: a sheet of paper was added to a page (a new notebook, +, /page, or writing low on the last one)
   "job.started",      // {kind}: a background job was started on the server (an export, a backup, a restore, an import)
+  "paper.fetched",    // a paper was fetched from an address (a URL, a DOI, an arXiv id) and filed in the library
   "approval.shown",   // {tool}: the assistant asked before a change
   "table.shown",      // an editable table rendered in the notes
   "table.created",    // a table made with /table or a paste first rendered as one

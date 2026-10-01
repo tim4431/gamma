@@ -31,7 +31,7 @@ import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FilePlusIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
-import { T, getLocale, t } from "../shared/i18n/i18n.js";
+import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -399,7 +399,7 @@ export default function ChatDock({
   // Opens a page the reply links to (/?page=<id>) in place.
   onOpenPage,
   // A blocked fetch's card hands it to Gamma Connector by itself, to fetch
-  // out of sight (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
+  // in a background tab (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
   // fetchMetadata}, how a reply's "Save to library" and save_paper save
   // (Settings → Reading).
   fetchInBackground = false, delegateReads = true, paperSave = {}, onResearch,
@@ -727,9 +727,12 @@ export default function ChatDock({
   const [history, setHistory] = useState(null); // null = not loaded yet
   const [historyQuery, setHistoryQuery] = useState("");
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
+  const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
   const historyOpen = openPopover === "chathistory";
   useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
+  // The selection belongs to the open popover: closing it drops the ticks.
+  useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
   useEffect(() => {
     if (readOnly || !historyOpen || history != null) return;
     let cancelled = false;
@@ -835,6 +838,7 @@ export default function ChatDock({
   function deleteHistory(entry) {
     const run = async () => {
       setHistory((prev) => (prev || []).filter((s) => s.id !== entry.id));
+      setPicked((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
       try {
         await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
       } catch (err) {
@@ -849,6 +853,30 @@ export default function ChatDock({
     });
   }
 
+  // The ticked entries in one call (POST /chat-history/delete). The active
+  // conversation is never among them: it has no history row to delete.
+  function deletePicked() {
+    const ids = [...picked];
+    if (!ids.length) return;
+    const run = async () => {
+      setHistory((prev) => (prev || []).filter((s) => !ids.includes(s.id)));
+      setPicked(new Set());
+      try {
+        await apiJson(`${API}/chat-history/delete`,
+          { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ids }) });
+      } catch (err) {
+        setStatus(t("Couldn't delete the conversations: {message}", { message: err.message }));
+        setHistory(null);
+      }
+    };
+    askConfirm({
+      title: T("Delete conversations"),
+      message: tn("Delete {n} conversation from this chat's history? This can't be undone.",
+        "Delete {n} conversations from this chat's history? This can't be undone.", ids.length),
+      confirmLabel: t("Delete"), danger: true, onConfirm: run,
+    });
+  }
+
   // Rows of the history popover: the active conversation first, then the
   // archived ones newest-first, filtered by the search box.
   const historyRows = useMemo(() => {
@@ -857,6 +885,16 @@ export default function ChatDock({
     const rows = [active, ...(history || [])];
     return q ? rows.filter((s) => `${s.title} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
   }, [history, historyQuery, activeTitle, chatMessages]);
+  // The rows a selection can hold: the listed archived ones ("Select all"
+  // takes the search's results, not the whole history). A tick survives
+  // only while its row is listed, so Delete never takes a hidden one.
+  const archivedRows = useMemo(() => historyRows.filter((s) => !s.active), [historyRows]);
+  const listedKey = archivedRows.map((s) => s.id).join(",");
+  useEffect(() => {
+    const listed = new Set(listedKey ? listedKey.split(",") : []);
+    setPicked((prev) => (prev.size && [...prev].some((id) => !listed.has(id))
+      ? new Set([...prev].filter((id) => listed.has(id))) : prev));
+  }, [listedKey]);
 
   // Attach picked/pasted files: images join the pasted-figures row, PDFs
   // become one-shot native attachments (same as the library PDF button).
@@ -1559,7 +1597,7 @@ export default function ChatDock({
                 placeholder={t("Search conversations…")}
                 onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
               />
-              <div className="chatHistList">
+              <div className={`chatHistList${picked.size ? " picking" : ""}`}>
                 {historyRows.map((s) => renaming?.id === s.id ? (
                   <div key={s.id} className="chatHistRow renaming">
                     <input
@@ -1581,6 +1619,16 @@ export default function ChatDock({
                     title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
                     onClick={() => { if (!s.active) openHistory(s.id); }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
+                    {s.active ? null : (
+                      <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
+                        aria-label={t("Select this conversation")} title={t("Select for deleting")}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setPicked((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(s.id); else next.delete(s.id);
+                          return next;
+                        })} />
+                    )}
                     <span className="chatHistTitle">{s.title || t("Untitled")}</span>
                     <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
@@ -1602,6 +1650,17 @@ export default function ChatDock({
                   : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
                   : null}
               </div>
+              {picked.size ? (
+                <div className="chatHistBulk">
+                  <span>{tn("{n} selected", "{n} selected", picked.size)}</span>
+                  {picked.size < archivedRows.length ? (
+                    <button type="button" className="uiBtn sm ghost"
+                      onClick={() => setPicked(new Set(archivedRows.map((s) => s.id)))}>{t("Select all")}</button>
+                  ) : null}
+                  <button type="button" className="uiBtn sm ghost" onClick={() => setPicked(new Set())}>{t("Clear")}</button>
+                  <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </span> : (

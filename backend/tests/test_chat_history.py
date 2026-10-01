@@ -81,6 +81,18 @@ def test_rename_and_delete_history(guest):
     assert _sessions(guest, key) == []
 
 
+def test_delete_several_conversations_at_once(guest):
+    """The history popover's selection: one call, only the named entries."""
+    key = "home:hist/bulk"
+    ids = [guest.post("/api/chat-history/archive",
+                      json={"bucket": key, "messages": _msgs(f"q{i}")}).json()["id"] for i in range(3)]
+    r = guest.post("/api/chat-history/delete", json={"ids": ids[:2] + ["missing"]})
+    assert r.status_code == 200 and r.json() == {"deleted": 2}
+    assert [s["id"] for s in _sessions(guest, key)] == [ids[2]]
+    assert guest.post("/api/chat-history/delete", json={"ids": []}).json() == {"deleted": 0}
+    assert [s["id"] for s in _sessions(guest, key)] == [ids[2]]
+
+
 def test_history_is_per_bucket(guest):
     guest.post("/api/chat-history/archive", json={"bucket": "home:hist/a", "messages": _msgs("A")})
     guest.post("/api/chat-history/archive", json={"bucket": "home:hist/b", "messages": _msgs("B")})

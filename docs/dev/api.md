@@ -372,7 +372,7 @@ the request's workspace — the extension names none, so its personal one.
 | GET | `/pdf-text-status` | whether a doc has extractable text |
 | GET | `/ai/selection-crop/{doc_id}?page=&box=x0,y0,x1,y1` | the picture of a selected region a chat reply sent the model, drawn again from its saved page + crop box (page fractions); any workspace member |
 | GET | `/ai/handoffs/{id}` | a fetch handed to the browser (`routers/ai_handoffs.py`, [ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)): `{id, source, url, pdf_url, host, wall, detail, status: waiting \| done \| dismissed \| expired, watched, note, background, pages, held, from_url}` — never the text or the PDF; 404 for another account's or a forgotten request |
-| POST | `/ai/handoffs/{id}/watch` | Gamma Connector took the request's tab (`watched: true`); optional body `{note, background}`: what it is doing there (`looking`, `check`, `signin`, `opening`, `refused`, `other`, `closed`; anything else clears it) and whether the tab is out of sight |
+| POST | `/ai/handoffs/{id}/watch` | Gamma Connector took the request's tab (`watched: true`); optional body `{note, background}`: what it is doing there (`looking`, `check`, `signin`, `opening`, `refused`, `other`, `closed`; anything else clears it) and whether it is a background tab |
 | POST | `/ai/handoffs/{id}/pdf` | multipart `file` (+ optional `url` it came from): the PDF for the request, read at once and kept in memory for the account; 400 not a PDF / no text layer, 413 over 40 MB, 409 once the request is settled |
 | POST | `/ai/handoffs/{id}/store` | writable workspace: the delivered PDF (while held, `held: true`) into the workspace's uploads, content-hash deduped like `POST /uploads` → `{doc_id, source_url, already_existed, url}` (`url`: where the browser got it), for `POST /clip {doc_id}`; 404 when nothing is held |
 | DELETE | `/ai/handoffs/{id}` | settle the request without a PDF. Optional body `{note}` — what the user wants the assistant to do instead, which only the model reads: the card's **Skip** while the reply waits on it |
@@ -394,6 +394,7 @@ token reads chats and history, and gets 403 on each write below.
 | POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title, updated_at?}` into history and clear the active row (→ `{id}`, null when empty); when `updated_at` isn't the stored version, the newer stored conversation is archived too (unless the copy holds all of it; alone when it holds all of the copy) |
 | POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title, updated_at?}` (the current one) is archived first, as for `archive` (→ `{messages, title, updated_at}`) |
 | PUT/DELETE | `/chat-history/{id}` | rename (`{title}`) / delete an archived conversation |
+| POST | `/chat-history/delete` | delete several at once (the history popover's ticked rows): `{ids}` → `{deleted}`, the rows that were still there |
 
 ### Import & export (`imports.py`, `export.py`)
 | Method | Path | Purpose |

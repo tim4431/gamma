@@ -136,6 +136,16 @@ function ViewerSettings({ value }) {
           onChange={value.setPdfSaveLocal}
         />
       </Section>
+      <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
+        <Toggle
+          icon={LinkIcon}
+          label={t("Linked from")}
+          hint={t("List the pages whose notes link to this one")}
+          title={t("Under a page's notes, a “Linked from” section lists the notes elsewhere that [[link]] to this page, grouped by page; a click opens the linking note. Off leaves the notes to end the page.")}
+          checked={value.backlinksVisible}
+          onChange={value.setBacklinksVisible}
+        />
+      </Section>
       <Section title={t("Handwriting")} scope="browser">
         <div data-setting={t("Draws with")}>
           <IconChoices label={t("Draws with")} value={value.inkPenOnly ? "pen" : "any"}
@@ -659,8 +669,8 @@ function AssistantSettings({ value, ai }) {
           checked={value.agentEnabled} onChange={value.setAgentEnabled} />
         <AgentToolMatrix perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
         <Toggle icon={CloudDownloadIcon} label={t("Fetch blocked papers in the background")}
-          hint={t("Gamma Connector tries in a minimized window and sends the PDF back")}
-          title={t("When a publisher stops a chat's fetch with a sign-in or a bot check, the card hands it to Gamma Connector without a click: it opens the page in a minimized window, and when your browser gets the PDF without you (you're signed in, or the check passes by itself) the PDF comes back to the chat and the tab closes. When the page needs you — to sign in or solve a CAPTCHA — the card says so and shows you the tab. Needs Gamma Connector in this browser.")}
+          hint={t("Gamma Connector tries in an unfocused tab and sends the PDF back")}
+          title={t("When a publisher stops a chat's fetch with a sign-in or a bot check, the card hands it to Gamma Connector without a click: it opens the page in a tab beside this one, without taking the focus, and when your browser gets the PDF without you (you're signed in, or the check passes by itself) the PDF comes back to the chat and the tab closes. Switch to that tab and it stays open. When the page needs you — to sign in or solve a CAPTCHA — the card says so and brings the tab forward. Needs Gamma Connector in this browser.")}
           checked={value.fetchInBackground} onChange={value.setFetchInBackground} />
         <Toggle icon={BookIcon} label={t("Read long papers with a helper")}
           hint={t("A second pass reads the document and answers in a short cited paragraph")}

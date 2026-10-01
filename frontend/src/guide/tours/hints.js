@@ -112,4 +112,34 @@ export const cloneSync = {
     title: T("This workspace syncs with a copy elsewhere: the pill says what is still to go, and opens the log of what changed.") }],
 };
 
-export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage, cloneSync];
+// The first paper fetched from an address, where this browser has no Gamma
+// Connector (shared/lib/connector.js asked it): the extension is the
+// browser's half of that job — it saves from the tab you are already on,
+// and lends the server your journal sign-ins for the PDFs it cannot get by
+// itself. Never in the desktop app, whose Connector would live in the
+// system browser, out of this page's reach.
+export const connector = {
+  id: "connector",
+  version: 1,
+  hint: true,
+  requires: { connectorHere: false, editable: true },
+  trigger: { event: "paper.fetched" },
+  steps: [{ id: "connector", anchor: "header.add", placement: "bottom",
+    title: T("Papers a publisher won't hand over can come from your own browser: **Gamma Connector** (`gammapdf.com/#download`) saves from the tab you're on and keeps your journal sign-ins.") }],
+};
+
+// A setting that travels with the account was just changed, on a server
+// that offers Gamma Cloud sign-in to an account that has not linked one:
+// linking is what carries these settings to the user's other Gamma servers.
+export const cloudAccount = {
+  id: "cloud-account",
+  version: 1,
+  hint: true,
+  requires: { cloudLinkable: true, prefsChanged: true },
+  trigger: {},
+  steps: [{ id: "cloud-account", anchor: "header.account", placement: "bottom",
+    title: T("Settings like that one can follow you: link a **Gamma Cloud** account in Settings → Account & sync, and your other Gamma servers get them too.") }],
+};
+
+export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,
+  cloneSync, connector, cloudAccount];

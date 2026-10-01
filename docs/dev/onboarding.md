@@ -1,7 +1,7 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), eleven
-triggered tours, ten hints and the welcome page with its sample PDF are
+triggered tours, twelve hints and the welcome page with its sample PDF are
 built. The first paper tour is also offered to every new library.** A synced
 `onboarding` pref and a checklist are not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
@@ -176,6 +176,8 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: approvals | the assistant asks before a change (`approval.shown`, from `ApprovalCard`) | the card: allow once or for the whole chat, and that Don't allow can say what to do instead |
 | hint: export | the View menu opens (`popover.opened {name: "menu"}`) on a page with 5+ highlights (`annotatedPage`) — the Export row is on screen only while that menu is | Export…: the PDF with the highlights drawn on it, or Markdown |
 | hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
+| hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, so nothing is suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
+| hint: Gamma Cloud | a setting that travels with the account was changed here (`prefsChanged`: the first push after the profile sync has been quiet once, so a profile arriving or seeding itself does not count) on a server offering cloud sign-in to an account that has not linked one (`cloudLinkable`, from `GET /api/auth/cloud/status`) — state, so the card comes once Settings is closed again | the account button: linking carries these settings to the user's other Gamma servers |
 | Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
@@ -460,7 +462,8 @@ call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
 `phone`, `dockedNotes`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
-`notebookView`, `clonedWorkspace`, `installable`, `demo`, `welcomePdf`), the
+`notebookView`, `clonedWorkspace`, `installable`, `connectorHere`,
+`cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
 services demos and tour ends call (`show`, `restore`, `openSettings`,
 `findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`) and `tidy`.
 
@@ -559,6 +562,7 @@ where the thing happens:
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/page` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
 | `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up ([ai.md](ai.md) "Asking before a call") |
+| `paper.fetched` | App's `openPdf`, once a paper fetched from an address (a URL, a DOI, an arXiv id) is open — not for a page the library already had |
 | `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |

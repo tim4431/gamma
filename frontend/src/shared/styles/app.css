@@ -3235,6 +3235,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
+/* Deleting several at once: the tick box comes up on hover and stays while
+   anything is ticked; the bar under the list says how many and removes them. */
+.chatHistPick { flex: none; margin: 0; display: none; }
+.chatHistRow:hover .chatHistPick, .chatHistRow:focus-within .chatHistPick,
+.chatHistList.picking .chatHistPick { display: block; }
+.chatHistBulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px 2px 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+}
+.chatHistBulk > span { flex: 1; }
 /* One tool-permission checkbox row (layout only — shared look via popover) */
 .chatToolPermRow {
   display: flex;

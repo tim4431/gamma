@@ -7,8 +7,9 @@
 // download the PDF and drop it on the card (the desktop app goes through
 // /api/ai/handoffs/<id>/go, the address the system browser's Connector knows
 // the tab by). With "Fetch blocked papers in the background" on, the card
-// hands the request to the Connector by itself, to fetch out of sight; "Show
-// the tab" brings that tab forward when it needs the user.
+// hands the request to the Connector by itself, to fetch in an unfocused tab
+// beside this one; "Show the tab" brings that tab forward when it needs the
+// user.
 //
 // The same card serves the reply that is still running — the server waits on
 // it and reads the PDF as the fetch's own result, and Skip ends that wait,
@@ -17,6 +18,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, isPdfFile } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload.js";
+import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { CheckIcon, ExternalLinkIcon, ShieldIcon, UploadIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 import {
@@ -26,7 +28,7 @@ import {
 
 const requestUrl = (id) => `${API}/ai/handoffs/${encodeURIComponent(id)}`;
 // The desktop app opens links in the system browser, where a Connector may be.
-const DESKTOP = /\bElectron\//.test(navigator.userAgent);
+const DESKTOP = IS_DESKTOP;
 
 // Gamma Connector's word on request `id` (connectorNote), asked through
 // window messages its content script answers. The script loads after the
@@ -54,7 +56,7 @@ function useConnector(id, active, round) {
   return status;
 }
 
-// Ask the Connector to open ("open", `background` for out of sight), show
+// Ask the Connector to open ("open", `background` for an unfocused tab), show
 // ("show") or let go of ("close") request `id`'s tab. Resolves to its
 // answer's status ("opened", "queued", "shown", "none", "closed", or the
 // request's status when it no longer waits), or "" when none came in time.
@@ -141,8 +143,8 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
     window.open(direct ? view.url : `${requestUrl(handoff.id)}/go`, "_blank", "noopener");
   }
 
-  // The tab the Connector works in, brought forward (one out of sight moves
-  // next to this one); opened afresh when it is gone.
+  // The tab the Connector works in, brought forward (one in another window
+  // moves next to this one); opened afresh when it is gone.
   async function show() {
     setError("");
     if (connector === "ok" && (await askConnector(handoff.id, "show")) === "shown") { refresh(); return; }
@@ -178,7 +180,7 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
       }));
     } catch { setView({ status: "gone" }); }
     finally { setWorking(""); setSkipping(false); }
-    // A tab the Connector keeps out of sight for it closes.
+    // A background tab the Connector keeps for it closes.
     if (connector === "ok") askConnector(handoff.id, "close");
   }
 

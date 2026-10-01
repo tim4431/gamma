@@ -54,7 +54,7 @@ export function openRoute(connector) {
 }
 
 // Whether the card hands its request to the Connector by itself, to fetch
-// out of sight (the "Fetch blocked papers in the background" setting): the
+// in a tab beside this one ("Fetch blocked papers in the background"): the
 // Connector can serve it, the request waits untouched in the conversation's
 // last reply, and no tab of it was closed before.
 export function autoOpens({ auto, connector, state, isLast, readOnly, note = "" }) {
@@ -100,14 +100,14 @@ export function wallHeadline(wall, host) {
   }
 }
 
-// What the user does next, per state. `background`: the Connector keeps the
-// tab out of sight; `queued`: it waits for a turn to open one; `live`: the
+// What the user does next, per state. `background`: the Connector works in
+// an unfocused tab; `queued`: it waits for a turn to open one; `live`: the
 // reply is held open on this card, so what arrives lands in the answer.
 export function handoffHint(state, { pages = 0, background = false, queued = false, live = false } = {}) {
   switch (state) {
     case "watching":
       return background
-        ? t("Gamma Connector is getting it in a minimized window — the PDF comes back here by itself.")
+        ? t("Gamma Connector is getting it in a tab of its own — the PDF comes back here by itself.")
         : t("Gamma Connector is watching the tab. Sign in or pass the check there — the PDF comes back here by itself.");
     case "opened":
       return queued

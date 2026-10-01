@@ -661,12 +661,15 @@ finished reply's actions for the requests it left behind:
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
 - **Fetch blocked papers in the background** (Settings → AI → Tools,
-  `fetchInBackground`, account-wide, off by default): a card in the
+  `fetchInBackground`, account-wide, **on** by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
-  Connector tries in a minimized window of its own, three requests at a
-  time, and closes the tab after delivery; the card reads "getting it in a
-  minimized window", or that the request waits for the papers before it.
+  Connector tries in an ordinary tab next to the Gamma one — unfocused, so
+  the user keeps reading, but there in the tab strip to switch to — three
+  requests at a time, and closes the tab after delivery; the card reads
+  "getting it in a tab of its own", or that the request waits for the papers
+  before it. A tab the user switches to is theirs from then on: it stays
+  open, and frees its turn (`chrome.tabs.onActivated` in the worker).
   Nothing solves a CAPTCHA: what completes by itself is what the browser gets
   unasked — the user already signed in (or on the institution's network), or
   a check that passes a real browser on its own. When the page needs the user
@@ -692,7 +695,7 @@ finished reply's actions for the requests it left behind:
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
 - **Skip** (live) or **Dismiss** (afterwards) settles the request; the
-  Connector closes a tab it kept out of sight for it. Skip opens one line,
+  Connector closes a background tab it kept for it. Skip opens one line,
   "What should the assistant do instead? (optional)", with **Skip** and
   **Skip, and don't wait in this chat**.
 

@@ -122,6 +122,7 @@ import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
+import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
 import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
 import { libraryAccess } from "../library/libraryAccess";
@@ -2485,7 +2486,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote,
+    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
@@ -3803,10 +3804,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     triggerFlash(land.id);
   }, [blocks]);
 
-  // Fetch backlinks for the focused block. Not in the share view: backlinks
-  // span the library, so the server refuses share tokens (403) by design.
+  // Fetch backlinks for the focused block, while the "Linked from" section
+  // is on (Settings → Reading & editing › Notes). Not in the share view:
+  // backlinks span the library, so the server refuses share tokens (403) by
+  // design.
   useEffect(() => {
-    if (!focusedBlockId || shareMode) { setBacklinks([]); return; }
+    if (!focusedBlockId || shareMode || !backlinksVisible) { setBacklinks([]); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -3815,7 +3818,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } catch { if (!cancelled) setBacklinks([]); }
     })();
     return () => { cancelled = true; };
-  }, [focusedBlockId, shareMode]);
+  }, [focusedBlockId, shareMode, backlinksVisible]);
 
   // The page's live session (collaboration/usePageCollab.js): the tree's transitions become ops
   // sent in debounced batches, other clients' batches arrive over the page
@@ -4643,6 +4646,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
+      guideEvents.emit("paper.fetched");
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("Open failed: {message}", { message: err.message }));
@@ -6827,6 +6831,41 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
     return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
   }, [homeBlocks]);
+  // What the two "try this" hints need to know (guide/tours/hints.js), each
+  // learnt once per load and never again: whether Gamma Connector is in
+  // this browser (its content script answers; the desktop app's Connector
+  // lives in the system browser, out of reach, so it stays unknown and
+  // nothing is suggested), whether this account could link a Gamma Cloud
+  // account but has not, and whether a setting that travels with the
+  // account was changed here — the moment carrying settings elsewhere
+  // starts to mean something.
+  // Nothing is asked where nothing would be suggested ("Suggest tours" off).
+  const [connectorHere, setConnectorHere] = useState(undefined);
+  useEffect(() => {
+    if (shareMode || !authUser?.user || !suggestTours || IS_DESKTOP) return;
+    let live = true;
+    askConnectorHere().then((here) => { if (live) setConnectorHere(here); });
+    return () => { live = false; };
+  }, [shareMode, authUser?.user, suggestTours]);
+  const [cloudLink, setCloudLink] = useState(null); // {identity, enabled, connected}
+  const cloudLogin = !!serverConfig?.cloud?.enabled;
+  useEffect(() => {
+    if (shareMode || !cloudLogin || !authUser?.user || authUser.is_guest || !suggestTours) { setCloudLink(null); return; }
+    let live = true;
+    apiJson(`${API}/auth/cloud/status`).then((d) => { if (live) setCloudLink(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [shareMode, cloudLogin, authUser?.user, authUser?.is_guest, suggestTours]);
+  // A setting of this account's own making, not the profile arriving: the
+  // first push AFTER the sync has been quiet once (a profile the server
+  // never held reads as every entry pending until its seeding push lands,
+  // app/prefs.js).
+  const [prefsChanged, setPrefsChanged] = useState(false);
+  const syncQuiet = useRef(false);
+  useEffect(() => {
+    if (!profileSync.pending.size && !profileSync.inflight.size) {
+      if (profileSync.state === "loaded") syncQuiet.current = true;
+    } else if (syncQuiet.current) setPrefsChanged(true);
+  }, [profileSync.pending, profileSync.inflight, profileSync.state]);
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
@@ -6908,6 +6947,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // this workspace has an offline copy or a publication, so it has a sync pill
       clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
       installable: HOME_SCREEN_INSTALLABLE,
+      // Gamma Connector in this browser (undefined while it is asked, and
+      // in the desktop app), and a Gamma Cloud account this one could link.
+      connectorHere,
+      cloudLinkable: cloudLink ? !!cloudLink.enabled && cloudLink.connected !== false && !cloudLink.identity : undefined,
+      prefsChanged,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
       welcomePdf,
@@ -7698,7 +7742,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Who links here (editor/BacklinksPanel.jsx), under the notes and above
   // the tail; an entry opens its page at the linking block, a link jump
-  // like a [[ref]] chip's.
+  // like a [[ref]] chip's. Nothing to show while the section is off — the
+  // list is only fetched when `backlinksVisible` is on.
   const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
     <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
       refCache={refCache} onFetchRefs={onFetchRefs} onOpen={(bl) => openBlockLink(bl.id, bl.page_root_id)}
@@ -10460,6 +10505,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFileLabels,
           syncPillScope,
           setSyncPillScope,
+          backlinksVisible,
+          setBacklinksVisible,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login

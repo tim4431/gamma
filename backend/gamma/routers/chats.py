@@ -66,6 +66,10 @@ class ChatTitleRequest(StorableBody):
     title: str
 
 
+class ChatDeleteRequest(StorableBody):
+    ids: list[str] = []
+
+
 def _clean_title(raw) -> str:
     return " ".join(str(raw or "").split())[:TITLE_MAX]
 
@@ -353,6 +357,22 @@ def rename_history(entry_id: str, payload: ChatTitleRequest, request: Request):
     if not cur.rowcount:
         raise HTTPException(status_code=404, detail="conversation not found")
     return {"ok": True}
+
+
+@history_router.post("/delete")
+def delete_history_many(payload: ChatDeleteRequest, request: Request):
+    """Several archived conversations at once (the history popover's
+    selection) → ``{deleted}``, the rows that were still there. Ids the
+    bucket does not hold are simply not found."""
+    ws = _require_chat_writer(request)
+    ids = [str(entry) for entry in payload.ids if entry][:HISTORY_LIST_CAP]
+    if not ids:
+        return {"deleted": 0}
+    with connect_data_db(ws) as database:
+        cursor = database.execute(
+            f"DELETE FROM chat_history WHERE id IN ({','.join('?' * len(ids))})", ids)
+        database.commit()
+    return {"deleted": cursor.rowcount}
 
 
 @history_router.delete("/{entry_id}")

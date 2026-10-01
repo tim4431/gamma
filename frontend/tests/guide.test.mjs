@@ -295,10 +295,29 @@ test("the sharing tour follows the popover and words access for an anyone-with-t
   assert.equal(create.advanceOn.event, "share.created");
 });
 
+test("the Connector and Cloud hints wait for what they suggest to be missing", () => {
+  const connector = TOURS.connector;
+  const base = { ...facts, connectorHere: false };
+  assert.equal(canOffer(connector, { facts: base, progress: null, event: at("paper.fetched"), seen: 1 }), true);
+  assert.equal(canOffer(connector, { facts: { ...base, connectorHere: true }, progress: null, event: at("paper.fetched"), seen: 1 }), false,
+    "a browser that has the Connector is not offered it");
+  assert.equal(canOffer(connector, { facts: { ...base, connectorHere: undefined }, progress: null, event: at("paper.fetched"), seen: 1 }), false,
+    "nothing is suggested while the answer is unknown (the desktop app, or still asking)");
+  assert.equal(canOffer(connector, { facts: base, progress: null }), false, "mere presence offers nothing");
+
+  const cloud = TOURS["cloud-account"];
+  const linkable = { ...facts, cloudLinkable: true, prefsChanged: true };
+  assert.equal(canOffer(cloud, { facts: linkable, progress: null }), true, "a state trigger needs no event");
+  assert.equal(canOffer(cloud, { facts: { ...linkable, prefsChanged: false }, progress: null }), false,
+    "it comes with a setting that would travel, not before");
+  assert.equal(canOffer(cloud, { facts: { ...linkable, cloudLinkable: false }, progress: null }), false,
+    "an account already linked, or a server without cloud sign-in, hears nothing");
+});
+
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
   assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
-    "approvals", "export-page", "clone-sync"]);
+    "approvals", "export-page", "clone-sync", "connector", "cloud-account"]);
 });
 
 // Keys in guide copy: `{key:<command id>}` shows the account's chord for a

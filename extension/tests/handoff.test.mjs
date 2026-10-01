@@ -101,7 +101,7 @@ test("a bot check shows by its host, its title, or the challenge the page carrie
   assert.equal(checkPage({}), false);
 });
 
-test("out-of-sight fetches take a few turns; a tab waiting for the user holds none", () => {
+test("background fetches take a few turns; a tab waiting for the user holds none", () => {
   const bg = (id, note = "") => ({ id, background: true, note });
   assert.equal(backgroundBusy({}), false);
   const full = Object.fromEntries(Array.from({ length: MAX_BACKGROUND }, (_, i) => [i + 1, bg(`r${i}`)]));
@@ -114,7 +114,7 @@ test("out-of-sight fetches take a few turns; a tab waiting for the user holds no
   assert.equal(backgroundBusy({ ...full, 1: bg("r0", "opening") }), true, "opening a PDF link still works on it");
 });
 
-test("a tab out of sight that stops on the user says so once, by what stopped it", () => {
+test("a background tab that stops on the user says so once, by what stopped it", () => {
   const out = (note) => needsYouMessage({ background: true }, note, "journals.example.org");
   assert.match(out("check"), /bot check/);
   assert.match(out("signin"), /sign in/);

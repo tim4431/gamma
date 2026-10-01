@@ -121,9 +121,9 @@ export function checkPage({ url = "", title = "", check = false } = {}) {
   return CHECK_HOST.test(host) || CHECK_TITLE.test(title || "");
 }
 
-// Out-of-sight fetches (the chat's "in the background" setting) load in a
-// minimized window of their own, a few at a time; the rest wait their turn.
-// A tab that waits for the user (these notes) does not hold a turn.
+// Background fetches (the chat's "in the background" setting) load in
+// unfocused tabs beside the Gamma one, a few at a time; the rest wait their
+// turn. A tab that waits for the user (these notes) does not hold a turn.
 export const MAX_BACKGROUND = 3;
 export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "other"]);
 
@@ -135,7 +135,7 @@ export function backgroundBusy(bindings) {
   return working.size >= MAX_BACKGROUND;
 }
 
-// What a tab out of sight needs from the user, as a sentence to notify
+// What a background tab needs from the user, as a sentence to notify
 // with — "" when nothing is wanted (it is still working, or the user is
 // looking at the tab anyway and can see for themselves).
 export function needsYouMessage(binding, note, host) {
