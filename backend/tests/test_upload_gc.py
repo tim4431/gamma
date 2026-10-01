@@ -60,7 +60,7 @@ def _image(c, tag: str):
 def _orphans(ws) -> dict:
     """``{name: since}`` once the scheduled checks have run."""
     upload_gc.flush(ws)
-    with upload_gc._lock(ws), closing(connect_pages_db(ws)) as conn:
+    with upload_gc.guard(ws), closing(connect_pages_db(ws)) as conn:
         return dict(conn.execute("SELECT name, since FROM upload_orphans").fetchall())
 
 

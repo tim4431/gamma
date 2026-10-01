@@ -49,7 +49,8 @@ it while the repo file stays a floor. Release notes give each download
 (platform installers, Docker image, AI plugins) a shields.io button, keep
 the first-launch and update instructions in a collapsed section, and list
 the commit subjects since the previous tag (trailing punctuation trimmed,
-repeats dropped); `extension.yml` writes its notes the same way. Dispatch inputs: `version` override,
+repeats dropped). `extension.yml` writes its notes the same way.
+Dispatch inputs: `version` override,
 `prerelease`, and `publish=false` for build-only artifacts (14 days). The
 publish job also dispatches `docker.yml` on the new tag so the server image
 gets a `<version>` tag, and the Windows job submits the MSIX to the

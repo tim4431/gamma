@@ -29,7 +29,8 @@ export const PAPER_COLORS = ["#ffffff", "#fbf7ec", "#f2f3f5", "#2b2d31"];
 const HEX = /^#[0-9a-f]{6}$/i;
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-const round2 = (v) => Math.round(v * 100) / 100;
+// Points stored to hundredths (text boxes round the same way, markup/textBox.js).
+export const round2 = (v) => Math.round(v * 100) / 100;
 const clamp = (v, lo, hi) => round2(Math.min(hi, Math.max(lo, v)));
 
 // A complete paper from a stored one: each missing or bad key from

@@ -189,21 +189,29 @@ def save(user: str, engine: str, fields: dict) -> None:
     if not ENGINES[engine]["fields"]:
         raise HTTPException(status_code=400, detail=f"{ENGINES[engine]['label']} needs no key")
     def change(saved):
-        old = saved.get(engine) or {}
-        conf = {}
-        for f in ENGINES[engine]["fields"]:
-            value = fields.get(f["id"])
-            value = value.strip() if isinstance(value, str) else ""
-            if len(value) > MAX_FIELD_LEN:
-                raise HTTPException(status_code=400, detail=f"{f['id']} is too long")
-            if not value and f["secret"]:
-                value = old.get(f["id"]) or ""
-            if not value:
-                raise HTTPException(status_code=400, detail=f"{f['id']} is required")
-            conf[f["id"]] = value
-        conf["updated_at"] = page_now()
-        saved[engine] = conf
+        saved[engine] = form_fields(ENGINES[engine]["fields"], saved.get(engine) or {}, fields)
     _update(user, change)
+
+
+def form_fields(specs: list, old: dict, given: dict) -> dict:
+    """A service's stored fields from a settings form: each of ``specs``
+    (``{id, secret}``) taken from ``given``, a secret left empty kept from
+    ``old``, stamped ``updated_at``. 400 for a missing or overlong value.
+    The online search services (gamma/search_services.py) store theirs
+    the same way."""
+    conf = {}
+    for f in specs:
+        value = given.get(f["id"])
+        value = value.strip() if isinstance(value, str) else ""
+        if len(value) > MAX_FIELD_LEN:
+            raise HTTPException(status_code=400, detail=f"{f['id']} is too long")
+        if not value and f["secret"]:
+            value = old.get(f["id"]) or ""
+        if not value:
+            raise HTTPException(status_code=400, detail=f"{f['id']} is required")
+        conf[f["id"]] = value
+    conf["updated_at"] = page_now()
+    return conf
 
 
 def remove(user: str, engine: str) -> None:

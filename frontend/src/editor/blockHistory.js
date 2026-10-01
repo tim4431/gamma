@@ -54,7 +54,7 @@
 // so the node tests drive it without React.
 import { useCallback, useEffect, useRef } from "react";
 import { generateNKeysBetween } from "fractional-indexing";
-import { applyOps, diffTrees, indexTree } from "../shared/model/blockOps.js";
+import { applyOps, diffTrees, indexTree, someNode, withTexts } from "../shared/model/blockOps.js";
 import { isTextBox, mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -177,17 +177,6 @@ function hasBlock(list, id) {
     if (b.id === id || hasBlock(b.children, id)) return true;
   }
   return false;
-}
-
-const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
-
-// `tree` with the text of the blocks in `texts` (id → text) replaced.
-function withTexts(tree, texts) {
-  return (tree || []).map((n) => {
-    const kids = n.children?.length ? withTexts(n.children, texts) : n.children;
-    if (texts.has(n.id)) return { ...n, content: texts.get(n.id), children: kids };
-    return kids === n.children ? n : { ...n, children: kids };
-  });
 }
 
 // The history's state: the two stacks, the tree last seen, the bookkeeping

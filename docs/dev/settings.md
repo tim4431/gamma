@@ -277,8 +277,7 @@ Preferences:
   how things look. The eight theme cards (`PictureChoices`; each swatch
   is drawn under its theme's `data-theme` / `data-scheme`, so it paints
   from that theme's own tokens, `ThemePreview` in
-  `shared/illustrations/`), the interface
-  language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the
+  `shared/illustrations/`), the
   dark-page switch with its live PDF sample, **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
@@ -295,9 +294,10 @@ Preferences:
   finger — the stored preference is `inkPenOnly`) plus the
   stylus-draws-right-away and pressure switches. **Search opens as**: on the
   home page and on a page (Full panel / Find bar).
-- **Translation** (pane id `translation`,
+- **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
-  in three sections. **Viewer & selection**: the viewer's button and the
+  in four sections. **Language**: the interface language (a `MenuSelect`:
+  System / English / 中文, [i18n.md](i18n.md)). **Viewer & selection**: the viewer's button and the
   language (`translateLang`; with none stored, the first of the browser's
   languages on offer — `defaultTranslateLang` in `app/prefDefs.js`, en-* →
   English — else Simplified Chinese), the selection popup's translate button
@@ -349,8 +349,13 @@ AI:
   and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
-  columns offer Read library / Read & search / All tools presets. Web search,
-  fetching and using connected journal sign-ins have separate switches. Then
+  each column's menu offers the Read library / Read & search / Ask before
+  changes / Allow all presets. Web search, fetching and using connected
+  journal sign-ins have separate rows. Under the table, two switches:
+  **Fetch blocked papers in the background** (`fetchInBackground`, the
+  handoff card hands a stopped fetch to Gamma Connector by itself) and
+  **Read long papers with a helper** (`delegateReads`, the `read_paper`
+  tool, [ai_tools.md](ai_tools.md)). Then
   **Online search** (`OnlineSearch.jsx`): which service general web search
   goes through (Automatic, your AI connection, Brave Search, SearXNG or Off)
   and the Brave, SearXNG and optional OpenAlex settings, stored on the server

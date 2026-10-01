@@ -143,7 +143,7 @@ class AgentLoop:
 
     def __init__(self, *, ws: str, scope: dict, tools: list, conversation: Conversation,
                  open_round, read_events, on_usage=None, max_rounds: int = 0,
-                 stopped: threading.Event | None = None, gate=None, settle=None):
+                 gate=None, settle=None):
         self.ws = ws
         self.scope = scope
         self.tools = tools
@@ -152,7 +152,6 @@ class AgentLoop:
         self.read_events = read_events
         self.on_usage = on_usage
         self.max_rounds = max_rounds or MAX_TOOL_ROUNDS
-        self.stopped = stopped
         self.gate = gate
         self.settle = settle
         self.armed = {t["name"] for t in tools}
@@ -395,14 +394,12 @@ class Helper:
     reply's footer can say what the whole answer cost.
     """
 
-    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None,
-                 stopped: threading.Event | None = None):
+    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None):
         self.ws = ws
         self.scope = scope
         self.open_call = open_call
         self.read_events = read_events
         self.on_usage = on_usage
-        self.stopped = stopped
 
     def run(self, *, question: str, system: str, tools: list) -> dict:
         """Answer ``question`` with ``tools`` armed. Returns
@@ -413,7 +410,7 @@ class Helper:
         loop = AgentLoop(ws=self.ws, scope=self.scope, tools=tools, conversation=talk,
                          open_round=lambda c: self.open_call(c, tools),
                          read_events=self.read_events, on_usage=self._meter(usage),
-                         max_rounds=HELPER_ROUNDS, stopped=self.stopped)
+                         max_rounds=HELPER_ROUNDS)
         text, actions = [], []
         for kind, data in loop.run(self.open_call(talk, tools)):
             if kind == "delta":
@@ -431,7 +428,6 @@ class Helper:
                 if isinstance(value, int):
                     into[key] = into.get(key, 0) + value
         return count
-
 
 
 class ApprovalGate:

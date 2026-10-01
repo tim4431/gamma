@@ -99,15 +99,4 @@
 .noteSheet.inkArmed .nbSheet { cursor: crosshair; }
 .noteSheet.inkTouchDraw .nbSheet { touch-action: none; }
 .noteSheetBar { display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-top: 4px; }
-.noteSheetBar .inkReplayBtn {
-  position: static;
-  opacity: 1;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-}
-.noteSheetBar .inkReplayBtn:hover { color: var(--text-primary); background: var(--bg-active); }
 .noteSheet .nbPaperMenu { position: static; margin: 6px 0 0 auto; max-width: 100%; }

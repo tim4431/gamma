@@ -2220,8 +2220,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const tasks = useTasks({ enabled: !!authUser?.user && !shareMode, onFinished: (job, started) => onJobFinished(job, started) });
   const { addLocal: addTask, updateLocal: updateTask } = tasks;
   // The search indexer of the open workspace runs (Settings shows it).
-  const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id
-    && (job.state === "queued" || job.state === "running"));
+  const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id && isActive(job));
   const transferByUrlRef = useRef({});
   // Byte-level download state reported by the PDF viewer (skips local uploads).
   // One row per URL: a re-download (LRU eviction, retry) reactivates the
@@ -5995,7 +5994,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setSettingsOpen(open.slice("settings:".length));
     }
   }
-  // Start a task's work again (a row's retry button, the export dialog's
   // Hand a question to the background researcher (gamma/paper_research.py):
   // it searches and reads for minutes and files a report page in the folder
   // being viewed. The tray follows it, and its row opens that page.
@@ -6010,6 +6008,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(err.message || t("Could not start the research"));
     }
   }
+  // Start a task's work again (a row's retry button, the export dialog's
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
   // watches, a workspace export was asked for from a menu), else offered.

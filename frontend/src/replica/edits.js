@@ -12,19 +12,15 @@
 //   deleteHere(id)              the page is deleted here (a tombstone the
 //                               next round carries to the remote)
 import { generateKeyBetween } from "fractional-indexing";
-import { inkProps, serializeInk } from "../ink/ink.js";
+import { inkProps } from "../ink/ink.js";
 import {
   firstSheetId, isSheet, newSheet, normalizePaper, paperBefore, sheetIdAfter, sheetsOf,
 } from "../notebook/notebook.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
+import { inkFiles } from "./round.js";
 import { applyLocal, childrenOf, treeOf } from "./tree.js";
 
 const TRIES = 5;
-const uploadName = (url) => /\/api\/uploads\/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})/.exec(url || "")?.[1] || "";
-const inkFiles = (host) => ({
-  read: async (url) => { const n = uploadName(url); return n ? host.readInk(n) : null; },
-  store: async (ink) => `/api/uploads/${await host.storeInk(ink)}`,
-});
 const noNulls = (props) => Object.fromEntries(Object.entries(props).filter(([, v]) => v !== null && v !== undefined));
 
 // Apply `ops` to the page here: → the page's snapshot after them.
@@ -74,10 +70,6 @@ export async function saveInk(host, pageId, { blockId, ink, baseUrl = "", parent
   const after = await editPage(host, pageId, ops);
   return after[blockId]?.props.ink_url || "";
 }
-
-// The bytes a drawing is stored as (and hashed by), for a host that names
-// files itself.
-export const inkBytes = (ink) => serializeInk(ink);
 
 // --- sheets --------------------------------------------------------------------------
 

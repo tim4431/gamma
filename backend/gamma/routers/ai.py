@@ -155,7 +155,7 @@ class AIChatRequest(BaseModel):
     # focused page — read tools + note editors). "" = plain chat (page_id
     # still names the context page). Every tool call comes back as an
     # {"action": …} NDJSON line alongside the text deltas.
-    # `permissions` is the Settings → Chat → Tools map, one state per
+    # `permissions` is the Settings → AI → Chat → Tools map, one state per
     # permission ({list, read, …, rename, move, block_edit} → "allow" /
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
@@ -183,7 +183,7 @@ class AIChatRequest(BaseModel):
     paper_wait: bool = True
     # Whether read_paper is offered: a long document is read by a helper on
     # the same connection, and the chat carries its answer instead of the
-    # document (Settings → Chat → "Read long papers with a helper").
+    # document (Settings → AI → Chat → "Read long papers with a helper").
     delegate_reads: bool = True
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
@@ -1154,7 +1154,7 @@ def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, requ
     return {"ok": True, "text": text}
 
 
-# --- Online search services (Settings → Assistant → Online search) -----------
+# --- Online search services (Settings → AI → Chat → Online search) -----------
 # Which service searches the general web, and the keys (write-only like the
 # AI keys: GET masks them) — gamma/search_services.py.
 
@@ -1453,10 +1453,11 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
         web["web_engine"] = engine
         if engine == "ai":
             web["ai_search"] = {"runtime": runtime, "entry": entry, "effort": effort}
-    # A blocked fetch can only be handed to a personal account's own browser,
-    # and only a live reply can wait on the card it shows.
-    handoff_user = (user if not request.state.is_guest
-                    and not request.query_params.get("share") else None)
+    # The person behind the request, when it is their own: a guest or a share
+    # link has no browser to hand a blocked fetch to and no publisher
+    # sign-ins. Only a live reply can wait on the card a handoff shows.
+    personal = (user if not request.state.is_guest
+                and not request.query_params.get("share") else None)
     return {**web, "type": payload.agent_scope, "folder": payload.folder,
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "permissions": states,
@@ -1471,16 +1472,14 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             # Journal sign-ins are on or off (a part of fetching, not a call to approve).
-            "publisher_user": (user if not request.state.is_guest
-                               and not request.query_params.get("share")
-                               and permission_state(payload.permissions, "publisher_cookies", False) != "off"
+            "publisher_user": (personal if permission_state(payload.permissions, "publisher_cookies", False) != "off"
                                else None),
             # The account a blocked fetch_paper hands to the user's browser
             # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
-            "handoff_user": handoff_user,
+            "handoff_user": personal,
             # Whether such a fetch waits on its card inside this reply
             # (ai_agent.PaperWait): the prompt tells the model which it is.
-            "paper_wait": bool(payload.paper_wait and can_ask and handoff_user),
+            "paper_wait": bool(payload.paper_wait and can_ask and personal),
             # Whether read_paper is offered: a long document read by a
             # helper whose own conversation carries the windows.
             "delegates": bool(payload.delegate_reads),
@@ -1676,7 +1675,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # It answers on the same connection, in its own conversation, and its
     # tokens are metered here like the chat's own.
     scope["helper"] = Helper(
-        ws=ws, scope=scope, stopped=stopped, on_usage=count_usage,
+        ws=ws, scope=scope, on_usage=count_usage,
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),
@@ -1755,7 +1754,6 @@ def ai_chat(payload: AIChatRequest, request: Request):
             read_events=lambda resp: _sse_events(resp, proto),
             on_usage=count_usage,
             max_rounds=payload.tool_rounds,
-            stopped=stopped,
             gate=ApprovalGate(ws, scope, user, stopped),
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
         )

@@ -310,39 +310,37 @@ gesture is left to the browser.
 ### Zoom gestures in a viewer
 
 The viewport meta turns the browser's own zoom off, so a viewer that zooms
-reads the gestures itself. Both of them come from one place,
+reads the gestures itself. Both gestures come from one place,
 `shared/lib/viewerZoom.js`, so the PDF's pages and the notebook's sheets
-cannot drift apart in how zooming feels. A native non-passive `wheel`
-listener, because React's root listener is passive and `preventDefault` —
-which is what stops the browser zooming the page — would not work from an
-`onWheel` prop.
+zoom the same way. The `wheel` listener is native and non-passive:
+React's root listener is passive, so the `preventDefault` that stops the
+browser zooming the page would not work from an `onWheel` prop.
 
-**Ctrl/⌘ + wheel** (which is also what a trackpad pinch reports) zooms by
+**Ctrl/⌘ + wheel** (also what a trackpad pinch reports) zooms by
 `e^(-deltaY · 0.0015)` per event, so a notch is a fixed ratio whatever the
-device reports in pixels; Firefox's line-mode deltas are converted first.
-Two details keep a fast train honest: the scale compounds on the module's
-own `live` value rather than on the committed scale, which is a frame or
-two behind, and the dispatch is coalesced to one per frame, because every
-commit re-renders every page. A viewer pushes its committed scale back in
-with `sync()` — ignored while a dispatch is in flight, or the events that
-arrived since would be dropped (measurably: a 6-notch train zoomed about 3
-notches' worth).
+device reports in pixels. Firefox's line-mode deltas are converted first.
+The scale compounds on the module's own `live` value, not on the committed
+scale, which is a frame or two behind. The dispatch is coalesced to one per
+frame, because every commit re-renders every page. A viewer pushes its
+committed scale back in with `sync()`. That is ignored while a dispatch is
+in flight: the events that arrived since are already in `live`, and
+overwriting it dropped them (a 6-notch train zoomed about 3 notches' worth).
 
 **Two fingers** pinch to zoom and drag to pan. The pinch does not commit
 while they are down: it previews as a CSS transform on the content layer,
-compositing only, since a commit per move event is more re-layout than any
-tablet can keep up with — so it is blurry until they lift, like every
-native PDF app. The layer must be the scroller's first in-flow child with
+compositing only, so it is blurry until they lift, like every native PDF
+app. A commit per move event is more re-layout than a tablet keeps up with.
+The layer must be the scroller's first in-flow child with
 `transform-origin: 0 0`, which is what the math assumes. `preventDefault`
 on the two-finger move blocks native scrolling along with the browser's
-zoom, which is why panning is the caller's job too: fingers held the same
-distance apart are a drag, and the commit gets the midpoint's travel to
-move the view by.
+zoom, so panning is the caller's job too: fingers held the same distance
+apart are a drag, and the commit gets the midpoint's travel to move the
+view by.
 
-Each viewer supplies only the two commits, since anchoring is the part that
-knows its own layout — the PDF's re-bases scroll and lets its zoom-anchor
-effect re-place the point (`pdf/PdfViewer.jsx`), the notebook's names the
-sheet and the fraction of it to hold ([notebooks.md](notebooks.md)).
+Each viewer supplies only the two commits, since anchoring depends on its
+layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
+the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
+fraction of it to hold ([notebooks.md](notebooks.md)).
 
 ### Fullscreen on touch devices
 

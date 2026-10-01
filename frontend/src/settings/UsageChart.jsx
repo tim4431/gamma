@@ -2,17 +2,18 @@ import React from "react";
 import { getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { MenuSelect } from "../shared/ui/Menus";
+import { Segmented } from "./SettingsKit";
 import { usageChartData } from "./usageChartData.js";
 
 export function UsageChart({ daily = [], total = {}, firstAt, keepDays, onReset, busy }) {
   const [metric, setMetric] = React.useState("tokens");
-  const [interval, setInterval] = React.useState("daily");
+  const [period, setPeriod] = React.useState("daily");
   const [selected, setSelected] = React.useState("");
   const plot = React.useRef(null);
-  const { bars, ceiling } = usageChartData(daily, interval, metric);
+  const { bars, ceiling } = usageChartData(daily, period, metric);
   const current = bars.find((bar) => bar.date === selected) || bars.at(-1);
   const dateLabel = (date, options) => new Date(`${date.slice(0, 10)}T00:00:00Z`).toLocaleDateString(getLocale(), { timeZone: "UTC", ...options });
-  const label = (date) => dateLabel(date, interval === "monthly" ? { month: "long", year: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  const label = (date) => dateLabel(date, period === "monthly" ? { month: "long", year: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
   const detail = (bar) => `${tn("{n} call", "{n} calls", bar.calls)} · ${usageDetail(bar)}`;
 
   function move(event, date) {
@@ -39,12 +40,9 @@ export function UsageChart({ daily = [], total = {}, firstAt, keepDays, onReset,
         {firstAt ? <div className="usageChartSince">{t("Since {date}", { date: dateLabel(firstAt, { month: "short", day: "numeric", year: "numeric" }) })}</div> : null}
       </div>
       <div className="usageChartHead">
-        <MenuSelect label={t("Chart interval")} value={interval} onChange={setInterval}
+        <MenuSelect label={t("Chart interval")} value={period} onChange={setPeriod}
           options={[["daily", t("Daily · last 30 days")], ["monthly", t("Monthly · last 12 months")]]} />
-        <div className="usageChartToggle" role="group" aria-label={t("Activity measured by")}>
-          <button type="button" aria-pressed={metric === "tokens"} onClick={() => setMetric("tokens")}>{t("Tokens")}</button>
-          <button type="button" aria-pressed={metric === "calls"} onClick={() => setMetric("calls")}>{t("Calls")}</button>
-        </div>
+        <Segmented value={metric} onChange={setMetric} options={[["tokens", t("Tokens")], ["calls", t("Calls")]]} />
       </div>
       {current ? <>
         <div className="usageChartPlot" ref={plot}>
@@ -61,7 +59,7 @@ export function UsageChart({ daily = [], total = {}, firstAt, keepDays, onReset,
               </button>;
             })}
           </div>
-          <div className="usageChartDates" aria-hidden="true">{[0, Math.floor((bars.length - 1) / 2), bars.length - 1].map((index, key) => <span key={key}>{dateLabel(bars[index].date, interval === "monthly" ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" })}</span>)}</div>
+          <div className="usageChartDates" aria-hidden="true">{[0, Math.floor((bars.length - 1) / 2), bars.length - 1].map((index, key) => <span key={key}>{dateLabel(bars[index].date, period === "monthly" ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" })}</span>)}</div>
         </div>
         <div className="usageChartDetail" aria-live="polite" aria-atomic="true">
           <strong>{label(current.date)}</strong>

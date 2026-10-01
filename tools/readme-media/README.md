@@ -276,4 +276,6 @@ retained for reuse; the GIF experiments write to scratch and have no callers.
 `runtime.mjs` resolves Playwright through the frontend dependency, so no second
 Node project is needed, and holds the recorders' shared pieces: the retina
 launch, context options and capture, `BASE`, `readSession`, the cursor, paced
-pointer travel and the curated page ids.
+pointer travel, the curated page ids, a phrase's rect in the text layer
+(`phraseBox`), a picture on the clipboard (`clipboardImage`) and opening the
+chat (`openChat`).

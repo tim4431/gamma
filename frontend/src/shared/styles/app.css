@@ -1775,11 +1775,10 @@ body {
   transition: opacity var(--dur-slow);
 }
 .statusPill.fading { opacity: 0; }
-.statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); }
 /* An error is read in full (a note too long to save, edits waiting): its
    text wraps rather than ending in "…", on a phone too, and a pill of two
    or three lines rounds like a card. */
-.statusPill.error { border-radius: var(--radius-lg); }
+.statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); border-radius: var(--radius-lg); }
 .statusPill.error .pillText { white-space: normal; overflow-wrap: anywhere; text-align: center; }
 .statusPill.interactive { pointer-events: auto; } /* has a Retry button */
 /* Keep feedback away from the handwriting strip, including expanded options. */
@@ -6089,9 +6088,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .blockInkPending { min-height: 28px; width: 100%; opacity: 0.5; }
 /* The card's replay button: in its corner, shown on hover (always on a
-   touch screen, and while a replay plays). */
+   touch screen, and while a replay plays). A sheet's tool row has the
+   same button as a plain ctlBtn (notebook/NoteSheet.jsx). */
 .blockInkCardWrap { position: relative; display: block; width: fit-content; max-width: 100%; }
-.inkReplayBtn {
+.blockInkCardWrap .inkReplayBtn {
   position: absolute;
   top: 10px;
   right: 6px;
@@ -6109,9 +6109,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   opacity: 0;
   transition: opacity var(--dur-fast) ease;
 }
-.inkReplayBtn:hover { color: var(--text-primary); }
-.blockInkCardWrap:hover .inkReplayBtn, .inkReplayBtn:focus-visible, .inkReplayBtn[aria-pressed="true"] { opacity: 1; }
-@media (hover: none) { .inkReplayBtn { opacity: 1; } }
+.blockInkCardWrap .inkReplayBtn:hover { color: var(--text-primary); }
+.blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; }
+@media (hover: none) { .blockInkCardWrap .inkReplayBtn { opacity: 1; } }
 /* The lasso selection: a dashed box the pointer drags to move. */
 .inkSelRect {
   fill: rgba(80, 140, 255, 0.06);

@@ -143,28 +143,28 @@ tour.
 **The PDF viewer** and **The notebook view** (`tours/viewer.js`) walk the
 viewer's left edge top to bottom: the PDF's table of contents (`optional`:
 only a PDF with an outline has it), the tool column, full screen. The two
-viewers share the column up to the pen — zoom out, zoom in, fit to width,
-the pen, in the same places in both (what only one viewer has comes after
-them: Translate and the phone's selection mode on a PDF, Paper and Notes
-view in the notebook view) — and full screen. So the tours are
-**siblings**: the zoom, pen and full screen steps are `shared`, the same
-step objects in both files. A user who has finished one tour gets the other
-without them: its one `recap` card spotlights the shared run
-(`viewer.common`) — "Zoom, fit and the pen work as on a PDF" — and the tour
-moves on to what is new there. After the PDF tour the notebook view's is
-three cards (the recap, Paper, Notes view); the other way round, the PDF's
-is the outline, the recap and Translate. A read-only page has no pen, so
-the recap has a variant that names only zoom and fit. "Finished" is the
-sibling's stored `done`; a tour left halfway teaches nothing to skip.
+viewers share the column up to the pen (zoom out, zoom in, fit to width,
+the pen, in the same places in both) and full screen. What only one viewer
+has comes after them: Translate and the phone's selection mode on a PDF,
+Paper and Notes view in the notebook view. So the tours are **siblings**:
+the zoom, pen and full screen steps are `shared`, the same step objects in
+both files. A user who has finished one tour gets the other without them.
+Its one `recap` card spotlights the shared run (`viewer.common`), "Zoom,
+fit and the pen work as on a PDF", and the tour moves on to what is new
+there. After the PDF tour the notebook view's is three cards (the recap,
+Paper, Notes view); the other way round, the PDF's is the outline, the
+recap and Translate. A read-only page has no pen, so the recap has a
+variant that names only zoom and fit. "Finished" is the sibling's stored
+`done`; a tour left halfway teaches nothing to skip.
 
-The PDF viewer is offered on `page.opened`, listed after Arrange windows,
-which therefore takes the first paper of a load; a paper opened on a later
-visit gets this one (the phone, without the windows tour, gets it first).
-The notebook view is offered once the user is in it (state). Both require
-`viewerTools` (the column is on screen: not closed, and on a phone not
-under the Notes or Chat panel). The notebook view's last card points at
-Notes view, the button that leaves it; clicking it ends the tour as done
-(the engine's rule for leaving on a last card, below).
+The PDF viewer is offered on `page.opened`. It is listed after Arrange
+windows, which therefore takes the first paper of a load; a paper opened on
+a later visit gets this one. The phone has no windows tour, so it gets this
+one first. The notebook view is offered once the user is in it (state).
+Both require `viewerTools`: the column is on screen, not closed, and on a
+phone not under the Notes or Chat panel. The notebook view's last card
+points at Notes view, the button that leaves it. Clicking it ends the tour
+as done (the engine's rule for leaving on a last card, below).
 
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
@@ -278,12 +278,12 @@ Engine abilities available to every step:
   someone else was on, once they go). An optional first step with nothing
   to point at does not keep a tour out of the Tours menu: the step after it
   decides (a PDF without a table of contents).
-- **Sibling tours** (`sibling: "<tour id>"` on both). Two tours about
-  controls that are partly the same: a step marked `shared` is left out of
-  the run once the sibling is `done`, and a step marked `recap` is in the
-  run only then (`stepApplies` in `triggers.js`). The viewer tours above.
-- **Leaving on the last card.** When a run's prerequisites stop holding it
-  ends; if it was on its last step and that step waits for no action, the
+- **Sibling tours** (`sibling: "<tour id>"` on both), for two tours about
+  controls that are partly the same. A step marked `shared` is left out of
+  the run once the sibling is `done`. A step marked `recap` is in the run
+  only then (`stepApplies` in `triggers.js`). The viewer tours above.
+- **Leaving on the last card.** When a run's prerequisites stop holding, it
+  ends. If it was on its last step and that step waits for no action, the
   tour is recorded as done, since every card was shown.
 - **`pick`** in the registry for an anchor that repeats: `"last"` where the
   newest one is meant (the latest chat reply's citation), `"recent"` where

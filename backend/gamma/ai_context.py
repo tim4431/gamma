@@ -19,7 +19,6 @@ from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pag
                        extract_text_pages, image_part, outline, page_count, page_label, render_page)
 from .server_settings import can_store
 from .storage import write_atomic
-from .notebook import is_sheet
 from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
 
@@ -251,7 +250,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     full — what an edit_block replace may start from (ai_tools.notes_seen).
     ``crops``, when given, receives the pictures of attached handwriting
     blocks and pages of paper (up to ``MAX_INK_PICTURES``)."""
-    focus =str(getattr(payload, "focus_block_id", "") or "").strip()
+    focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
     # A selection's block rides along whole, so the model sees what surrounds
@@ -1207,18 +1206,22 @@ def area_highlight(properties: dict) -> tuple[int, tuple] | None:
     return page, box
 
 
-def text_box_label(properties: dict, on_sheet: bool = False) -> str:
+def text_box_label(properties: dict, on_sheet: bool = False, above: bool = False) -> str:
     """A text box's block as the model is told of it, with where it is
     placed: "(text box on p. N)", "(text box on a page of paper)" or
     "(text box, not placed on a page)"; "" for any other block. The
     nearest sheet wins: ``on_sheet`` says a sheet is among the block's
-    ancestors, as the walk that reached it knows."""
+    ancestors, as the walk that reached it knows. ``above`` names that
+    sheet as "the page of paper above", for an outline that shows it
+    (read_block)."""
     if not is_text_box(properties):
         return ""
     page = box_page(properties, on_sheet)
     if page:
         return f"(text box on p. {page})"
-    return "(text box on a page of paper)" if on_sheet else "(text box, not placed on a page)"
+    if on_sheet:
+        return "(text box on the page of paper above)" if above else "(text box on a page of paper)"
+    return "(text box, not placed on a page)"
 
 
 def under_sheet(conn, block_id: str) -> bool:

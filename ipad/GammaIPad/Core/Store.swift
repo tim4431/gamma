@@ -274,10 +274,4 @@ final class Store {
                        [e.string("page_id"), e.string("action"), e.string("title"), try JSON.string(e["stats"]), e.string("at")])
         try db.execute("DELETE FROM log WHERE id <= (SELECT MAX(id) FROM log) - 500")
     }
-
-    func recentLog() throws -> [[String: Any]] {
-        try db.query("SELECT page_id, action, title, at FROM log ORDER BY id DESC LIMIT 100").map {
-            ["page_id": $0[0] as? String ?? "", "action": $0[1] as? String ?? "", "title": $0[2] as? String ?? "", "at": $0[3] as? String ?? ""]
-        }
-    }
 }

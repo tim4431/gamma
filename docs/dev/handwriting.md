@@ -230,7 +230,7 @@ instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`):
   makes the merge unclean.
 - A base file that is gone merges as a union by stroke id. A file that
   cannot be read, or a result over the budgets, leaves the write as sent
-  (last writer wins, as before).
+  (last writer wins).
 
 The merged file is stored (`ink.dumps`) only when it is new. One stored
 already stays: the purge deletes only under the write lock the batch

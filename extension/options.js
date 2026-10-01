@@ -44,7 +44,6 @@ async function refreshAccount() {
   status("account-status", "");
   if (!settings.server) {
     status("server-status", "Not connected.");
-    $("signed-out").classList.remove("hidden"); $("signed-in").classList.add("hidden");
     return;
   }
   try {
@@ -55,7 +54,6 @@ async function refreshAccount() {
     $("signed-out").classList.toggle("hidden", !!me.user);
     $("signed-in").classList.toggle("hidden", !me.user);
     if (me.user) $("who").textContent = me.user;
-    status("account-status", "");
   } catch (err) {
     status("server-status", `Can't reach ${settings.server}: ${err.message}`, "err");
   }

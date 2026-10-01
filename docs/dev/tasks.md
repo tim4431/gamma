@@ -60,8 +60,8 @@ it stands; anything else is logged with its traceback.
 The work itself takes the report as a plain `progress` callable, never
 the job: `ws_backup.write_zip`, `create` and `restore_zip`,
 `backups.create`, the export driver `_run_export`, the Zotero and Markdown
-imports. A caller that does not watch passes nothing (the routers default
-to `jobs.no_progress`).
+imports. A caller that does not watch passes nothing; the default is
+`jobs.no_progress`.
 
 **Limits.** An account runs two jobs at once and the server four; the rest
 wait queued, oldest first. A workspace's own jobs (the indexer) run outside

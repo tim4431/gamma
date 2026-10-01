@@ -459,9 +459,6 @@
 .usageChartSince { margin-top: 7px; color: var(--text-dim); font-size: var(--fs-2xs); }
 .usageChartHead, .usageChartFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .usageChartHead { margin: 20px 0 18px; }
-.usageChartToggle { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-block); }
-.usageChartToggle button { border: 0; background: transparent; color: var(--text-muted); padding: 4px 10px; border-radius: var(--radius-xs); font-size: var(--fs-xs); cursor: pointer; }
-.usageChartToggle button[aria-pressed="true"] { background: var(--bg-surface); color: var(--accent); box-shadow: var(--shadow-1); }
 .usageChartPlot { display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: 150px auto; gap: 10px 8px; }
 .usageChartAxis { display: flex; flex-direction: column; justify-content: space-between; text-align: right; color: var(--text-dim); font-size: var(--fs-2xs); }
 .usageChartBars { position: relative; display: flex; gap: 3px; min-width: 0; }
@@ -473,7 +470,6 @@
 .usageChartBar[data-value="0"]::after { content: ""; position: absolute; bottom: 0; height: 2px; width: 100%; max-width: 38px; background: var(--border); }
 .usageChartBar:hover, .usageChartBar[aria-pressed="true"] { background: var(--bg-selected); }
 .usageChartBar:hover .usageChartFill, .usageChartBar[aria-pressed="true"] .usageChartFill { background: var(--accent); }
-.usageChartBar:focus-visible, .usageChartToggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .usageChartDates { grid-column: 2; display: flex; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: var(--fs-2xs); }
 .usageChartDetail { display: flex; flex-direction: column; gap: 4px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); line-height: 1.6; min-height: 54px; }
 .usageChartDetail strong { color: var(--text-primary); font-weight: 500; }

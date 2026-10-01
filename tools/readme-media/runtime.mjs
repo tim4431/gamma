@@ -20,6 +20,36 @@ export function readSession(dir = process.cwd()) {
   return fs.readFileSync(path.join(dir, 'session.txt'), 'utf8').trim();
 }
 
+// The CSS rect of `phrase` inside a text-layer span (a locator), for gestures
+// placed from the page's text.
+export function phraseBox(locator, phrase) {
+  return locator.evaluate((el, phrase) => {
+    const text = el.firstChild, i = text.textContent.indexOf(phrase);
+    const r = document.createRange();
+    r.setStart(text, i); r.setEnd(text, i + phrase.length);
+    const b = r.getBoundingClientRect();
+    return { x: b.x, y: b.y, width: b.width, height: b.height };
+  }, phrase);
+}
+
+// A PNG (base64) on the page's clipboard, for a real Ctrl+V paste (the
+// context needs the clipboard permissions).
+export function clipboardImage(page, base64) {
+  return page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+  }, base64);
+}
+
+// Open the chat dock through the command palette when it is closed.
+export async function openChat(page) {
+  if (await page.locator('.chatInput').isVisible().catch(() => false)) return;
+  await page.keyboard.press('Control+Shift+p');
+  await page.keyboard.type('chat');
+  await page.getByRole('dialog', { name: 'Command palette' }).locator('[role="option"][aria-selected="true"]', { hasText: 'chat' }).waitFor();
+  await page.keyboard.press('Enter');
+}
+
 // Retina capture. Playwright's recordVideo, and Chrome's screencast under
 // `deviceScaleFactor` emulation, deliver frames at the window's CSS size, and
 // CSS zoom misplaces the app's popups. A headless shell whose screen itself is

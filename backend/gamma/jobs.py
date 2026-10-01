@@ -345,7 +345,7 @@ def _work(live: _Live) -> None:
         result = live.run(job)
         encoded = json.dumps(result) if result is not None else None
         if live.artifact:
-            part = _dir(live.id) / "artifact.part"
+            part = job.artifact_path
             if not part.is_file():
                 raise RuntimeError("the task finished without writing its file")
             final = part.with_name("artifact")

@@ -5,7 +5,7 @@
 // (suite-workspace.mjs with MEDIA_SCRATCH set to this shot's directory).
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, RETINA, launchRetina, startCapture, configureContext, addCursor } from './runtime.mjs';
+import { ROOT, RETINA, launchRetina, startCapture, configureContext, addCursor, clipboardImage, openChat } from './runtime.mjs';
 import { Account } from '../../frontend/tests/e2e/harness.mjs';
 
 const scratch = path.resolve(process.env.MEDIA_SCRATCH || path.join(ROOT, 'artifacts/readme-media/agentic-notes'));
@@ -49,17 +49,9 @@ try {
   await page.goto(`${state.base}/?page=${note.id}&ws=${account.ws}`);
   const cursorRow = page.locator('.blockRow', { hasText: CURSOR }).first();
   await cursorRow.waitFor({ timeout: 30000 });
-  if (!await page.locator('.chatInput').isVisible()) {
-    await page.keyboard.press('Control+Shift+p');
-    await page.keyboard.type('chat');
-    await page.getByRole('dialog', { name: 'Command palette' }).locator('[role="option"][aria-selected="true"]', { hasText: 'chat' }).waitFor();
-    await page.keyboard.press('Enter');
-  }
+  await openChat(page);
   await page.locator('.chatInput').waitFor();
-  await page.evaluate(async b64 => {
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
-  }, slide);
+  await clipboardImage(page, slide);
   await page.mouse.move(700, 620);
   await page.waitForTimeout(1200);
   capture = await startCapture(page, path.join(scratch, 'frames'));

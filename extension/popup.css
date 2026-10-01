@@ -29,7 +29,7 @@ body.options { width: auto; min-width: 380px; max-width: 520px; padding: 4px 0; 
 .hidden { display: none !important; }
 a { color: var(--accent-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button, input, select { font-family: inherit; font-size: inherit; color: inherit; }
+button, input { font-family: inherit; font-size: inherit; color: inherit; }
 code, kbd { font-family: var(--font-mono); }
 
 /* Keyboard focus: Gamma's one ring, shown only for keyboard focus; menu

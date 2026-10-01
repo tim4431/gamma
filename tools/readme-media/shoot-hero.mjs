@@ -12,7 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, RETINA, launchRetina, CURATED } from './runtime.mjs';
+import { ROOT, RETINA, launchRetina, CURATED, openChat, phraseBox } from './runtime.mjs';
 import { Server, Account, fakeAiModels } from '../../frontend/tests/e2e/harness.mjs';
 
 const SCRATCH = path.resolve(process.env.MEDIA_SCRATCH || path.join(ROOT, 'artifacts/readme-media/hero'));
@@ -51,26 +51,14 @@ try {
     await page.goto(`${server.base}/?page=${id}&ws=${account.ws}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 60000 });
   }
-  if (!await page.locator('.chatInput').isVisible().catch(() => false)) {
-    await page.keyboard.press('Control+Shift+p');
-    await page.keyboard.type('chat');
-    await page.getByRole('dialog', { name: 'Command palette' }).locator('[role="option"][aria-selected="true"]', { hasText: 'chat' }).waitFor();
-    await page.keyboard.press('Enter');
-  }
+  await openChat(page);
   await page.locator('.chatBubbleRow.ai', { hasText: 'optical tweezers' }).waitFor({ timeout: 20000 });
   // Pages are lazy: bring page 2 in, then frame Fig. 1 over the sentence.
   await page.evaluate(() => document.querySelector('[data-page="2"]').scrollIntoView({ block: 'start' }));
   const sentence = page.locator('[data-page="2"] .textLayer span').filter({ hasText: HIGHLIGHT }).first();
   await sentence.waitFor({ timeout: 30000 });
-  const phraseBox = () => sentence.evaluate((el, phrase) => {
-    const text = el.firstChild, i = text.textContent.indexOf(phrase);
-    const r = document.createRange();
-    r.setStart(text, i); r.setEnd(text, i + phrase.length);
-    const b = r.getBoundingClientRect();
-    return { x: b.x, y: b.y, width: b.width, height: b.height };
-  }, HIGHLIGHT);
   // The sentence 80 px above the window's foot: the figure fills the view above it.
-  const first = await phraseBox();
+  const first = await phraseBox(sentence, HIGHLIGHT);
   await page.mouse.move(600, 450);
   await page.mouse.wheel(0, first.y - (900 - 80));
   await page.waitForTimeout(2000);
@@ -80,7 +68,7 @@ try {
     console.log('Saved', path.join(SCRATCH, 'inspect.png'));
   } else {
     // Highlight the sentence (a double-press drag selects whole words) and comment on it.
-    const b = await phraseBox();
+    const b = await phraseBox(sentence, HIGHLIGHT);
     await page.mouse.move(b.x + 6, b.y + b.height / 2);
     await page.mouse.down({ clickCount: 2 });
     await page.mouse.move(b.x + b.width - 6, b.y + b.height / 2, { steps: 12 });

@@ -9,7 +9,6 @@ call orphans a conversation or a share, never page data.
 """
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from ..auth import require_ws
 from ..ops import StorableBody

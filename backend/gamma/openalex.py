@@ -7,7 +7,7 @@ abstracts, citation counts, open-access locations and reference lists. It
 answers without an account on a small daily budget (a search costs a tenth
 of a cent of it, a lookup by id nothing) and pauses keyless searches when
 its cluster is loaded; a free API key gives ten times the budget and
-uninterrupted search. The key is the account's (Settings → Assistant →
+uninterrupted search. The key is the account's (Settings → AI → Chat →
 Online search, gamma/search_services.py), else the server's
 ``GAMMA_OPENALEX_API_KEY``, and travels in the Authorization header, never
 in a URL. Records come back in the shape the other registries use
@@ -132,9 +132,9 @@ def _year_filter(from_year: int) -> str:
     return f"from_publication_date:{int(from_year)}-01-01" if from_year else ""
 
 
-# What ai_web's `kind` means to OpenAlex: a work published in a journal, or
-# one that is not (a preprint server's copy).
-WORK_TYPES = {"article": "article", "preprint": "preprint"}
+# What ai_web's `kind` means to OpenAlex: its work types of the same name
+# (a work published in a journal, or a preprint server's copy).
+WORK_TYPES = ("article", "preprint")
 
 
 def search(query: str, rows: int = 5, from_year: int = 0, key: str = "", *,
@@ -145,8 +145,8 @@ def search(query: str, rows: int = 5, from_year: int = 0, key: str = "", *,
     if not (query or "").strip():
         return []
     narrow = [_year_filter(from_year)]
-    if WORK_TYPES.get(work_type):
-        narrow.append(f"type:{WORK_TYPES[work_type]}")
+    if work_type in WORK_TYPES:
+        narrow.append(f"type:{work_type}")
     if open_access:
         narrow.append("is_oa:true")
     data = _get("/works", {"search": query[:400], "per-page": rows, "select": _SELECT,

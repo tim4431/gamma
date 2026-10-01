@@ -48,6 +48,18 @@ export function applyPatch(props, patch) {
   return out;
 }
 
+// Whether `test` holds for `node` or any block under it.
+export const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
+
+// `tree` with the text of the blocks in `texts` (id → text) replaced.
+export function withTexts(tree, texts) {
+  return (tree || []).map((n) => {
+    const kids = n.children?.length ? withTexts(n.children, texts) : n.children;
+    if (texts.has(n.id)) return { ...n, content: texts.get(n.id), children: kids };
+    return kids === n.children ? n : { ...n, children: kids };
+  });
+}
+
 // id → {node, parent} for every block; the page id is the top level's parent.
 export function indexTree(tree, pageId) {
   const map = new Map();

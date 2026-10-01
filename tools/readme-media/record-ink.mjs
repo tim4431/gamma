@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { ROOT, VIEW, RETINA, launchRetina, startCapture, addCursor } from './runtime.mjs';
+import { ROOT, VIEW, RETINA, launchRetina, startCapture, addCursor, phraseBox } from './runtime.mjs';
 import { Server, Account } from '../../frontend/tests/e2e/harness.mjs';
 
 const scratch = path.resolve(process.env.MEDIA_SCRATCH || path.join(ROOT, 'artifacts/readme-media'));
@@ -66,13 +66,6 @@ try {
   const HIGHLIGHT = 'robust quantum information storage';
   const NOTE = 'Robust storage is what lets qubits move.';
   const CLAIM = 'non-local connectivity';
-  const phraseBox = (locator, phrase) => locator.evaluate((el, phrase) => {
-    const text = el.firstChild, i = text.textContent.indexOf(phrase);
-    const r = document.createRange();
-    r.setStart(text, i); r.setEnd(text, i + phrase.length);
-    const box = r.getBoundingClientRect();
-    return { x: box.x, y: box.y, width: box.width, height: box.height };
-  }, phrase);
   // Optional first README story: text highlight and a real annotation before ink.
   if (process.argv.includes('--annotate')) {
     marks.start = at();

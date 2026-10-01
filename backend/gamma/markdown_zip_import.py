@@ -55,6 +55,7 @@ from urllib.parse import unquote
 from fastapi import HTTPException
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
+from . import jobs
 from .blocks_store import last_child_position, write_lock
 from .db import page_now
 from .foldertags import clean_path, clean_segment, parse_tags
@@ -417,7 +418,7 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
     and every page is stamped at its commit). ``progress`` (a background
     job's report, gamma/jobs.py) hears each note; a stopped job keeps the
     notes it got to. Returns the report dict."""
-    progress = progress or (lambda **_: None)
+    progress = progress or jobs.no_progress
     from .import_review import archive_entries, validate_selection
     prefix = clean_path(folder)
     entries, opened = [], []

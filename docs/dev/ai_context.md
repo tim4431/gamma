@@ -40,7 +40,7 @@ and applies unchanged.
 ## The problem
 
 A page chat injects the first `context_char_limit` chars of the PDF's
-extracted text (default 60,000 since 2026-08-28 — Settings → Assistant →
+extracted text (default 60,000 since 2026-08-28 — Settings → AI → Chat →
 "Single paper"; the eval below ran at the old 8,000). A 50-page paper is
 ~280,000 chars, so at 8k the model saw under 3% of it — and nothing used to
 tell it that. Asked for a detail deeper in

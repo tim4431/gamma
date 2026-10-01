@@ -8,7 +8,7 @@ import time
 from imageio_ffmpeg import get_ffmpeg_exe
 
 ROOT = Path(__file__).resolve().parents[2]
-# The 1x WebM cases' frame (metadata, reference-links, connector): warm paper,
+# The 1x WebM cases' frame (metadata, reference-links): warm paper,
 # a fine card edge, a 16:9 canvas. Retina captures are framed by compose.Frame.
 FRAME = ('pad=iw+4:ih+4:2:2:color=0xe3e0d8,'
          'pad=1728:972:(ow-iw)/2:(oh-ih)/2:color=0xf6f4ef')

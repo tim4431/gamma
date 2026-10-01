@@ -83,10 +83,6 @@ class FetchError(Exception):
         super().__init__(message)
         self.wall, self.open_url, self.pdf_url = wall, open_url, pdf_url
 
-    @property
-    def access_blocked(self) -> bool:
-        return bool(self.wall)
-
 
 # ---------------------------------------------------------------- search
 

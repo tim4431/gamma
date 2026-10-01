@@ -126,17 +126,13 @@ _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 
-def _lock(ws: str) -> threading.Lock:
-    with _locks_guard:
-        return _locks.setdefault(ws, threading.Lock())
-
-
 def guard(ws: str) -> threading.Lock:
     """The workspace's lock the check, the full pass and the purge hold.
     ``storage._store`` re-dates a stored file under it, so a re-upload of
     bytes the purge is about to delete lands either before the purge's
     check (the file stays) or after its delete (the file is written again)."""
-    return _lock(ws)
+    with _locks_guard:
+        return _locks.setdefault(ws, threading.Lock())
 
 
 def _has_pages_db(ws: str) -> bool:
@@ -150,7 +146,7 @@ def check(ws: str, names) -> list[str]:
     """Record the ``names`` a writer dropped that nothing references any
     more — stored files past the grace, not recorded yet. Returns the file
     names recorded."""
-    with _lock(ws):
+    with guard(ws):
         if not _has_pages_db(ws):
             return []
         files = _stored(ws)
@@ -177,7 +173,7 @@ def reconcile(ws: str) -> dict:
     row, the rows cleared, the files deleted, and why a due purge was
     refused ("" when it was not)."""
     out = {"recorded": [], "cleared": [], "purged": [], "blocked": ""}
-    with _lock(ws):
+    with guard(ws):
         if not _has_pages_db(ws):
             return out
         _sweep_partial(ws)

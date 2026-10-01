@@ -392,7 +392,7 @@ are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
 paused searches without an API key (heavy load) — a free OpenAlex API key in
-Settings → Assistant → Online search avoids this.)".
+Settings → AI → Chat → Online search avoids this.)".
 
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
@@ -463,7 +463,7 @@ search off.
 
 #### Online search services
 
-Settings → Assistant → **Online search** (`settings/OnlineSearch.jsx`) holds
+Settings → AI → Chat → **Online search** (`settings/OnlineSearch.jsx`) holds
 **Search the web with** (the engine) and one row per service: Brave Search (API
 key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
 or Test, Edit and Remove. Test runs one small search with the stored settings.
@@ -665,8 +665,8 @@ finished reply's actions for the requests it left behind:
   for the request's owner that Gamma page goes straight on to the publisher,
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
-- **Fetch blocked papers in the background** (Settings → AI → Tools,
-  `fetchInBackground`, account-wide, **on** by default): a card in the
+- **Fetch blocked papers in the background** (Settings → AI → Chat → Tools,
+  `fetchInBackground`, account-wide, on by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
   Connector tries in an ordinary tab next to the Gamma one — unfocused, so
