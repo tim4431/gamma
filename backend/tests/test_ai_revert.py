@@ -48,9 +48,9 @@ def _edit(ids, block_id, **args):
     return action
 
 
-def _revert(c, action, force=False):
+def _revert(c, action, force=False, redo=False):
     return c.post("/api/ai/revert", json={"kind": action["kind"], "block_id": action["block_id"],
-                                          "revert": action["revert"], "force": force})
+                                          "revert": action["revert"], "force": force, "redo": redo})
 
 
 def _type(c, block_id, content):
@@ -117,7 +117,7 @@ def test_a_new_note_reverts_unless_it_was_filled_in(notes):
     text, action = run_agent_tool(ids["ws"], SANDBOX, "create_block",
                                   {"parent_id": ids["page"], "content": "from the AI"})
     new_id = re.search(r"\[([^\]]+)\]", text).group(1)
-    assert action["revert"] == {"after": "from the AI"}
+    assert action["revert"]["after"] == "from the AI" and action["revert"]["parent"] == ids["page"]
     assert _revert(c, action).status_code == 200
     assert new_id not in children(c, ids["page"])
     assert _revert(c, action).json()["noop"] is True  # gone already
@@ -185,6 +185,75 @@ def test_a_malformed_change_is_refused(notes):
     assert r.status_code == 400
     r = c.post("/api/ai/revert", json={"kind": "rename", "block_id": ids["child"], "revert": {}})
     assert r.status_code == 422
+
+
+def test_a_reverted_edit_redoes_and_keeps_what_the_user_typed_since(notes):
+    c, ids = notes
+    action = _edit(ids, ids["child"], mode="patch", find="supporting", content="sharper")
+    assert _revert(c, action).status_code == 200
+    _type(c, ids["child"], "supporting detail, and my own words")
+    r = _revert(c, action, redo=True)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"page_id": ids["page"], "noop": False}
+    assert props(c, ids["child"])["content"] == "sharper detail, and my own words"
+    assert _revert(c, action, redo=True).json()["noop"] is True
+    # Back and forth: it reverts again.
+    assert _revert(c, action).status_code == 200
+    assert props(c, ids["child"])["content"] == "supporting detail, and my own words"
+
+
+def test_a_redo_over_a_rewrite_asks_before_forcing(notes):
+    c, ids = notes
+    _type(c, ids["child"], "one two three. tail")
+    action = _edit(ids, ids["child"], mode="patch", find="one two three", content="the AI's sentence")
+    assert _revert(c, action).status_code == 200
+    _type(c, ids["child"], "my own sentence. tail")
+    r = _revert(c, action, redo=True)
+    assert r.status_code == 409 and r.json()["conflict"] == "changed"
+    assert props(c, ids["child"])["content"] == "my own sentence. tail"
+    assert _revert(c, action, redo=True, force=True).status_code == 200
+    assert props(c, ids["child"])["content"] == "the AI's sentence. tail"
+
+
+def test_a_reverted_new_note_comes_back_in_its_place(notes):
+    c, ids = notes
+    text, action = run_agent_tool(ids["ws"], SANDBOX, "create_block",
+                                  {"parent_id": ids["page"], "content": "from the AI", "after_id": ids["top"]})
+    new_id = re.search(r"\[([^\]]+)\]", text).group(1)
+    order = children(c, ids["page"])
+    assert _revert(c, action).status_code == 200
+    r = _revert(c, action, redo=True)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"page_id": ids["page"], "noop": False}
+    assert children(c, ids["page"]) == order  # the same id, between the same siblings
+    assert props(c, new_id)["content"] == "from the AI"
+    assert _revert(c, action, redo=True).json()["noop"] is True
+    # Its parent gone, there is nowhere to put it.
+    _, nested = run_agent_tool(ids["ws"], SANDBOX, "create_block", {"parent_id": ids["other"], "content": "x"})
+    assert _revert(c, nested).status_code == 200
+    assert c.delete(f"/api/blocks/{ids['other']}").status_code == 200
+    r = _revert(c, nested, redo=True)
+    assert r.status_code == 409 and r.json()["conflict"] == "gone"
+
+
+def test_a_reverted_move_redoes_unless_moved_since(notes):
+    c, ids = notes
+    _, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+                               {"block_id": ids["other"], "parent_id": ids["top"]})
+    assert action["revert"]["to_position"]
+    assert _revert(c, action).status_code == 200
+    assert _revert(c, action, redo=True).status_code == 200
+    assert ids["other"] in children(c, ids["top"])
+    assert _revert(c, action).status_code == 200
+    r = c.post(f"/api/pages/{ids['page']}/ops", json={"client": "tab", "ops": [
+        {"op": "move", "id": ids["other"], "parent": ids["child"]}]})
+    assert r.status_code == 200, r.text
+    r = _revert(c, action, redo=True)
+    assert r.status_code == 409 and r.json()["conflict"] == "moved"
+    # An action recorded without `to_position` goes last under its parent.
+    old = {**action, "revert": {k: v for k, v in action["revert"].items() if k != "to_position"}}
+    assert _revert(c, old, redo=True, force=True).status_code == 200
+    assert children(c, ids["top"])[-1] == ids["other"]
 
 
 def test_the_replay_tells_the_model_a_change_was_reverted():

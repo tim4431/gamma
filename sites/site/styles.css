@@ -220,11 +220,12 @@ li + li { margin-top: 8px; }
 @media (max-width: 900px) { .dl { grid-template-columns: 1fr; } .dl__card--wide { grid-column: auto; } }
 
 /* Code blocks */
-.code { position: relative; min-width: 0; background: var(--dark); color: var(--dark-fg); border-radius: 10px; }
+.code { position: relative; min-width: 0; background: var(--dark); color: var(--dark-fg); border-radius: 10px; overflow: hidden; }
 .code pre { margin: 0; padding: 14px 84px 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; }
 .code code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; }
-.copy { position: absolute; top: 8px; right: 8px; background: rgba(255, 255, 255, 0.1); color: var(--dark-fg); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 7px; padding: 4px 10px; font: 600 12px var(--font); cursor: pointer; }
-.copy:hover { background: rgba(255, 255, 255, 0.18); }
+/* Opaque, with the code fading into it: a long command scrolls under the button. */
+.copy { position: absolute; top: 8px; right: 8px; background: color-mix(in srgb, var(--dark-fg) 10%, var(--dark)); color: var(--dark-fg); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 7px; padding: 4px 10px; font: 600 12px var(--font); cursor: pointer; box-shadow: -16px 0 12px var(--dark); }
+.copy:hover { background: color-mix(in srgb, var(--dark-fg) 18%, var(--dark)); }
 
 /* Self-host */
 .selfhost { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; padding: 88px 0; }

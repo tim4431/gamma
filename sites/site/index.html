@@ -61,19 +61,20 @@
         <a href="https://github.com/tim4431/Gamma">Source on GitHub</a>
       </p>
       <ul class="chips" aria-label="Highlights">
-        <li>Highlights &amp; ink</li>
+        <li>Highlights, ink &amp; text boxes</li>
         <li>Outliner notes</li>
         <li>Markdown + LaTeX</li>
         <li>Ask an AI about your papers</li>
         <li>Library search</li>
-        <li>Shared workspaces</li>
+        <li>Live collaboration</li>
+        <li>One-click browser saving</li>
         <li>Obsidian &amp; Zotero import</li>
       </ul>
     </div>
     <div class="wrap wrap--wide">
       <figure class="frame frame--hero">
         <div class="frame__bar" aria-hidden="true"><i></i><i></i><i></i></div>
-        <img src="/media/app.png" width="1680" height="1000" alt="Gamma with a Nature paper open: a highlighted passage on the left, its outliner notes and an AI chat on the right" fetchpriority="high">
+        <img src="/media/app.webp" width="2880" height="1800" alt="Gamma with a Nature paper open on its first figure: a highlighted sentence and its comment in the notes on the right, and under them an AI chat that answers what the paper's key idea is" fetchpriority="high">
       </figure>
     </div>
   </section>
@@ -105,6 +106,7 @@
           <li><b>Any browser</b> — the office desktop, the iPad with the Pencil, your phone: reading position, open tabs and zoom follow your account from device to device.</li>
           <li><b>Offline copy</b> — keep a full copy of a workspace on your laptop with the desktop app (one click on the workspace's <i>clone</i> chip) or on any second Gamma. Read and write it on the train; it syncs when the connection returns.</li>
           <li><b>Merges, not losses</b> — edits merge block by block; the rare conflict is shown on its block with both versions to pick from.</li>
+          <li><b>Install it</b> — Safari → <i>Add to Home Screen</i> on the iPad, <i>Install Gamma</i> in Chrome or Edge, or the desktop app for Windows, macOS and Linux.</li>
         </ul>
       </div>
       <figure class="feature__media feature__media--plain">
@@ -120,6 +122,8 @@
         <ul>
           <li><b>Highlight</b> — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block. Highlights already saved in the file by SumatraPDF, Acrobat or Preview are imported as blocks too.</li>
           <li><b>Draw</b> — use a stylus or mouse to circle a claim, sketch an arrow or highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or just part of one. Ink becomes a note block linked to its place in the PDF.</li>
+          <li><b>Type on the page</b> — the Text tool puts a text box on a PDF page or a notebook sheet, like Acrobat's, with Markdown and math inside. Boxes are notes too, and export as real text boxes in the annotated PDF.</li>
+          <li><b>Follow citations</b> — references in the PDF are clickable; a global <b>← Back</b> unwinds jumps across documents, and a cited arXiv or DOI paper is one click from your library.</li>
           <li><b>Translate</b> — redraw a page in your language in place, figures untouched, or translate just a selected sentence. Microsoft's free service works with no setup; a chat model, Google or Youdao are one setting away.</li>
           <li><b>Dockable panels</b> — drag any window's grip to the left, right or bottom; double-click to collapse.</li>
         </ul>
@@ -136,9 +140,10 @@
         <p>Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way.</p>
         <ul>
           <li><b>Outliner</b> — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.</li>
-          <li><b>Live preview, Obsidian-style</b> — markdown, <code>$…$</code> / <code>$$…$$</code> math, code fences, callouts and tables render in place while the block you're on stays raw. Math gets bracket-pair coloring, <code>\command</code> autocomplete and Tab hops between <code>{}</code> arguments.</li>
-          <li><b>Link and embed</b> — <code>[[page]]</code> mentions, <code>![[block]]</code> embeds that edit the source in place, and a "/" menu for everything else.</li>
-          <li><b>Pictures and tables</b> — paste an image and drag its edge to resize it; edit tables cell by cell.</li>
+          <li><b>Live preview, Obsidian-style</b> — markdown, <code>$…$</code> / <code>$$…$$</code> math, code fences, callouts, tables and Mermaid diagrams render in place while the block you're on stays raw. Math gets bracket-pair coloring, <code>\command</code> autocomplete and Tab hops between <code>{}</code> arguments.</li>
+          <li><b>Pictures, tables and diagrams</b> — paste a screenshot and drag its edge to size it; edit tables cell by cell; double-click a diagram to edit its source.</li>
+          <li><b>Pages to write on</b> — type <code>/page</code> and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.</li>
+          <li><b>Link and embed</b> — <code>[[page]]</code> mentions, <code>![[block]]</code> embeds that edit the source in place, backlinks, and a "/" menu for everything else.</li>
         </ul>
       </div>
       <figure class="feature__media">
@@ -148,18 +153,33 @@
 
     <section class="feature wrap">
       <div class="feature__text">
-        <p class="eyebrow">Native agentic</p>
-        <h2>Ask an AI about your papers. Follow its citations back.</h2>
+        <p class="eyebrow">Ask an AI about your papers</p>
+        <h2>Ask about the paper. Follow its citations back.</h2>
         <p>Chat with the open PDF, or several at once. Answers cite the page, and clicking a citation jumps to the passage it came from.</p>
         <ul>
-          <li><b>See what it sees</b> — paste figures, dictate by voice, or attach the whole PDF so the model reads tables and plots.</li>
+          <li><b>See what it sees</b> — Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model reads tables and plots.</li>
           <li><b>Your provider, your key</b> — Anthropic or OpenAI models, or sign in with your ChatGPT subscription. Nothing is sent to any AI service until you add one.</li>
-          <li><b>Mention a paper</b> — type <code>@</code> to attach a library page; its details and text stay in context.</li>
-          <li><b>Put the agent to work</b> — search your library, read papers, compare findings, rename pages or file them into folders. Expand each tool step to inspect it.</li>
+          <li><b>Mention a paper</b> — type <code>@</code> to attach a library page; its details and text stay in context for follow-ups.</li>
+          <li><b>Put the agent to work</b> — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages or file them into folders. It asks before each change, each tool step expands to show what it did, and it can never delete anything.</li>
         </ul>
       </div>
       <figure class="feature__media">
         <img src="/media/demo-native-agentic.webp" width="1600" height="900" loading="lazy" alt="Ctrl+dragging a figure into the chat and asking about it, following a cited passage, then letting the assistant find the most-cited follow-up papers online and save them after approval">
+      </figure>
+    </section>
+
+    <section class="feature feature--flip wrap">
+      <div class="feature__text">
+        <p class="eyebrow">AI in your notes</p>
+        <h2>From a slide to your notes, as math you can edit.</h2>
+        <ul>
+          <li><b>Write where your cursor is</b> — paste a slide or a screenshot into the chat and ask: the new block goes under the one you're on, an equation as KaTeX, once you approve the edit.</li>
+          <li><b>Every change, listed</b> — what the agent changed in your notes and your library is listed under its answer, each a link to the place it changed.</li>
+          <li><b>Undo what it did</b> — revert one change or the whole list; a revert keeps what you typed since, and asks first if you changed the AI's own words.</li>
+        </ul>
+      </div>
+      <figure class="feature__media">
+        <img src="/media/demo-agentic-notes.webp" width="1600" height="900" loading="lazy" alt="Pasting a slide's equation into the chat and asking for it in the note: after an approval card, it lands as a KaTeX block under the cursor">
       </figure>
     </section>
 
@@ -179,9 +199,9 @@
           <p>Citations in the PDF are clickable: jump to the reference, unwind jumps across documents with a global Back, and fetch a cited arXiv or DOI paper into your library in one click.</p>
         </article>
         <article class="card">
-          <img src="/media/demo-library.webp" width="1600" height="900" loading="lazy" alt="Searching titles and PDF text from home, narrowing with a folder chip, and opening a highlighted match">
-          <h3>Search everything</h3>
-          <p><kbd>Ctrl</kbd>+<kbd>F</kbd> searches notes, highlights and the full text of every PDF at once, with match-case, whole-word and regex toggles. Narrow by label (an author) or by folder (<code>qc</code> pulls in everything beneath it). "3000" still finds "3,000-qubit" across a line break.</p>
+          <img src="/media/demo-search.webp" width="1600" height="900" loading="lazy" alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers">
+          <h3>Find anything</h3>
+          <p>In a paper, <kbd>Ctrl</kbd>+<kbd>F</kbd> counts the matches and Enter steps through them. <kbd>Ctrl</kbd>+<kbd>P</kbd> opens any page, folder or label as you type, typos forgiven; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> runs any command. From home, <kbd>Ctrl</kbd>+<kbd>F</kbd> searches notes, highlights and every PDF at once: "3000" still finds "3,000-qubit" across a line break.</p>
         </article>
         <article class="card">
           <img src="/media/demo-metadata.webp" width="1120" height="714" loading="lazy" alt="A freshly opened paper resolves its title, authors and venue; one click copies BibTeX or a slide-ready citation">
@@ -197,10 +217,9 @@
         <p class="eyebrow">Connect your research</p>
         <h2>At home in the tools you already use.</h2>
         <ul>
-          <li><b>Gamma Connector</b> — a browser extension that saves the paper you're reading in one click: PDF, metadata, folder and labels, straight from the arXiv, DOI or publisher tab. Right-click clips a link or a selection into your notes; its cookie button keeps your publisher sign-in per journal so the server can fetch that journal's PDFs on its own.</li>
+          <li><b>Assistants</b> — the Gamma plugin for Codex and Claude Code lets either assistant search, read and export your papers, notes and highlights, read-only, for a workspace you approve in the browser: "@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?" Any other MCP client connects with the same URL.</li>
           <li><b>Import</b> — Logseq PDF exports and Zotero libraries come in with their annotations; Markdown folders, Obsidian vaults (wikilinks, block embeds, tags) and Notion exports come in as notes.</li>
           <li><b>Export</b> — a page or folder as annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, or a Gamma zip another Gamma can merge.</li>
-          <li><b>Assistants</b> — Codex, Claude Code or any MCP client can search, read and export your papers, notes and highlights, read-only, for a workspace you approve: "@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?"</li>
         </ul>
       </div>
       <figure class="feature__media feature__media--plain">
@@ -210,18 +229,48 @@
 
     <section class="feature wrap">
       <div class="feature__text">
+        <p class="eyebrow">Gamma Connector</p>
+        <h2>Save the paper you're reading. One click.</h2>
+        <ul>
+          <li><b>From the paper's own page</b> — on an arXiv, DOI or publisher tab the toolbar badge shows what it found; the popup has the title and authors, a folder and labels, and <b>Save to Gamma</b> brings in the PDF with its metadata. A paper already in your library gets a ✓ and an <i>Open in Gamma</i> instead.</li>
+          <li><b>Clip</b> — right-click to save a link, a page, or a selection as a quote under the paper it came from.</li>
+          <li><b>Your publisher sign-ins</b> — the cookie button keeps your sign-in per journal, so the server can fetch that journal's PDFs on its own. When the AI chat meets a sign-in or a paywall, its card opens the page in a tab, and once you are through the Connector sends the PDF back to the chat.</li>
+        </ul>
+      </div>
+      <figure class="feature__media">
+        <img src="/media/demo-connector.webp" width="1600" height="900" loading="lazy" alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label">
+      </figure>
+    </section>
+
+    <section class="feature feature--flip wrap">
+      <div class="feature__text">
         <p class="eyebrow">Share, sync and move your data</p>
         <h2>Your space. A shared place.</h2>
         <ul>
-          <li><b>Workspaces</b> — keep separate personal libraries, or collaborate in a shared library with owners, editors and viewers.</li>
+          <li><b>Workspaces</b> — keep separate personal libraries, or collaborate in a shared library created by a server administrator: owners manage members, editors change pages, viewers read.</li>
           <li><b>Share a page or a folder</b> — send a link to an annotated paper, or to a whole folder of them; invite people with view or edit rights, or open it to anyone with the link.</li>
-          <li><b>Edit together</b> — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.</li>
           <li><b>Tabs follow you</b> — open tabs and reading positions sync per account and workspace.</li>
           <li><b>Back up</b> — export a workspace, or all of them, as one zip; keep server-side snapshots; restore or merge on another Gamma.</li>
         </ul>
       </div>
       <figure class="feature__media feature__media--plain">
         <img src="/media/workspaces-light.svg" width="1920" height="1080" loading="lazy" alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along">
+      </figure>
+    </section>
+
+    <section class="feature wrap">
+      <div class="feature__text">
+        <p class="eyebrow">Edit together</p>
+        <h2>One page. Everyone typing on it.</h2>
+        <ul>
+          <li><b>Live</b> — changes appear as they are typed, and each person's caret carries their name.</li>
+          <li><b>Even in the same block</b> — edits to different blocks coexist, and two people typing into one block keep both texts.</li>
+          <li><b>Your undo is yours</b> — Ctrl+Z takes back your own change, never what someone else wrote since.</li>
+          <li><b>With or without an account</b> — members of a shared workspace, people you invited to a page, or anyone with an edit link, under a name they choose.</li>
+        </ul>
+      </div>
+      <figure class="feature__media">
+        <img src="/media/demo-collab.webp" width="1600" height="900" loading="lazy" alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name">
       </figure>
     </section>
 
@@ -261,9 +310,9 @@
           <p>Unzip, then <code>chrome://extensions</code> → <i>Developer mode</i> → <i>Load unpacked</i>. Chrome, Edge and other Chromium browsers.</p>
         </article>
         <article class="dl__card">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.85 0a4.16 4.16 0 0 0-2.95 1.217L1.456 10.66a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l9.442-9.442a2.49 2.49 0 0 1 3.541 0 2.49 2.49 0 0 1 0 3.541L8.59 12.97l-.1.1a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l.1-.098 7.03-7.034a2.49 2.49 0 0 1 3.542 0l.049.05a2.49 2.49 0 0 1 0 3.54l-8.54 8.54a1.96 1.96 0 0 0 0 2.755l1.753 1.753a.835.835 0 0 0 1.18 0 .835.835 0 0 0 0-1.18l-1.753-1.753a.266.266 0 0 1 0-.394l8.54-8.54a4.185 4.185 0 0 0 0-5.9l-.05-.05a4.16 4.16 0 0 0-2.95-1.218c-.2 0-.401.02-.6.048a4.17 4.17 0 0 0-1.17-3.552A4.16 4.16 0 0 0 13.85 0m0 3.333a.84.84 0 0 0-.59.245L6.275 10.56a4.186 4.186 0 0 0 0 5.902 4.186 4.186 0 0 0 5.902 0L19.16 9.48a.835.835 0 0 0 0-1.18.835.835 0 0 0-1.18 0l-6.985 6.984a2.49 2.49 0 0 1-3.54 0 2.49 2.49 0 0 1 0-3.54l6.983-6.985a.835.835 0 0 0 0-1.18.84.84 0 0 0-.59-.245"/></svg></span>Codex &amp; MCP</h3>
+          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.85 0a4.16 4.16 0 0 0-2.95 1.217L1.456 10.66a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l9.442-9.442a2.49 2.49 0 0 1 3.541 0 2.49 2.49 0 0 1 0 3.541L8.59 12.97l-.1.1a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l.1-.098 7.03-7.034a2.49 2.49 0 0 1 3.542 0l.049.05a2.49 2.49 0 0 1 0 3.54l-8.54 8.54a1.96 1.96 0 0 0 0 2.755l1.753 1.753a.835.835 0 0 0 1.18 0 .835.835 0 0 0 0-1.18l-1.753-1.753a.266.266 0 0 1 0-.394l8.54-8.54a4.185 4.185 0 0 0 0-5.9l-.05-.05a4.16 4.16 0 0 0-2.95-1.218c-.2 0-.401.02-.6.048a4.17 4.17 0 0 0-1.17-3.552A4.16 4.16 0 0 0 13.85 0m0 3.333a.84.84 0 0 0-.59.245L6.275 10.56a4.186 4.186 0 0 0 0 5.902 4.186 4.186 0 0 0 5.902 0L19.16 9.48a.835.835 0 0 0 0-1.18.835.835 0 0 0-1.18 0l-6.985 6.984a2.49 2.49 0 0 1-3.54 0 2.49 2.49 0 0 1 0-3.54l6.983-6.985a.835.835 0 0 0 0-1.18.84.84 0 0 0-.59-.245"/></svg></span>Codex, Claude Code &amp; MCP</h3>
           <a class="btn btn--ghost" href="https://github.com/tim4431/Gamma/blob/main/docs/dev/mcp.md">Connection guide</a>
-          <p>In Gamma, <i>Settings → AI → External assistants</i> gives a one-line setup command for the Codex plugin, and the server URL for any other MCP client.</p>
+          <p>In Gamma, <i>Settings → AI → Integrations</i> gives a one-command setup for the Codex and Claude Code plugin, and the server URL for any other MCP client.</p>
         </article>
       </div>
     </div>
@@ -276,10 +325,10 @@
       <h2>One container. Your whole lab.</h2>
       <p>The server is one Docker image (linux/amd64 and arm64) with everything inside: the API, the app, SQLite and your uploads under a single <code>/data</code> volume that survives upgrades. No environment variables are needed.</p>
       <ul>
-        <li>Accounts are managed in the app: an admin creates users, resets passwords and grants admin from the account menu.</li>
+        <li>Accounts are managed in the app: an admin creates users, resets passwords and grants admin in <i>Settings → Users</i>.</li>
         <li>Shared workspaces with owner / editor / viewer roles, per-workspace storage caps, and server-side backups in Settings.</li>
         <li>AI providers are per user and stored server-side; keys are never sent back to the browser.</li>
-        <li>Put a TLS reverse proxy (Caddy, nginx) in front of port 9001 to use a domain — then the desktop app, the extension and MCP assistants can reach it too.</li>
+        <li>Put a TLS reverse proxy (Caddy, nginx) in front of port 9001 to use a domain — then the desktop app, the extension and MCP assistants can reach it too. For assistants signing in, an admin confirms the public server URL once in <i>Settings → Server</i>.</li>
       </ul>
       <p><a href="https://github.com/tim4431/Gamma#install">Full install notes on GitHub →</a></p>
     </div>
@@ -311,7 +360,7 @@ volumes:
       <div class="facts">
         <div><h3>Nothing is collected</h3><p>No telemetry, analytics, crash reporting or accounts hosted by us. The desktop app's only outbound call of its own is the update check against GitHub Releases.</p></div>
         <div><h3>Plain storage</h3><p>A data directory of SQLite databases and your files. Copy it, back it up, move it to another computer or server.</p></div>
-        <div><h3>Network only when you ask</h3><p>Metadata lookups go to arXiv, Crossref and Unpaywall; AI requests go to the provider you configured with your own key. Nothing else.</p></div>
+        <div><h3>Network only when you ask</h3><p>Paper lookups go to public scholarly services (arXiv, Crossref, Unpaywall and the like) and the publisher's site; a translation goes to the service you picked; AI requests go to the provider you configured, with your own key. Each only when you use that feature.</p></div>
         <div><h3>Leave any time</h3><p>Export everything as Markdown, an Obsidian vault, Logseq, Zotero, annotated PDFs, or one zip that any Gamma can restore.</p></div>
       </div>
       <p class="privacy__link"><a href="/privacy/">Read the privacy policy →</a></p>
@@ -340,11 +389,11 @@ volumes:
     </details>
     <details>
       <summary>Can I work with my group?</summary>
-      <p>A server administrator creates shared workspaces with owners, editors and viewers. Any page can also be shared by link with view or edit rights. Edits and cursors show up live for everyone on the page.</p>
+      <p>A server administrator creates shared workspaces with owners, editors and viewers. Any page or folder can also be shared by link with view or edit rights. Edits and cursors show up live for everyone on the page, even two people typing in the same block.</p>
     </details>
     <details>
       <summary>What about handwriting and tablets?</summary>
-      <p>Ink works with a stylus or a mouse in the browser and the desktop app: draw, lasso, move, resize, erase part of a stroke, undo. There is no native tablet app yet.</p>
+      <p>Ink works with a stylus or a mouse in the browser and the desktop app: draw, lasso, move, resize, erase part of a stroke, undo, or type a text box on the page. On an iPad, open your Gamma in Safari and <i>Add to Home Screen</i>: the Apple Pencil writes with pressure while fingers scroll and pinch to zoom. There is no App Store app.</p>
     </details>
     <details>
       <summary>Which platforms?</summary>

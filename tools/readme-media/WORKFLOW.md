@@ -66,3 +66,13 @@ library. Use its exported copy for recording, not synthetic replacement papers.
 `shoot-stills.mjs` navigates the curated demo to capture the annotated PDF, home,
 and library search for documentation. Read each image back and check that the
 paper and highlights have painted, panels are useful, and no loading state remains.
+
+`shoot-hero.mjs` makes the website's hero, `docs/assets/screenshots/hero-app.webp`:
+an isolated server with the curated export, the atom-arrays paper on Fig. 1 in a
+2× window, a sentence highlighted with a comment in its notes, and the paper's
+chat under them. The chat is the question and the model's answer from the earlier
+hero (`01-annotated-pdf.png`), saved as the paper's conversation; nothing is sent
+to an AI. The model list is answered with the demo account's model (as the e2e
+harness's `fakeAiModels` does), so the chat shows its composer instead of the
+"connect an AI service" card. The script checks the saved highlight; the PNG
+master stays in `artifacts/readme-media/hero/`; `--inspect` saves the framing.

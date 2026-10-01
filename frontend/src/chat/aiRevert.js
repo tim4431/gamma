@@ -9,11 +9,21 @@ import { changePlace, isChange } from "./agentSteps.js";
 
 const REVERTIBLE = new Set(["edit", "create", "move"]);
 
-// A note change this reply can still take back. Changes saved before
-// changes were recorded for reverting have no `revert`.
+// A note change recorded for reverting (changes saved by an older version
+// have no `revert`).
+function recorded(a) {
+  return isChange(a) && changePlace(a) === "notes" && REVERTIBLE.has(a.kind) && !!a.block_id && !!a.revert;
+}
+
+// A note change this reply can still take back.
 export function canRevert(a) {
-  return isChange(a) && changePlace(a) === "notes" && REVERTIBLE.has(a.kind)
-    && !!a.block_id && !!a.revert && !a.reverted;
+  return recorded(a) && !a.reverted;
+}
+
+// A reverted change that can be put back. A new note needs the place it
+// was made in, which older actions did not record.
+export function canRedo(a) {
+  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string");
 }
 
 // The actions as the request's history sends them for the replay: the
@@ -33,16 +43,19 @@ export function revertOrder(actions = []) {
 }
 
 // `messages` with the actions at `indexes` of the message `id` marked
-// reverted (the same list when nothing changes).
-export function markReverted(messages, id, indexes) {
+// reverted, or with `reverted` false unmarked again after a redo (the same
+// list when nothing changes).
+export function markReverted(messages, id, indexes, reverted = true) {
   const marks = new Set(indexes);
   let changed = false;
   const next = messages.map((m) => {
     if (m.id !== id || !m.actions?.length) return m;
     return { ...m, actions: m.actions.map((a, i) => {
-      if (!marks.has(i) || a.reverted) return a;
+      if (!marks.has(i) || !!a.reverted === reverted) return a;
       changed = true;
-      return { ...a, reverted: true };
+      if (reverted) return { ...a, reverted: true };
+      const { reverted: _was, ...rest } = a;
+      return rest;
     }) };
   });
   return changed ? next : messages;

@@ -19,7 +19,7 @@ const TEMPLATES = path.join(HERE, 'templates');
 const MEDIA = {
   'favicon.svg': 'frontend/public/media/icons/favicon.svg',
   'logo.svg': 'docs/assets/branding/gamma-logo.svg',
-  'app.png': 'docs/assets/screenshots/01-annotated-pdf.png',
+  'app.webp': 'docs/assets/screenshots/hero-app.webp',
   'hero-light.png': 'docs/assets/branding/gamma-hero-light.png',
   'library-light.svg': 'docs/assets/branding/gamma-library-light.svg',
   'connections-light.svg': 'docs/assets/branding/gamma-connections-light.svg',
@@ -28,9 +28,12 @@ const MEDIA = {
   'demo-annotate-and-ink.webp': 'docs/assets/demos/demo-annotate-and-ink.webp',
   'demo-notes.webp': 'docs/assets/demos/demo-notes.webp',
   'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
-  'demo-library.webp': 'docs/assets/demos/demo-library.webp',
+  'demo-agentic-notes.webp': 'docs/assets/demos/demo-agentic-notes.webp',
+  'demo-search.webp': 'docs/assets/demos/demo-search.webp',
   'demo-reference-links.webp': 'docs/assets/demos/demo-reference-links.webp',
   'demo-metadata.webp': 'docs/assets/demos/demo-metadata.webp',
+  'demo-connector.webp': 'docs/assets/demos/demo-connector.webp',
+  'demo-collab.webp': 'docs/assets/demos/demo-collab.webp',
 };
 
 // Markdown pages rendered through templates/page.html.

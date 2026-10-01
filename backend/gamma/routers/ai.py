@@ -1555,20 +1555,22 @@ class AIRevert(BaseModel):
     block_id: str = Field(max_length=64)
     revert: dict   # the action's `revert`, as the note tool recorded it
     force: bool = False
+    redo: bool = False  # put a reverted change back
 
 
 @router.post("/ai/revert")
 def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, from its row under
-    the reply (gamma/ai_revert.py): ``{page_id, noop}``. 409
+    """Take back one change the agent made to the notes, or with ``redo``
+    put a reverted one back, from its row under the reply
+    (gamma/ai_revert.py): ``{page_id, noop}``. 409
     ``{detail, conflict, preview?}`` when the note changed since —
-    ``preview`` is what ``force`` would do — or can't go back; 404 when it
+    ``preview`` is what ``force`` would do — or can't go there; 404 when it
     is gone. A workspace editor's, like the chat's writes; the change is
     theirs to make by hand anyway. Sync: it waits on the write lock."""
     ws = require_ws(request, write=True)
     try:
         return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
-                                       force=payload.force, actor=actor_of(request))
+                                       force=payload.force, redo=payload.redo, actor=actor_of(request))
     except ai_revert.RevertError as e:
         return JSONResponse(status_code=e.status, content={
             "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),

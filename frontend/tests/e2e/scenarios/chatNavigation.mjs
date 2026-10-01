@@ -1036,6 +1036,15 @@ export async function chatNavigationScenarios(env) {
       assertEq(await noteText(one.id), "First draft");
       await page.locator(".blockRow", { hasText: "First draft" }).filter({ hasNotText: "improved" }).waitFor();
       assertEq(await changes.getByRole("button", { name: "Revert all" }).count(), 0, "one change left: no Revert all");
+      // A reverted change redoes from the same row, and reverts again.
+      await rows.nth(0).getByRole("button", { name: "Redo this change" }).click();
+      await rows.nth(0).getByRole("button", { name: "Revert this change" }).waitFor();
+      assertEq(await rows.nth(0).filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      assertEq(await noteText(one.id), "First draft, improved by AI");
+      await page.locator(".blockRow", { hasText: "First draft, improved by AI" }).waitFor();
+      await rows.nth(0).getByRole("button", { name: "Revert this change" }).click();
+      await rows.nth(0).getByRole("button", { name: "Redo this change" }).waitFor();
+      assertEq(await noteText(one.id), "First draft");
       // One the user changed since asks first and shows what forcing it does.
       await rows.nth(1).getByRole("button", { name: "Revert this change" }).click();
       const ask = changes.locator(".chatRevertAsk");

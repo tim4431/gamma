@@ -24,12 +24,17 @@ _dmp = diff_match_patch()
 _dmp.Diff_Timeout = 0.2  # seconds before the diff settles for a coarser answer
 
 
-def _hunks(base: str, text: str) -> list[tuple[int, int, str]]:
+def _hunks(base: str, text: str, semantic: bool = False) -> list[tuple[int, int, str]]:
     """The change ``base → text`` as ``(start, end, insert)`` hunks in
-    ``base`` offsets, in order: ``base[start:end]`` becomes ``insert``."""
+    ``base`` offsets, in order: ``base[start:end]`` becomes ``insert``.
+    ``semantic``: whole words and phrases, not the scattered characters two
+    texts happen to share (``diff_cleanupSemantic``)."""
     out: list[tuple[int, int, str]] = []
     at = 0
-    for kind, chunk in _dmp.diff_main(base, text, False):
+    diffs = _dmp.diff_main(base, text, False)
+    if semantic:
+        _dmp.diff_cleanupSemantic(diffs)
+    for kind, chunk in diffs:
         if kind == 0:
             at += len(chunk)
             continue
@@ -42,16 +47,19 @@ def _hunks(base: str, text: str) -> list[tuple[int, int, str]]:
     return out
 
 
-def merge(base: str, ours: str, theirs: str) -> tuple[str, bool]:
+def merge(base: str, ours: str, theirs: str, semantic: bool = False) -> tuple[str, bool]:
     """Merge the change ``base → ours`` into ``theirs`` (the text stored now:
     ``base`` changed by someone else). Returns ``(text, clean)``; ``clean``
     is False when a hunk of ours was dropped for changing characters theirs
-    changed too."""
+    changed too. Typing merges character by character. ``semantic`` merges
+    word and phrase hunks instead: two rewrites of one sentence then clash
+    as wholes, where characters would interleave them (a revert of the
+    agent's edit, gamma/ai_revert.py)."""
     if theirs == base:
         return ours, True
     if ours == base or ours == theirs:
         return theirs, True
-    stored, mine = _hunks(base, theirs), _hunks(base, ours)
+    stored, mine = _hunks(base, theirs, semantic), _hunks(base, ours, semantic)
     kept, j = [], 0
     for start, end, insert in mine:
         # stored hunks ending before this one starts can't share a character

@@ -24,8 +24,9 @@ sites/
 1. copies `site/` to `dist/`, expanding the includes in every `.html`;
 2. copies the artwork the page uses from the repository into `dist/media/`:
    the favicon (`frontend/public/media/icons/`), the hero PNG and the
-   illustration SVGs (`docs/assets/branding/`), the six README demos
-   (`docs/assets/demos/`) and the app screenshot (`docs/assets/screenshots/`).
+   illustration SVGs (`docs/assets/branding/`), nine of the demos
+   (`docs/assets/demos/`) and the hero still (`docs/assets/screenshots/hero-app.webp`,
+   shot by `tools/readme-media/shoot-hero.mjs`).
    The site keeps no copies of its own, so regenerating brand assets or
    re-recording a demo updates the site on its next deploy;
 3. renders `PRIVACY.md` at the repository root to `dist/privacy/` through

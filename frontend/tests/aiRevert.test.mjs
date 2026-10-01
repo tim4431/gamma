@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canRevert, forReplay, markReverted, revertOrder, revertRefusal } from "../src/chat/aiRevert.js";
+import { canRedo, canRevert, forReplay, markReverted, revertOrder, revertRefusal } from "../src/chat/aiRevert.js";
 import { createChatSession } from "../src/chat/chatSession.js";
 
 const edit = (id, extra = {}) => ({ kind: "edit", tool: "edit_block", block_id: id, page_id: "p",
@@ -41,6 +41,20 @@ test("a revert marks its actions on its own message only", () => {
   assert.equal(next[2], messages[2]);
   assert.equal(markReverted(next, "r1", [1]), next); // marked already: the same list
   assert.equal(markReverted(messages, "nope", [0]), messages);
+  // A redo unmarks it, leaving no `reverted` key behind.
+  const redone = markReverted(next, "r1", [1], false);
+  assert.equal("reverted" in redone[1].actions[1], false);
+  assert.equal(markReverted(redone, "r1", [1], false), redone);
+});
+
+test("only a reverted change can be redone, and a new note only with its place", () => {
+  assert.equal(canRedo(edit("b1")), false);
+  assert.equal(canRedo(edit("b1", { reverted: true })), true);
+  assert.equal(canRedo(edit("b1", { reverted: true, revert: undefined })), false);
+  const created = { ...edit("b1", { reverted: true }), kind: "create", tool: "create_block" };
+  assert.equal(canRedo({ ...created, revert: { after: "x", parent: "p", position: "a0" } }), true);
+  assert.equal(canRedo({ ...created, revert: { after: "x" } }), false); // recorded before redo existed
+  assert.equal(canRedo({ ...edit("b1", { reverted: true }), kind: "move", tool: "move_block" }), true);
 });
 
 test("the refusal the row shows", () => {

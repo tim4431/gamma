@@ -18,8 +18,9 @@ delivery rules and regeneration steps are in
 | [metadata](demo-metadata.webp) | 13.2 s | 1120 x 714 | 1.10 MiB |
 | [reference-links](demo-reference-links.webp) | 15.2 s | 1040 x 662 | 4.58 MiB |
 
-The first seven are the README's; annotate-and-ink, notes,
-native-agentic, library, metadata and reference-links appear on the website.
+The first seven are the README's; the website shows those seven, metadata
+and reference-links. Library is shown nowhere at the moment (search took its
+place); it and its recorder are kept for re-use.
 The ten total about 21.5 MiB; each is below 5 MiB. The eight 1600 × 900
 animations are retina captures; the README's seven come to 12.47 MiB. Collab
 and connector sit beside the workspaces and connections illustrations: the

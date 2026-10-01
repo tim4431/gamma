@@ -574,19 +574,20 @@ export default function ChatDock({
   // it, so a debounced save can't roll a rename back.
   const [chatTitle, setChatTitle] = useState("");
 
-  // A change under a reply was reverted (chat/AgentChanges.jsx): its action
-  // is marked in the saved conversation, so the model hears of it on the
-  // next turn, and the pages it touched reload where no live socket brought
-  // the ops. The conversation is the one the reply belongs to, even if the
-  // dock moved on while a "Revert all" ran.
+  // A change under a reply was reverted, or redone (`reverted` false —
+  // chat/AgentChanges.jsx): its action is marked or unmarked in the saved
+  // conversation, so the model hears of it on the next turn, and the pages
+  // it touched reload where no live socket brought the ops. The
+  // conversation is the one the reply belongs to, even if the dock moved
+  // on while a "Revert all" ran.
   const loadedRef = useRef(loadedMessages);
   loadedRef.current = loadedMessages;
-  const changesReverted = (id, indexes, answer) => {
+  const changesReverted = (id, indexes, answer, reverted = true) => {
     const current = session.getSnapshot().replies.get(chatKey)?.messages
       || (chatKeyRef.current === chatKey ? loadedRef.current : null);
     const message = current?.find((m) => m.id === id);
     if (message) {
-      const next = markReverted(current, id, indexes);
+      const next = markReverted(current, id, indexes, reverted);
       if (next !== current) {
         session.edit(chatKey, next, chatTitle)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
       }
@@ -1825,7 +1826,7 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
-                        onReverted={!readOnly && m.id ? (indexes, answer) => changesReverted(m.id, indexes, answer) : undefined} />
+                        onReverted={!readOnly && m.id ? (indexes, answer, reverted) => changesReverted(m.id, indexes, answer, reverted) : undefined} />
                     ) : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}

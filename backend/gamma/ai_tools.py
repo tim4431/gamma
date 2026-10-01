@@ -1201,7 +1201,7 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
     return (f"ok — created block [{block_id}]",
             {"kind": "create", "page_id": page_id, "block_id": block_id,
              "title": page_title, "summary": f"Added a note in “{page_title[:60]}”",
-             "revert": {"after": content}})
+             "revert": {"after": content, "parent": parent["id"], "position": position}})
 
 
 def _plan_move_block(conn, scope: dict, args: dict):
@@ -1309,13 +1309,13 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
                           actor=scope.get("actor", ""))
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
-    # Where it was, for the user's revert: its old parent and key, and the
-    # parent it went to (moved on from there since, the revert asks first).
+    # Where it was and where it went, parent and key, for the user's revert
+    # and redo (moved on from there since, either asks first).
     action = {"kind": "move", "page_id": page_id, "block_id": block["id"], "title": page_title,
               "summary": f"Moved a note within {where}" if page_id == src_page_id
                          else f"Moved a note “{src_title[:40]}” → {where}",
               "revert": {"parent": block["parent_id"], "position": block["position"],
-                         "to_parent": parent["id"]}}
+                         "to_parent": parent["id"], "to_position": position}}
     if page_id != src_page_id:
         action["src_page_id"] = src_page_id
     return f'ok — block [{block["id"]}] moved', action

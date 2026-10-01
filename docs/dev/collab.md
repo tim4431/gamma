@@ -441,7 +441,10 @@ focus, and `peers` / `me` as React state. The session owns:
   caret keep both people's keystrokes (text typed in front of a word the
   other replaced stays in front of the replacement). Only a span of ours that replaces
   characters the stored change also replaced is dropped; the stored text
-  stands for it. The echoed op carries the merged text and the
+  stands for it. Typing merges by characters. A revert of the agent's edit
+  merges by words and phrases (`semantic=True`, [ai_tools.md](ai_tools.md)
+  "Reverting a note change"), so two rewrites of one sentence clash as
+  wholes instead of interleaving. The echoed op carries the merged text and the
   batch's `cursor` is remapped into it. On the ack, a set whose stored
   text differs from what we sent lands on screen like a remote op — but
   only when no newer set of ours for that block is queued or in flight:
@@ -624,7 +627,8 @@ state in App instead of the tree.
 - `backend/tests/test_text_box_merge.py`: the same-box merge through the
   op endpoint and `PUT /blocks/{id}`; its rule's cases are
   `tests/shared/textboxmerge.json`.
-- `backend/tests/test_textmerge.py`: the same-block merge — different spans,
+- `backend/tests/test_textmerge.py`: the same-block merge — word-level
+  hunks keeping two rewrites of one phrase apart, different spans,
   insertions at one caret keeping both (through the op endpoint too), an
   insertion in front of a replaced word, an insertion inside the other
   side's deleted span, a span both replaced.
