@@ -16,7 +16,10 @@
 //            siblings: the longest increasing run of existing keys keeps
 //            them, everything else is re-keyed between its new neighbours
 //            (the minimal set of moves);
-//   set    — content and/or a properties PATCH (null deletes a key);
+//   set    — content and/or a properties PATCH (null deletes a key); a
+//            changed text box carries `base_props`, the box it was changed
+//            from, which the server merges key by key into a box changed
+//            meanwhile (gamma/text_box.py merge_text_box);
 //   delete — the top-most removed subtrees, last (so a block that escaped
 //            a deleted parent is moved out before the parent goes).
 // applyOps is idempotent: inserting a known id re-parents it, moving or
@@ -131,6 +134,8 @@ export function diffTrees(base, next, pageId, pos) {
         }
         const patch = propsPatch(r.b.node.properties, r.n.properties);
         if (Object.keys(patch).length) { set.props = patch; changed = true; }
+        const box = r.b.node.properties?.text_box;
+        if (patch.text_box && box && typeof box === "object" && !Array.isArray(box)) set.base_props = { text_box: box };
         if (changed) ops.push(set);
       }
       walk(r.n.children, r.n.id);
@@ -269,7 +274,14 @@ export function pushOp(queue, op) {
         // keystrokes started from); only a props-only op adopts the new one.
         if (q.content === undefined) merged.base = op.base;
       }
-      if (op.props) merged.props = { ...(q.props || {}), ...op.props };
+      if (op.props) {
+        merged.props = { ...(q.props || {}), ...op.props };
+        // A key keeps the base of its first change in the run, as the text
+        // does (none, when that change named none).
+        const bases = { ...(q.base_props || {}) };
+        for (const [k, v] of Object.entries(op.base_props || {})) if (!(k in (q.props || {}))) bases[k] = v;
+        if (Object.keys(bases).length) merged.base_props = bases;
+      }
       queue[i] = merged;
       return q;
     }

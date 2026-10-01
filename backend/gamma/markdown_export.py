@@ -1,7 +1,8 @@
 """Render a page's block subtree to readable Markdown: clean nested bullets,
-highlights as blockquotes with a page marker, page title as an H1, scalar
-metadata as YAML front-matter and the cached BibTeX as a fenced block. Lossy
-but portable. (Logseq-app export lives in ``logseq_graph_export``.)
+highlights as blockquotes with a page marker, a text box on a PDF page as a
+note with one, page title as an H1, scalar metadata as YAML front-matter and
+the cached BibTeX as a fenced block. Lossy but portable. (Logseq-app export
+lives in ``logseq_graph_export``.)
 
 Upload references (``/api/uploads/<sha>.<ext>``) are collected and rewritten to
 relative ``assets/<sha>.<ext>`` paths as a post-processing pass over the rendered
@@ -14,6 +15,8 @@ from urllib.parse import quote as urlquote
 
 from .blocks_store import block_to_dict
 from .note_markup import obsidian_image_sizes
+from .notebook import is_sheet
+from .text_box import box_page
 
 # rgba → Logseq colour name, the inverse of logseq_import._LOGSEQ_COLORS (using
 # the canonical name for each distinct rgba we emit). Used by the Logseq graph
@@ -159,8 +162,11 @@ def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=Fa
 
 
 def _render_readable_block(node, depth, lines, highlights=True, notes=True,
-                           resolve_ref=None, page_file=None, page_id=None):
+                           resolve_ref=None, page_file=None, page_id=None, on_sheet=False):
+    """One block and its subtree. ``on_sheet``: a sheet of paper is among
+    the block's ancestors, so a text box under it is on that sheet."""
     props = node.get("properties") or {}
+    under_sheet = on_sheet or is_sheet(props)
     content = obsidian_image_sizes((node.get("content") or "").strip())
     content = resolve_block_links(content, resolve_ref, page_file, page_id)
     # The two export switches. A highlight block carries both a PDF region and
@@ -220,6 +226,11 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
         lines.append(f"{indent}- {clines[0]}")
         for c in clines[1:]:
             lines.append(f"{indent}  {c}")
+        # A text box on a PDF page is your writing placed there: the note,
+        # then the page line a highlight carries.
+        page_no = box_page(props, on_sheet)
+        if page_no:
+            lines.append(f"{indent}  `p.{page_no}`")
         emitted = True
 
     # Blocks with nothing to show (empty containers) don't consume an indent
@@ -227,7 +238,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
     child_depth = depth + 1 if emitted else depth
     for child in node["children"]:
         _render_readable_block(child, child_depth, lines, highlights, notes,
-                               resolve_ref, page_file, page_id)
+                               resolve_ref, page_file, page_id, under_sheet)
 
 
 # --- asset handling ----------------------------------------------------------

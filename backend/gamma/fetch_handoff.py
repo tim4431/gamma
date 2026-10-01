@@ -3,15 +3,23 @@ paper is behind a wall only a person gets past.
 
 ``fetch_paper`` opens a request here when it meets a CAPTCHA or bot check, a
 sign-in page, a refusal, or an article page whose PDF needs access
-(``ai_web.WALLS``). The chat shows a card for it. The user opens the page
-through ``/api/ai/handoffs/<id>/go`` and signs in or passes the check; then
-Gamma Connector, which recognized that tab by the ``/go`` address, sends the
-PDF it can now download (``POST …/pdf``), or the user drops the file on the
-card. The PDF's text is kept for the account alone, in memory like any
-fetched document, and the next ``fetch_paper`` of the same source reads it.
-The PDF itself is held too, so the chat can save the paper to the library
-(``POST …/store`` writes it into a workspace only then). Nothing is written
-to disk or to a workspace by itself; a restart forgets everything.
+(``ai_web.WALLS``). The chat shows a card for it and, by default, waits on
+that card inside the same reply (``ai_agent.PaperWait``): the user opens the
+page, signs in or passes the check, and Gamma Connector — which recognized
+that tab — sends the PDF back (``POST …/pdf``), or the user drops the file
+on the card. The call then simply runs again and reads what arrived, so the
+model gets the paper where it asked for it.
+
+A wait that nobody answers gives up (:data:`IDLE_TIMEOUT`), and the request
+stays open for six hours: its card remains under the reply, and it is listed
+in Background tasks until the PDF arrives or the user lets it go. Skipping
+settles it at once and can tell the model what to do instead.
+
+The PDF's text is kept for the account alone, in memory like any fetched
+document, and the next ``fetch_paper`` of the same source reads it. The PDF
+itself is held too, so the chat can save the paper to the library (``POST
+…/store`` writes it into a workspace only then). Nothing is written to disk
+or to a workspace by itself; a restart forgets everything.
 """
 
 import secrets
@@ -19,18 +27,37 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+from .db import page_now
+
 TTL = 6 * 3600              # a request (with what was delivered for it) lives this long
 MAX_PER_ACCOUNT = 20        # requests kept per account; the oldest are dropped first
 MAX_DELIVERED_CHARS = 30_000_000  # delivered text kept in all, the oldest dropped first
 MAX_HELD_BYTES = 200_000_000      # delivered PDFs held for saving, the oldest let go first
+MAX_NOTE = 2000             # chars of what the user says to do instead, when they skip
+
+# How long a reply waits on a card. IDLE_TIMEOUT is the quiet stretch it
+# gives up after — long enough to sign in, short enough that a reply never
+# hangs on a user who walked away. Every sign of life (Gamma Connector
+# taking the tab, or reporting what it found there) starts it over, up to
+# MAX_WAIT in all: a person working through an institutional sign-in keeps
+# the reply open, an unanswered card does not.
+IDLE_TIMEOUT = 300.0
+MAX_WAIT = 900.0
+_POLL = 1.0                 # seconds between deadline checks while waiting
+
 # What the Connector reports doing in the tab, shown on the card: no PDF link
 # on the page yet, the page is a bot check or CAPTCHA, the PDF link leads to
 # a sign-in, opening one in the tab, no link gave a PDF, the tab shows
 # another paper, the user closed the tab (the card offers to open it again).
 NOTES = ("looking", "check", "signin", "opening", "refused", "other", "closed")
 
+WAITING, DONE, DISMISSED, EXPIRED = "waiting", "done", "dismissed", "expired"
+
 _requests: dict[str, dict] = {}   # id → request (insertion order = age)
 _lock = threading.Lock()
+# Notified whenever a request settles or shows a sign of life, so a reply
+# waiting on its card wakes at once instead of at its next poll.
+_changed = threading.Condition(_lock)
 
 
 def source_key(source: str) -> str:
@@ -60,16 +87,16 @@ def open_request(user: str, source: str, *, wall: str, url: str, pdf_url: str = 
         _prune(now)
         mine = [r for r in _requests.values() if r["user"] == user]
         for req in mine:
-            if req["key"] == key and req["status"] == "waiting":
+            if req["key"] == key and req["status"] == WAITING:
                 req.update(wall=wall, detail=detail)
                 return dict(req)
         for req in mine[:max(0, len(mine) - MAX_PER_ACCOUNT + 1)]:
             del _requests[req["id"]]
         req = {"id": secrets.token_urlsafe(18), "user": user, "key": key, "source": source,
                "url": url, "pdf_url": pdf_url, "host": urlsplit(url).hostname or "",
-               "wall": wall, "detail": detail, "status": "waiting", "created": now,
-               "watched": 0.0, "note": "", "background": False, "done_at": 0.0, "from_url": "",
-               "doc": None, "pdf": None}
+               "wall": wall, "detail": detail, "status": WAITING, "created": now,
+               "created_at": page_now(), "watched": 0.0, "note": "", "background": False,
+               "done_at": 0.0, "from_url": "", "skip_note": "", "doc": None, "pdf": None}
         _requests[req["id"]] = req
         return dict(req)
 
@@ -79,6 +106,15 @@ def get(user: str, rid: str) -> dict | None:
         _prune(time.time())
         req = _requests.get(rid)
         return dict(req) if req and req["user"] == user else None
+
+
+def waiting(user: str) -> list[dict]:
+    """The account's requests still waiting for a PDF, oldest first — the
+    Background tasks rows (``routers/jobs.py``)."""
+    with _lock:
+        _prune(time.time())
+        return [public(req) for req in _requests.values()
+                if req["user"] == user and req["status"] == WAITING]
 
 
 def target(rid: str) -> dict | None:
@@ -92,29 +128,36 @@ def target(rid: str) -> dict | None:
 
 
 def _update(user: str, rid: str, **fields) -> dict | None:
-    with _lock:
+    with _changed:
         req = _requests.get(rid)
         if not req or req["user"] != user:
             return None
         req.update(fields)
+        _changed.notify_all()
         return dict(req)
 
 
 def watch(user: str, rid: str, note: str = "", background: bool = False) -> dict | None:
     """The Connector took the request's tab, and what it is doing there
     (a NOTES entry; "" when it just took it), in a tab of its own out of
-    sight (``background``) or one the user sees: the card says so."""
+    sight (``background``) or one the user sees: the card says so, and a
+    reply waiting on it gives the user more time."""
     return _update(user, rid, watched=time.time(), note=note if note in NOTES else "",
                    background=bool(background))
 
 
-def dismiss(user: str, rid: str) -> dict | None:
-    with _lock:
+def dismiss(user: str, rid: str, note: str = "") -> dict | None:
+    """Settle a waiting request without a PDF. ``note`` is what the user
+    wants the assistant to do instead — only a skip inside a live reply has
+    one, and only the model ever reads it."""
+    with _changed:
         req = _requests.get(rid)
         if not req or req["user"] != user:
             return None
-        if req["status"] == "waiting":
-            req["status"] = "dismissed"
+        if req["status"] == WAITING:
+            req["status"] = DISMISSED
+            req["skip_note"] = str(note or "").strip()[:MAX_NOTE]
+            _changed.notify_all()
         return dict(req)
 
 
@@ -131,34 +174,87 @@ def deliver(user: str, rid: str, data: bytes, from_url: str = "") -> dict | None
     req = get(user, rid)
     if req is None:
         return None
-    if req["status"] != "waiting":
+    if req["status"] != WAITING:
         raise Settled(req["status"])
     url = from_url or req["pdf_url"] or req["url"]
     doc = pdf_document(url, data, "The user fetched this PDF in their own browser"
                        + (f" from {from_url}" if from_url else "") + " and sent it to the chat.")
     doc.update(delivered=True, request=rid)
-    with _lock:
+    with _changed:
         live = _requests.get(rid)
         if not live or live["user"] != user:
             return None
-        if live["status"] != "waiting":  # delivered from elsewhere meanwhile
+        if live["status"] != WAITING:  # delivered from elsewhere meanwhile
             raise Settled(live["status"])
-        live.update(status="done", doc=doc, pdf=data, from_url=from_url, done_at=time.time())
-        # Delivered text is capped like the fetch cache: the oldest goes.
-        total = sum(r["doc"]["chars"] for r in _requests.values() if r["doc"])
-        for old in [r for r in _requests.values() if r["doc"]]:
-            if total <= MAX_DELIVERED_CHARS or old is live:
-                break
-            total -= old["doc"]["chars"]
-            old.update(doc=None, pdf=None, status="expired")
-        # So are the PDFs held for saving; a paper let go keeps its text.
-        held = sum(len(r["pdf"]) for r in _requests.values() if r["pdf"])
-        for old in [r for r in _requests.values() if r["pdf"]]:
-            if held <= MAX_HELD_BYTES or old is live:
-                break
-            held -= len(old["pdf"])
-            old["pdf"] = None
+        live.update(status=DONE, doc=doc, pdf=data, from_url=from_url, done_at=time.time())
+        _trim_locked(live)
+        _changed.notify_all()
         return dict(live)
+
+
+def _trim_locked(keep: dict) -> None:
+    """Hold the delivered text and PDFs to their caps, oldest first, never
+    dropping the delivery that just arrived. A paper let go keeps its text
+    when only the held file has to go."""
+    total = sum(r["doc"]["chars"] for r in _requests.values() if r["doc"])
+    for old in [r for r in _requests.values() if r["doc"]]:
+        if total <= MAX_DELIVERED_CHARS or old is keep:
+            break
+        total -= old["doc"]["chars"]
+        old.update(doc=None, pdf=None, status=EXPIRED)
+    held = sum(len(r["pdf"]) for r in _requests.values() if r["pdf"])
+    for old in [r for r in _requests.values() if r["pdf"]]:
+        if held <= MAX_HELD_BYTES or old is keep:
+            break
+        held -= len(old["pdf"])
+        old["pdf"] = None
+
+
+def wait_for_all(user: str, rids: list, *, stopped: threading.Event | None = None) -> dict:
+    """Block until every request of ``rids`` has settled, or the wait gives
+    up. Returns ``{rid: (outcome, note)}`` — ``"delivered"``, ``"dismissed"``
+    (with what the user wants done instead), ``"expired"`` (still waiting
+    when the wait ended) or ``"gone"``.
+
+    The wait is patient while somebody is working on it: every report from
+    Gamma Connector restarts the :data:`IDLE_TIMEOUT` stretch, up to
+    :data:`MAX_WAIT` in all. ``stopped`` (the chat's client left) ends it at
+    once.
+    """
+    started = time.monotonic()
+    outcomes = {rid: ("gone", "") for rid in rids}
+    with _changed:
+        while True:
+            pending, latest = [], 0.0
+            for rid in rids:
+                req = _requests.get(rid)
+                if not req or req["user"] != user:
+                    continue
+                if req["status"] == WAITING:
+                    pending.append(rid)
+                    latest = max(latest, req["watched"])
+                    continue
+                outcomes[rid] = (("delivered", "") if req["status"] == DONE
+                                 else (req["status"], req.get("skip_note", "")))
+            if not pending or (stopped is not None and stopped.is_set()):
+                break
+            now = time.monotonic()
+            # The quiet stretch starts over on every sign of life, but the
+            # whole wait is still capped.
+            since = min(now - started, now - _monotonic_of(latest)) if latest else now - started
+            left = min(IDLE_TIMEOUT - since, MAX_WAIT - (now - started))
+            if left <= 0:
+                for rid in pending:
+                    outcomes[rid] = ("expired", "")
+                break
+            _changed.wait(min(left, _POLL))
+    return outcomes
+
+
+def _monotonic_of(wall_clock: float) -> float:
+    """``time.time()`` stamp read on the monotonic clock, so a wait is not
+    confused by a system clock that moved."""
+    return time.monotonic() - max(0.0, time.time() - wall_clock)
 
 
 def held_pdf(user: str, rid: str) -> tuple[bytes, str] | None:
@@ -187,11 +283,13 @@ def delivered(user: str | None, source: str) -> dict | None:
 
 
 def public(req: dict) -> dict:
-    """What the chat card and the Connector see: never the text or the PDF."""
+    """What the chat card and the Connector see: never the text, the PDF or
+    what the user said when they skipped."""
     doc = req.get("doc") or {}
     return {"id": req["id"], "source": req["source"], "url": req["url"],
             "pdf_url": req["pdf_url"], "host": req["host"], "wall": req["wall"],
             "detail": req["detail"], "status": req["status"],
+            "created_at": req.get("created_at", ""),
             "watched": bool(req["watched"]), "note": req.get("note", ""),
             "background": bool(req.get("background")),
             "pages": len(doc.get("pages") or []), "held": bool(req.get("pdf")),
@@ -199,5 +297,6 @@ def public(req: dict) -> dict:
 
 
 def clear():
-    with _lock:
+    with _changed:
         _requests.clear()
+        _changed.notify_all()

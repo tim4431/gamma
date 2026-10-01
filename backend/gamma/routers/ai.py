@@ -18,7 +18,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import ai_catalog, ai_permissions, ai_protocols, ai_usage, chatgpt_oauth, search_services, translate_engines
+from .. import (ai_catalog, ai_permissions, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
+                paper_research, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -28,7 +29,6 @@ from ..ai_client import (
     check_call_slot as _check_call_slot,
     failure_kind,
     open_ai as _open_ai,
-    partial_json_object as _partial_json_object,
     partial_json_strings as _partial_json_strings,
     protocol as _protocol,
     read_reply as _read_reply,
@@ -37,29 +37,19 @@ from ..ai_client import (
     upstream_detail as _upstream_detail,
     wire_protocol as _wire_protocol,
 )
+from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
 from ..ai_tools import (
     AGENT_PROMPT,
-    MAX_TOOL_ACTIONS,
-    MAX_TOOL_ROUNDS,
-    MUTATING_TOOLS,
     READ_CHARS_MAX,
     agent_system,
     agent_tools,
-    approval_preview,
     available,
-    find_selection,
-    run_agent_tool,
-    settled_action,
-    tool_action,
-    tool_permission,
     tool_states,
 )
 from ..ai_context import (
     build_messages as _build_messages,
-    canonical_tool as _canonical_tool,
     MAX_CONTEXT_BLOCKS,
     context_markdown,
-    elide_live_results,
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
@@ -87,22 +77,18 @@ from ..ai_settings import (
     protocol_choices,
     provider_label,
     require_ai_runtime,
+    resolve_model as _resolve_model,
     server_entries_for,
     shared_allowance,
     update_entry,
     update_provider_entries,
 )
-from ..auth import can_write, require_user, require_ws
+from ..auth import actor_of, can_write, require_personal_user, require_user, require_ws
 from ..db import connect_data_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
 from ..translate_engines import TRANSLATE_LANGS
-
-# Note editors whose in-flight arguments the chat streams as "progress"
-# events: the notes panel types the markdown into the block as the model
-# writes it (see agent_events).
-_PREVIEW_TOOLS = {"edit_block", "create_block"}
 
 router = APIRouter(prefix="/api", tags=["ai"])
 
@@ -190,17 +176,17 @@ class AIChatRequest(BaseModel):
     # How save_paper stores a paper — the Reading choices the reply's Save to
     # library also uses: {allow_oa, save_copy, fetch_metadata}, missing = on.
     paper_save: dict = Field(default_factory=dict)
+    # Whether a fetch a publisher blocked waits in this reply for the PDF the
+    # user's browser can get (gamma/ai_agent.PaperWait). False is the "don't
+    # wait in this chat" the card's Skip offers: the reply ends and the card
+    # stays under it.
+    paper_wait: bool = True
+    # Whether read_paper is offered: a long document is read by a helper on
+    # the same connection, and the chat carries its answer instead of the
+    # document (Settings → Chat → "Read long papers with a helper").
+    delegate_reads: bool = True
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
-
-
-def _resolve_model(rt: dict, requested: str) -> dict:
-    """Registry entry for a requested model id (or bare model name) in the
-    user's effective config (`rt` from ai_runtime()); default otherwise."""
-    for entry in rt["models"]:
-        if requested == entry["id"] or requested == entry["model"]:
-            return entry
-    return rt["default"]
 
 
 def _resolve_effort(requested: str) -> str:
@@ -227,21 +213,6 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
         info.update(provider_id=entry["provider"], provider_name=conf.get("name") or "",
                     provider_auth=ai_protocols.of(conf).auth)
     return info
-
-
-# The arguments a {"step"} line repeats: the short ones the chat's "now
-# running" label reads (chat/agentSteps.js runningLabel), never a note's
-# content — the page a call reads, views, renames or moves; read_block's
-# block (a page id names the page); the query or source; the PDF page; the
-# new title or folder; list_pages' label filter; edit_block's mode.
-_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "pdf_page", "mode")
-
-
-def _step_event(name: str, call: dict) -> dict:
-    """The {"step"} line announcing one tool call before it runs."""
-    args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
-    return {"id": call.get("id") or "", "tool": name,
-            "args": {k: str(args[k])[:120] for k in _STEP_ARGS if args.get(k) not in (None, "")}}
 
 
 def _failure_response(status: int, detail: str, info: dict) -> JSONResponse:
@@ -1482,6 +1453,10 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
         web["web_engine"] = engine
         if engine == "ai":
             web["ai_search"] = {"runtime": runtime, "entry": entry, "effort": effort}
+    # A blocked fetch can only be handed to a personal account's own browser,
+    # and only a live reply can wait on the card it shows.
+    handoff_user = (user if not request.state.is_guest
+                    and not request.query_params.get("share") else None)
     return {**web, "type": payload.agent_scope, "folder": payload.folder,
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "permissions": states,
@@ -1502,8 +1477,13 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
                                else None),
             # The account a blocked fetch_paper hands to the user's browser
             # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
-            "handoff_user": (user if not request.state.is_guest
-                             and not request.query_params.get("share") else None),
+            "handoff_user": handoff_user,
+            # Whether such a fetch waits on its card inside this reply
+            # (ai_agent.PaperWait): the prompt tells the model which it is.
+            "paper_wait": bool(payload.paper_wait and can_ask and handoff_user),
+            # Whether read_paper is offered: a long document read by a
+            # helper whose own conversation carries the windows.
+            "delegates": bool(payload.delegate_reads),
             "paper_save": {key: payload.paper_save.get(key, True) is not False
                            for key in ("allow_oa", "save_copy", "fetch_metadata")},
             # This turn's reads, {block_id: full text}: what an edit_block
@@ -1550,18 +1530,6 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     return pdf_b64s, messages, system, coverage, crops
 
 
-# What the model hears for a call the user did not allow (with what they
-# want done instead, when they said it), or did not answer.
-_DECLINED = ("declined: the user did not allow this call, so nothing was changed. Do not "
-             "repeat it or make the same change another way; carry on without it, and say "
-             "what you would have changed.")
-_DECLINED_SAYING = ('declined: the user did not allow this call, so nothing was changed, and '
-                    'told you what to do instead: "{note}". Do that; do not repeat the declined call.')
-_UNANSWERED = ("declined: the user did not answer the approval request in time, so nothing "
-               "was changed. Do not repeat it; finish your reply and say what you would have "
-               "changed.")
-
-
 class AIApprovalAnswer(BaseModel):
     decision: Literal["once", "chat", "always", "deny"]
     # With "deny": what the user wants the assistant to do instead.
@@ -1580,6 +1548,55 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     if not ai_permissions.answer(approval_id, request.state.user or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}
+
+
+class AIRevert(BaseModel):
+    kind: Literal["edit", "create", "move"]
+    block_id: str = Field(max_length=64)
+    revert: dict   # the action's `revert`, as the note tool recorded it
+    force: bool = False
+
+
+@router.post("/ai/revert")
+def ai_revert_change(payload: AIRevert, request: Request):
+    """Take back one change the agent made to the notes, from its row under
+    the reply (gamma/ai_revert.py): ``{page_id, noop}``. 409
+    ``{detail, conflict, preview?}`` when the note changed since —
+    ``preview`` is what ``force`` would do — or can't go back; 404 when it
+    is gone. A workspace editor's, like the chat's writes; the change is
+    theirs to make by hand anyway. Sync: it waits on the write lock."""
+    ws = require_ws(request, write=True)
+    try:
+        return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
+                                       force=payload.force, actor=actor_of(request))
+    except ai_revert.RevertError as e:
+        return JSONResponse(status_code=e.status, content={
+            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
+            **({"preview": e.preview} if e.preview else {})})
+
+
+class ResearchJob(BaseModel):
+    question: str = Field(max_length=paper_research.MAX_QUESTION)
+    folder: str = ""   # where the report page is filed (the viewed folder)
+    model: str = ""    # the connection to answer on; "" = the account's default
+    read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
+
+
+@router.post("/jobs/research")
+def start_research_job(payload: ResearchJob, request: Request):
+    """Research one question in the background and file the report as a page
+    (kind ``research``, docs/dev/tasks.md). The user starts this, never the
+    model: it reads and searches for minutes and writes one page at the end.
+    It needs an editor's workspace (it creates that page) and a personal
+    account (it answers on the account's own AI connection)."""
+    ws = require_ws(request, write=True)
+    user = require_personal_user(request, "Background research needs a personal Gamma account")
+    try:
+        return paper_research.start(user=user, ws=ws, question=payload.question,
+                                    folder=payload.folder, model=payload.model,
+                                    read_chars=payload.read_char_limit)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
 
 class AIChatContextRequest(AIChatRequest):
@@ -1629,13 +1646,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
     images = _parse_images(payload.images)
     # Only a streamed reply can show an approval card and wait for it.
     scope = _chat_scope(request, user, payload, rt, entry, effort, can_ask=payload.stream)
-    tools = _chat_tools(payload, scope)
     # Set once the client is gone (Stop, a dropped connection; WatchedStream):
     # a tool call waiting on its approval card gives up, and nothing runs for it.
     stopped = threading.Event()
-    # Which model answers, at what effort, with tools or not — the reply's
-    # footer names them, and the coverage chip's advice depends on the tools.
-    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
     # The conversation the agent loop grows across tool rounds (agent mode).
     state = {"drop": 0}
     count_usage = ai_usage.recorder("chat", entry, rt)
@@ -1644,9 +1657,31 @@ def ai_chat(payload: AIChatRequest, request: Request):
     conf = rt["providers"].get(entry["provider"]) or {}
     window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
 
-    def open_upstream(messages, system, pdf_b64s, stream):
+    def open_upstream(messages, system, pdf_b64s, stream, call_tools=None, images=None):
+        """One provider turn. ``call_tools`` / ``images`` differ for a
+        helper's turn, which carries its own narrow tool set and none of
+        the user's pictures."""
         return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, timeout=180,
-                        images=state["images"], stream=stream, tools=tools, cache_key=cache_key)
+                        images=state["images"] if images is None else images, stream=stream,
+                        tools=tools if call_tools is None else call_tools,
+                        cache_key=cache_key + ("" if call_tools is None else ":helper"))
+
+    tools = _chat_tools(payload, scope)
+    # tools may reroute openai → /v1/responses, so the wire is settled once;
+    # a helper's turn carries tools too, so it goes over the same one.
+    proto = _wire_protocol(rt, entry, tools) if tools else None
+    # The second agent read_paper hands a document to (gamma/ai_agent.py).
+    # It answers on the same connection, in its own conversation, and its
+    # tokens are metered here like the chat's own.
+    scope["helper"] = Helper(
+        ws=ws, scope=scope, stopped=stopped, on_usage=count_usage,
+        open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
+                                                     True, htools, []),
+        read_events=lambda resp: _sse_events(resp, proto),
+    ) if tools and scope["delegates"] else None
+    # Which model answers, at what effort, with tools or not — the reply's
+    # footer names them, and the coverage chip's advice depends on the tools.
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
 
     def prepared(allow_native, drop=0):
         """_chat_prompt, keeping the coverage report and the pictures."""
@@ -1705,176 +1740,24 @@ def ai_chat(payload: AIChatRequest, request: Request):
                                 f"retrying as text: {e}")
                     break
 
-    def gated_call(name, call, armed):
-        """Run one tool call under the chat's permissions (scope
-        "permissions"). The call of an asking tool first shows its approval
-        card, an ("approval", …) event naming what it would change, and
-        waits for the user's decision (ai_permissions): once runs it, for
-        the chat or always also allows that permission's later calls of
-        this reply, deny and no answer leave it unmade and tell the model
-        why. A call that could not change anything is answered without
-        asking. Returns ``(result, action)``, or None once the client is
-        gone while the card waits: nothing more may run."""
-        args = call["arguments"]
-        perm = tool_permission(name)
-        states = scope["permissions"]
-        if name not in armed or states.get(perm) != "ask":
-            return run_agent_tool(ws, scope, name, args, allowed_tools=armed)
-        preview, answer = approval_preview(ws, scope, name, args)
-        if answer is not None:
-            return answer, settled_action(name, args, answer)
-        approval_id = ai_permissions.open_approval(user)
-        decision, note = "expired", ""
-        if approval_id:
-            yield ("approval", {"id": approval_id, "call_id": call.get("id") or "", "tool": name,
-                                "perm": perm, "args": _step_event(name, call)["args"],
-                                "preview": preview, "timeout": int(ai_permissions.APPROVAL_TIMEOUT)})
-            decision, note = ai_permissions.wait_for(approval_id, stopped)
-        if decision == "stopped":
-            return None
-        if decision in ("chat", "always"):
-            states[perm] = "allow"
-        if decision in ai_permissions.ALLOWING:
-            result, action = run_agent_tool(ws, scope, name, args, allowed_tools=armed)
-            return result, {**action, "approval": decision}
-        # The chip names the refused change by its page's title (and a note
-        # edit's mode), but carries no page_id: nothing changed on that page.
-        result = (_DECLINED_SAYING.format(note=note) if note else _DECLINED) if decision == "deny" else _UNANSWERED
-        return result, tool_action("error", f"Not allowed: {name}", name, args, result,
-                                   error=True, declined=True, approval=decision,
-                                   **{k: preview[k] for k in ("title", "mode") if preview.get(k)},
-                                   **({"note": note} if note else {}))
-
     def agent_events(first_resp):
-        """Organizer tool loop: yield ("delta", text) / ("action", dict) /
-        ("progress", dict) / ("usage", dict) events. Each round streams one
-        provider turn (its token counts are one "usage" event; the client
-        sums them per reply); tool calls are executed here and their
-        results appended before the next round re-opens the provider. A "progress" event previews a note
-        edit while the model is still writing it: the block being edited (or
-        the parent/sibling of the block being created) plus the markdown
-        streamed so far — the notes panel types it into the block live."""
-        proto = _wire_protocol(rt, entry, tools)  # tools may reroute openai → /v1/responses
-        messages, system, pdf_b64s = state["messages"], state["system"], state["pdf_b64s"]
-        armed = {t["name"] for t in tools}  # only armed tools execute
-        resp = first_resp
-        actions = 0
-        max_rounds = payload.tool_rounds or MAX_TOOL_ROUNDS
-        for round_no in range(max_rounds):
-            calls, text_parts = [], []
-            last_preview = {}  # call id -> content previewed so far (dedup)
-            stop = ""
-            try:
-                for kind, data in _sse_events(resp, proto):
-                    if kind == "text":
-                        text_parts.append(data)
-                        yield ("delta", data)
-                    elif kind == "stop":
-                        stop = data
-                    elif kind == "tool_delta":
-                        name = _canonical_tool(data.get("name") or "")
-                        # A call that waits for approval shows on its card,
-                        # never in the notes before the user decided.
-                        if (name not in _PREVIEW_TOOLS or name not in armed
-                                or scope["permissions"].get(tool_permission(name)) != "allow"):
-                            continue
-                        args = _partial_json_object(data.get("json") or "")
-                        target = args.get("block_id" if name == "edit_block" else "parent_id")
-                        mode = str(args.get("mode") or "replace").lower()
-                        sel = (find_selection(scope, args.get("selection"))
-                               if name == "edit_block" and mode == "selection" else None)
-                        if sel:
-                            target = sel["block_id"]
-                        content = args.get("content")
-                        if not target or content is None:
-                            continue  # nothing to point at (or say) yet
-                        if last_preview.get(data.get("id")) == content:
-                            continue
-                        last_preview[data.get("id")] = content
-                        progress = {"tool": name, "id": data.get("id") or "",
-                                    "content": content}
-                        if name == "edit_block":
-                            progress["block_id"] = target
-                            # append/prepend: the preview keeps the stored text
-                            # and types the addition in at the right end.
-                            if sel:
-                                # selection: the preview swaps the selected
-                                # range (re-found by its text if it moved).
-                                progress.update(mode="selection", find=sel["text"], at=sel["from"])
-                            elif mode == "selection":
-                                continue  # no such selection: nothing to preview
-                            elif mode in ("append", "prepend"):
-                                progress["mode"] = mode
-                            elif mode == "patch" and isinstance(args.get("find"), str):
-                                # patch: the preview swaps the passage in place.
-                                progress["mode"] = mode
-                                progress["find"] = args["find"]
-                        else:
-                            progress["parent_id"] = target
-                            if args.get("after_id"):
-                                progress["after_id"] = args["after_id"]
-                        yield ("progress", progress)
-                    elif kind == "tool":
-                        calls.append(data)
-                    elif kind == "usage":
-                        count_usage(data)
-                        yield ("usage", data)
-            finally:
-                resp.close()
-            if truncated_stop(stop):
-                # The output cap ended the round: say so rather than pass a
-                # cut-off reply (or a half-written tool call) as finished.
-                yield ("truncated", True)
-                return
-            if not calls:
-                return
-            messages.append({"role": "assistant", "content": "".join(text_parts),
-                             "tool_calls": calls})
-            for call in calls:
-                # A model copying a renamed tool out of replayed history still
-                # names the current one here (ai_context.DEPRECATED_TOOLS).
-                name = _canonical_tool(call["name"])
-                # The step about to run, so the chat can say what the agent
-                # is doing now ("Searching library for …") instead of
-                # "Thinking"; its action follows once it finished.
-                yield ("step", _step_event(name, call))
-                if name in armed and name in MUTATING_TOOLS and actions >= MAX_TOOL_ACTIONS:
-                    result = ("error: change limit for one message reached — "
-                              "stop and tell the user")
-                    action = tool_action("error", f'{name} — change limit reached',
-                                         name, call["arguments"], result, error=True)
-                else:
-                    outcome = yield from gated_call(name, call, armed)
-                    if outcome is None:
-                        return  # the client left while the card waited
-                    result, action = outcome
-                # Reads and failures render as chips too, but only applied
-                # mutations count against the change budget.
-                if name in MUTATING_TOOLS and not action.get("error"):
-                    actions += 1
-                # A picture a tool answered with (view_pdf_page) goes to the
-                # model with its result, never into the streamed/saved chip.
-                tool_images = action.pop("images", None)
-                yield ("action", action)
-                messages.append({"role": "tool", "call_id": call["id"], "content": result,
-                                 **({"images": tool_images} if tool_images else {})})
-            if round_no == max_rounds - 1:
-                yield ("delta", "\n\n*(stopped: tool-round limit reached — "
-                                "raise it in Settings → Assistant)*")
-                return
-            # The valve on a long reply: once the rounds' results outgrow
-            # their budget, the oldest become stubs (the last rounds stay).
-            elide_live_results(messages)
-            try:
-                resp = open_upstream(messages, system, pdf_b64s, True)
-            except UpstreamError as e:
-                if failure_kind(e) != "too_long":
-                    raise
-                # Over the window mid-reply: keep only the last round's
-                # results and try once more.
-                elide_live_results(messages, keep_rounds=1, budget=0)
-                log.info("[ai_chat] tool round too long for the provider, retrying with earlier results elided")
-                resp = open_upstream(messages, system, pdf_b64s, True)
+        """This reply's tool loop (gamma/ai_agent.py) with the chat's two
+        pauses wired in: a permission set to Ask stops on an approval card,
+        and a fetch a sign-in page, bot check or paywall stopped waits here
+        for the PDF the user's own browser can get. Both need a live client,
+        so a non-streamed reply only gets the approval-free loop."""
+        loop = AgentLoop(
+            ws=ws, scope=scope, tools=tools,
+            conversation=Conversation(state["messages"], state["system"], state["pdf_b64s"]),
+            open_round=lambda talk: open_upstream(talk.messages, talk.system, talk.files, True),
+            read_events=lambda resp: _sse_events(resp, proto),
+            on_usage=count_usage,
+            max_rounds=payload.tool_rounds,
+            stopped=stopped,
+            gate=ApprovalGate(ws, scope, user, stopped),
+            settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
+        )
+        return loop.run(first_resp)
 
     try:
         if payload.stream:

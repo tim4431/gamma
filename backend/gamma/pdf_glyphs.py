@@ -33,7 +33,7 @@ from PyPDF2.generic import (
     NumberObject,
 )
 
-from .vector_text import header, path_ops
+from .vector_text import TEXT_COLOR, header, path_ops
 
 MAX_CODES = 255          # codes 1..255; 0 is left unused
 RESOURCE_PREFIX = "GmT3"   # resource names GmT30, GmT31, … (F1–F7 are the base-14)
@@ -171,12 +171,13 @@ class GlyphFonts:
         return min(chars) if chars else ""
 
     # -- drawing --
-    def draw(self, drawing) -> bytes:
-        """Content-stream ops for a drawing: its shapes, then the glyphs as
-        text runs. Consecutive glyphs on one baseline in one font and size
-        become a single ``TJ`` whose adjustments carry the exact layout
-        positions (kerning, spacing), so extractors see a natural string."""
-        ops = [header(drawing)]
+    def draw(self, drawing, color=TEXT_COLOR) -> bytes:
+        """Content-stream ops for a drawing in ``color``: its shapes, then
+        the glyphs as text runs. Consecutive glyphs on one baseline in one
+        font and size become a single ``TJ`` whose adjustments carry the
+        exact layout positions (kerning, spacing), so extractors see a
+        natural string."""
+        ops = [header(drawing, color)]
         if drawing.shapes:
             ops.append(drawing.shapes)
         runs = []                    # [font, size, y, [(code, x, advance)]]

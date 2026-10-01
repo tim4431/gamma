@@ -107,14 +107,17 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
     case "obsidian":
       return t("An Obsidian vault: one note per page{folders}, links as [[wikilinks]], labels as tags{callouts}{lists}. Unzip it into a vault, or open it as one.", { folders: folder ? t(", subfolders as folders") : "", callouts: highlights ? t(", highlights as quote callouts") : "", lists: notes ? t(", your notes as headings, paragraphs and lists") : "" });
     case "pdf":
+      // Text boxes are written as annotations with either switch (they are
+      // the user's own writing on the page); highlights and ink only with
+      // the first (routers/export.py).
       if (folder) {
         return highlights || notes
-          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("no annotations"), page: notes ? t(" and every note printed onto the page") : "" })
+          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and every note printed onto the page") : "" })
           : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes) return t("The PDF file exactly as stored, with nothing added.");
-      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("no annotations"), page: notes ? t(" and every note printed onto the page") : "" });
+      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and every note printed onto the page") : "" });
     case "notespdf":
       if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
       return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });

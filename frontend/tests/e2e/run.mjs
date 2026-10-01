@@ -42,6 +42,7 @@ import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
 import { notebookScenarios } from "./scenarios/notebooks.mjs";
+import { textBoxScenarios } from "./scenarios/textBoxes.mjs";
 import { replicaScenarios } from "./scenarios/replica.mjs";
 import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
@@ -72,6 +73,7 @@ const RUNNERS = {
   "pdf-load": pdfLoadScenarios,
   "ink": inkScenarios,
   "notebooks": notebookScenarios,
+  "textbox": textBoxScenarios,
   "pdf-touch": pdfTouchScenarios,
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,

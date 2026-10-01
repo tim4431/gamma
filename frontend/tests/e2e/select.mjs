@@ -19,6 +19,7 @@ export const GROUPS = [
   { id: "guide", files: ["guide.mjs"] }, // ~55
   { id: "settings", files: ["settings.mjs"] }, // ~45
   { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"] }, // ~40
+  { id: "textbox", files: ["textBoxes.mjs"] }, // ~40
   { id: "contextual-guide", files: ["contextualGuide.mjs"] }, // ~27
   { id: "triggered-guide", files: ["triggeredGuide.mjs"] }, // ~27
   { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
@@ -48,7 +49,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "collab", "files", "transfers", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "mermaid"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
@@ -73,11 +74,15 @@ export const RULES = [
   ["frontend/src/app/**", ALL],
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks"]],
-  ["frontend/src/notebook/**", ["notebooks", "replica"]],
+  // (a text box's menu is placed and labelled by the ink layer's helpers)
+  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox"]],
+  // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
+  ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox"]],
+  ["frontend/src/notebook/**", ["notebooks", "replica", "textbox"]],
   ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
-  ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide"]],
+  // (a text box's editor and read mode are the notes')
+  ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox"]],
   ["frontend/src/chat/**", CHAT],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
@@ -118,6 +123,8 @@ export const RULES = [
   ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
   ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
   ["backend/gamma/notebook.py", ["notebooks"]],
+  // what the exports, the notebook PDF and the agent's outline read of a text box
+  ["backend/gamma/text_box.py", [...EXPORTS, "notebooks", "textbox", ...CHAT]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
   ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],

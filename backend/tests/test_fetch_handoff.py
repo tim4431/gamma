@@ -5,6 +5,7 @@ User-Agent on a connected host, and the search merge. The resolver, reader
 and cookie path are real; HTTPS is the fake transport of test_net_guard."""
 
 import json
+import threading
 import time
 from urllib.request import Request
 
@@ -261,7 +262,10 @@ def test_requests_expire_and_are_capped_per_account(accounts, monkeypatch):
 
 # ------------------------------------------------------ the chat loop
 
-def test_chat_streams_the_handoff_and_reads_the_delivery_next_turn(accounts, web, monkeypatch):
+@pytest.fixture
+def blocked_chat(accounts, web, monkeypatch):
+    """A chat of alice's whose one fetch_paper call meets a bot check. Call
+    it to run a reply; it returns the reply's NDJSON lines."""
     import gamma.routers.ai as ai_mod
 
     alice, _ = accounts
@@ -274,7 +278,6 @@ def test_chat_streams_the_handoff_and_reads_the_delivery_next_turn(accounts, web
     assert r.status_code == 200, r.text
 
     def fake_open(messages, system, entry, rt, pdf_b64s=None, **kwargs):
-        assert "a card lets the user get the PDF in their browser" in system
         if messages[-1]["role"] == "tool":
             return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Done."}}])
         return FakeResp([
@@ -287,17 +290,104 @@ def test_chat_streams_the_handoff_and_reads_the_delivery_next_turn(accounts, web
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *args: (0, ""))
 
-    def chat():
-        r = alice.post("/api/ai/chat", json={"prompt": "Read it", "agent_scope": "folder", "stream": True})
+    def chat(**body):
+        r = alice.post("/api/ai/chat", json={"prompt": "Read it", "agent_scope": "folder",
+                                             "stream": True, **body})
         assert r.status_code == 200, r.text
-        action, = [line["action"] for line in map(json.loads, r.text.splitlines()) if "action" in line]
-        return action
+        return [json.loads(line) for line in r.text.splitlines() if line.strip()]
 
-    action = chat()
+    chat.source = source
+    return chat
+
+
+def _await_request(user=USER, timeout=5.0):
+    """The id of the request the reply is waiting on, once it opened one."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        waiting = fetch_handoff.waiting(user)
+        if waiting:
+            return waiting[0]["id"]
+        time.sleep(0.02)
+    raise AssertionError("the reply never opened a handoff request")
+
+
+def _while_waiting(answer):
+    """Run ``answer(rid)`` from another thread as soon as the reply's card
+    is up, and hand back the thread to join."""
+    thread = threading.Thread(target=lambda: answer(_await_request()))
+    thread.start()
+    return thread
+
+
+def test_a_blocked_fetch_waits_in_the_reply_and_reads_what_the_browser_sends(accounts, blocked_chat):
+    """The default: the reply stops on its card, and the PDF the browser
+    sends becomes that same call's result — no second turn."""
+    browser, sent = login(USER, "handoff-password"), {}
+
+    def deliver(rid):
+        sent["status"] = browser.post(f"/api/ai/handoffs/{rid}/pdf",
+                                      files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))}).status_code
+
+    thread = _while_waiting(deliver)
+    lines = blocked_chat()
+    thread.join(5)
+    assert sent == {"status": 200}
+    card, = [line["handoff"] for line in lines if "handoff" in line]
+    assert card["host"] == "www.science.example" and card["wall"] == "captcha"
+    action, = [line["action"] for line in lines if "action" in line]
+    assert PDF_TEXT in action["result"] and action["delivered"] is True and "handoff" not in action
+
+
+def test_skipping_the_card_tells_the_model_what_to_do_instead(accounts, blocked_chat):
+    browser = login(USER, "handoff-password")
+
+    def skip(rid):
+        browser.request("DELETE", f"/api/ai/handoffs/{rid}", json={"note": "use the arXiv version"})
+
+    thread = _while_waiting(skip)
+    lines = blocked_chat()
+    thread.join(5)
+    action, = [line["action"] for line in lines if "action" in line]
+    assert action["skipped"] is True and "use the arXiv version" in action["result"]
+
+
+def test_a_waiting_request_is_listed_in_background_tasks(accounts, blocked_chat, monkeypatch):
+    """A card whose reply has scrolled away is still somewhere to find."""
+    alice, bob = accounts
+    monkeypatch.setattr(fetch_handoff, "IDLE_TIMEOUT", 0.1)
+    blocked_chat()
+    rows = [row for row in alice.get("/api/jobs").json()["jobs"] if row["kind"] == "paper-handoff"]
+    (row,) = rows
+    assert row["title"] == "www.science.example" and row["readonly"] is True
+    assert row["progress"]["phase"] == "browser"   # nobody has taken the tab yet
+    assert row["params"]["request"] == fetch_handoff.waiting(USER)[0]["id"]
+    # Another account never sees it, and a settled request drops off.
+    assert not [r for r in bob.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
+    alice.request("DELETE", f"/api/ai/handoffs/{row['params']['request']}")
+    assert not [r for r in alice.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
+
+
+def test_an_unanswered_card_lets_the_reply_carry_on(accounts, blocked_chat, monkeypatch):
+    monkeypatch.setattr(fetch_handoff, "IDLE_TIMEOUT", 0.1)
+    lines = blocked_chat()
+    assert any("handoff" in line for line in lines)
+    action, = [line["action"] for line in lines if "action" in line]
+    assert "nothing arrived" in action["result"] and "carry on" in action["result"]
+    # The card stays: the user can still finish it from Background tasks.
+    assert len(fetch_handoff.waiting(USER)) == 1
+
+
+def test_a_chat_that_does_not_wait_ends_with_the_card(accounts, blocked_chat):
+    """"Don't wait in this chat": the reply ends on the card, and the next
+    turn reads what the browser delivered meanwhile."""
+    alice, _ = accounts
+    lines = blocked_chat(paper_wait=False)
+    assert not any("handoff" in line for line in lines)   # no live card to wait on
+    action, = [line["action"] for line in lines if "action" in line]
     rid = action["handoff"]["id"]
-    assert action["handoff"]["host"] == "www.science.example"
-    assert alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))}).status_code == 200
-    action = chat()
+    assert alice.post(f"/api/ai/handoffs/{rid}/pdf",
+                      files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))}).status_code == 200
+    action, = [line["action"] for line in blocked_chat(paper_wait=False) if "action" in line]
     assert PDF_TEXT in action["result"] and "handoff" not in action
 
 
@@ -373,12 +463,14 @@ def test_resolver_sends_the_article_page_as_referer(transport, monkeypatch):
 
 def test_search_keeps_both_identifiers_and_ranks_the_exact_title_first(monkeypatch):
     title = "Bias-preserving gates with stabilized cat qubits"
-    monkeypatch.setattr(metadata_mod, "_crossref_search", lambda q, rows=5, detail=False, from_year=0: [
+    monkeypatch.setattr(metadata_mod, "_crossref_search",
+                        lambda q, rows=5, detail=False, from_year=0, work_type="": [
         {"title": "A survey of cat qubits", "doi": "10.1000/survey", "authors": []},
         {"title": title, "doi": "10.1126/sciadv.aay5901", "authors": []}])
     monkeypatch.setattr(metadata_mod, "_arxiv_search", lambda q, rows=5, detail=False: [
         {"title": title.upper(), "arxiv_id": "1905.00450", "authors": []}])
-    monkeypatch.setattr(ai_web.openalex, "search", lambda q, rows=5, from_year=0, key="": [])
+    monkeypatch.setattr(ai_web.openalex, "search",
+                        lambda q, rows=5, from_year=0, key="", work_type="", open_access=False: [])
     records = ai_web.search_papers(title)
     assert [r.get("doi") for r in records] == ["10.1126/sciadv.aay5901", "10.1000/survey"]
     assert records[0]["arxiv_id"] == "1905.00450"
@@ -387,9 +479,12 @@ def test_search_keeps_both_identifiers_and_ranks_the_exact_title_first(monkeypat
             'fetch_paper(source="doi:10.1126/sciadv.aay5901") for the publisher\'s') in text
 
 
-def test_prompt_tells_the_model_to_stop_for_the_card():
-    assert "end your reply instead of retrying" in agent_system(folder(""))
-    assert "a card lets the user" not in agent_system(folder(""), {"web_read": False})
+def test_prompt_says_whether_the_reply_waits_for_the_browser():
+    waiting = agent_system({**folder(""), "paper_wait": True})
+    assert "this reply waits" in waiting and "end your reply instead of retrying" not in waiting
+    ends = agent_system(folder(""))
+    assert "end your reply instead of retrying" in ends and "this reply waits" not in ends
+    assert "stop the server" not in agent_system(folder(""), {"web_read": "off"})
 
 
 # ------------------------------------------- what real publishers do

@@ -419,7 +419,7 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
     def flush():
         if pending:
             ops.append(b"q")
-            ops.append(glyphs.draw(vector_text.Drawing(b"", tuple(pending), 0.0, 0.0)))
+            ops.append(glyphs.draw(vector_text.Drawing(b"", tuple(pending), 0.0, 0.0), color))
             ops.append(b"Q")
             pending.clear()
 
@@ -435,7 +435,7 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
                 continue
             flush()
             ops.append(b"q 1 0 0 1 %s %s cm" % (num(x), num(base - asc)))
-            ops.append(glyphs.draw(drawing))
+            ops.append(glyphs.draw(drawing, color))
             ops.append(b"Q")
             x += w
             continue

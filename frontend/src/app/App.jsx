@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
+import PdfViewer from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
@@ -98,7 +99,11 @@ import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfil
 import { useNotices } from "./useNotices";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
-import { InkToolbar } from "../ink/InkLayer";
+import { useMarks } from "../markup/MarkupLayers";
+import { MarkupToolbar } from "../markup/MarkupToolbar";
+import { PageToolsContext, useStableActions } from "../markup/PageTools";
+import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
+import { useTextBoxes } from "../markup/useTextBoxes";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -121,6 +126,7 @@ import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
+import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
 import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
 import { libraryAccess } from "../library/libraryAccess";
@@ -344,10 +350,10 @@ function captureViewerSnapshot() {
 }
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
-function CardCarousel({ label, children, className }) {
+function CardCarousel({ label, children, className, guide }) {
   const trackRef = useWheelPan();
   return (
-    <div className={"carouselRow" + (className ? " " + className : "")}>
+    <div className={"carouselRow" + (className ? " " + className : "")} data-guide={guide}>
       {label ? <div className="carouselLabel">{label}</div> : null}
       <div className="carouselTrack" ref={trackRef}>{children}</div>
     </div>
@@ -2478,13 +2484,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     embAnnots, setEmbAnnots,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
-    inkLassoMode, setInkLassoMode,
+    inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
     translateEnabled, setTranslateEnabled,
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote,
+    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
@@ -2496,7 +2502,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
-    fetchInBackground, setFetchInBackground,
+    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -3537,11 +3543,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // sticky toggle button in the viewer's zoom column instead.
   const [areaSelectMode, setAreaSelectMode] = useState(false);
   // Handwriting (docs/dev/handwriting.md): the tool strip — open, the armed
-  // tool (a preset id from inkTools, "eraser", "select", or null for the
-  // hand), whether its options row is open, the pen preset a stylus writes
-  // with (the last pen armed) — the group the next stroke on a page joins,
-  // the pending-upload timer, the group outlined after a jump, and the
-  // viewer's identity-stable ink list.
+  // tool (a preset id from inkTools, "eraser", "select", "text" for text
+  // boxes, or null for the hand), whether its options row is open, the pen
+  // preset a stylus writes with (the last pen armed) — the group the next
+  // stroke on a page joins, the pending-upload timer, the group outlined
+  // after a jump, and the identity-stable list of ink groups the page marks
+  // are built from.
   const [inkUi, setInkUi] = useState({ open: false, tool: null, options: false, pen: null });
   const [inkFlash, setInkFlash] = useState(null);
   const inkActiveRef = useRef(null);
@@ -3626,13 +3633,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // server — it becomes the collab base as is) or "remote" (another client's
   // ops applied — the base already has them, so the diff sends only our own
   // edits in the same render). Neither is an undo step, and a load empties
-  // the undo stack. Kept on the tree VALUE, never a flag beside setBlocks:
-  // a flag outlived a load React
+  // the undo stack. "fold" (foldBlocks) is an edit here that belongs to the
+  // one before it, a text box's measured size: sent like any edit, part of
+  // that edit's undo step rather than one of its own. Kept on the tree
+  // VALUE, never a flag beside setBlocks: a flag outlived a load React
   // skipped (nothing changed) or was set by an effect that runs before the
   // autosave one, and the edit committed with it was taken for a load and
   // never sent — the server later refused the block as unknown.
   const treeOriginRef = useRef(new WeakMap());
   const loaded = (tree) => { treeOriginRef.current.set(tree, "load"); return tree; };
+  const foldBlocks = (fn) => setBlocks((prev) => {
+    const next = fn(prev);
+    if (next !== prev) treeOriginRef.current.set(next, "fold");
+    return next;
+  });
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // THE undo history (Ctrl+Z anywhere on the page, editors included):
   // derived from the block tree's transitions, see blockHistory.js. Declared
@@ -3640,6 +3654,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const caretRef = useRef(null);         // {id, from, to} the open editor's live selection
   const caretBeforeRef = useRef(null);   // {id, from, to} of the last editor change
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
+  // Text boxes (markup/useTextBoxes.js): the selected or edited box, its
+  // edits. A box's editor and the notes' row editor are never open at once,
+  // nor a selected box and the lasso's selection; an ink tool armed makes
+  // the boxes inert.
+  const textBoxes = useTextBoxes({
+    blocks, blocksRef, setBlocks, foldBlocks, readOnly, pageId: focusedBlockId,
+    rowEditingId: view.editingId, closeRowEditor: () => setView((v) => (v.editingId ? closeEditing(v, v.editingId) : v)),
+    style: textBoxStyle, setStyle: setTextBoxStyle, keybindings,
+    inert: !!inkUi.tool && inkUi.tool !== "text", onSelect: () => setInkSelection(null),
+  });
   const blockHistory = useBlockHistory(blocks, setBlocks, {
     originOf: (tree) => treeOriginRef.current.get(tree),
     pageId: focusedBlockId,
@@ -3647,8 +3671,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     caretRef,
     caretBeforeRef,
     onCaret: (caret) => { pendingCaretRef.current = caret; },
-    editingId: view.editingId,
-    onEditing: (id) => setView((v) => withEditing(v, id)),
+    // a run of typing in a box's editor merges like one in a row's, and
+    // an undo there keeps that editor, not the box's row, open
+    editingId: view.editingId || textBoxes.editingId,
+    onEditing: (id) => { if (!id || id !== textBoxes.editingId) setView((v) => withEditing(v, id)); },
   });
   // After a restore the kept-open editor has synced the new text (child
   // effects run first); now put the cursor where the change was.
@@ -3802,10 +3828,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     triggerFlash(land.id);
   }, [blocks]);
 
-  // Fetch backlinks for the focused block. Not in the share view: backlinks
-  // span the library, so the server refuses share tokens (403) by design.
+  // Fetch backlinks for the focused block, while the "Linked from" section
+  // is on (Settings → Reading & editing › Notes). Not in the share view:
+  // backlinks span the library, so the server refuses share tokens (403) by
+  // design.
   useEffect(() => {
-    if (!focusedBlockId || shareMode) { setBacklinks([]); return; }
+    if (!focusedBlockId || shareMode || !backlinksVisible) { setBacklinks([]); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -3814,7 +3842,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } catch { if (!cancelled) setBacklinks([]); }
     })();
     return () => { cancelled = true; };
-  }, [focusedBlockId, shareMode]);
+  }, [focusedBlockId, shareMode, backlinksVisible]);
 
   // The page's live session (collaboration/usePageCollab.js): the tree's transitions become ops
   // sent in debounced batches, other clients' batches arrive over the page
@@ -4642,6 +4670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
+      guideEvents.emit("paper.fetched");
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("Open failed: {message}", { message: err.message }));
@@ -4691,6 +4720,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         client: "", ops: [{ op: "insert", id: sheet.id, parent: created.id, position: generateKeyBetween(null, null),
           content: "", props: sheet.properties }] }) });
       setNotebookView(created.id, true);
+      guideEvents.emit("sheet.created", { id: sheet.id });
       await fetchHomeBlocks();
       await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
@@ -5947,11 +5977,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setExportOpen(true);
     } else if (open === "import") {
       setImportReview({ jobId: task.id });
+    } else if (open === "page") {
+      // A finished research job: the report page it filed. The listing
+      // leaves results out, so ask for this one job.
+      if (isActive(task)) setStatus(t("Still working — its page appears when it finishes."));
+      else {
+        tasks.fetchJob(task.id)
+          .then((full) => { if (full?.result?.page_id) openBlock(full.result.page_id); })
+          .catch(() => {});
+      }
+    } else if (open === "handoff") {
+      // A paper the chat could not download: its /go page leads on to the
+      // publisher, and Gamma Connector knows the tab by that address.
+      window.open(`${API}/ai/handoffs/${encodeURIComponent(task.params?.request || "")}/go`,
+                  "_blank", "noopener");
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }
   }
   // Start a task's work again (a row's retry button, the export dialog's
+  // Hand a question to the background researcher (gamma/paper_research.py):
+  // it searches and reads for minutes and files a report page in the folder
+  // being viewed. The tray follows it, and its row opens that page.
+  async function startResearch(question) {
+    if (!question) return;
+    try {
+      await tasks.start("research", { question, folder: folderFilter || "",
+                                      model: chatModel || "", read_char_limit: agentReadChars || 0 },
+                        { pill: true });
+      setStatus(t("Researching in the background — Background tasks has it."));
+    } catch (err) {
+      setStatus(err.message || t("Could not start the research"));
+    }
+  }
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
   // watches, a workspace export was asked for from a menu), else offered.
@@ -6004,6 +6062,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else if (!shownInDialog && started && job.state === "failed") {
         setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
       }
+      return;
+    }
+    if (job.kind === "research") {
+      if (job.state !== "done") {
+        if (started && job.state === "failed") setStatus(t("Research failed: {msg}", { msg: t(job.error) }));
+        return;
+      }
+      if (here) fetchHomeBlocks();
+      // Its report is a page: offer to open it rather than open it over
+      // whatever the user is reading now.
+      tasks.fetchJob(job.id).then((full) => {
+        const pageId = full?.result?.page_id;
+        if (!pageId) return;
+        postPill(`job:${job.id}`, { msg: t("Research finished: {name}.", { name: full.result.title || title }),
+          action: { label: t("Open"), run: () => { openBlock(pageId); postPill(`job:${job.id}`, null); } } },
+        { after: [60000, null] });
+      }).catch(() => {});
       return;
     }
     if (!started || shownInDialog) return;
@@ -6103,7 +6178,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const p = inkTools.find((x) => x.id === t);
     return p ? toolStyle(p) : null;
   }, [inkUi.tool, readOnly, inkTools]);
-  const inkPenTool = inkAutoPen && !readOnly ? inkPen : null;
+  // The Text tool (docs/dev/text_boxes.md) takes every pointer, a stylus's too.
+  const textArmed = inkUi.tool === "text" && !readOnly;
+  const inkPenTool = inkAutoPen && !readOnly && !textArmed ? inkPen : null;
+  // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
+  // block history for text boxes, the stroke history otherwise.
+  const boxUndo = textArmed || !!textBoxes.sel;
   // Arm a tool; a pen preset also becomes the stylus pen. The options row
   // closes unless the caller keeps it (a duplicate stays editable).
   const pickInkTool = useCallback((id, { keepOptions = false, kind } = {}) => {
@@ -6115,7 +6195,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const openInkStrip = () => pickInkTool(inkTools.find((t) => t.id === inkUi.pen)?.id || inkTools[0].id);
   // A removed preset leaves the strip's hand armed.
   useEffect(() => {
-    if (inkUi.tool && inkUi.tool !== "eraser" && inkUi.tool !== "select" && !inkTools.some((t) => t.id === inkUi.tool)) {
+    if (inkUi.tool && !["eraser", "select", "text"].includes(inkUi.tool) && !inkTools.some((t) => t.id === inkUi.tool)) {
       setInkUi((s) => ({ ...s, tool: null, options: false }));
     }
   }, [inkTools, inkUi.tool]);
@@ -6292,7 +6372,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function handleInkSelect(page, items) {
     if (readOnly) return;
     setInkSelection(items.length ? { page, items } : null);
-    if (items.length) setInkUi((s) => ({ ...s, open: true, options: false }));
+    if (items.length) {
+      setInkUi((s) => ({ ...s, open: true, options: false }));
+      textBoxes.actions.onBoxDeselect();
+    }
   }
   // The lasso selection, edited group by group: edit(ink, ids) -> ink.
   function editInkSelection(edit, label) {
@@ -6323,7 +6406,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         id: item.id, ids: (inkOf(item.id)?.strokes || []).map((s) => s.id),
       })));
     } else if (action === "show-note") {
-      showInkInNotes(inkSelection.items[0].id);
+      showInNotes(inkSelection.items[0].id);
       setInkSelection(null);
     } else if (action === "duplicate") {
       const changes = [], items = [];
@@ -6344,21 +6427,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       handleInkSelect(inkSelection.page, items);
     }
   }
-  // From the notes (marker / card): show the group on the page. From the
-  // page (Show note, or a read-only ink click): show its block in the notes.
-  function showInkOnPage(id) {
-    const b = flattenBlocks(blocksRef.current).find((x) => x.id === id);
+  // From the notes (a marker, an ink card): show an ink group or a text box
+  // on its page and outline it. From the page (Show note, a read-only click
+  // on ink or a box): show its block in the notes.
+  function showOnPage(id) {
+    const b = findBlock(blocksRef.current, id);
     if (!b) return;
+    const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
+    const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
+    const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);
     if (sheetId && notebook) {
-      nbScrollRef.current?.(sheetId, inkBounds(inkOf(id)));
-      setInkFlash({ id, nonce: Date.now() });
+      nbScrollRef.current?.(sheetId, box);
+      flash();
       return;
     }
     if (sheetId) {
-      // A page among the notes: unfold what hides it, then its drawing into view.
+      // A page among the notes: unfold what hides it, then the mark into view.
       reveal(sheetId);
-      const box = inkBounds(inkOf(id));
       requestAnimationFrame(() => {
         const node = document.querySelector(`.noteSheet[data-sheet-id="${CSS.escape(sheetId)}"] .nbSheet`);
         const scroller = node?.closest(".blockList");
@@ -6367,16 +6453,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const y = r.top - scroller.getBoundingClientRect().top + (box ? box[1] * k : 0) - 120;
         scroller.scrollBy({ top: y, behavior: "smooth" });
       });
-      setInkFlash({ id, nonce: Date.now() });
+      flash();
       return;
     }
     const position = b.properties.pdf_position || { pageNumber: b.properties.pdf_page };
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
-    setTimeout(() => scrollToRef.current?.({ position, offset: 120 }), wasHidden ? 300 : 0);
-    setInkFlash({ id, nonce: Date.now() });
+    setTimeout(() => scrollToRef.current?.({ position, box: tb, offset: 120 }), wasHidden ? 300 : 0);
+    flash();
   }
-  function showInkInNotes(id) {
+  function showInNotes(id) {
     scrollToBlock(id);
     reveal(id);
   }
@@ -6402,6 +6488,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const sheet = newSheet(id, paperBefore(tree, afterId));
     setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
+    guideEvents.emit("sheet.created", { id });
     return id;
   }
   // The viewer's "Add page": after the last page.
@@ -6422,6 +6509,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fold = !block.children?.length;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
       properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    guideEvents.emit("sheet.created", { id: blockId });
     saveNowRef.current = true;
     setView((v) => closeEditing(v, blockId));
   }
@@ -6451,13 +6539,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
   // The strip's keys while it is open: 1–9 arm the preset at that position,
   // P / H step through the pens / highlighters, E the eraser, L the lasso,
-  // V the hand, Esc drops the selection then closes, Delete removes the
-  // selection, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the STROKE history —
-  // registered in the capture phase so the page's block undo (a bubble
-  // listener on the window) never sees them. A focused text field keeps
-  // its own keys.
+  // T the Text tool, V the hand, Esc drops the selection then closes,
+  // Delete removes the selection, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step
+  // the STROKE history — registered in the capture phase so the page's
+  // block undo (a bubble listener on the window) never sees them. Text
+  // boxes are blocks: with the Text tool armed or a box selected, Ctrl+Z is
+  // left to the block undo, and Esc to the box (it lets go first). A focused
+  // text field keeps its own keys.
   const inkKeysRef = useRef(null);
-  inkKeysRef.current = { inkUndo, deleteInkSelection, hasSelection: !!inkSelection, tools: inkTools, tool: inkUi.tool, pickInkTool };
+  inkKeysRef.current = { inkUndo, deleteInkSelection, hasSelection: !!inkSelection, tools: inkTools, tool: inkUi.tool, pickInkTool,
+    boxUndo, hasBox: !!textBoxes.sel };
   useEffect(() => {
     if (!inkUi.open) return;
     const onKey = (e) => {
@@ -6465,12 +6556,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (isTextField(t)) return;
       const K = inkKeysRef.current;
       if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
+        if (K.boxUndo) return;
         e.preventDefault();
         e.stopPropagation();
         K.inkUndo(e.key.toLowerCase() === "y" || e.shiftKey);
         return;
       }
       if (e.key === "Escape") {
+        if (K.hasBox) return;
         if (K.hasSelection) setInkSelection(null);
         else setInkUi((s) => ({ ...s, open: false, tool: null, options: false }));
         return;
@@ -6484,6 +6577,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const k = e.key.toLowerCase();
       if (k === "e") K.pickInkTool("eraser");
       else if (k === "l") K.pickInkTool("select");
+      else if (k === "t") K.pickInkTool("text");
       else if (k === "v") K.pickInkTool(null);
       else if (k === "p" || k === "h") {
         // The next preset of that kind after the armed one, wrapping.
@@ -6672,10 +6766,52 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
   const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
   nbSheetsRef.current = nbSheets;
+  // The page tools every surface's layers read (markup/PageTools.jsx), and
+  // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
+  // by their pdf_page, a sheet's by its id, its text boxes, with the lasso
+  // selection, the selected box and the flashes on the surface they are on.
+  const pageActions = useStableActions({
+    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
+    onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
+  });
+  const pageTools = useMemo(() => ({
+    readOnly,
+    ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
+      eraserSize: inkEraserSize, lassoMode: inkLassoMode },
+    text: { armed: textArmed, style: textBoxStyle },
+    actions: pageActions,
+  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, textArmed, textBoxStyle,
+    pageActions]);
+  const inkBySurface = useMemo(() => {
+    const map = new Map();
+    for (const b of inkBlocks) {
+      const p = b.properties?.pdf_page;
+      if (!p) continue;
+      if (!map.has(p)) map.set(p, []);
+      map.get(p).push(b);
+    }
+    for (const [id, groups] of nbInk) map.set(id, groups);
+    return map;
+  }, [inkBlocks, nbInk]);
+  const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
+    boxFlash: textBoxes.flash });
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
     ? [...selectedPages][0] : "";
+  // What a step of the block history did, in the status pill.
+  function reportUndo(applied, redo) {
+    setStatus(applied?.blocked ? (redo ? t("Can't redo: someone else changed this since.") : t("Can't undo: someone else changed this since."))
+      : applied?.kept ? (redo ? t("Redone: {what} — kept what someone else changed since.", { what: applied.description })
+        : t("Undone: {what} — kept what someone else changed since.", { what: applied.description }))
+      : applied ? `${redo ? t("Redone") : t("Undone")}: ${applied.description}.`
+      : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
+  }
+  // The strip's Undo / Redo for text boxes: a press there leaves an open
+  // editor focused, whose undo it then is, as Ctrl+Z in it would be.
+  function undoBlocks(redo) {
+    reportUndo(blockHistory.undo(redo, !!document.activeElement?.closest?.(".cm-editor")), redo);
+  }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode,
@@ -6697,13 +6833,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const inEditor = !!active?.closest?.(".cm-editor");
       if (!inEditor && isTextField(active)) return false;
       const applied = blockHistory.undo(redo, inEditor);
-      if (applied || inEditor || !active || active === document.body) {
-        setStatus(applied?.blocked ? (redo ? t("Can't redo: someone else changed this since.") : t("Can't undo: someone else changed this since."))
-          : applied?.kept ? (redo ? t("Redone: {what} — kept what someone else changed since.", { what: applied.description })
-            : t("Undone: {what} — kept what someone else changed since.", { what: applied.description }))
-          : applied ? `${redo ? t("Redone") : t("Undone")}: ${applied.description}.`
-          : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
-      }
+      if (applied || inEditor || !active || active === document.body) reportUndo(applied, redo);
       // Always swallowed in an editor: the browser's native contenteditable
       // undo would otherwise mutate CodeMirror's DOM behind its back.
       return inEditor || !!applied;
@@ -6762,6 +6892,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // A library big enough that folders and labels start to pay: the
+  // "Organize your library" tour is offered once, past the folders hint.
+  const growingLibrary = useMemo(() => homeBlocks.length >= 20, [homeBlocks]);
+  // The open page carries enough of the user's own work to be worth
+  // taking out of Gamma: the export hint.
+  const annotatedPage = useMemo(() => blocksToHighlights(blocks).length >= 5, [blocks]);
   // Nothing in the library yet but the seeded Welcome page, once the listing
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
@@ -6772,6 +6908,41 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
     return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
   }, [homeBlocks]);
+  // What the two "try this" hints need to know (guide/tours/hints.js), each
+  // learnt once per load and never again: whether Gamma Connector is in
+  // this browser (its content script answers; the desktop app's Connector
+  // lives in the system browser, out of reach, so it stays unknown and
+  // nothing is suggested), whether this account could link a Gamma Cloud
+  // account but has not, and whether a setting that travels with the
+  // account was changed here — the moment carrying settings elsewhere
+  // starts to mean something.
+  // Nothing is asked where nothing would be suggested ("Suggest tours" off).
+  const [connectorHere, setConnectorHere] = useState(undefined);
+  useEffect(() => {
+    if (shareMode || !authUser?.user || !suggestTours || IS_DESKTOP) return;
+    let live = true;
+    askConnectorHere().then((here) => { if (live) setConnectorHere(here); });
+    return () => { live = false; };
+  }, [shareMode, authUser?.user, suggestTours]);
+  const [cloudLink, setCloudLink] = useState(null); // {identity, enabled, connected}
+  const cloudLogin = !!serverConfig?.cloud?.enabled;
+  useEffect(() => {
+    if (shareMode || !cloudLogin || !authUser?.user || authUser.is_guest || !suggestTours) { setCloudLink(null); return; }
+    let live = true;
+    apiJson(`${API}/auth/cloud/status`).then((d) => { if (live) setCloudLink(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [shareMode, cloudLogin, authUser?.user, authUser?.is_guest, suggestTours]);
+  // A setting of this account's own making, not the profile arriving: the
+  // first push AFTER the sync has been quiet once (a profile the server
+  // never held reads as every entry pending until its seeding push lands,
+  // app/prefs.js).
+  const [prefsChanged, setPrefsChanged] = useState(false);
+  const syncQuiet = useRef(false);
+  useEffect(() => {
+    if (!profileSync.pending.size && !profileSync.inflight.size) {
+      if (profileSync.state === "loaded") syncQuiet.current = true;
+    } else if (syncQuiet.current) setPrefsChanged(true);
+  }, [profileSync.pending, profileSync.inflight, profileSync.state]);
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
@@ -6845,7 +7016,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       editable: !readOnly,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
+      growingLibrary,
+      annotatedPage,
+      // the notebook view: the sheets fill the viewer, so the notes view's
+      // own sheet and its tool row (the notebook tour's anchors) are not up
+      notebookView: !!notebook,
+      // this workspace has an offline copy or a publication, so it has a sync pill
+      clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
       installable: HOME_SCREEN_INSTALLABLE,
+      // Gamma Connector in this browser (undefined while it is asked, and
+      // in the desktop app), and a Gamma Cloud account this one could link.
+      connectorHere,
+      cloudLinkable: cloudLink ? !!cloudLink.enabled && cloudLink.connected !== false && !cloudLink.identity : undefined,
+      prefsChanged,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
       welcomePdf,
@@ -7636,7 +7819,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Who links here (editor/BacklinksPanel.jsx), under the notes and above
   // the tail; an entry opens its page at the linking block, a link jump
-  // like a [[ref]] chip's.
+  // like a [[ref]] chip's. Nothing to show while the section is off — the
+  // list is only fetched when `backlinksVisible` is on.
   const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
     <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
       refCache={refCache} onFetchRefs={onFetchRefs} onOpen={(bl) => openBlockLink(bl.id, bl.page_root_id)}
@@ -7650,27 +7834,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
-  // The pages among the notes (notebook/NoteSheet.jsx): the ink state and
-  // handlers a notebook's viewer gets, and the strip over the notes when no
-  // viewer is there to hold it.
+  // The pages among the notes (notebook/NoteSheet.jsx): their marks and the
+  // sheet actions (the tools reach them through PageToolsContext), and the
+  // strip over the notes when no viewer is there to hold it.
   const viewerInk = (!!pdfUrl || notebook) && !viewerHidden;
   const openInkTools = () => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip());
   const noteSheetCtx = notebook ? null : {
-    readOnly, inkBySheet: nbInk, tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure,
-    eraserMode: inkEraserMode, eraserSize: inkEraserSize, lassoMode: inkLassoMode, selection: inkSelection, flash: inkFlash,
-    inkOpen: inkUi.open,
-    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
-    onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInkInNotes,
+    marks, inkOpen: inkUi.open,
     onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
     onNotebookView: hasSheets ? () => setNotebookView(focusedBlockId, true) : undefined,
   };
-  const inkToolbar = (
-    <InkToolbar
+  const markupToolbar = (
+    <MarkupToolbar
       tools={inkTools} active={inkUi.tool} options={inkUi.options}
-      eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode}
-      onPick={pickInkTool}
-      onUndo={() => inkUndo(false)} onRedo={() => inkUndo(true)}
-      canUndo={inkHistoryState.undo > 0} canRedo={inkHistoryState.redo > 0}
+      eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
+      onPick={pickInkTool} onTextStyle={textBoxes.restyle} blockHistory={boxUndo}
+      onUndo={() => (boxUndo ? undoBlocks(false) : inkUndo(false))} onRedo={() => (boxUndo ? undoBlocks(true) : inkUndo(true))}
+      // the block history keeps no count to disable its buttons by: a step with nothing to undo says so
+      canUndo={boxUndo || inkHistoryState.undo > 0} canRedo={boxUndo || inkHistoryState.redo > 0}
       onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
       onChangeTools={setInkTools}
       onEraser={(patch) => {
@@ -7682,7 +7863,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     />
   );
   const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
-    ? <div className="notesInkDock">{inkToolbar}</div> : null;
+    ? <div className="notesInkDock">{markupToolbar}</div> : null;
 
   const notesWindow = notesVisible ? (
     <div className="sidebar" data-guide="dock.notes">
@@ -8192,7 +8373,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
             {homeMode && lib.history && recentViewedPages.length > 0 ? (
-              <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
+              <CardCarousel label={t("Recently viewed")} className="recentsCarousel" guide="home.recents">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
@@ -8214,7 +8395,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={14} /> {t("Pinned")}</div>
-                <div className="pinnedStrip" ref={pinnedStripRef}>
+                <div className="pinnedStrip" ref={pinnedStripRef} data-guide="home.pinned">
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
                       key={item.key}
@@ -8356,7 +8537,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
                 {lib.organize && !folderFilter && !categoryFilter ? (
-                  <button type="button" className="ctlBtn" title={t("Recently deleted")}
+                  <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}>
                     <Trash2Icon size={16} />
                   </button>
@@ -8466,6 +8647,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <PageCard
                           key={id}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
                           preview={b._preview}
                           title={b.content}
@@ -8614,6 +8796,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div
                           key={id}
                           className={`fileRow ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
@@ -8674,7 +8857,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   rootId: focusedBlockId,
                   pages: pageBlocks, // the [[ link picker's page list
                   onJump: jumpToHighlightId,
-                  onInkJump: showInkOnPage,
+                  onShowOnPage: showOnPage,
                   // Sheets: numbered as pages; drawn in place unless a notebook's viewer draws them.
                   sheetNumbers,
                   inlineSheets: !notebook,
@@ -8712,6 +8895,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onChangeText: (id, text, selectionBefore) => {
                     if (readOnly) return;
                     caretBeforeRef.current = selectionBefore ? { id, ...selectionBefore } : null;
+                    textBoxes.touch(id); // a text box refits to the text typed in its row
                     setBlocks((prev) => setBlockText(prev, id, text));
                   },
                   // The open editor's selection: the history's caret
@@ -9062,9 +9246,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
-          fetchInBackground={fetchInBackground}
+          fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
+          onResearch={startResearch}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -9152,6 +9337,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem
             key="export"
             icon={ExportIcon}
+            data-guide="page.export"
             onClick={() => {
               setOpenPopover(null);
               setExportFolder(homeMode ? folderFilter : null);
@@ -9254,11 +9440,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
-            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
-            <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
-            <MenuItem icon={NotebookIcon} onClick={() => createNotebook()}
+            <MenuItem icon={FilePlusIcon} data-guide="add.newPage" onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={NotebookIcon} data-guide="add.newNotebook" onClick={() => createNotebook()}
               title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}
@@ -9487,6 +9673,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   return (
     <GammaNavContext.Provider value={gammaNav}>
+    <PageToolsContext.Provider value={pageTools}>
     <div
       ref={appRef}
       className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
@@ -9838,7 +10025,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   className={inkUi.open ? "modeActive" : ""}
                   data-guide="pdf.inkButton"
                   onClick={openInkTools}
-                  title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
+                  title={inkUi.open ? t("Close the markup tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
                   aria-label={t("Handwriting tools")}
                 >
                   <PenIcon size={16} />
@@ -9886,7 +10073,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onClose={() => setPaperMenu(false)} />
             );
           })() : null}
-          {viewerInk && inkUi.open && !readOnly ? inkToolbar : null}
+          {viewerInk && inkUi.open && !readOnly ? markupToolbar : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox">
               <button
@@ -9918,24 +10105,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && isPhone && !shareMode}
-              inkBlocks={inkBlocks}
-              inkTool={inkTool}
-              inkPenTool={inkPenTool}
-              inkPenOnly={inkPenOnly}
-              inkPressure={inkPressure}
-              inkFlash={inkFlash}
+              marks={marks}
               flashHighlightId={flashingId}
-              onInkStroke={readOnly ? undefined : handleInkStroke}
-              onInkErase={readOnly ? undefined : handleInkErase}
-              onInkErasePartial={readOnly ? undefined : handleInkErasePartial}
-              inkEraserMode={inkEraserMode}
-              inkEraserSize={inkEraserSize}
-              inkLassoMode={inkLassoMode}
-              inkSelection={inkSelection}
-              onInkSelect={readOnly ? undefined : handleInkSelect}
-              onInkAction={readOnly ? undefined : handleInkAction}
-              onInkMoveSelection={readOnly ? undefined : handleInkMoveSelection}
-              onInkJump={showInkInNotes}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
               captureRef={pdfCaptureRef}
@@ -9980,19 +10151,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
             />
           ) : notebook ? (
-            <NotebookViewer sheets={nbSheets} inkBySheet={nbInk} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
+            <NotebookViewer sheets={nbSheets} marks={marks} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
               onZoomTo={zoomTo} readOnly={readOnly} onAddSheet={readOnly ? undefined : addPageAtEnd}
-              onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef}
-              inkTool={inkTool} inkPenTool={inkPenTool} inkPenOnly={inkPenOnly} inkPressure={inkPressure}
-              inkEraserMode={inkEraserMode} inkEraserSize={inkEraserSize} inkLassoMode={inkLassoMode}
-              inkSelection={inkSelection} inkFlash={inkFlash}
-              onInkStroke={readOnly ? undefined : handleInkStroke}
-              onInkErase={readOnly ? undefined : handleInkErase}
-              onInkErasePartial={readOnly ? undefined : handleInkErasePartial}
-              onInkSelect={readOnly ? undefined : handleInkSelect}
-              onInkAction={readOnly ? undefined : handleInkAction}
-              onInkMoveSelection={readOnly ? undefined : handleInkMoveSelection}
-              onInkJump={showInkInNotes} />
+              onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef} />
           ) : (
             <div className="status">{t("No PDF open.")}</div>
           )}
@@ -10394,6 +10555,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFileLabels,
           syncPillScope,
           setSyncPillScope,
+          backlinksVisible,
+          setBacklinksVisible,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -10479,6 +10642,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setAgentEnabled,
           fetchInBackground,
           setFetchInBackground,
+          delegateReads,
+          setDelegateReads,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);
@@ -10837,6 +11002,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </ContextMenu>
       ) : null}
     </div>
+    </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );
 }

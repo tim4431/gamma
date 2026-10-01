@@ -5,21 +5,21 @@
 // a tool armed, any pointer) into samples, erasures, a lasso selection or
 // a move of that selection. InkCard is the same strokes as a picture in
 // the notes, with a replay of their writing that plays there and on the
-// page (ink/inkReplay.js); InkToolbar the tool strip. Strokes come from inkStore (drafts ahead of uploads,
-// files behind block URLs); App owns the tool state, the selection, the
-// stroke history and the commits.
+// page (ink/inkReplay.js). The tool strip is markup/MarkupToolbar.jsx, and
+// a surface mounts its layer through markup/MarkupLayers.jsx. Strokes come
+// from inkStore (drafts ahead of uploads, files behind block URLs); App owns
+// the tool state, the selection, the stroke history and the commits.
 import React, { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ContextMenu } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
 import {
-  CopyIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, HandIcon, HighlightIcon, LassoIcon, PenIcon,
-  FileTextIcon, LineWidthIcon, PaletteIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, StopIcon, TrashIcon, UndoIcon, XIcon,
+  CopyIcon, FileTextIcon, HighlightIcon, LineWidthIcon, PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon,
+  ResizeIcon, StopIcon, TrashIcon,
 } from "../shared/ui/Icons";
 import {
-  HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_STROKE_SIZE, MAX_TOOLS, PEN_COLORS, boundsOf, encodeStroke, hitStrokes,
-  inkBounds, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
-  transformPoint, unionBox,
+  HIGHLIGHTER_COLORS, MAX_STROKE_SIZE, PEN_COLORS, boundsOf, encodeStroke, hitStrokes, inkBounds, nearestInkColor,
+  nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, transformPoint, unionBox,
 } from "./ink";
 import * as inkStore from "./inkStore";
 import * as inkReplay from "./inkReplay";
@@ -37,7 +37,7 @@ const INK_COLOR_NAMES = {
   "#fde047": T("Yellow"), "#86efac": T("Mint"), "#7dd3fc": T("Light blue"), "#f9a8d4": T("Pink"),
   "#fdba74": T("Peach"), "#c4b5fd": T("Lavender"), "#67e8f9": T("Cyan"), "#d4d4d8": T("Light gray"),
 };
-const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Custom color"));
+export const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Custom color"));
 const inkKindName = (kind) => (kind === "highlighter" ? t("Highlighter") : t("Pen"));
 
 // Re-render when any draft or file changes.
@@ -49,17 +49,32 @@ export function useInkVersion() {
 
 // Eraser radius on screen (css px) per S/M/L index.
 export const ERASER_SIZES = [5, 9, 16];
-const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
+// What a press on never starts ink, even from a stylus that writes right
+// away: the menus (portalled), the lasso's handles, and a text box's width
+// handle, its move band and its open editor (markup/TextBoxLayer.jsx).
+const NOT_INK = ".inkEditMenu, .inkTransformHandle, .textBoxWidth, .textBoxBand, .textBox.editing";
+// What takes a click above a stroke of a read-only page (whose tap shows
+// the stroke's note): the page's own clickable marks. The strokes are drawn
+// above them all, text boxes included (app.css), but take no pointer.
+const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
 
-export function Strokes({ ink, onClick, hide }) {
+// The click a handled pointer-up would deliver to whatever lies under it
+// (a highlight rect, a link box) is not a click on that thing.
+export function swallowClick() {
+  const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+  document.addEventListener("click", swallow, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
+}
+
+export function Strokes({ ink, hide }) {
   return ink.strokes.map((s) => {
     if (hide?.has(s.id)) return null;
     const p = strokePath(s);
     return p.stroke ? (
       <path key={s.id} d={p.d} fill="none" stroke={s.color} strokeWidth={p.width} strokeOpacity={s.opacity}
-        strokeLinecap="round" strokeLinejoin="round" style={{ mixBlendMode: "multiply" }} onClick={onClick} />
+        strokeLinecap="round" strokeLinejoin="round" style={{ mixBlendMode: "multiply" }} />
     ) : (
-      <path key={s.id} d={p.d} fill={s.color} fillOpacity={s.opacity} onClick={onClick} />
+      <path key={s.id} d={p.d} fill={s.color} fillOpacity={s.opacity} />
     );
   });
 }
@@ -101,7 +116,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     }
   }
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, lassoMode, width, height, groups, selBox,
-    onStroke, onErase, onErasePartial, onSelect, onMoveSelection };
+    onStroke, onErase, onErasePartial, onSelect, onMoveSelection, onJump };
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -116,7 +131,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       el.classList.remove("inkHovering");
     };
     const showCursor = (e) => {
-      if (e.pointerType === "touch" || e.target.closest?.(".inkSelectionHit, .inkTransformHandle, .inkEditMenu")) { hideCursor(); return; }
+      if (e.pointerType === "touch" || e.target.closest?.(`.inkSelectionHit, ${NOT_INK}`)) { hideCursor(); return; }
       const L = live.current, use = L.tool || (e.pointerType === "pen" ? L.penTool : null);
       if (!use || !L.width || !cursorRef.current) { hideCursor(); return; }
       const rect = el.getBoundingClientRect(), k = rect.width / L.width;
@@ -235,8 +250,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     };
 
     const onDown = (e) => {
-      // Menu controls are portalled; React events must not start page ink.
-      if (e.target.closest?.(".inkEditMenu, .inkTransformHandle")) { hideCursor(); return; }
+      if (e.target.closest?.(NOT_INK)) { hideCursor(); return; }
       showCursor(e);
       const L = live.current;
       const selectionDrag = !!L.onSelect && e.target.closest?.(".inkSelectionHit")
@@ -254,15 +268,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         return;
       }
       if (contacts.size > 1 && e.pointerType === "touch") return;
-      const navigation = e.pointerType === "touch" ? (L.penOnly || !L.tool) : e.pointerType === "mouse" && !L.tool;
-      if (!selectionDrag && navigation && L.onSelect && L.width && e.button === 0) {
+      // A read-only page: a tap near a stroke shows its note, below the
+      // page's own clickable marks.
+      const passive = !L.onSelect && !!L.onJump;
+      if (passive && e.target.closest?.(ABOVE_PASSIVE_INK)) return;
+      const navigation = passive || (e.pointerType === "touch" ? (L.penOnly || !L.tool) : e.pointerType === "mouse" && !L.tool);
+      if (!selectionDrag && navigation && (L.onSelect || passive) && L.width && e.button === 0) {
         clearPending();
         const probe = setup(e, { tool: "select" });
         if (!probe) return;
         const pt = probe.toPt(e);
         const hit = nearestInkStroke(L.groups, pt.x, pt.y, (e.pointerType === "touch" ? 10 : 5) / probe.k);
         pending = { id: e.pointerId, x: e.clientX, y: e.clientY, hit, shown: false };
-        if (hit && e.pointerType === "touch") {
+        if (hit && e.pointerType === "touch" && !passive) {
           pending.timer = setTimeout(() => {
             if (!pending || drawing) return;
             pending.shown = true;
@@ -335,21 +353,16 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
       if (!d.raf) d.raf = requestAnimationFrame(paint);
     };
-    const swallowClick = () => {
-      // The click this pointer-up would deliver to whatever lies under it
-      // (a highlight rect, a link box) is not a click on that thing.
-      const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
-      document.addEventListener("click", swallow, { capture: true, once: true });
-      setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
-    };
     const finish = (e, cancelled) => {
       if (pending?.id === e.pointerId) {
         const p = pending;
         const isTap = !cancelled && Math.hypot(e.clientX - p.x, e.clientY - p.y) <= 8;
         clearPending(cancelled);
         if (isTap) {
-          live.current.onSelect?.(pageNumber, p.hit ? [p.hit] : []);
-          if (p.hit || live.current.selBox) { e.preventDefault(); e.stopPropagation(); swallowClick(); }
+          const L = live.current;
+          if (L.onSelect) L.onSelect(pageNumber, p.hit ? [p.hit] : []);
+          else if (p.hit) L.onJump?.(p.hit.id);
+          if (p.hit || L.selBox) { e.preventDefault(); e.stopPropagation(); swallowClick(); }
         }
         return;
       }
@@ -487,9 +500,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       <svg className="inkLayer" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
         {groups.map((g) => (
           <g key={g.id} data-ink-id={g.id}
-            style={{ pointerEvents: armed || !onJump ? "none" : "visiblePainted", cursor: "pointer" }}>
-            <Strokes ink={replay?.id === g.id ? replay.frame : g.ink} hide={dragging ? selectedIds : null}
-              onClick={!onSelect && onJump ? (e) => { e.stopPropagation(); onJump(g.id); } : undefined} />
+            style={{ pointerEvents: armed || !onSelect ? "none" : "visiblePainted", cursor: "pointer" }}>
+            <Strokes ink={replay?.id === g.id ? replay.frame : g.ink} hide={dragging ? selectedIds : null} />
           </g>
         ))}
         {dragging ? (
@@ -583,9 +595,26 @@ function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale,
   </>;
 }
 
+// A palette's swatches and a custom colour, `color` marked; onColor(hex).
+// A pen preset's colours (markup/MarkupToolbar.jsx) and a text box's
+// (markup/TextBoxLayer.jsx TextStyleChoices).
+export function ColorChoices({ colors, color, onColor }) {
+  return <>
+    {colors.map((c) => (
+      <button key={c} type="button" className={"colorBtn inkSwatch" + (color === c ? " selected" : "")}
+        style={{ background: c }} onClick={() => onColor(c)} title={inkColorName(c)} aria-label={inkColorName(c)}
+        aria-pressed={color === c} />
+    ))}
+    <label className={"colorBtn inkSwatch inkCustomColor" + (colors.includes(color) ? "" : " selected")}
+      title={t("Custom color")} style={{ "--ink-custom": color }}>
+      <input type="color" value={color} aria-label={t("Custom color")} onChange={(e) => onColor(e.target.value.toLowerCase())} />
+    </label>
+  </>;
+}
+
 // Native title tooltips are inconsistent for Pencil hover. Use the same
 // descriptions for mouse, pen and keyboard focus, outside clipped toolbars.
-function InkTooltips({ children, contentRef, ...props }) {
+export function InkTooltips({ children, contentRef, ...props }) {
   const id = useId(), [tip, setTip] = useState(null), active = useRef(null), timer = useRef(null);
   const clear = () => { clearTimeout(timer.current); active.current?.removeAttribute("aria-describedby"); active.current = null; setTip(null); };
   useEffect(() => {
@@ -625,11 +654,20 @@ function viewportOf(el) {
   return null;
 }
 
-function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
+// Where a selection's menu goes (the handwriting's, a text box's): above
+// the selection when it fits in the scroller the page is seen through (and
+// below the tool strip floating over its top), else below it, else
+// wherever it fits; null while the selection is off-screen.
+// It follows scrolls, resizes and its own height. `ref` is an element the
+// selection moves and scales with (observed for resizes); rectOf(its screen
+// rect) is the selection's screen rect, and `deps` what else moves it.
+// contentRef goes on an element inside the menu.
+export function useSelectionMenuAnchor(ref, rectOf, deps) {
   const [anchor, setAnchor] = useState(null);
-  const [options, setOptions] = useState(null);
   const contentRef = useRef(null);
   const [menuHeight, setMenuHeight] = useState(96);
+  const rectRef = useRef(rectOf);
+  rectRef.current = rectOf;
   useLayoutEffect(() => {
     const el = contentRef.current?.closest(".ctxMenu");
     if (!el) return;
@@ -637,22 +675,21 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
     observer.observe(el);
     return () => observer.disconnect();
   }, [!!anchor]);
-  const [x0, y0, x1, y1] = box;
   useLayoutEffect(() => {
-    const el = wrapRef.current;
+    const el = ref.current;
     if (!el) return;
     const view = viewportOf(el);
     const update = () => {
-      const rect = el.getBoundingClientRect();
       const viewport = view ? view.getBoundingClientRect()
         : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-      const k = rect.width / width;
-      const left = rect.left + x0 * k, top = rect.top + y0 * k, bottom = rect.top + y1 * k;
-      const y = top - menuHeight - 40 >= viewport.top + 8 ? top - menuHeight - 40
+      const bar = document.querySelector(".pdfInkBar")?.getBoundingClientRect();
+      const roof = bar && bar.bottom > viewport.top && bar.top < viewport.bottom ? Math.max(viewport.top, bar.bottom) : viewport.top;
+      const { left, top, right, bottom } = rectRef.current(el.getBoundingClientRect());
+      const y = top - menuHeight - 40 >= roof + 8 ? top - menuHeight - 40
         : bottom + menuHeight + 40 <= viewport.bottom - 8 ? bottom + 40
-        : Math.max(viewport.top + 8, Math.min(top - menuHeight - 40, viewport.bottom - menuHeight - 8));
-      const next = bottom < viewport.top || top > viewport.bottom || rect.left + x1 * k < viewport.left || left > viewport.right
-        ? null : { x: Math.max(viewport.left + 8, left), y, k };
+        : Math.max(roof + 8, Math.min(top - menuHeight - 40, viewport.bottom - menuHeight - 8));
+      const next = bottom < viewport.top || top > viewport.bottom || right < viewport.left || left > viewport.right
+        ? null : { x: Math.max(viewport.left + 8, left), y };
       setAnchor((prev) => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
     };
     update();
@@ -661,15 +698,27 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
     return () => { observer.disconnect(); window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
-  }, [wrapRef, width, x0, y0, x1, y1, menuHeight]);
+  }, [ref, menuHeight, ...deps]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { anchor, contentRef };
+}
+
+function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
+  const [options, setOptions] = useState(null);
+  const [x0, y0, x1, y1] = box;
+  const { anchor, contentRef } = useSelectionMenuAnchor(wrapRef, (r) => {
+    const k = r.width / width;
+    return { left: r.left + x0 * k, top: r.top + y0 * k, right: r.left + x1 * k, bottom: r.top + y1 * k };
+  }, [width, x0, y0, x1, y1]);
   if (!anchor) return null;
+  // 12 screen pixels, in the page's points
+  const nudge = () => 12 * width / wrapRef.current.getBoundingClientRect().width;
   const kinds = [...new Set(strokes.map((s) => s.tool))];
   return <ContextMenu x={anchor.x} y={anchor.y} ignoreRef={wrapRef} onClose={onClose} className="inkEditMenu">
     <InkTooltips contentRef={contentRef} role="toolbar" aria-label={t("Edit handwriting")} onPointerDown={(e) => e.stopPropagation()}>
       <div className="inkEditRow">
         <button className={"ctlBtn" + (options === "color" ? " modeActive" : "")} aria-label={t("Color")} title={t("Color")} aria-expanded={options === "color"} onClick={() => setOptions(options === "color" ? null : "color")}><PaletteIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (options === "width" ? " modeActive" : "")} aria-label={t("Width")} title={t("Width")} aria-expanded={options === "width"} onClick={() => setOptions(options === "width" ? null : "width")}><LineWidthIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Duplicate")} title={t("Duplicate")} onClick={() => onAction("duplicate", { dx: 12 / anchor.k, dy: 12 / anchor.k })}><CopyIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Duplicate")} title={t("Duplicate")} onClick={() => onAction("duplicate", { dx: nudge(), dy: nudge() })}><CopyIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Select note")} title={t("Select all handwriting in this note")} onClick={() => onAction("select-note")}><RectSelectIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Show note")} title={t("Show note")} onClick={() => onAction("show-note")}><FileTextIcon aria-hidden="true" /></button>
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
@@ -740,125 +789,5 @@ export function InkCard({ block, onJump }) {
       </svg>
       <InkReplayButton replay={replay} />
     </span>
-  );
-}
-
-// The tool strip above the page, Notability-style: a row of tool presets
-// (each pen / highlighter with its own colour and width), the eraser, the
-// lasso and a hand. Tapping the armed tool again opens its options row —
-// colours (palette + custom), widths, duplicate, remove for a preset;
-// whole / partial + size for the eraser; freeform / box for the lasso.
-// `tools`: the presets; `active`: a preset id, "eraser", "select" or null
-// (the hand); `options`: whether the row is open.
-export function InkToolbar({ tools, active, options, eraserMode, eraserSize, lassoMode,
-  onPick, onToggleOptions, onChangeTools, onEraser, onLasso, onClose, onUndo, onRedo, canUndo, canRedo }) {
-  const preset = tools.find((t) => t.id === active) || null;
-  const tap = (id) => (id === active ? onToggleOptions() : onPick(id));
-  const btn = (id, label, icon, extra) => (
-    <button key={id} type="button" className={"ctlBtn inkToolBtn" + (active === id ? " modeActive" : "")}
-      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : undefined}
-      onClick={() => tap(id)} title={label} aria-label={label} aria-pressed={active === id}>{icon}{extra}</button>
-  );
-  const edit = (patch) => onChangeTools(tools.map((t) => (t.id === active ? { ...t, ...patch } : t)));
-  const duplicate = () => {
-    const i = tools.findIndex((t) => t.id === active);
-    const copy = { ...tools[i], id: toolId() };
-    onChangeTools([...tools.slice(0, i + 1), copy, ...tools.slice(i + 1)]);
-    onPick(copy.id, { keepOptions: true, kind: copy.kind });   // not in the list the picker closed over yet
-  };
-  const remove = () => {
-    const i = tools.findIndex((t) => t.id === active);
-    const rest = tools.filter((t) => t.id !== active);
-    onChangeTools(rest);
-    onPick(rest[Math.min(i, rest.length - 1)].id);
-  };
-  const seg = (on, label, icon, click, title) => (
-    <button type="button" className={"ctlBtn inkSegBtn" + (on ? " modeActive" : "")} onClick={click}
-      title={title} aria-label={label} aria-pressed={on}>{icon}<span>{label}</span></button>
-  );
-  const palette = preset ? (preset.kind === "highlighter" ? HIGHLIGHTER_COLORS : PEN_COLORS) : null;
-  return (
-    <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Handwriting tools")} data-guide="ink.toolbar">
-      <div className="pdfInkRow">
-        {tools.map((tt, i) => {
-          const hl = tt.kind === "highlighter";
-          const sizes = sizesFor(tt.kind), k = Math.max(0, sizes.indexOf(tt.size));
-          const color = inkColorName(tt.color), size = tt.size;
-          // "Pink highlighter · 14 pt · key 7": the digit keys 1–9 arm presets.
-          const label = (hl ? t("{color} highlighter · {size} pt", { color, size })
-            : tt.brush === "monoline" ? t("{color} monoline pen · {size} pt", { color, size })
-            : t("{color} pen · {size} pt", { color, size }))
-            + (i < 9 ? t(" · key {key}", { key: i + 1 }) : "")
-            + (active === tt.id ? t(" — tap again for options") : "");
-          return btn(tt.id, label, hl ? <HighlightIcon size={16} /> : <PenIcon size={16} />,
-            <span className="inkToolInk" style={{ background: tt.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
-              opacity: hl ? 0.85 : 1 }} />);
-        })}
-        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
-        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={16} />)}
-        <span className="pdfInkSep" />
-        <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
-          onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
-          aria-pressed={active === null}><HandIcon size={16} /></button>
-        <span className="pdfInkSep" />
-        <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")} aria-label={t("Close the handwriting tools")}><XIcon size={16} /></button>
-        <span className="pdfInkHistory">
-          <button type="button" className="ctlBtn" aria-label={t("Undo ink")} title={t("Undo handwriting")} disabled={!canUndo} onClick={onUndo}><UndoIcon aria-hidden="true" /></button>
-          <button type="button" className="ctlBtn" aria-label={t("Redo ink")} title={t("Redo handwriting")} disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
-        </span>
-      </div>
-      {options && preset ? (
-        <div className="pdfInkSub" data-ink-options="tool" data-guide="ink.options">
-          {preset.kind === "pen" ? <>
-            {seg(preset.brush !== "monoline", t("Pen"), <PenIcon size={14} />, () => edit({ brush: "pen" }), t("Pen: width follows stylus pressure"))}
-            {seg(preset.brush === "monoline", t("Monoline"), <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), t("Monoline: an even line at every pressure"))}
-            <span className="pdfInkSep" />
-          </> : null}
-          {palette.map((c) => (
-            <button key={c} type="button" className={"colorBtn inkSwatch" + (preset.color === c ? " selected" : "")}
-              style={{ background: c }} onClick={() => edit({ color: c })} title={inkColorName(c)} aria-label={inkColorName(c)} />
-          ))}
-          <label className={"colorBtn inkSwatch inkCustomColor" + (palette.includes(preset.color) ? "" : " selected")}
-            title={t("Custom color")} style={{ "--ink-custom": preset.color }}>
-            <input type="color" value={preset.color} aria-label={t("Custom color")}
-              onChange={(e) => edit({ color: e.target.value.toLowerCase() })} />
-          </label>
-          <span className="pdfInkSep" />
-          {sizesFor(preset.kind).map((sz, i) => (
-            <button key={sz} type="button" className={"ctlBtn inkSizeBtn" + (preset.size === sz ? " modeActive" : "")}
-              onClick={() => edit({ size: sz })} title={t("{sz} pt", { sz: sz })} aria-label={t("Width {sz} pt", { sz: sz })}>
-              <span className="inkSizeDot" style={{ width: 4 + i * 2, height: 4 + i * 2, background: preset.color,
-                opacity: preset.kind === "highlighter" ? HIGHLIGHTER_OPACITY + 0.2 : 1 }} />
-            </button>
-          ))}
-          <span className="pdfInkSep" />
-          <button type="button" className="ctlBtn" onClick={duplicate} disabled={tools.length >= MAX_TOOLS}
-            title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={16} /></button>
-          <button type="button" className="ctlBtn" onClick={remove} disabled={tools.length <= 1}
-            title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={16} /></button>
-        </div>
-      ) : null}
-      {options && active === "eraser" ? (
-        <div className="pdfInkSub" data-ink-options="eraser">
-          {seg(eraserMode !== "partial", t("Whole strokes"), <EraseStrokeIcon size={14} />, () => onEraser({ mode: "stroke" }),
-            t("Whole strokes: anything the eraser touches goes entirely"))}
-          {seg(eraserMode === "partial", t("Partial"), <ErasePartialIcon size={14} />, () => onEraser({ mode: "partial" }),
-            t("Partial: erase just what the eraser passes over (strokes are cut)"))}
-          <span className="pdfInkSep" />
-          {ERASER_SIZES.map((px, i) => (
-            <button key={px} type="button" className={"ctlBtn inkSizeBtn" + (eraserSize === i ? " modeActive" : "")}
-              onClick={() => onEraser({ size: i })} title={t("{i} eraser", { i: SIZE_LABELS[i] })} aria-label={t("{i} eraser", { i: SIZE_LABELS[i] })}>
-              <span className="inkSizeDot inkEraserDot" style={{ width: 6 + i * 4, height: 6 + i * 4 }} />
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {options && active === "select" ? (
-        <div className="pdfInkSub" data-ink-options="select">
-          {seg(lassoMode !== "box", t("Freeform"), <LassoIcon size={14} />, () => onLasso("free"), t("Freeform: draw a loop around the strokes"))}
-          {seg(lassoMode === "box", t("Box"), <RectSelectIcon size={14} />, () => onLasso("box"), t("Box: drag a rectangle over the strokes"))}
-        </div>
-      ) : null}
-    </InkTooltips>
   );
 }

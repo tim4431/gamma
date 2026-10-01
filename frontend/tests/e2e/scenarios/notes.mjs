@@ -654,7 +654,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
-  await step("notes: 'Linked from' under the notes opens the linking block; folding it is remembered", async () => {
+  await step("notes: 'Linked from' is off until the setting turns it on, then opens the linking block; folding it is remembered", async () => {
     const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Link target" } });
     await alice2.api(`/api/pages/${target.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "blown", parent: target.id, position: "a0", content: "the target's own note" }] } });
@@ -662,9 +662,15 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await alice2.api(`/api/pages/${source.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "blfiller", parent: source.id, position: "a0", content: "filler" },
       { op: "insert", id: "blsource", parent: source.id, position: "a1", content: `See [[${target.id}]] for more` }] } });
-    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${target.id}`);
+    const url = `${server.base}/?ws=${second.id}&page=${target.id}`;
+    const p2 = await openPage(ctx, url);
     try {
       const panel = p2.locator(".backlinksPanel");
+      // Off by default (Settings → Reading & editing › Notes › Linked from).
+      await until(async () => (await p2.locator(".blockRowWrap").count()) > 0, { what: "the notes render" });
+      assertEq(await panel.count(), 0, "the section is off until the account turns it on");
+      await alice2.api("/api/prefs/profile", { method: "PATCH", body: { set: { backlinksVisible: true } } });
+      await p2.goto(url);
       await panel.waitFor();
       assert((await panel.locator(".backlinksHead").innerText()).includes("Linked from 1 page"), "the head counts pages");
       const [own, box] = [await row(p2, "the target's own note").boundingBox(), await panel.boundingBox()];
@@ -675,7 +681,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await until(async () => (await p2.locator('.blockRowWrap[data-block-id="blsource"] > .blockRow.focused').count()) === 1,
         { what: "the linking page opens with its block focused" });
       // Folded here, still folded after a reload.
-      await p2.goto(`${server.base}/?ws=${second.id}&page=${target.id}`);
+      await p2.goto(url);
       await panel.waitFor();
       await panel.locator(".backlinksHead").click();
       assertEq(await panel.locator(".backlinkItem").count(), 0, "folding hides the entries");

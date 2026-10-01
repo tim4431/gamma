@@ -69,6 +69,22 @@ export const TASK_KINDS = {
     icon: "database", open: "settings:backups",
     title: ({ params }) => t("Backup task “{name}”", { name: named(params.name) }),
   },
+  // A question the user handed over: the assistant searches and reads for
+  // minutes and files a report page (gamma/paper_research.py). A click
+  // opens that page once it is there.
+  research: {
+    icon: "sparkles", open: "page",
+    title: ({ params }) => t("Research: {question}", { question: named(params.question) }),
+    retry: ({ params }) => ["research", { question: params.question, folder: params.folder || "",
+      model: params.model || "" }],
+  },
+  // A paper the AI chat could not download, waiting for the user's own
+  // browser (gamma/fetch_handoff.py). Read-only here: the chat's card
+  // settles it, and a click opens the publisher's page.
+  "paper-handoff": {
+    icon: "cloudDownload", open: "handoff",
+    title: ({ params }) => t("Get “{host}” in your browser", { host: named(params.host) }),
+  },
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
   upload: { icon: "upload" },
@@ -98,6 +114,11 @@ const PHASES = {
   annotations: t("Importing embedded annotations"),
   databases: t("Copying databases"),
   files: t("Copying files"),
+  searching: t("Searching"),
+  reading: t("Reading papers"),
+  filing: t("Writing the report"),
+  browser: t("Waiting for you in your browser"),
+  connector: t("Gamma Connector is on it"),
 };
 
 // "12 of 40 pages", "120 MB of 2.1 GB", "" when there are no counts.

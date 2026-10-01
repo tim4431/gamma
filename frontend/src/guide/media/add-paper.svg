@@ -1,0 +1,72 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Paste an address and Gamma fetches the paper into the library. Every
+       rule is scoped to the wrapper's data-media, and every colour is a
+       token, so the drawing follows the theme (guide/media.js). -->
+  <style>
+    [data-media="add-paper"] .panel { fill: var(--bg-card); stroke: var(--border); }
+    [data-media="add-paper"] .field { fill: var(--bg-field); stroke: var(--border); }
+    [data-media="add-paper"] .row { fill: var(--text-dim); opacity: 0.45; }
+    [data-media="add-paper"] .glyph { stroke: var(--text-muted); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    [data-media="add-paper"] .card { fill: var(--bg-raised); stroke: var(--border); }
+    [data-media="add-paper"] .cardLine { fill: var(--text-dim); opacity: 0.5; }
+    [data-media="add-paper"] .chip { fill: var(--accent-bg); stroke: var(--accent); }
+    [data-media="add-paper"] .typed { fill: var(--accent); animation: addType 4.8s ease-in-out infinite; }
+    [data-media="add-paper"] .wire { stroke: var(--accent); stroke-width: 1.8; fill: none; stroke-linecap: round;
+      stroke-dasharray: 34; animation: addWire 4.8s ease-in-out infinite; }
+    [data-media="add-paper"] .paper { animation: addPaper 4.8s ease-in-out infinite; transform-origin: 257px 100px; }
+    [data-media="add-paper"] .tag { animation: addTag 4.8s ease-in-out infinite; }
+    @keyframes addType {
+      0%, 4% { width: 0; }
+      26%, 92% { width: 82px; }
+      100% { width: 0; }
+    }
+    @keyframes addWire {
+      0%, 28% { stroke-dashoffset: 34; opacity: 0; }
+      34% { opacity: 1; }
+      46%, 92% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: 34; opacity: 0; }
+    }
+    @keyframes addPaper {
+      0%, 44% { opacity: 0; transform: scale(0.9); }
+      58%, 92% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(0.9); }
+    }
+    @keyframes addTag {
+      0%, 62% { opacity: 0; }
+      74%, 92% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+
+  <!-- The Add popover: the address box, then its four rows -->
+  <rect class="panel" x="18" y="28" width="150" height="144" rx="10" stroke-width="1" />
+  <rect class="field" x="30" y="42" width="126" height="24" rx="6" stroke-width="1" />
+  <path class="glyph" d="M39 54h5m5 0h5M42 50.5a3.5 3.5 0 0 0 0 7M49 50.5a3.5 3.5 0 0 1 0 7" />
+  <rect class="typed" x="58" y="51" width="0" height="6" rx="3" />
+
+  <!-- the four rows' glyphs: upload, folder, blank page, notebook -->
+  <path class="glyph" d="M32.5 91v-8m-3 3 3-3 3 3" />
+  <path class="glyph" d="M28.5 106.5h4l1.5 2h4v8h-9.5z" />
+  <path class="glyph" d="M29.5 128.5h5l3 3v8h-8z" />
+  <path class="glyph" d="M29.5 148.5h8v9h-8zm2.5 0v9" />
+
+  <rect class="row" x="50" y="85" width="88" height="5" rx="2.5" />
+  <rect class="row" x="50" y="109" width="72" height="5" rx="2.5" />
+  <rect class="row" x="50" y="131" width="60" height="5" rx="2.5" />
+  <rect class="row" x="50" y="150" width="80" height="5" rx="2.5" />
+
+  <!-- the address travelling to a saved paper -->
+  <path class="wire" d="M174 100h30" />
+
+  <g class="paper">
+    <rect class="card" x="212" y="60" width="90" height="80" rx="8" stroke-width="1" />
+    <rect class="cardLine" x="224" y="74" width="60" height="6" rx="3" />
+    <rect class="cardLine" x="224" y="88" width="48" height="4" rx="2" />
+    <rect class="cardLine" x="224" y="98" width="66" height="4" rx="2" />
+    <rect class="cardLine" x="224" y="108" width="40" height="4" rx="2" />
+    <rect class="cardLine" x="224" y="118" width="56" height="4" rx="2" />
+  </g>
+  <g class="tag">
+    <rect class="chip" x="228" y="148" width="58" height="14" rx="7" stroke-width="1" />
+  </g>
+</svg>

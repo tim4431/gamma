@@ -210,7 +210,7 @@ function plainRun(source, at) {
 export function locateInRendered(text, source, at) {
   if (!text || !source) return null;
   at = Math.max(0, Math.min(at, source.length));
-  const find = (from, to, anchor) => {
+  const lookup = (from, to, anchor) => {
     const core = source.slice(from, to);
     if (!core.trim()) return null;
     return locateInSource(text, {
@@ -219,6 +219,18 @@ export function locateInRendered(text, source, at) {
       after: source.slice(to, to + CTX),
       nth: indexesOf(source.slice(0, from + core.length - 1), core).length,
     });
+  };
+  // The rendered view drops the whitespace at a line's ends — the space after
+  // the word someone is typing — so a run that isn't found is looked up again
+  // without it.
+  const find = (from, to, anchor) => {
+    const hit = lookup(from, to, anchor);
+    if (hit != null) return hit;
+    let f = from, t = to;
+    while (f < t && /\s/.test(source[f])) f++;
+    while (t > f && /\s/.test(source[t - 1])) t--;
+    if (f === from && t === to) return null;
+    return lookup(f, t, Math.max(0, Math.min(anchor - (f - from), t - f)));
   };
   const [from, to] = plainRun(source, at);
   const here = find(from, to, at - from);

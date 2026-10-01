@@ -14,7 +14,7 @@ kind ``scheduled-backup``.
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from .. import backup_schedule, jobs, workspaces
+from .. import backup_schedule, fetch_handoff, jobs, workspaces
 from ..auth import require_user, require_ws, ws_role
 from ..logbuf import log
 from ..storage import attachment_disposition
@@ -75,13 +75,32 @@ def _running_backup_tasks(user: str) -> list[dict]:
     return rows
 
 
+def _waiting_papers(user: str) -> list[dict]:
+    """The account's blocked paper fetches still waiting for a PDF from
+    their browser (gamma/fetch_handoff.py), in the jobs' shape: read-only
+    rows, so a card whose reply has scrolled away is still somewhere to
+    find. A click opens the publisher's page; the chat's card settles it."""
+    return [{
+        "id": f"paper-{req['id']}", "kind": "paper-handoff", "owner": user, "workspace": "",
+        "title": req["host"] or req["source"],
+        "params": {"request": req["id"], "host": req["host"], "wall": req["wall"],
+                   "source": req["source"]},
+        # Whose turn it is, in the phase words the tray already speaks.
+        "state": "running", "progress": {"phase": "connector" if req["watched"] else "browser"},
+        "error": "", "created_at": req["created_at"],
+        "started_at": req["created_at"], "finished_at": "", "artifact": None,
+        "downloaded": False, "stoppable": False, "stopping": False, "readonly": True,
+    } for req in fetch_handoff.waiting(user)]
+
+
 @router.get("")
 def list_jobs(request: Request):
     """``{jobs: [...]}``: the account's jobs (newest first, without their
-    results) and the running scheduled backups, plus the own jobs of the
-    workspace the request works in."""
+    results), the running scheduled backups and the paper fetches waiting
+    for their browser, plus the own jobs of the workspace the request works
+    in."""
     user, ws, _ = _context(request)
-    return {"jobs": _running_backup_tasks(user) + jobs.for_account(user, ws)}
+    return {"jobs": _running_backup_tasks(user) + _waiting_papers(user) + jobs.for_account(user, ws)}
 
 
 @router.post("/clear")

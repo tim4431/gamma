@@ -3235,6 +3235,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
+/* Deleting several at once: the tick box comes up on hover and stays while
+   anything is ticked; the bar under the list says how many and removes them. */
+.chatHistPick { flex: none; margin: 0; display: none; }
+.chatHistRow:hover .chatHistPick, .chatHistRow:focus-within .chatHistPick,
+.chatHistList.picking .chatHistPick { display: block; }
+.chatHistBulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px 2px 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+}
+.chatHistBulk > span { flex: 1; }
 /* One tool-permission checkbox row (layout only — shared look via popover) */
 .chatToolPermRow {
   display: flex;
@@ -3416,6 +3431,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
+/* Skipping a card the reply waits on may say what to do instead, like
+   declining an approval. */
+.chatHandoffInstead { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatHandoffInstead .aiKeyInput { flex: 1 1 14rem; min-width: 0; }
 /* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
    would do, the change as a word diff, the four answers. It looks like a
    fetch handoff's card, the other place the chat waits for the user. */
@@ -4661,13 +4680,26 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.45;
 }
 .chatChangesHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-muted);
   font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
   font-weight: 600;
 }
 .chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
-.chatChangeText { min-width: 0; overflow-wrap: anywhere; }
+.chatChangeText { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* Taking a note change back (chat/AgentChanges.jsx): a frameless undo icon
+   at the row's end, "Revert all" in the head, a reverted row muted with its
+   tag, and the prompt a row shows when the note changed since. */
+.chatChange .ctlBtn.chatChangeRevert { flex: none; width: 22px; height: 22px; margin: -2px 0; }
+.chatChange.reverted .chatChangeText { color: var(--text-muted); }
+.chatChange.reverted .chatChangeLink { color: inherit; }
+.chatChangeTag { flex: none; color: var(--text-muted); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
+.uiBtn.chatChangesAll { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-2); }
+.chatRevertAsk { margin: 0 0 4px 21px; color: var(--text-secondary); }
+.chatRevertAsk .chatApprovalActions { margin-top: 6px; }
 .chatChangeOld { color: var(--text-muted); }
 .chatChangeLink {
   padding: 0;
@@ -4698,6 +4730,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatToolActionHead.plain { cursor: default; }
+/* What a call turned out to be, beside its summary: the version fetched,
+   how long it took (chat/agentSteps.js chipNote). */
+.chatToolActionNote { flex: none; color: var(--text-muted); opacity: 0.8; }
+.chatToolActionNote::before { content: "·"; margin-right: 6px; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */
@@ -5027,12 +5063,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which
-   sits at content (0,0) as the scroller's first in-flow child — the pinch
-   math assumes exactly that. No width rules on purpose: width:auto keeps
-   pages laid out against the viewer width like they always were (max-content
-   ballooned the layer to the widest placeholder page — fit-width looked
-   broken on desktop, page adrift in white space); zoomed-in pages simply
-   overflow, as they did before the wrapper existed. */
+   sits at content (0,0) as the scroller's first in-flow child — what the
+   gesture math in shared/lib/viewerZoom.js assumes. No width rules on purpose:
+   width:auto keeps pages laid out against the viewer width like they always
+   were (max-content ballooned the layer to the widest placeholder page —
+   fit-width looked broken on desktop, page adrift in white space); zoomed-in
+   pages simply overflow, as they did before the wrapper existed. */
 .pdfZoomLayer {
   transform-origin: 0 0;
 }
@@ -5873,8 +5909,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* --- Handwriting (ink/InkLayer.jsx, docs/dev/handwriting.md) ------------------ */
 /* While a tool is armed the page is a drawing surface (PdfPage turns the
    text layer's user-select off): a crosshair; touch-action stays until
-   fingers are meant to draw too. The retained strokes sit with the
-   highlight overlays (z 2), the in-progress canvas above everything. */
+   fingers are meant to draw too. The markup layers (markup/MarkupLayers.jsx)
+   stack at z-index 6, over the page's own marks (highlights 2, note badges
+   4, link boxes 5), in their order: the text boxes, the retained strokes,
+   the lasso's hit area, the in-progress canvas; the handles and the cursor
+   above. So ink is drawn over everything, yet a stroke takes no click from
+   what lies under it on a read-only page (InkLayer resolves those taps
+   itself, below the page's clickable marks), and a text box takes its own
+   click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
 .inkLayer, .inkCanvas {
@@ -5885,8 +5927,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 100%;
   pointer-events: none;
 }
-.inkLayer { z-index: 2; overflow: visible; }
-.inkCanvas { z-index: 5; display: none; }
+.inkLayer { z-index: 6; overflow: visible; }
+.inkCanvas { z-index: 6; display: none; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -5910,14 +5952,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
   color: var(--text-primary); font-size: var(--fs-xs); line-height: var(--lh-ui); box-shadow: var(--shadow-2); }
-.inkSelectionHit { position: absolute; z-index: 4; touch-action: none; cursor: move; }
+.inkSelectionHit { position: absolute; z-index: 6; touch-action: none; cursor: move; }
 .inkEditMenu { width: 310px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
 .inkEditRow, .inkEditOptions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; }
 .inkEditRow .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
 .inkEditRow .inkDeleteBtn { color: var(--danger); }
 .inkEditOptions { align-items: center; border-top: 1px solid var(--border); margin-top: 4px; }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas) { filter: invert(1) hue-rotate(180deg); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -5944,9 +5986,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   .pdfPageWrap [data-hl-id].pdfHlFlash { box-shadow: 0 0 0 3px var(--hl-line, var(--hl)); }
 }
 
-/* The tool strip: top-centre of the viewer, the control-box surface laid
-   flat. Row one is the tools (presets, eraser, lasso, hand, close,
-   undo/redo); the options row of the armed tool opens under it. */
+/* The tool strip (markup/MarkupToolbar.jsx): top-centre of the viewer,
+   the control-box surface laid flat. Row one is the tools (presets,
+   eraser, lasso, text, hand, close, undo/redo); the options row of the armed
+   tool opens under it. */
 .pdfInkBar {
   position: absolute;
   z-index: calc(var(--z-dock) + 1);
@@ -6013,11 +6056,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
 .pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+/* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */
+.pdfInkBar .inkTextSize { width: auto; min-width: 24px; padding: 0 4px; font-size: var(--fs-xs); }
+.textNoBackground { background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%), var(--bg-elevated); }
 
-/* The notes: a rounded-square pen marker in the dot slot, the strokes as a
-   picture above the caption (on white: the card is a piece of the page,
-   the same rule as .pdfAreaMarquee). */
-.inkMarker {
+/* The notes: a rounded-square pen marker in the dot slot (a text box's is
+   a T), the strokes as a picture above the caption (on white: the card is
+   a piece of the page, the same rule as .pdfAreaMarquee). */
+.inkMarker, .textBoxMarker {
   display: inline-flex;
   align-items: center;
   justify-content: center;

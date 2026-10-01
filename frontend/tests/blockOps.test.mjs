@@ -156,6 +156,34 @@ test("pushOp coalesces consecutive sets of one block", () => {
   assert.equal(q.length, 4);
 });
 
+test("a changed text box names the box it was changed from, which a run of changes keeps", () => {
+  const box = { x: 10, y: 10, w: 60, h: 23, auto: true, size: 12, color: "#1f1f1f", bg: null };
+  const ops = roundTrip(
+    [N("t", "Hello", [], { text_box: box, pdf_page: 1 }), N("n", "note")],
+    [N("t", "Hello world", [], { text_box: { ...box, w: 101.5 }, pdf_page: 1 }), N("n", "note", [], { text_box: box })],
+  );
+  // (gamma/text_box.py merge_text_box: the server takes only the keys changed from it)
+  assert.deepEqual(ops, [
+    { op: "set", id: "t", content: "Hello world", base: "Hello", props: { text_box: { ...box, w: 101.5 } },
+      base_props: { text_box: box } },
+    { op: "set", id: "n", props: { text_box: box } }, // a new box: nothing to merge into
+  ]);
+  const q = [];
+  pushOp(q, { op: "set", id: "t", content: "a", base: "", props: { text_box: { ...box, w: 30 } }, base_props: { text_box: box } });
+  pushOp(q, { op: "set", id: "t", props: { text_box: { ...box, w: 30, x: 50 } }, base_props: { text_box: { ...box, w: 30 } } });
+  pushOp(q, { op: "set", id: "t", props: { pdf_page: 2 } });
+  assert.deepEqual(q, [{ op: "set", id: "t", content: "a", base: "",
+    props: { text_box: { ...box, w: 30, x: 50 }, pdf_page: 2 }, base_props: { text_box: box } }], "the first base stays");
+  const r = [];
+  pushOp(r, { op: "set", id: "t", props: { pdf_page: 2 } });
+  pushOp(r, { op: "set", id: "t", props: { text_box: { ...box, x: 50 } }, base_props: { text_box: box } });
+  assert.deepEqual(r[0].base_props, { text_box: box }, "the box's first change brings its base");
+  const w = [];
+  pushOp(w, { op: "set", id: "t", props: { text_box: box } });
+  pushOp(w, { op: "set", id: "t", props: { text_box: { ...box, x: 50 } }, base_props: { text_box: box } });
+  assert.equal(w[0].base_props, undefined, "a run that began with a whole box stays one");
+});
+
 test("a diff of a large flat reorder stays minimal", () => {
   const ids = Array.from({ length: 40 }, (_, i) => `n${i}`);
   const base = ids.map((id) => N(id));

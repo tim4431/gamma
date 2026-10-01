@@ -49,7 +49,7 @@ from PyPDF2.generic import (
 from . import pdf_text, vector_text
 from .logbuf import log
 from .note_markup import TEXT, latex_spans, parse_note
-from .pdf_export import ExportPdfReader, parse_css_color
+from .pdf_export import ExportPdfReader, display_size, page_frame, parse_css_color
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import (
@@ -338,16 +338,13 @@ def _frame(crop, rotation):
     """Display frame (x right, y down, origin top-left of the visible page) →
     (display size, cm matrix into user space, user→display point mapper)."""
     cx0, cy0, cx1, cy1 = crop
+    size = display_size(crop, rotation)
     if rotation == 90:
-        size = (cy1 - cy0, cx1 - cx0)
         return size, (0, 1, 1, 0, cx0, cy0), lambda px, py: (py - cy0, px - cx0)
     if rotation == 180:
-        size = (cx1 - cx0, cy1 - cy0)
         return size, (-1, 0, 0, 1, cx1, cy0), lambda px, py: (cx1 - px, py - cy0)
     if rotation == 270:
-        size = (cy1 - cy0, cx1 - cx0)
         return size, (0, -1, -1, 0, cx1, cy1), lambda px, py: (cy1 - py, cx1 - px)
-    size = (cx1 - cx0, cy1 - cy0)
     return size, (1, 0, 0, -1, cx0, cy1), lambda px, py: (px - cx0, cy1 - py)
 
 
@@ -444,16 +441,9 @@ def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
     drawn = 0
     try:
         for page_num, entries in sorted(by_page.items()):
-            page = writer.pages[page_num - 1]
-            crop = tuple(float(v) for v in (page.cropbox.left, page.cropbox.bottom,
-                                            page.cropbox.right, page.cropbox.top))
-            try:
-                rotation = int(page.rotation) % 360
-            except Exception:
-                rotation = 0
+            # The frame the highlight rects are stored in, as the annotations use it.
+            crop, rotation = page_frame(writer.pages[page_num - 1])
             (disp_w, disp_h), matrix, to_display = _frame(crop, rotation)
-            if disp_w <= 0 or disp_h <= 0:
-                continue
 
             pdfium_page = None
             if doc is not None:

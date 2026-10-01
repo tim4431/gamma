@@ -17,6 +17,7 @@
 // breaks the app. Plain strings need no codec.
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
 
@@ -183,10 +184,11 @@ export const PREFS = {
 
   // --- PDF viewer (Settings → Reading) ---
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
-  // would render twice once imported as blocks — canvas + overlay. "hide"
-  // keeps them out of the canvas; "strip" removes them from the stored file
-  // at import time.
-  embAnnots: pref("gamma-embedded-annots", ACCOUNT, "hide", oneOf(["hide", "strip"])),
+  // would render twice once imported as blocks — canvas + overlay. "strip"
+  // removes them from the stored file at import time, so the blocks are the
+  // only copy and deleting one deletes it from the exports too; "hide" keeps
+  // the file as it came and leaves them out of the canvas.
+  embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
 
   // --- Translation (Settings → Translation) ---
   // Master switch: off removes the translate button from the viewer.
@@ -220,8 +222,11 @@ export const PREFS = {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
-  // The "Linked from N pages" section under a page's notes, folded or open
-  // (editor/BacklinksPanel.jsx): a view state of this browser.
+  // The "Linked from N pages" section under a page's notes
+  // (editor/BacklinksPanel.jsx): off by default — a page's own notes end
+  // the page unless the links into it are asked for. `backlinksCollapsed`
+  // is the shown section's fold, a view state of this browser.
+  backlinksVisible: flag("gamma-backlinks", ACCOUNT, false),
   backlinksCollapsed: flag("gamma-backlinks-collapsed", BROWSER, false),
   // Keyboard shortcuts (Settings → Keyboard, docs/dev/hotkeys.md): command
   // id → chord ("Mod-Shift-k") or null for unbound; a command not named
@@ -264,10 +269,16 @@ export const PREFS = {
   agentEnabled: flag("gamma-ai-agent-enabled", ACCOUNT, true),
   agentPerms: pref("gamma-ai-agent-perms", ACCOUNT,
     Object.fromEntries(CHAT_KINDS.map((k) => [k, { ...TOOL_PERMS_DEFAULT }])), AGENT_PERMS),
-  // Off by default: a chat fetch a publisher stopped waits for the user to
-  // open the page. On, the card hands it to Gamma Connector by itself, which
-  // tries in a minimized window (chat/FetchHandoffCards.jsx).
-  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, false),
+  // On by default: a chat fetch a publisher stopped is handed to Gamma
+  // Connector by the card itself, which tries in an unfocused tab beside
+  // the Gamma one (chat/FetchHandoffCards.jsx). Off leaves the fetch waiting
+  // for the user to open the page.
+  fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, true),
+  // On by default: a chat may give a long document to a helper that reads
+  // it and hands back a short cited answer (the read_paper tool), so the
+  // conversation carries the answer and not the paper. Off makes the chat
+  // read every document itself.
+  delegateReads: flag("gamma-ai-delegate-reads", ACCOUNT, true),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
   // Per-read_page-call cap on document text the folder/paper agent may pull.
@@ -307,6 +318,9 @@ export const PREFS = {
   inkEraserSize: pref("gamma-ink-eraser-size", BROWSER, 1, { ...intIn(0, 2), serialize: String }),
   // The lasso draws a freeform loop or a box.
   inkLassoMode: pref("gamma-ink-lasso", BROWSER, "free", oneOf(["free", "box"])),
+  // The size, colour and background of new text boxes (markup/textBox.js
+  // textStyle), set from the Text tool's options row like a pen preset.
+  textBoxStyle: pref("gamma-text-box-style", BROWSER, textStyle({}), json(textStyle)),
 };
 
 export const setterName = (name) => `set${name[0].toUpperCase()}${name.slice(1)}`;

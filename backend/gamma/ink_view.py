@@ -4,7 +4,8 @@ page or on their sheet of paper — rasterized by pdfium like view_pdf_page's
 page, whole or cropped to the handwriting.
 
 Nothing is drawn here. A sheet goes through the notebook export's one-page
-PDF (``notebook.notebook_pdf``: the paper painted, the strokes as vectors);
+PDF (``notebook.notebook_pdf``: the paper painted, its text boxes typeset,
+the strokes as vectors);
 ink on a PDF page is that page alone with the strokes as the annotated
 export's ``/Ink`` annotations (``pdf_export.page_with_ink``), which pdfium
 draws when it renders. ``pdf_text.render_page`` rasterizes either.
@@ -14,7 +15,7 @@ from . import ink as inkmod
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
 from .db import ws_uploads_dir
 from .logbuf import log
-from .notebook import is_sheet, normalize_paper, notebook_pdf, sheets_of
+from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_text_boxes, sheets_of
 from .pdf_text import RENDER_MAX_SIDE, render_page
 
 # A cropped picture's margin around the handwriting (points, or a tenth of
@@ -76,7 +77,8 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
         if sheet is None:
             return {"error": "error: that page of paper could not be read"}
         inks = [ink for b in sheet["blocks"] if (ink := load(b)) is not None]
-        return _done(_render(notebook_pdf([(sheet["paper"], inks)]), None), inks, whole=True)
+        return _done(_render(notebook_pdf([(sheet["paper"], sheet_text_boxes(sheet["blocks"]), inks)]), None),
+                     inks, whole=True)
     if not props.get("ink_url"):
         return {"error": ('error: that block holds no handwriting — pass the id of a handwriting '
                           'block (read_block labels it "handwriting on …") or of a page of paper')}
@@ -93,7 +95,8 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
         inks = ([i for b in sheet["blocks"] if (i := load(b)) is not None]
                 if whole and sheet else [ink])
         box = None if whole else crop_box([ink], paper["width"], paper["height"])
-        return _done(_render(notebook_pdf([(paper, inks)]), box), inks, whole=whole)
+        boxes = sheet_text_boxes(sheet["blocks"]) if sheet else []
+        return _done(_render(notebook_pdf([(paper, boxes, inks)]), box), inks, whole=whole)
 
     from .ai_context import pdf_path
     from .pdf_export import page_with_ink, still_embedded
@@ -122,7 +125,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
     if data:
         return _done(_render(data, box), drawn, pdf_page=page_no, whole=whole)
     paper = normalize_paper({"width": ink.space.width, "height": ink.space.height})
-    return _done(_render(notebook_pdf([(paper, drawn)]), box), drawn, pdf_page=page_no, whole=whole, bare=True)
+    return _done(_render(notebook_pdf([(paper, [], drawn)]), box), drawn, pdf_page=page_no, whole=whole, bare=True)
 
 
 def _render(pdf: bytes, box):

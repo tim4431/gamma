@@ -61,6 +61,8 @@ from .pdf_typeset import (
     styled,
     wrap,
 )
+from .notebook import is_sheet
+from .text_box import box_page
 
 PAGE_W, PAGE_H = 595.28, 841.89          # A4
 MARGIN_X = 56.0
@@ -114,15 +116,19 @@ _MEDIA_RE = re.compile(
 _ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?$")
 _DELIM_CELL_RE = re.compile(r":?-+:?")
 
-# One pass over a line of markdown. Order matters: ** before *, ![[ before [[.
+# One pass over a line of markdown. Order matters: ** before *, ![[ before [[,
+# \( math before a backslash escape (CommonMark's: a backslash before ASCII
+# punctuation is that character, so "\*" or "\$" reads as typed, as on
+# screen). A closing mark never follows a backslash, which escapes it.
 _INLINE_RE = re.compile(
     r"(?P<code>``[^`]+``|`[^`\n]+`)"
     r"|(?P<dmath>\$\$[^\n]+?\$\$)"
     r"|(?P<math>\$[^$\n]+?\$|\\\([^\n]+?\\\))"
-    r"|(?P<bold>\*\*(?=\S).+?(?<=\S)\*\*|__(?=\S).+?(?<=\S)__)"
-    r"|(?P<italic>\*(?=\S)[^*\n]+?(?<=\S)\*|(?<![\w_])_(?=\S)[^_\n]+?(?<=\S)_(?![\w_]))"
-    r"|(?P<strike>~~(?=\S).+?(?<=\S)~~)"
-    r"|(?P<mark>==(?=\S).+?(?<=\S)==)"
+    r"|(?P<esc>\\[!-/:-@\[-`{-~])"
+    r"|(?P<bold>\*\*(?=\S).+?(?<=[^\s\\])\*\*|__(?=\S).+?(?<=[^\s\\])__)"
+    r"|(?P<italic>\*(?=\S)[^*\n]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_\n]+?(?<=[^\s\\])_(?![\w_]))"
+    r"|(?P<strike>~~(?=\S).+?(?<=[^\s\\])~~)"
+    r"|(?P<mark>==(?=\S).+?(?<=[^\s\\])==)"
     r"|(?P<embed>!\[\[[^\]]+\]\])"
     r"|(?P<ref>\[\[[^\]]+\]\])"
     r"|(?P<link>\[[^\]]*\]\(\s*[^)\s]+[^)]*\))"
@@ -157,6 +163,8 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
         body = m.group(which)
         if which == "code":
             out.append((TEXT, body.strip("`"), 0, styled(style, MONO)))
+        elif which == "esc":
+            out.append((TEXT, body[1], 0, style))
         elif which in ("math", "dmath"):
             tex = body.strip("$").strip() if body[0] == "$" else body[2:-2].strip()
             if tex:
@@ -758,11 +766,15 @@ def _emit_chunks(cv: _Canvas, md: str, x: float, width: float, color=TEXT_COLOR,
         first = False
 
 
-def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bool):
+def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bool,
+                on_sheet: bool = False):
     """One block and its subtree. Mirrors the Markdown export's switches: with
     highlights off a highlight block keeps its own writing as a plain bullet;
-    with notes off only the quoted passages remain."""
+    with notes off only the quoted passages remain. ``on_sheet``: a sheet of
+    paper is among the block's ancestors, so a text box under it is on that
+    sheet."""
     props = node.get("properties") or {}
+    under_sheet = on_sheet or is_sheet(props)
     content = (node.get("content") or "").strip()
     is_highlight = bool(props.get("highlight_id"))
     is_link = bool(props.get("link_url"))
@@ -819,6 +831,15 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
             inset = QUOTE_PAD if emitted else 0
             _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(depth or inset))
             emitted = True
+    elif content and (page_no := box_page(props, on_sheet)):
+        # A text box on a PDF page: a line naming its page, as handwriting
+        # has, kept with the text under it.
+        cv.gap(BLOCK_GAP)
+        cv.need((SMALL_SIZE + BODY_SIZE) * LEADING)
+        cv.paragraph([(TEXT, f"text box, p. {page_no}", 0, PLAIN)], x, width, SMALL_SIZE,
+                     color=MUTED, bullet="" if depth else None)
+        _emit_chunks(cv, content, x, width)
+        emitted = True
     elif content:
         cv.gap(BLOCK_GAP)
         _emit_chunks(cv, content, x, width, bullet=bool(depth))
@@ -829,7 +850,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     # export does the same).
     child_depth = depth + 1 if emitted else depth
     for child in node.get("children") or []:
-        _emit_block(cv, child, child_depth, highlights, notes)
+        _emit_block(cv, child, child_depth, highlights, notes, under_sheet)
 
 
 def _emit_page(cv: _Canvas, page: dict, highlights: bool, notes: bool):

@@ -376,6 +376,14 @@ export const PaletteIcon = (p) => (
 export const LineWidthIcon = (p) => (
   <Icon {...p}><path d="M4 5h16" strokeWidth="1" /><path d="M4 12h16" strokeWidth="3" /><path d="M4 19h16" strokeWidth="5" /></Icon>
 );
+// A large and a small A: a text box's size.
+export const TextSizeIcon = (p) => (
+  <Icon {...p}><path d="m2 18 5-12 5 12" /><path d="M4 13.5h6" /><path d="m14 18 3-7 3 7" /><path d="M15.2 15.5h3.6" /></Icon>
+);
+// A paint bucket: a text box's background.
+export const PaintBucketIcon = (p) => (
+  <Icon {...p}><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" /><path d="m5 2 5 5" /><path d="M2 13h15" /><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" /></Icon>
+);
 
 // Filled glyphs — bespoke markup, not the stroke wrapper.
 export const SparklesIcon = ({ size = 16, ...rest }) => (

@@ -121,9 +121,9 @@ export function checkPage({ url = "", title = "", check = false } = {}) {
   return CHECK_HOST.test(host) || CHECK_TITLE.test(title || "");
 }
 
-// Out-of-sight fetches (the chat's "in the background" setting) load in a
-// minimized window of their own, a few at a time; the rest wait their turn.
-// A tab that waits for the user (these notes) does not hold a turn.
+// Background fetches (the chat's "in the background" setting) load in
+// unfocused tabs beside the Gamma one, a few at a time; the rest wait their
+// turn. A tab that waits for the user (these notes) does not hold a turn.
 export const MAX_BACKGROUND = 3;
 export const NEEDS_YOU = new Set(["signin", "refused", "looking", "check", "other"]);
 
@@ -133,4 +133,19 @@ export function backgroundBusy(bindings) {
     .filter((b) => b && b.background && !NEEDS_YOU.has(b.note || ""))
     .map((b) => b.id));
   return working.size >= MAX_BACKGROUND;
+}
+
+// What a background tab needs from the user, as a sentence to notify
+// with — "" when nothing is wanted (it is still working, or the user is
+// looking at the tab anyway and can see for themselves).
+export function needsYouMessage(binding, note, host) {
+  if (!binding?.background || !NEEDS_YOU.has(note)) return "";
+  const where = host || "a publisher";
+  switch (note) {
+    case "check": return `${where} is showing a bot check — open the tab to pass it.`;
+    case "signin": return `${where} wants you to sign in before it hands over the PDF.`;
+    case "other": return `The tab for ${where} shows another paper — open this one there.`;
+    case "refused": return `${where} didn't hand over the PDF — open the tab and save it yourself.`;
+    default: return `No PDF link on ${where} yet — open the tab and have a look.`;
+  }
 }

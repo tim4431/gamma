@@ -91,6 +91,12 @@ def test_a_viewer_reads_chats_but_never_changes_them(lab):
     assert clients["editor"].put(f"/api/chats/{page_id}", json={"messages": []}).status_code == 200
 
 
+def test_a_viewer_cannot_revert_an_ai_change(lab):
+    _, clients, page_id = lab
+    body = {"kind": "edit", "block_id": page_id, "revert": {"before": "", "after": "x"}}
+    assert clients["viewer"].post("/api/ai/revert", json=body).status_code == 403
+
+
 def test_a_viewer_keeps_its_cover_snapshots_to_itself(lab):
     _, clients, page_id = lab
     assert clients["viewer"].put(f"/api/page-snaps/{page_id}", json=SNAP).status_code == 403

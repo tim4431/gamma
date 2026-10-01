@@ -2,12 +2,16 @@
 // chat/FetchHandoffCards.jsx) that asks whether this browser's Connector can
 // fetch for its request — {source: "gamma-app", type: "connector-probe", id}
 // — or asks it to open, show or close the request's tab — {type:
-// "connector-tab", id, do: "open" | "show" | "close", background}. The worker
-// checks the request with the Connector's own Gamma server and decides what
-// may be said — nothing at all to a page that is neither that server's app
-// nor holding a request of its account, so other sites learn nothing.
+// "connector-tab", id, do: "open" | "show" | "close", background}. It also
+// answers the app's "is the Connector here?" (type: "connector-hello", no
+// id), which only its own server's app hears — Gamma uses it to stop
+// suggesting an extension the browser already has. The worker checks the
+// request with the Connector's own Gamma server and decides what may be
+// said — nothing at all to a page that is neither that server's app nor
+// holding a request of its account, so other sites learn nothing.
 (() => {
-  const REPLIES = { "connector-probe": "connector-status", "connector-tab": "connector-tab" };
+  const REPLIES = { "connector-probe": "connector-status", "connector-tab": "connector-tab",
+                    "connector-hello": "connector-here" };
   const asked = new Map(); // request id + question → when it was last asked
   window.addEventListener("message", (event) => {
     const data = event.data;

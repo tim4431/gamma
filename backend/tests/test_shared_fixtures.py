@@ -1,7 +1,8 @@
 """Rules the frontend mirrors, pinned by one set of cases both sides read:
 tests/shared/*.json at the repository root. The node half is
-frontend/tests/textnorm.test.mjs, libraryUtils.test.mjs and ink.test.mjs;
-a case added here fails whichever side drifts."""
+frontend/tests/textnorm.test.mjs, libraryUtils.test.mjs, ink.test.mjs,
+replica.test.mjs and textBox.test.mjs; a case added here fails whichever
+side drifts."""
 
 import json
 from pathlib import Path
@@ -90,6 +91,27 @@ def test_page_sheets(case):
             "ink": [b["id"] for b in s["blocks"] if (b["properties"] or {}).get("ink_url")]}
            for s in sheets_of(blocks, case["page"])]
     assert got == case["sheets"]
+
+
+TEXTBOX = _load("textbox.json")
+
+
+@pytest.mark.parametrize("case", TEXTBOX["normalize"], ids=[c["note"] for c in TEXTBOX["normalize"]])
+def test_text_box_normalize(case):
+    from gamma.text_box import normalize_text_box
+    # as JSON text, so True is not 1 and a whole number is written as the client writes it (23, not 23.0)
+    got = json.dumps(normalize_text_box(case["input"]), sort_keys=True)
+    assert got == json.dumps(case["output"], sort_keys=True)
+
+
+TEXTBOXMERGE = _load("textboxmerge.json")
+
+
+@pytest.mark.parametrize("case", TEXTBOXMERGE["merge"], ids=[c["note"] for c in TEXTBOXMERGE["merge"]])
+def test_text_box_merge(case):
+    from gamma.text_box import merge_text_box
+    got = json.dumps(merge_text_box(case["stored"], case["mine"], case["base"]), sort_keys=True)
+    assert got == json.dumps(case["result"], sort_keys=True)
 
 
 TEXTMERGE = _load("textmerge.json")

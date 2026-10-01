@@ -2,9 +2,13 @@
 
 Notes and AI replies render closed `mermaid` Markdown fences as SVG diagrams.
 Use `/mermaid` in a note to insert a starter flowchart. A note's diagram is an
-object like a picture: a click selects it, and its right-click menu's "Edit
-markdown source" opens the source editor; leaving the editor renders the
-updated diagram. Hovering a diagram shows its toolbar — the same flat icon
+object like a picture: a click selects it, and a double-click — or its
+right-click menu's "Edit markdown source", which names the double-click —
+opens the source editor; leaving the editor renders the updated diagram. A
+diagram is the one object whose body has no editing of its own (a picture
+zooms on double-click, a table edits the cell under the pointer), so the
+gesture is free for its source; the hover toolbar and the resize grips keep
+their own double-clicks (`editor/MdObject.jsx`). Hovering a diagram shows its toolbar — the same flat icon
 buttons as a note image's hover strip: show source (`</>`), copy source,
 download SVG. Ordinary code blocks keep their existing behavior.
 

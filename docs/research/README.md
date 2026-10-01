@@ -8,7 +8,7 @@ duplicate.
 
 | Note | Question it answers |
 |---|---|
-| [paper-fetching.md](paper-fetching.md) | What real paper questions revealed about search, reference following, publisher downloads, open-access provenance and human help after blocked access; the browser handoff that followed; how discovery from a research question differs (OpenAlex, citation graphs, general web search, ranking a lab's publication list), and the checks that remain. |
+| [paper-fetching.md](paper-fetching.md) | What real paper questions revealed about search, reference following, publisher downloads, open-access provenance and human help after blocked access; the browser handoff that followed; how discovery from a research question differs (OpenAlex, citation graphs, general web search, ranking a lab's publication list), where a real reply's 26k tokens went and the four changes that followed (a probe read, a round's reads side by side, search filters, the reply waiting on its card), and the checks that remain. |
 | [demo-production.md](demo-production.md) | How scripted demos and screen-recording editors achieve smooth motion, readable framing and repeatable exports; animated WebP delivery measured on Gamma's refreshed demos. |
 | [handwriting-interactions.md](handwriting-interactions.md) | How Goodnotes and Notability select, edit, transform and reuse ink; finger taps versus holds; contextual menus; the broader writing/study feature inventory; Gamma gaps and acceptance criteria. |
 | [collaboration.md](collaboration.md) | How real-time collaborative editing is built elsewhere (OT, record-level last-writer-wins, CRDTs), why a snapshot autosave cannot collaborate, and why Gamma took the Notion / Linear / Figma shape. |

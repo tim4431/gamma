@@ -67,10 +67,16 @@ export function declinedSummary(action, titleOf = () => "") {
   return `${why}: ${change}`;
 }
 
-// "Allow in this chat" lasts as long as the conversation: the permissions
-// it allowed are kept in this browser, per account and conversation (named
-// by its first message's id), and sent with each request as `granted`. A new
-// chat, or another conversation opened from history, asks again.
+// What a conversation decided for itself, kept in this browser per account
+// and conversation (named by its first message's id) and sent with each of
+// its requests. A new chat, or another conversation opened from history,
+// decides afresh. Two decisions live here:
+//
+// - "Allow in this chat" on an approval card: those permissions ride as
+//   `granted` and run without asking again.
+// - "Don't wait in this chat" when skipping a blocked paper: `paper_wait`
+//   goes false, so a later blocked fetch leaves its card under the reply
+//   instead of holding the reply open (chat/FetchHandoffCards.jsx).
 export const GRANTS_KEY = "gamma-ai-chat-grants";
 const MAX_CONVERSATIONS = 100;
 
@@ -82,15 +88,30 @@ export function grantsIn(store, user, conversation) {
   return Array.isArray(perms) ? perms.filter((p) => typeof p === "string") : [];
 }
 
-// The store with `perm` allowed in the conversation, keeping only the most
-// recently used conversations.
-export function withGrant(store, user, conversation, perm, now = Date.now()) {
-  if (!conversation || !perm) return store || {};
+// Whether this conversation asked not to wait for blocked papers.
+export function waitsForPapers(store, user, conversation) {
+  return !(conversation && store?.[slot(user, conversation)]?.noWait);
+}
+
+// The store with one more decision recorded for the conversation, keeping
+// only the most recently used ones.
+function decided(store, user, conversation, change, now) {
+  if (!conversation) return store || {};
   const key = slot(user, conversation);
-  const perms = [...new Set([...grantsIn(store, user, conversation), perm])];
-  const entries = Object.entries({ ...(store || {}), [key]: { perms, at: now } })
+  const entries = Object.entries({ ...(store || {}),
+    [key]: { ...(store?.[key] || {}), ...change, at: now } })
     .sort(([, a], [, b]) => (b?.at || 0) - (a?.at || 0)).slice(0, MAX_CONVERSATIONS);
   return Object.fromEntries(entries);
+}
+
+export function withGrant(store, user, conversation, perm, now = Date.now()) {
+  if (!perm) return store || {};
+  return decided(store, user, conversation,
+    { perms: [...new Set([...grantsIn(store, user, conversation), perm])] }, now);
+}
+
+export function withoutPaperWait(store, user, conversation, now = Date.now()) {
+  return decided(store, user, conversation, { noWait: true }, now);
 }
 
 export function withoutGrants(store, user, conversation) {

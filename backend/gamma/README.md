@@ -24,7 +24,9 @@ ai_protocols/      one adapter per AI wire protocol (request, stream, usage, mod
 ai_client.py       provider-agnostic AI transport (open, read, stream, errors)
 ai_catalog.py      live model listings + context windows (provider, then models.dev)
 ai_context.py      PDF attachments, extraction, and chat context assembly
+ai_agent.py        the agent tool loop, its two user-facing pauses, and the helper a tool delegates to
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
+paper_research.py  a background research job: the same loop headless, filing its report as a page
 logseq_import.py   EDN / Markdown importers
 ratelimit.py       in-process fixed-window limits per key (bounded; the client address is the peer)
 compression.py     gzip for whole JSON answers only (never streams, files or ranges)

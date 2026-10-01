@@ -849,6 +849,176 @@
    "moved": [
     "c1"
    ]
+  },
+  {
+   "note": "a changed text box carries the box it was changed from; a new one names none",
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "a note",
+     "props": {}
+    }
+   },
+   "target": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello world",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "a note",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    }
+   },
+   "ops": [
+    {
+     "op": "set",
+     "id": "t1",
+     "content": "Hello world",
+     "base": "Hello",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     },
+     "base_props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    },
+    {
+     "op": "set",
+     "id": "n1",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    }
+   ],
+   "applied": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello world",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    },
+    "n1": {
+     "parent": "pg",
+     "position": "a1",
+     "content": "a note",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    }
+   },
+   "moved": []
   }
  ],
  "unlanded": [
@@ -1597,6 +1767,324 @@
    },
    "result": [
     null,
+    null
+   ]
+  },
+  {
+   "note": "a text box the remote shows with our keys landed, whatever else changed there",
+   "op": {
+    "op": "set",
+    "id": "t1",
+    "props": {
+     "text_box": {
+      "x": 40,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    },
+    "base_props": {
+     "text_box": {
+      "x": 10,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "result": [
+    {
+     "op": "set",
+     "id": "t1",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    },
+    null
+   ]
+  },
+  {
+   "note": "a text box whose keys the remote shows as they were goes again, onto the remote's box",
+   "op": {
+    "op": "set",
+    "id": "t1",
+    "props": {
+     "text_box": {
+      "x": 40,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    },
+    "base_props": {
+     "text_box": {
+      "x": 10,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "result": [
+    null,
+    {
+     "op": "set",
+     "id": "t1",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     },
+     "base_props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 101.5,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    }
+   ]
+  },
+  {
+   "note": "a key of a text box changed there since counts as overridden",
+   "op": {
+    "op": "set",
+    "id": "t1",
+    "props": {
+     "text_box": {
+      "x": 40,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    },
+    "base_props": {
+     "text_box": {
+      "x": 10,
+      "y": 10,
+      "w": 60,
+      "h": 23,
+      "auto": true,
+      "size": 12,
+      "color": "#1f1f1f",
+      "bg": null
+     }
+    }
+   },
+   "base": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 10,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "remote": {
+    "pg": {
+     "parent": "root",
+     "position": "a0",
+     "content": "Page",
+     "props": {}
+    },
+    "t1": {
+     "parent": "pg",
+     "position": "a0",
+     "content": "Hello",
+     "props": {
+      "text_box": {
+       "x": 200,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      },
+      "pdf_page": 1
+     }
+    }
+   },
+   "result": [
+    {
+     "op": "set",
+     "id": "t1",
+     "props": {
+      "text_box": {
+       "x": 40,
+       "y": 10,
+       "w": 60,
+       "h": 23,
+       "auto": true,
+       "size": 12,
+       "color": "#1f1f1f",
+       "bg": null
+      }
+     }
+    },
     null
    ]
   }

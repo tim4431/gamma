@@ -16,8 +16,9 @@ a name), a mention of a block ``[[Title#^id]]`` and a ``![[embed]]``
 blocks that are actually linked carry an anchor). Highlights are
 ``[!quote]`` callouts whose title links the bundled PDF's page
 (``[[Paper.pdf#page=3|p. 3]]``); the PDF is also the quoted
-``source: "[[Paper.pdf]]"`` property. Targets outside the export degrade the
-way the readable Markdown export does (text, or the materialized block).
+``source: "[[Paper.pdf]]"`` property. A text box on a PDF page is a note
+followed by that page link. Targets outside the export degrade the way the
+readable Markdown export does (text, or the materialized block).
 
 Upload references are rewritten by the caller with ``collect_and_rewrite``
 (prefix ``attachments/``), as for the readable export.
@@ -28,6 +29,8 @@ import re
 
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
+from .notebook import is_sheet
+from .text_box import box_page
 
 # What Obsidian refuses in a note name on any OS (link syntax) plus the
 # Windows set, and control characters.
@@ -242,6 +245,11 @@ class _Renderer:
             return ""
         return f"[[{self.pdf_leaf}#page={page_no}|p. {page_no}]]" if self.pdf_leaf else f"p. {page_no}"
 
+    def _box_link(self, props, on_sheet):
+        """The page link of a text box on a PDF page; "" for any other block
+        (a box under a sheet, ``on_sheet``, included)."""
+        return self._page_link(props) if box_page(props, on_sheet) else ""
+
     def _region(self, props, content):
         """A PDF link region → a link line, or None when it isn't one."""
         if not (props.get("link_url") or props.get("link_page_id")):
@@ -261,9 +269,12 @@ class _Renderer:
         return self.ctx.anchors.get(node["id"])
 
     # --- document style (top level, and under a top-level heading) ---------
+    # ``on_sheet``, here and in the list style: a sheet of paper is among
+    # the block's ancestors, so a text box under it is on that sheet.
 
-    def top(self, node, lines):
+    def top(self, node, lines, on_sheet=False):
         props = self._props(node)
+        under_sheet = on_sheet or is_sheet(props)
         content = self._content(node)
         marker = self._marker(node)
         region = self._region(props, content)
@@ -271,7 +282,7 @@ class _Renderer:
 
         if region:
             lines += [region + (f" ^{marker}" if marker else ""), ""]
-            self._children_as_list(node, lines)
+            self._children_as_list(node, lines, under_sheet)
         elif quote:
             title = self._page_link(props)
             lines.append(f"> [!quote] {title}".rstrip())
@@ -281,21 +292,27 @@ class _Renderer:
             lines.append("")
             if content:
                 lines += [content, ""]
-            self._children_as_list(node, lines)
+            self._children_as_list(node, lines, under_sheet)
+        elif content and (link := self._box_link(props, on_sheet)):
+            # The link is a paragraph of its own: a line straight after a
+            # list, a quote or a table would run into it.
+            self._paragraph(content, marker, lines)
+            lines += [link, ""]
+            self._children_as_list(node, lines, under_sheet)
         elif content and _HEADING_RE.match(content):
             self._paragraph(content, marker, lines)
             for child in node["children"]:
-                self.top(child, lines)
+                self.top(child, lines, under_sheet)
         elif content and node["children"]:
             # A block with children keeps its subtree as a nested list (a
             # paragraph can't own children in Markdown).
-            self.item(node, 0, lines)
+            self.item(node, 0, lines, on_sheet)
             lines.append("")
         elif content:
             self._paragraph(content, marker, lines)
         else:
             for child in node["children"]:
-                self.top(child, lines)
+                self.top(child, lines, under_sheet)
 
     def _paragraph(self, content, marker, lines):
         if marker and _COMPOUND_RE.match(content):
@@ -305,17 +322,18 @@ class _Renderer:
         else:
             lines += [content, ""]
 
-    def _children_as_list(self, node, lines):
+    def _children_as_list(self, node, lines, on_sheet):
         if not node["children"]:
             return
         for child in node["children"]:
-            self.item(child, 0, lines)
+            self.item(child, 0, lines, on_sheet)
         lines.append("")
 
     # --- list style (everything below the top level) -------------------------
 
-    def item(self, node, indent, lines):
+    def item(self, node, indent, lines, on_sheet=False):
         props = self._props(node)
+        under_sheet = on_sheet or is_sheet(props)
         content = self._content(node)
         marker = self._marker(node)
         region = self._region(props, content)
@@ -337,9 +355,12 @@ class _Renderer:
             clines = content.split("\n")
             lines.append(f"{pad}- {clines[0]}" + (f" ^{marker}" if marker else ""))
             lines += [f"{pad}  {c}" for c in clines[1:]]
+            link = self._box_link(props, on_sheet)
+            if link:
+                lines.append(f"{pad}  {link}")
         else:
             emitted = False
 
         child_indent = indent + 2 if emitted else indent
         for child in node["children"]:
-            self.item(child, child_indent, lines)
+            self.item(child, child_indent, lines, under_sheet)

@@ -38,6 +38,17 @@ test("a folder exports its papers' annotated PDFs as one zip, with both switches
   assert.match(exportSummary(folder, "Reading"), /Pages without a PDF are left out/);
 });
 
+test("an annotated PDF with only the notes switch still carries its text boxes as annotations", () => {
+  const notesOnly = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, paper);
+  assert.equal(exportSummary(notesOnly), "The PDF with text box annotations only and every note printed onto the page.");
+  const folder = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, { folder: "Reading" });
+  assert.match(exportSummary(folder, "Reading"), /with text box annotations only and every note printed onto the page/);
+  const both = resolveExport({ format: "pdf", highlights: true, notes: true, bundle: false }, paper);
+  assert.equal(exportSummary(both), "The PDF with highlight annotations and every note printed onto the page.");
+  const none = resolveExport({ format: "pdf", ...allOff }, paper);
+  assert.equal(exportSummary(none), "The PDF file exactly as stored, with nothing added.");
+});
+
 test("an export job's body names the server's mode for a page or a folder", () => {
   assert.deepEqual(exportJobBody({ format: "pdf", highlights: true, notes: false, bundle: false }, { folder: "Reading" }),
     { folder: "Reading", mode: "annotated-pdf", pdf: false, highlights: true, notes: false });

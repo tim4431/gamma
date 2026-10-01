@@ -13,6 +13,7 @@ import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
+import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
@@ -21,7 +22,7 @@ import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth
 import { MdObject, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, PenIcon, XIcon } from "../shared/ui/Icons";
+import { LinkIcon, PenIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
@@ -729,11 +730,12 @@ function BlockRow({
   block,
   depth,
   sheetNumber = 0,
+  onSheet = false,
   focusedId,
   setFocusedId,
   flashingId,
   onJump,
-  onInkJump,
+  onShowOnPage,
   onEnterAttachMode,
   onUnlinkHighlight,
   onOpenLinkTarget,
@@ -1172,8 +1174,13 @@ function BlockRow({
 
   const isHighlight = !!block.highlightId;
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
-  // as a card; its content is the caption.
+  // as a card; its content is the caption. A text box
+  // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
   const isInk = block.properties?.ink_url !== undefined;
+  const isBox = !isInk && isTextBox(block);
+  // A box under a sheet is on that sheet, whatever pdf_page it still
+  // carries (markup/textBox.js textBoxesBySurface): it names no PDF page.
+  const shownPage = isBox && onSheet ? null : block.page;
   const hasChildren = (block.children?.length || 0) > 0;
 
   function trackGapLine(e) {
@@ -1585,13 +1592,15 @@ function BlockRow({
               >⊕</button>
             ) : null}
           </>
-        ) : isInk && !editing ? (
+        ) : (isInk || isBox) && !editing ? (
           <button
             className="collapseBtn highlightDotBtn dotSlot"
-            onClick={(e) => { e.stopPropagation(); onInkJump?.(block.id); }}
-            title={block.page ? t("Handwriting on page {page} — click to show it", { page: block.page }) : t("Handwriting")}
+            onClick={(e) => { e.stopPropagation(); onShowOnPage?.(block.id); }}
+            title={isInk
+              ? (shownPage ? t("Handwriting on page {page} — click to show it", { page: shownPage }) : t("Handwriting"))
+              : shownPage ? t("Text box on page {page} — click to show it", { page: shownPage }) : t("Text box — click to show it")}
           >
-            <span className="inkMarker"><PenIcon size={9} /></span>
+            {isInk ? <span className="inkMarker"><PenIcon size={9} /></span> : <span className="textBoxMarker"><TypeIcon size={9} /></span>}
           </button>
         ) : (
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
@@ -1599,7 +1608,7 @@ function BlockRow({
 
         <div className="blockBody" data-guide={isInk ? "notes.ink" : undefined}>
           <div className="blockMeta">
-            {block.page ? `p.${block.page}` : "note"}
+            {shownPage ? `p.${shownPage}` : "note"}
           </div>
 
           {!readOnly && editing ? (
@@ -1824,7 +1833,7 @@ function BlockRow({
             <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
-          {isInk ? <InkCard block={block} onJump={onInkJump} /> : null}
+          {isInk ? <InkCard block={block} onJump={onShowOnPage} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
               type="button"
@@ -2085,7 +2094,9 @@ function AiGhostRow({ content, depth }) {
 // omitted: rowProps.rootId) — it places the agent's ghost row (rowProps.aiLive
 // for a create_block still streaming) under the right parent, after the
 // sibling the call names (at the end when it names none or an unknown one).
-function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
+// `onSheet`: a sheet holds these rows (notebook/notebook.js), which puts
+// a text box among them on it.
+function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2108,13 +2119,14 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
           : depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>
           {!readOnly ? (
-            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
+            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} {...rowProps} />
           ) : (
-            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} {...rowProps} />
+            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} {...rowProps} />
           )}
           {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">
-              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id} />
+              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
+                onSheet={onSheet || isSheet(rawBlock)} />
             </div>
           ) : null}
           {ghostAt === idx + 1 ? ghostRow : null}

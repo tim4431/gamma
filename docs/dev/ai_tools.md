@@ -120,7 +120,9 @@ picture 1 attached)" — and the crop of that region rides on the result as
 a picture (`ai_context.area_highlight` turns the stored pixel rectangle
 into page fractions, `render_area_crops` renders it like a selection
 crop; the chip's `images`, which the loop moves onto the tool message like
-`view_pdf_page`'s page). At most `MAX_AREA_CROPS` (4) per page per read;
+`view_pdf_page`'s page). `area_highlight` answers only for a block with
+`highlight_id`, never for a text box, which has no quote either. At most
+`MAX_AREA_CROPS` (4) per page per read;
 the rest say "no picture: more than the limit on this page". `read_block`
 does the same on its outline lines, and the chat context does it for the
 notes of a context page (the pictures go with the message's images; the
@@ -172,7 +174,10 @@ subtree). Highlight blocks show their quoted passage inline, handwriting
 blocks a "handwriting on p. N" label before their caption; long child
 contents are snipped per line with an explicit "read_block this id for the
 full text" marker, and the listing stops at the read-window budget naming how
-many blocks were left out. (`read_page` shows the same notes without ids —
+many blocks were left out. A text box ([text_boxes.md](text_boxes.md)) shows
+"(text box on p. N)", "(text box on the page of paper above)" or "(text
+box, not placed on a page)" before its text. The nearest sheet above a box
+wins over its `pdf_page`. (`read_page` shows the same notes without ids —
 context for answering; `read_block` is the editing view.)
 
 ### read_chats (both scopes)
@@ -289,9 +294,28 @@ every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
 
 ### The web tools (both scopes)
 
+```mermaid
+flowchart LR
+  q["a paper the library lacks"] --> lib["search_library, read_page"]
+  lib --> held{"already a page?"}
+  held -- yes --> read
+  held -- no --> find["search_papers: Crossref + arXiv + OpenAlex"]
+  find --> more["search_web, related_papers"]
+  more --> probe
+  find --> probe["fetch_paper mode=probe"]
+  probe --> right{"the right paper?"}
+  right -- no --> find
+  right -- yes --> long{"answer could be anywhere in it?"}
+  long -- yes --> helper["read_paper: a helper reads it"]
+  long -- no --> read["fetch_paper, window by window"]
+  helper --> ans(["answer, citing pages"])
+  read --> ans --> keep["save_paper"]
+```
+
 The agent's reach outside the library, read-only: `search_papers`,
 `related_papers` and `search_web` under **Search papers online**
-(`web_search`), `fetch_paper` under **Fetch documents** (`web_read`). The
+(`web_search`), `fetch_paper` and `read_paper` under **Fetch documents**
+(`web_read`). The
 code is `gamma/ai_web.py` (registries, citation graph, fetching),
 `gamma/openalex.py`, `gamma/paper_links.py` and `gamma/search_services.py`
 (general web search); the executors are in `ai_tools.py`.
@@ -344,11 +368,26 @@ whatever the order. A query that is itself a DOI or arXiv id (bare,
 and OpenAlex's record of it (a lookup by id, which costs nothing) adds the
 abstract, citation count and open-access PDF.
 
+`kind` and `open_access` narrow the search instead of the model spelling
+"journal", "PDF" or "preprint" into the query, where those words only
+confuse the match. `kind` is `any`, `article` (published in a journal) or
+`preprint`, and each goes to the registries that can answer it: an
+`article` search skips arXiv and asks Crossref for `type:journal-article`
+and OpenAlex for `type:article`; a `preprint` search skips Crossref's
+bibliographic index, which is about the published record. `open_access`
+asks OpenAlex for `is_oa:true` and drops merged records that name no PDF
+anyone can read (`ai_web._free_full_text`: an arXiv copy or an
+open-access location). The head names whatever was narrowed, and says so
+again when nothing was found.
+
 `limit` defaults to 8 (max 20). Each record is one line (title, up to three
 authors, year, venue, `cited by N`, DOI, arXiv id with its PDF URL, else the
 open-access PDF) ending with the `fetch_paper(source=…)` call that reads it —
 both calls, the arXiv version first, when it has both — and a second line with
-the first 400 characters of its abstract. The result reminds the model these
+the first 400 characters of its abstract. A work this reply already listed
+shrinks to one line pointing back (`format_records(first_sight=…)`, from the
+message's `ai_tools.Tally`), so the second and third query of a search cost
+a line per repeat instead of a whole record. The result reminds the model these
 are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
@@ -442,6 +481,11 @@ store keys. The routes are in [api.md](api.md).
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
 from the Read window preference, shared through `_window_args`), `pdf_page`,
 `pdf_offset`, and an excerpt that names the next offset while text remains.
+`mode: "probe"` reads only `PROBE_CHARS` (1 500) of front matter with the
+version and the identity check, for deciding whether a candidate is the
+right paper before a full read costs a window; its excerpt ends by saying
+to call again without `mode` to read it, and its chip reads "front matter
+only".
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
@@ -511,6 +555,27 @@ online".
 
 #### Walls and the browser handoff
 
+```mermaid
+flowchart LR
+  src["fetch_paper(source)"] --> got{"browser already sent one?"}
+  got -- yes --> text
+  got -- no --> resolve["resolve_source: arXiv, citation_pdf_url, 4 Unpaywall copies"]
+  resolve --> dl["download: SSRF guard, one cookie jar, publisher sign-ins"]
+  dl --> pdf{"a PDF with text?"}
+  pdf -- yes --> text(["text, [p. N] prefixed, version named"])
+  pdf -- no --> wall{"a wall?"}
+  wall -- no --> page["the article page, its PDF links ranked"] --> text
+  wall -- yes --> req["open_request: one per work, 6 h"]
+  req --> waits{"paper_wait?"}
+  waits -- no --> under["card under the reply; the model stops there"]
+  waits -- yes --> card["{handoff} card + a Background tasks row"]
+  card --> who["Gamma Connector from the tab, or the user drops the PDF"]
+  who --> out{"wait_for_all"}
+  out -- delivered --> again["the call runs again"] --> text
+  out -- dismissed --> skip["skipped, with what to do instead"]
+  out -- expired --> gave["nothing arrived; the card stays"]
+```
+
 What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
 
 - `captcha`: a bot check or CAPTCHA page, served as 200, 403 or 503. It is
@@ -543,19 +608,51 @@ sign-in or bot-check address the page it would return to is taken from its
 query (Radware's `ssc=` on `validate.perfdrive.com` in front of IOP, a sign-in
 page's `next=` / `uri=`): starting from the paper's page, the site sends the
 person through its check and back. The action carries `handoff: {id, host, wall,
-source}`. A blocked fetch is an error action ("Needs your browser: host")
-whose result tells the model to say briefly what blocked it and end its
-reply, without retrying, switching versions or answering from memory. With
-`search_web` armed, the model may first run one search for the paper's exact
-title to read another legitimate copy (an author's or lab's page, a
-repository) and say which version it read, unless the user asked for the
-publisher's own copy. The resolver has already tried the open-access copies
-by then; the card stays either way. An article-page-only read returns the
-page with the same instruction for questions that need more. The armed
-prompt says the same.
+source}`, and the chip reads "Needs your browser: host".
 
-The chat renders a card per request under the reply
-(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
+**The reply waits on the card.** A blocked fetch does not end the turn: the
+loop's `settle` hook (`ai_agent.PaperWait`) sends a `{"handoff"}` line for
+each request the round opened and blocks on
+`fetch_handoff.wait_for_all`, exactly as an Ask permission blocks on its
+approval card. The calls of one round wait together, so four blocked papers
+cost one wait. What happens next:
+
+- **Delivered.** The same call runs again. `fetch_paper` reads a delivered
+  PDF before it fetches anything, so the model gets the paper's text where
+  it asked for it, with `delivered: true` on the chip. No second turn, and
+  no message in the user's name.
+- **Skipped.** The card's Skip settles the request (`DELETE …/<id>` with an
+  optional `note`, like declining an approval): the model hears that the
+  user did not want it and what to do instead (`ai_tools.skipped_fetch`),
+  and carries on.
+- **Unanswered.** The wait gives up after `IDLE_TIMEOUT` (5 minutes of
+  nothing happening; every report from Gamma Connector starts that stretch
+  over, up to `MAX_WAIT`, 15 minutes). The model is told what blocked the
+  paper and that nothing arrived (`ai_tools.unanswered_fetch`), the request
+  stays open for its 6 hours, and its card stays under the reply.
+
+A wall on the PDF still falls back to the page's text, so the model keeps
+what was readable; an article-page-only read carries the same card. With
+`search_web` armed and the chat told not to wait, the model may first run
+one search for the paper's exact title to read another legitimate copy (an
+author's or lab's page, a repository) and say which version it read, unless
+the user asked for the publisher's own copy. The resolver has already tried
+the open-access copies by then; the card stays either way. The armed prompt
+says which of the two it is — the reply waits, or the card is under it.
+
+**"Don't wait in this chat."** Skip's second button
+(`withoutPaperWait` in `chat/approvals.js`) records the choice for that
+conversation in this browser, beside the permissions its approval cards
+allowed, and its requests then send `paper_wait: false`. The reply ends on
+the card instead, the model is told to finish, and **Continue with the PDF**
+under the reply asks the chat to go on once something arrived. The chat
+never sends that continuation by itself: a message in the user's name is
+the user's to send.
+
+The card is the same component live and afterwards
+(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`)
+— `LiveHandoffCards` while the reply waits, `FetchHandoffCards` over a
+finished reply's actions for the requests it left behind:
 
 - **Open {host}** has Gamma Connector open the publisher's page in a new
   tab when it answered the card (`openRoute`: `connector-tab` `open`
@@ -569,12 +666,15 @@ The chat renders a card per request under the reply
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
 - **Fetch blocked papers in the background** (Settings → AI → Tools,
-  `fetchInBackground`, account-wide, off by default): a card in the
+  `fetchInBackground`, account-wide, **on** by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
-  Connector tries in a minimized window of its own, three requests at a
-  time, and closes the tab after delivery; the card reads "getting it in a
-  minimized window", or that the request waits for the papers before it.
+  Connector tries in an ordinary tab next to the Gamma one — unfocused, so
+  the user keeps reading, but there in the tab strip to switch to — three
+  requests at a time, and closes the tab after delivery; the card reads
+  "getting it in a tab of its own", or that the request waits for the papers
+  before it. A tab the user switches to is theirs from then on: it stays
+  open, and frees its turn (`chrome.tabs.onActivated` in the worker).
   Nothing solves a CAPTCHA: what completes by itself is what the browser gets
   unasked — the user already signed in (or on the institution's network), or
   a check that passes a real browser on its own. When the page needs the user
@@ -599,8 +699,10 @@ The chat renders a card per request under the reply
   the card is back to Open, saying so.
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
-- **Dismiss** settles the request; the Connector closes a tab it kept out of
-  sight for it.
+- **Skip** (live) or **Dismiss** (afterwards) settles the request; the
+  Connector closes a background tab it kept for it. Skip opens one line,
+  "What should the assistant do instead? (optional)", with **Skip** and
+  **Skip, and don't wait in this chat**.
 
 The card asks the server every 2.5 s while the user is at the page, every
 10 s while the request waits in the conversation's last reply, and otherwise
@@ -611,12 +713,14 @@ settled) is extracted and kept with the request for its account only
 held for saving (200 MB across requests, the oldest let go first; its text
 stays). `fetch_paper` reads it
 before any fetch, for the same work in any spelling or the request's URLs,
-with a source note saying the user fetched it in their browser. When every
-request of the reply is settled with a PDF delivered, the reply is the
-conversation's last, the chat is idle, the composer is empty, and this tab saw
-a request waiting, the chat sends "I got it in my browser — {source} is
-available now. Please continue." by itself. Otherwise the card offers
-**Continue with the PDF**; a reload never resends.
+with a source note saying the user fetched it in their browser.
+
+A request still waiting also shows in **Background tasks** as a read-only
+`paper-handoff` row (`GET /api/jobs` adds them from
+`fetch_handoff.waiting`, the way it adds a running scheduled backup), so a
+card whose reply has scrolled away is still somewhere to find; a click on
+the row opens the publisher's page through `/go`
+([tasks.md](tasks.md)).
 
 Every reply that read or named papers ends with a **Save to library** pill
 (`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
@@ -643,6 +747,44 @@ user's browser task, and transferred cookies cannot guarantee access through
 a challenge bound to that browser or IP. The model is told not to repeatedly
 retry a blocked URL and to respect rate limits. Reading an uploaded library
 page requires **Read pages** and selecting that page as context.
+
+#### read_paper
+
+Delegation, under the same **Fetch documents** permission as `fetch_paper`.
+`read_paper(source, question, title, version)` hands one document and one
+question to a second agent (`ai_agent.Helper`): it fetches the paper, reads
+as many windows as the question needs, and hands back one cited paragraph.
+The windows stay in the helper's own conversation, so the chat carries an
+answer of at most `_HELPER_ANSWER_MAX` (4 000) characters instead of a
+forty-page paper it would have to re-send every round for the rest of the
+reply. Four papers asked the same question cost about what one full read
+would.
+
+The helper runs the same `AgentLoop` with `fetch_paper` as its only tool,
+no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
+own connection with its own prompt (`READ_PAPER_PROMPT`: one document, one
+question, a page number beside every number, say plainly when the document
+does not answer it). Nothing it does can change the library, its pictures
+never leave it, and its cache key is the conversation's with `:helper`
+appended so the two prompts do not fight over one prefix cache.
+
+The parent's chip carries the document the helper actually read (`url`,
+`title`, `pdf`, `version`), its calls as `children` (up to 12, without
+their output — a child's text is the helper's, not the chat's), and
+`spent`, the helper's token counts, which the loop yields as a `usage`
+event so the reply's footer counts the whole answer. A wall the helper met
+cannot show a card from in there, so its request rides up on the parent
+action as the `handoff`, and the chat's own card and wait take over
+([above](#walls-and-the-browser-handoff)).
+
+The tool is offered only when **Read long papers with a helper**
+(`gamma-ai-delegate-reads`, account-wide, on by default) is set — the
+request's `delegate_reads`, which the scope carries as `delegates` and
+`available()` turns into the entry's `needs: "helper"`. The armed prompt
+says when to reach for it (the answer could be anywhere in a long
+document, or the same question over several papers) and when not (the
+document's own wording, a table, a quotation, or an abstract that already
+settles it).
 
 ### save_paper (both scopes)
 
@@ -775,6 +917,8 @@ under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and
 cross-page moves (allowed when both pages are in scope) refuse subtrees
 containing highlight blocks, whose PDF anchors are tied to their own paper.
+They also refuse a text box, placed on its own page's PDF or sheet, unless
+the sheet it is on moves with it (`_loose_text_box`).
 All three go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
 logged, fanned out to anyone on the page, and the page root's `updated_at`
 stamped so the home feed reorders. Their UI actions carry `page_id` (moves across
@@ -782,8 +926,10 @@ pages also `src_page_id`) and `block_id` (the edited/moved block, or the
 created block's new id; `read_block` actions carry it too). The frontend
 reloads the open page's block tree when it was touched and lights the block
 up; edit/create calls are previewed in the block while the model is still
-writing them (see "Watching the agent work" in [ai.md](ai.md)). There is still no delete under any permission: an
-unwanted block is emptied or left for the user.
+writing them (see "Watching the agent work" in [ai.md](ai.md)). Each of
+the three records what undoing it needs, so the user can revert it from the
+reply ("Reverting a note change" below). No tool deletes under any
+permission: an unwanted block is emptied or left for the user.
 
 Typical uses: *"rename these to AuthorYear style"*, *"file the readout papers
 into a subfolder"*, *"which of these papers measure T1? summarize the
@@ -823,10 +969,67 @@ rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
-`chat/ChatDock.jsx`: list, book, search, eye, pen, quote, globe, download,
+`chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
 file-plus, history, pencil, folder, plus). Each line expands to the
 arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved and
 restored pages) and "Changed in your notes" (edited, added and moved
 blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.
+
+### Reverting a note change
+
+Each row under "Changed in your notes" has a revert button, and the list a
+"Revert all" when it holds more than one change. The user takes back one
+change at a time, in any order, and whatever anyone wrote since stays.
+
+The note tools record what undoing their change needs, as `revert` on the
+action:
+
+| Tool | `revert` |
+| --- | --- |
+| `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
+| `create_block` | `after`: the text the block was made with |
+| `move_block` | `parent` and `position`: where the block was; `to_parent`: where it went |
+
+The chat saves the action with the reply. A revert sends it to
+`POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
+one write lock:
+
+| Change | Reverted by | Stops (409) when |
+| --- | --- | --- |
+| edit | merging the change `after → before` into the text stored now (`textmerge.merge`, the merge the agent's own writes use) | `changed`: someone changed the agent's own text |
+| new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
+| move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
+
+Typing elsewhere in an edited block survives the merge. So two edits to
+different parts of one block revert independently. A change taken back
+already is a no-op (`noop`): an edit the text still holds reverted
+(`textmerge.contains`), or a new block that is gone.
+
+A stop carries `preview.diff`, what `force` would write. A forced edit
+writes `before` with the later changes that don't overlap the agent's
+text. The user's overlapping words are lost, and the diff shows them struck
+out first. Some stops are `gone` and cannot be forced: the old parent was
+deleted or is now inside the block, or the highlight or text-box rule
+refuses the move back across pages. A deleted note answers 404.
+
+A revert is the user's own write: `actor` is the account and the op log's
+`client` is `"revert"`. It fans out like any edit, so the open page and
+collaborators see it live. The chat then marks the action `reverted`, saves
+the conversation (`chatSession.edit`), and reloads the touched pages when no
+socket brought the ops.
+
+In the list, a reverted row shows "Reverted". A stopped row says why, shows
+the diff, and offers "Revert anyway", "Delete anyway" or "Move back anyway"
+beside "Keep it". "Revert all" goes newest first and stops at the first row
+that asks. The buttons wait while a reply streams. A viewer and the share
+view get none.
+
+The request's history leaves `revert` out of the actions it sends
+(`chat/aiRevert.js` `forReplay`). The replay puts "the user reverted this
+change afterwards" before a reverted action's result, so the model does not
+build on it ([ai.md](ai.md) "Replay across turns"). An action without
+`revert`, saved by an older version, shows no button. Ctrl+Z does not
+reach any of this: the agent's writes and the reverts both arrive as remote
+ops, which the undo history never records ([collab.md](collab.md)).

@@ -10,7 +10,7 @@ import pytest
 
 import gamma.routers.clip as clip_mod
 import gamma.routers.pdf as pdf_mod
-from gamma.ai_tools import MAX_SAVES, approval_preview, run_agent_tool
+from gamma.ai_tools import MAX_SAVES, Tally, approval_preview, run_agent_tool
 
 from ai_fixtures import FakeResp, ai_provider, folder, org, props  # noqa: F401  (fixtures)
 
@@ -148,7 +148,10 @@ def test_save_paper_refusals(org, upstream):
     c, ids = org
     text, action = run_agent_tool(ids["ws"], folder(""), "save_paper", {"source": "a paper about cats"})
     assert text.startswith("error") and "DOI, an arXiv id" in text and action["error"]
-    text, _ = run_agent_tool(ids["ws"], {**folder(""), "tally": {"saves": MAX_SAVES}}, "save_paper",
+    spent = Tally()
+    for _ in range(MAX_SAVES):
+        spent.take("saves", MAX_SAVES)
+    text, _ = run_agent_tool(ids["ws"], {**folder(""), "tally": spent}, "save_paper",
                              {"source": "arXiv:2601.09999"})
     assert text.startswith("error") and "most one message may save" in text
     text, _ = run_agent_tool(ids["ws"], {**folder(""), "can_write": False}, "save_paper",
@@ -197,7 +200,7 @@ def test_the_save_count_spans_the_calls_of_one_message(org, upstream):
     scope = folder("")
     for n in range(2):
         run_agent_tool(ids["ws"], scope, "save_paper", {"source": f"https://example.org/p/count-{n}.pdf"})
-    assert scope["tally"]["saves"] == 2
+    assert scope["tally"].count("saves") == 2
 
 
 # --- Recently deleted -----------------------------------------------------------------------

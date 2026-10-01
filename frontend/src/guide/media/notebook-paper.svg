@@ -1,0 +1,78 @@
+<svg viewBox="0 0 320 183" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- The paper menu at work: one page's pattern and background changing as
+       the choice moves along the row (guide/media.js). -->
+  <style>
+    [data-media="notebook-paper"] .sheet { fill: var(--bg-surface); stroke: var(--border); }
+    [data-media="notebook-paper"] .tint { fill: var(--warn); }
+    [data-media="notebook-paper"] .mark { stroke: var(--border-subtle); stroke-width: 1; fill: none; }
+    [data-media="notebook-paper"] .dot { fill: var(--border); }
+    [data-media="notebook-paper"] .chip { fill: var(--bg-raised); stroke: var(--border); }
+    [data-media="notebook-paper"] .chipOn { fill: var(--accent-bg); stroke: var(--accent); }
+    [data-media="notebook-paper"] .chipLine { fill: var(--text-muted); opacity: 0.65; }
+    [data-media="notebook-paper"] .ruled { animation: npPat 6s steps(1, end) infinite; animation-delay: 0s; }
+    [data-media="notebook-paper"] .grid { animation: npPat 6s steps(1, end) infinite; animation-delay: -4.5s; }
+    [data-media="notebook-paper"] .dots { animation: npPat 6s steps(1, end) infinite; animation-delay: -3s; }
+    [data-media="notebook-paper"] .warm { animation: npTint 6s ease-in-out infinite; }
+    [data-media="notebook-paper"] .pick1 { animation: npPick 6s steps(1, end) infinite; animation-delay: -1.5s; }
+    [data-media="notebook-paper"] .pick2 { animation: npPick 6s steps(1, end) infinite; animation-delay: 0s; }
+    [data-media="notebook-paper"] .pick3 { animation: npPick 6s steps(1, end) infinite; animation-delay: -4.5s; }
+    [data-media="notebook-paper"] .pick4 { animation: npPick 6s steps(1, end) infinite; animation-delay: -3s; }
+    /* each pattern is up for one quarter of the loop */
+    @keyframes npPat {
+      0%, 25% { opacity: 1; }
+      25.01%, 100% { opacity: 0; }
+    }
+    @keyframes npPick {
+      0%, 25% { opacity: 1; }
+      25.01%, 100% { opacity: 0; }
+    }
+    @keyframes npTint {
+      0%, 46% { opacity: 0; }
+      62%, 88% { opacity: 0.09; }
+      100% { opacity: 0; }
+    }
+  </style>
+
+  <!-- the page -->
+  <rect class="sheet" x="104" y="10" width="112" height="126" rx="5" stroke-width="1" />
+  <rect class="tint warm" x="104.5" y="10.5" width="111" height="125" rx="5" />
+
+  <!-- pattern one: blank, so nothing is drawn -->
+  <g class="ruled">
+    <path class="mark" d="M112 30h96M112 44h96M112 58h96M112 72h96M112 86h96M112 100h96M112 114h96" />
+  </g>
+  <g class="grid">
+    <path class="mark" d="M112 30h96M112 44h96M112 58h96M112 72h96M112 86h96M112 100h96M112 114h96
+      M126 16v114M140 16v114M154 16v114M168 16v114M182 16v114M196 16v114" />
+  </g>
+  <g class="dots">
+    <g class="dot">
+      <circle cx="126" cy="30" r="1.1" /><circle cx="154" cy="30" r="1.1" /><circle cx="182" cy="30" r="1.1" />
+      <circle cx="126" cy="58" r="1.1" /><circle cx="154" cy="58" r="1.1" /><circle cx="182" cy="58" r="1.1" />
+      <circle cx="126" cy="86" r="1.1" /><circle cx="154" cy="86" r="1.1" /><circle cx="182" cy="86" r="1.1" />
+      <circle cx="126" cy="114" r="1.1" /><circle cx="154" cy="114" r="1.1" /><circle cx="182" cy="114" r="1.1" />
+    </g>
+  </g>
+
+  <!-- the choices, the live one accented -->
+  <g>
+    <rect class="chip" x="28" y="150" width="60" height="20" rx="10" stroke-width="1" />
+    <rect class="chipLine" x="42" y="158" width="32" height="4" rx="2" />
+    <rect class="chipOn pick1" x="28" y="150" width="60" height="20" rx="10" stroke-width="1" />
+  </g>
+  <g>
+    <rect class="chip" x="96" y="150" width="60" height="20" rx="10" stroke-width="1" />
+    <rect class="chipLine" x="110" y="158" width="32" height="4" rx="2" />
+    <rect class="chipOn pick2" x="96" y="150" width="60" height="20" rx="10" stroke-width="1" />
+  </g>
+  <g>
+    <rect class="chip" x="164" y="150" width="60" height="20" rx="10" stroke-width="1" />
+    <rect class="chipLine" x="178" y="158" width="32" height="4" rx="2" />
+    <rect class="chipOn pick3" x="164" y="150" width="60" height="20" rx="10" stroke-width="1" />
+  </g>
+  <g>
+    <rect class="chip" x="232" y="150" width="60" height="20" rx="10" stroke-width="1" />
+    <rect class="chipLine" x="246" y="158" width="32" height="4" rx="2" />
+    <rect class="chipOn pick4" x="232" y="150" width="60" height="20" rx="10" stroke-width="1" />
+  </g>
+</svg>

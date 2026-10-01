@@ -106,6 +106,11 @@ def _finish_request_log(request: Request, response, started: float, expected: st
             reason = "authentication-required"
         elif status == 403:
             reason = "forbidden"
+        elif status == 404:
+            # Nothing was rejected: the thing asked for is not here. Routine
+            # for a client polling something the server may have let go — a
+            # chat's fetch handoff after its six hours or a restart.
+            reason = "not-found"
         elif status >= 500:
             reason = "server-error"
         elif path in _AUTH_PATHS:

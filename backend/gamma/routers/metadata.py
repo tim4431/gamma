@@ -459,7 +459,14 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
     except Exception as e:
-        log.warning(f"[metadata] doi lookup failed: {e}")
+        # A 404 is "no such DOI" — routine when a paper's text, or a model,
+        # names one that does not exist; the caller answers "not found"
+        # either way. Anything else (doi.org down, a timeout) is worth an
+        # admin's attention in the warnings filter.
+        if getattr(e, "code", 0) == 404:
+            log.info(f"[metadata] no DOI record for {doi}")
+        else:
+            log.warning(f"[metadata] doi lookup failed: {e}")
         return None, ""
     title = data.get("title") or ""
     if isinstance(title, list):
@@ -495,19 +502,23 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     return meta, bibtex
 
 
-def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0) -> list[dict]:
+def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0,
+                     work_type: str = "") -> list[dict]:
     """Bibliographic search against the Crossref REST API, returning candidate
     meta dicts in Crossref's relevance order. Candidates are NOT trusted as-is
     — _pick_crossref_match decides whether one matches this paper. ``detail``
     adds the ``abstract`` and ``cited_by`` count a search result shows;
-    ``from_year`` keeps works published that year or later."""
+    ``from_year`` keeps works published that year or later, and ``work_type``
+    (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
     fields = "DOI,title,author,container-title,volume,page,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
+    narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
+        [f"type:{work_type}"] if work_type else [])
     url = ("https://api.crossref.org/works?rows=%d" % rows
            + "&select=" + fields
-           + (f"&filter=from-pub-date:{int(from_year)}" if from_year else "")
+           + (("&filter=" + ",".join(narrow)) if narrow else "")
            + "&mailto=" + urllib.parse.quote(CONTACT_EMAIL)
            + "&query.bibliographic=" + urllib.parse.quote(query[:400]))
     try:

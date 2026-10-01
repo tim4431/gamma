@@ -88,6 +88,9 @@ test("every preference declares one scope; the profile carries exactly the accou
   for (const name of ["uiScale", "statusBarVisible", "inkPenOnly", "inkTools", "inkEraserSize", "metaModel", "translateModel"]) {
     assert.ok(!account.has(name), `${name} is browser-scoped`);
   }
+  // Imported annotations leave the stored PDF by default, so the blocks are
+  // the only copy and a block deleted in Gamma is gone from the exports too.
+  assert.equal(PREFS.embAnnots.default, "strip");
 });
 
 test("the profile codec keeps valid entries and drops the rest", async () => {

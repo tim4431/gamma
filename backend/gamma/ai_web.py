@@ -158,14 +158,29 @@ def _enriched(rec: dict, key: str) -> dict:
     return _merge([[rec], [openalex.record(work)] if work else []])[0]
 
 
+# What `kind` narrows a search to, and which registries can answer it: a
+# work published in a journal (arXiv holds none), or a preprint (Crossref's
+# bibliographic search is about the published record).
+KINDS = ("any", "article", "preprint")
+
+
+def _free_full_text(rec: dict) -> bool:
+    """Whether a record names a PDF anyone can read (an arXiv copy, or an
+    open-access location Unpaywall/OpenAlex found)."""
+    return bool(rec.get("arxiv_id") or rec.get("oa_pdf"))
+
+
 def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT, *, from_year: int = 0,
-                  sort: str = "relevance", openalex_key: str = "", notes: list | None = None) -> list[dict]:
+                  sort: str = "relevance", kind: str = "any", open_access: bool = False,
+                  openalex_key: str = "", notes: list | None = None) -> list[dict]:
     """Records for a free-text query — Crossref, arXiv and OpenAlex asked at
     once, merged (``_merge``) — or the one record of an identifier query.
     ``from_year`` keeps works from that year on; ``sort`` orders the merged
     records by relevance (the registries' own order), "citations" or
     "recent" (the registries' own citation sorts ignore relevance, so the
-    order is applied here, to the relevant candidates). A record whose
+    order is applied here, to the relevant candidates). ``kind`` (KINDS)
+    narrows to published articles or to preprints, and ``open_access`` to
+    works with a PDF anyone can read. A record whose
     title is exactly the query (a cited reference) ranks first. A
     ``notes`` list collects the registries that did not answer, so the
     model can say what the result lacks."""
@@ -174,29 +189,39 @@ def search_papers(query: str, limit: int = SEARCH_LIMIT_DEFAULT, *, from_year: i
 
     limit = max(1, min(int(limit or SEARCH_LIMIT_DEFAULT), SEARCH_LIMIT_MAX))
     notes = [] if notes is None else notes
-    kind, ident = identifier(query)
-    if kind:
-        rec = registry._fetch_arxiv(ident) if kind == "arxiv" else registry._fetch_doi(ident, with_bibtex=False)[0]
+    kind = kind if kind in KINDS else "any"
+    ident_kind, ident = identifier(query)
+    if ident_kind:
+        rec = (registry._fetch_arxiv(ident) if ident_kind == "arxiv"
+               else registry._fetch_doi(ident, with_bibtex=False)[0])
         return [_enriched(rec, openalex_key)] if rec else []
 
     def ask_openalex():
         try:
-            return openalex.search(query, rows=limit, from_year=from_year, key=openalex_key)
+            return openalex.search(query, rows=limit, from_year=from_year, key=openalex_key,
+                                   work_type="" if kind == "any" else kind, open_access=open_access)
         except openalex.OpenAlexError as e:
             notes.append(str(e))
             return []
 
     # OpenAlex leads the interleave: its relevance reads a topic best, where
     # Crossref's puts loosely matching book chapters first. An exact title
-    # still ranks first whichever registry found it.
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        asked = [pool.submit(ask_openalex),
-                 pool.submit(registry._crossref_search, query, limit, True, from_year),
-                 pool.submit(registry._arxiv_search, query, limit, True)]
-        found = [job.result() for job in asked]
+    # still ranks first whichever registry found it. A narrowed search skips
+    # the registry that cannot hold that kind rather than filtering it out
+    # after the fact.
+    asks = [ask_openalex]
+    if kind != "preprint":
+        asks.append(lambda: registry._crossref_search(
+            query, limit, True, from_year, "journal-article" if kind == "article" else ""))
+    if kind != "article":
+        asks.append(lambda: registry._arxiv_search(query, limit, True))
+    with ThreadPoolExecutor(max_workers=len(asks)) as pool:
+        found = [job.result() for job in [pool.submit(ask) for ask in asks]]
     out = _merge(found)
     if from_year:
         out = [rec for rec in out if not _year(rec) or _year(rec) >= from_year]
+    if open_access:
+        out = [rec for rec in out if _free_full_text(rec)]
     if sort == "citations":
         out.sort(key=lambda rec: -(rec.get("cited_by") or 0))
     elif sort == "recent":
@@ -242,12 +267,21 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
 
 
-def format_records(records: list[dict]) -> str:
+def format_records(records: list[dict], *, first_sight=None) -> str:
     """One line per record — what the model reads — ending with the source
     string to hand fetch_paper, then the start of its abstract (enough to
-    judge relevance before fetching; never evidence of what it contains)."""
+    judge relevance before fetching; never evidence of what it contains).
+
+    ``first_sight(keys)`` (the message's ``ai_tools.Tally``) says whether a
+    work has not been listed in this reply yet. One that has shrinks to a
+    single line pointing back, so the second and third query of a search
+    cost a line per repeat instead of a whole record.
+    """
     lines = []
     for rec in records:
+        if first_sight is not None and not first_sight(_keys_of(rec)):
+            lines.append(f'- "{_clip(rec.get("title", ""), 120)}" — listed earlier in this reply')
+            continue
         authors = [a for a in rec.get("authors") or [] if a]
         who = ", ".join(authors[:3]) + (f" (+{len(authors) - 3})" if len(authors) > 3 else "")
         title = rec.get("title", "")

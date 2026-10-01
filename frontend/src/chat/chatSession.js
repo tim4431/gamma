@@ -192,6 +192,17 @@ export function createChatSession(save, { retryDelays = RETRY_DELAYS,
       if (final) return flush(key);
       if (!timers.has(key)) timers.set(key, setTimeout(() => { flush(key).catch(() => {}); }, 500));
     },
+    // The conversation changed outside a reply (a change the user reverted,
+    // marked on its action — chat/aiRevert.js): shown at once and saved
+    // like a finished reply, conditional on the copy it was made from.
+    edit(key, messages, title) {
+      const prev = snapshot.replies.get(key);
+      snapshot = { ...snapshot, replies: new Map(snapshot.replies).set(key, {
+        ...prev, title: prev?.title ?? title, messages,
+      }) };
+      emit();
+      return flush(key);
+    },
     finish(key) {
       controllers.delete(key);
       const active = new Set(snapshot.active);

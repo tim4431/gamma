@@ -54,12 +54,44 @@ export function stepsSummary(actions = []) {
   return [tn("{n} step", "{n} steps", actions.length), verbs.join(", ")].filter(Boolean).join(" · ");
 }
 
+// How long a call took and what it turned out to be, shown beside its chip:
+// a fetch that waited twenty seconds on a publisher and one served from the
+// cache read very differently, and the version says which copy was read.
+const VERSIONS = {
+  publisher: t("publisher PDF"),
+  preprint: t("arXiv preprint"),
+  published: t("open-access, published"),
+  accepted: t("open-access, accepted manuscript"),
+  submitted: t("open-access, preprint"),
+};
+
+export function chipNote(a) {
+  const parts = [];
+  if (a?.version && VERSIONS[a.version]) parts.push(VERSIONS[a.version]);
+  if (a?.probe) parts.push(t("front matter only"));
+  if (a?.delivered) parts.push(t("from your browser"));
+  if (a?.ms >= 1000) parts.push(t("{n}s", { n: (a.ms / 1000).toFixed(1) }));
+  return parts.join(" · ");
+}
+
 // What the step running right now is doing, from its {"step"} line
-// ({tool, args} — the short arguments the server repeats, _STEP_ARGS in
-// routers/ai.py); `titleOf(pageId)` names a page when the library knows it
-// (read_block's block_id is one when it names a whole page).
+// ({tool, args} — the short arguments the server repeats, ai_agent.STEP_ARGS);
+// `titleOf(pageId)` names a page when the library knows it (read_block's
+// block_id is one when it names a whole page). A batch the server ran side
+// by side says how many, since no single call is "the" one running.
 export function runningLabel(step, titleOf = () => "") {
   const args = step?.args || {};
+  if (step?.batch > 1) {
+    const n = step.batch;
+    switch (step.tool) {
+      case "fetch_paper": return tn("Fetching {n} document…", "Fetching {n} documents…", n);
+      case "read_page": return tn("Reading {n} page…", "Reading {n} pages…", n);
+      case "search_papers": return tn("Searching papers, {n} query…", "Searching papers, {n} queries…", n);
+      case "search_web": return tn("Searching the web, {n} query…", "Searching the web, {n} queries…", n);
+      case "search_library": return tn("Searching your library, {n} query…", "Searching your library, {n} queries…", n);
+      default: return t("Running {n} steps at once…", { n });
+    }
+  }
   const title = args.page_id ? titleOf(args.page_id) : "";
   const folder = args.folder || "";
   switch (step?.tool) {

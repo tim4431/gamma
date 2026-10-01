@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MAX_BACKGROUND, MAX_OPENS, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, nextToOpen, sameWork,
-  signInUrl, sourceIds,
+  MAX_BACKGROUND, MAX_OPENS, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn,
+  needsYouMessage, nextToOpen, sameWork, signInUrl, sourceIds,
 } from "../handoff.js";
 
 const ORIGIN = "https://gamma.example";
@@ -101,7 +101,7 @@ test("a bot check shows by its host, its title, or the challenge the page carrie
   assert.equal(checkPage({}), false);
 });
 
-test("out-of-sight fetches take a few turns; a tab waiting for the user holds none", () => {
+test("background fetches take a few turns; a tab waiting for the user holds none", () => {
   const bg = (id, note = "") => ({ id, background: true, note });
   assert.equal(backgroundBusy({}), false);
   const full = Object.fromEntries(Array.from({ length: MAX_BACKGROUND }, (_, i) => [i + 1, bg(`r${i}`)]));
@@ -112,4 +112,18 @@ test("out-of-sight fetches take a few turns; a tab waiting for the user holds no
   assert.equal(backgroundBusy({ ...full, 1: bg("r0", "check") }), false);
   assert.equal(backgroundBusy({ ...full, 1: { id: "r0", background: false } }), false, "a tab the user sees");
   assert.equal(backgroundBusy({ ...full, 1: bg("r0", "opening") }), true, "opening a PDF link still works on it");
+});
+
+test("a background tab that stops on the user says so once, by what stopped it", () => {
+  const out = (note) => needsYouMessage({ background: true }, note, "journals.example.org");
+  assert.match(out("check"), /bot check/);
+  assert.match(out("signin"), /sign in/);
+  assert.match(out("other"), /another paper/);
+  assert.match(out("refused"), /save it yourself/);
+  assert.match(out("looking"), /No PDF link/);
+  for (const m of ["check", "signin", "looking"]) assert.match(out(m), /journals\.example\.org/);
+  // Nothing to say: still working, or a tab the user is looking at anyway.
+  assert.equal(out("opening"), "");
+  assert.equal(needsYouMessage({ background: false }, "check", "h"), "");
+  assert.equal(needsYouMessage(null, "check", "h"), "");
 });

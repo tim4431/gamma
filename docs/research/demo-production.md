@@ -48,6 +48,48 @@ The delivery rules, the recipe per slot and the published inventory live in
 [tools/readme-media/README.md](../../tools/readme-media/README.md) and
 [the asset directory](../assets/demos/README.md).
 
+## Retina capture, a camera and a tile encoder (2026-09-30)
+
+Why the earlier WebPs looked soft: they were captured at 1×, since Playwright's
+`recordVideo` and Chrome's screencast deliver the window's CSS size even under
+`deviceScaleFactor: 2`. Playwright then compresses to VP8 at 1 Mbps, and the
+render scaled that to 60% for a 1040–1120 px image, so zoomed shots were 2×
+upscales.
+
+What works is a headless shell whose screen is 2× (`--force-device-scale-factor=2`
+and a 1440 × 900 window, with no viewport emulation). The page gets its usual
+viewport at devicePixelRatio 2, and the screencast delivers 2880 × 1800 frames.
+CSS zoom on `<html>` was the other candidate. Chrome's standardized zoom returns
+zoomed rects, which the app then applies as unzoomed px, so popups land at twice
+their offset. GPU compositing is required: software readback held capture to
+about 15 fps and slowed scripted input 2.5×; with the GPU it is about 30 fps at
+normal timing. Rendered to 1600 × 900, the app is supersampled, and GitHub's
+README column shows about 1.8 image px per CSS px, which is sharp on a retina
+screen.
+
+Animated WebP has no motion compensation. A frame in which everything moves
+costs 50–130 KB at 1600 px, while a clean capture's unchanged pixels are
+identical, so typing costs about 5 KB/s. Measured on the ink clip, a 0.8 s zoom
+cost 1.8 MB at quality 70. Heavy motion blur (a 3 px Gaussian on a 180° shutter)
+brought it to 0.6 MB but read as blur and was rejected. A light blur (15% of a
+frame, at most 0.6 px) on 0.5 s moves costs 0.5–0.9 MB. Hence at most two moves
+per clip, a still framing wherever the action allows, and no reframing inside a
+dissolve: blending two framings costs as much as a move.
+
+libwebp's animation encoder (behind FFmpeg's `libwebp_anim` and Pillow) judges a
+pixel unchanged against the previous source frame, within a quality-dependent
+tolerance (about 5 levels at quality 75, 12 at 40). A slow change never crosses
+it, so what is on screen drifts from the source: blocks left behind after a
+camera settles, a closed popup's shadow. `encode_master` keeps, for each 16 px
+tile, the source it was last encoded from and at what quality. It re-encodes a
+tile that drifted by more than one level, or that was encoded lower (an
+isolated patch's flat colour lands a few levels off its neighbours), behind an
+alpha mask, and writes the RIFF container itself. At equal quality it is the
+same size without the ghosts.
+
+Result: five README animations at 1600 × 900, 8.62 MiB together, against 10.34 MiB
+for the previous four at 960–1120 px. Each file is smaller than the one it replaced.
+
 ## Abstract SVG scenes next to the recordings (2026-09)
 
 Tried: the same three interactions (annotate + ink, notes with live math,

@@ -25,13 +25,13 @@ On open, each paper's title, authors and venue are filled in automatically (arXi
 - **Highlight**: select text with the mouse → a small popup offers four colors. Pick one and the highlight becomes a note block, already focused so you can type a comment. The chain button in the same popup links the selection to another paper or a URL instead.
 - **Area highlight / screenshot**: **hold Ctrl and drag a rectangle** on the page. Two things happen at once: the region is cropped as an image and attached to the AI chat (ready to ask about a figure or table), and the color popup appears — pick a color to also keep it as a rectangular highlight whose note card shows a thumbnail of the region. On a phone there is no Ctrl — use the text/rectangle mode toggle in the zoom column.
 - **Click a highlight** to jump to its note (and quote it into the chat). **Right-click** it to recolor, link it to a paper, copy it as a reference point (also copies a deep link to the exact passage), or delete it. Highlights with a comment carry a small **speech-bubble badge** — hover it to read the note in place.
-- **Highlights already in the file** (made in Acrobat, Preview, SumatraPDF…) are imported as blocks when the paper is added; Settings → Reading & editing decides whether the embedded copies are kept or stripped from the stored PDF so nothing renders twice.
+- **Highlights already in the file** (made in Acrobat, Preview, SumatraPDF…) are imported as blocks when the paper is added; by default the embedded copies are then removed from the stored PDF, so nothing renders twice and a highlight you delete is gone from exports too. Settings → Reading & editing → *Imported annotations* → *Keep originals* leaves the file as it came instead.
 - **Zoom**: Ctrl+wheel (anchored at the cursor), pinch on touch, or the zoom buttons in the viewer's controls on its left edge (−, +, fit width). Zoom and reading position are remembered per paper and synced across your devices.
 - **Dark pages**: Settings → Appearance → *Flip page colors* inverts the page for night reading (display only; the PDF is untouched).
 
 ### Draw with a pen
 
-The pen button in the viewer's zoom column opens the tool strip: pens and highlighters with their own colors and widths, an eraser (whole strokes or partial), a lasso to move, resize, rotate, recolor, duplicate or delete strokes, and Undo / Redo.
+The pen button in the viewer's zoom column opens the tool strip: pens and highlighters with their own colors and widths, an eraser (whole strokes or partial), a lasso to move, resize, rotate, recolor, duplicate or delete strokes, the **Text** tool for [typed text](#type-on-the-page), and Undo / Redo.
 
 Tap an active pen preset again to choose **Pen** (width follows stylus pressure) or **Monoline** (an even line at every pressure). Each preset remembers its style, color, and width. Highlighters stay translucent and constant-width.
 
@@ -41,9 +41,22 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - **Transcribe with AI**: in a handwriting block's ⋮⋮ menu. The chat reads the strokes and writes them out as text in the block's caption; like any change, it asks first unless **Edit note blocks** is set to Allow. Math comes out as LaTeX, and a word it can't read is marked *[illegible]*. With **Edit note blocks** Off it answers in the chat instead. You can also ask the chat about your handwriting: it looks at the strokes where you wrote them.
 - Two people, or two of your devices, drawing in the same block keep both drawings: the strokes merge instead of one side replacing the other.
 
+### Type on the page
+
+The strip's **Text** tool (**T** while the strip is open) puts typed text on a PDF page or a notebook sheet, like a text box in Acrobat.
+
+- **Add a box**: arm Text and tap where the text should start, then type. Drag instead to set the box's width first; the text then wraps inside it. Esc or a click elsewhere finishes. A box you leave empty goes away.
+- **Type**: Enter starts a new line in the box. The note formatting keys work (Ctrl+B, Ctrl+I, Ctrl+K…), and so does Markdown: lists, headings, math.
+- **Select and move**: with the hand (or the strip closed), click a box to select it and click it again to edit it. Drag a box to move it. On a touch screen, tap a box first, then drag it; a finger on a box that isn't selected scrolls the page. A selected box's keys: the arrows nudge it (Shift for bigger steps), Delete removes it, Enter edits it, Esc lets go.
+- **Resize**: drag the handle on the right edge of a selected box to set its width.
+- **Style**: a selected box has a menu with its **Size**, **Color** and **Background**, **Duplicate**, **Show note** and **Delete**. Tap the armed Text tool again for its options: the size, color and background of new boxes, which also restyle the selected box or the one you are typing in.
+- **In the notes** each box is a note with a **T** marker; click the marker to see the box on its page. Edit the text in either place.
+- **Undo**: while Text is armed or a box is selected, Ctrl+Z and the strip's Undo take back changes to the boxes (and your notes), a run of nudges in one step; with a pen armed they take back strokes. On a shared page, someone moving a box while you type in it keeps both, and your undo takes back only yours.
+- Boxes export with your notes, a box on a PDF page with its page number, and as real text boxes in **Annotated PDF**. Text boxes and sticky notes made in other PDF apps come in as boxes.
+
 ### Notebooks
 
-A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF.
+A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF, and type on them with the Text tool.
 
 - **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
 - **Two views.** The notes view draws each sheet right among your notes, with its tools under it: its pen, its **Paper**, a replay of what's written on it, **+** for another sheet after it, and **Notebook view**, which shows the sheets large in the viewer instead, with your notes beside them. **Notes view** in the viewer's side bar, or closing the viewer, goes back. Each page remembers its view in this browser.
@@ -131,7 +144,15 @@ So you can ask it to read a folder of papers and write what it finds into your n
 
 **Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
 
-While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+While it works, a pill under your question says what it is doing ("Searching library for …", or "Fetching 4 documents…" when it reads several at once). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. Each note change has an undo button that reverts just that change, and **Revert all** takes back the whole list. A revert keeps what you typed since. If you changed the AI's own words, it asks first and shows what reverting anyway would remove. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+
+### When a publisher blocks a paper
+
+A journal that wants a sign-in or a CAPTCHA can stop the server but not your browser. The reply then shows a card and waits on it: **Open** takes you to the publisher's page, you sign in or pass the check, and Gamma Connector sends the PDF back from that tab — the answer continues with the paper in it. You can also download the PDF and drop it on the card. **Skip** carries on without that paper, and can say what to do instead ("use the arXiv version"); **Skip, and don't wait in this chat** stops later papers in that conversation from holding a reply up. A card nobody answers stops waiting after five minutes and stays under the reply, and while it waits it is also listed in **Background tasks**.
+
+### Longer work
+
+Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Chat → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
 
 ## Library and organization
 
@@ -241,7 +262,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 **Import…**
 
-- **Annotations embedded in the open PDF** (Acrobat, Preview, SumatraPDF…) as highlight blocks; the *strip* switch rewrites the stored PDF without them so nothing renders twice.
+- **Annotations embedded in the open PDF** (Acrobat, Preview, SumatraPDF…) as highlight blocks, handwriting as ink, and typed text and sticky notes as text boxes; the *strip* switch rewrites the stored PDF without them so nothing renders twice.
 - **Zotero library**: File → Export Library as Zotero RDF with files and notes, zipped — collections become folders, tags become labels, reader annotations become highlights.
 - **Logseq**: a `.pdf + .edn` pair with its highlights.
 - **Markdown notes**: one `.md`, or a `.zip` of a folder — an **Obsidian vault** (wikilinks, block embeds, tags and image sizes survive) or a **Notion export** — comes in as note pages, folders included.
@@ -249,7 +270,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 **Export…**
 
-- **Annotated PDF**: highlights become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
+- **Annotated PDF**: highlights, handwriting and text boxes become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
 - **Notes as PDF** or **Markdown** (highlights as quotes, images bundled or linked).
 - **Obsidian vault** (wikilinks, `^id` block anchors, highlights as quote callouts linking the PDF page), **Logseq graph**, **Zotero library** (RDF with PDFs and annotations, ready to import), or a **Gamma zip** another Gamma can merge.
 - Switches choose the layers (highlights, notes, bundle the files); the last choice is remembered.

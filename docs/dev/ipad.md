@@ -184,6 +184,10 @@ Raw touches carry everything `gamma-ink` stores.
   page's notes (the PDF is that page's reader).
 - The lasso, the partial eraser, moving and restyling strokes, and
   editing presets beyond colour and width.
+- Text boxes ([text_boxes.md](text_boxes.md)). The app neither draws them
+  on a PDF page or a sheet nor makes them. A box shows as a note row with
+  its text, which edits like any note. The browser redraws the box at the
+  new text's size and stores that size at its next local edit of the box.
 - A per-page choice of what to keep offline: every file comes over, like
   a desktop clone.
 - Sync in the background, and resolving a conflict from the app (the
@@ -262,7 +266,8 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   (`paintStatusBar` in App.jsx).
 
 Nothing else is tablet-specific: the viewport meta already disables
-browser zoom in favour of the viewer's own pinch-zoom, `touch-action:
+browser zoom in favour of each viewer's own pinch-zoom (the PDF's and the
+notebook's — [notebooks.md](notebooks.md)), `touch-action:
 manipulation` removes double-tap zoom, and both layouts carry the touch
 rules the ink layer and the viewer already have.
 

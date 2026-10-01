@@ -92,20 +92,37 @@ jobs:
           TAG: ${{ steps.v.outputs.tag }}
         run: |
           zip="gamma-connector-$VERSION.zip"
+          # Download buttons are shields.io badges, as in desktop.yml.
+          btn() {
+            local t=${1//-/--}; t=${t//_/__}; t=${t// /%20}; t=${t//\//%2F}
+            echo -n "[![$1](https://img.shields.io/badge/$t-$2?style=for-the-badge&logo=$3&logoColor=white)]($4) "
+          }
           if [ -n "$PREV" ]; then range="$PREV..HEAD"; else range="HEAD"; fi
-          git log "$range" --no-merges --format='- %s' -- extension > changes.md
+          git log "$range" --no-merges --format='%s' -- extension \
+            | sed -E 's/[[:space:];.,]+$//' \
+            | awk 'NF && !seen[$0]++ { print "- " $0 }' > changes.md
           {
-            echo "## Gamma Connector $VERSION"
+            echo "## Download"
             echo
-            echo "[$zip](https://github.com/$REPO/releases/download/$TAG/$zip) — unzip, then \`chrome://extensions\` → *Developer mode* → *Load unpacked*. Works in Chrome, Edge and other Chromium browsers."
+            btn "Download Gamma Connector" 4285F4 googlechrome "https://github.com/$REPO/releases/download/$TAG/$zip"
+            echo
+            echo
+            echo "For Chrome, Edge and other Chromium browsers."
+            echo
+            echo "1. Unzip the download into a permanent folder."
+            echo "2. Open \`chrome://extensions\` and turn on *Developer mode*."
+            echo "3. Click *Load unpacked* and choose the unzipped folder."
             echo
             if [ -s changes.md ]; then
-              echo "## Changes${PREV:+ since $PREV}"
+              echo "## What's new${PREV:+ since $PREV}"
               echo
               cat changes.md
               echo
             fi
-            echo "The desktop app and server have their own releases: [latest Gamma release](https://github.com/$REPO/releases/latest)."
+            echo "## Desktop app and server"
+            echo
+            btn "Latest Gamma release" 181717 github "https://github.com/$REPO/releases/latest"
+            echo
             echo
           } > notes.md
           cat notes.md

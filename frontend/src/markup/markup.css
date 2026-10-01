@@ -1,0 +1,108 @@
+/* --- Text boxes (markup/TextBoxLayer.jsx, docs/dev/text_boxes.md) ---------- */
+/* A surface's boxes sit over the page's own marks (highlights 2, note
+   badges 4, link boxes 5), so a click on a box is the box's, and under the
+   ink: the ink layer follows this one at the same z-index (app.css). The
+   layer is the size container its boxes resolve in: --tb-pt (set on it)
+   is one point of the surface, so position, text and padding follow the
+   zoom. The frame, the band and the handle stay in screen pixels. The
+   dark-page filter is ink's rule in app.css, on a box's body only, so its
+   frame keeps its colours. */
+.textBoxLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.textBox {
+  position: absolute;
+  min-width: calc(24 * var(--tb-pt));
+  pointer-events: auto;
+  user-select: none;
+}
+/* The box as the page shows it, and as tall as its text whatever height
+   it stores: its padding, its size, colour and background (inline), and
+   the PDF export's Helvetica, not the interface face: these stacks are
+   metric-compatible with it, so a box wraps on screen as in the file. */
+.textBoxBody {
+  padding: calc(4 * var(--tb-pt));
+  font-family: Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif;
+  font-size: calc(var(--tb-size) * var(--tb-pt));
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+/* Auto width: as wide as the longest line, up to the surface's edge (the
+   inline max-width). */
+.textBox.auto { width: max-content; }
+.textBox:not(.selected, .editing):hover { outline: 1px dashed var(--border-hover); }
+/* Selected, a finger drags it rather than scrolling the page. */
+.textBox.selected { outline: 1.5px solid var(--accent); touch-action: none; }
+.textBox.editing { outline: 1px dashed var(--accent); user-select: text; cursor: text; }
+/* While a box is edited the band around its frame moves it. It lies under
+   every box's body, so only the ring outside the frame takes a press. */
+.textBoxBand { position: absolute; inset: -6px; z-index: -1; cursor: move; touch-action: none; }
+/* The width handle, on the right edge. */
+.textBoxWidth {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 0;
+  width: 10px;
+  height: 24px;
+  padding: 0;
+  transform: translate(50%, -50%);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  cursor: ew-resize;
+  touch-action: none;
+}
+@media (pointer: coarse) {
+  .textBoxBand { inset: -12px; }
+  .textBoxWidth { width: 16px; height: 32px; }
+}
+/* Read mode: the note's Markdown laid out as the PDF export lays a box out
+   (gamma/text_box.py): no margins, a line per source line, headings at
+   1.45 / 1.25 / 1.1 em on the box's leading, each list level 1.5 em in
+   with its marker (a to-do's box too) in that indent, code in Courier,
+   and the export's code tint, link blue and mark yellow
+   (gamma/pdf_typeset.py), fixed colours on the page's paper. */
+.textBoxText :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6, .katex-display) { margin: 0; }
+.textBoxText h1 { font-size: 1.45em; }
+.textBoxText h2 { font-size: 1.25em; }
+.textBoxText h3 { font-size: 1.1em; }
+.textBoxText :is(h4, h5, h6) { font-size: 1em; }
+.textBoxText :is(ul, ol) { padding-left: 1.5em; }
+.textBoxText ul { list-style-type: disc; }
+.textBoxText li:has(> .mdTaskCheckbox) { list-style: none; }
+.textBoxText .mdTaskCheckbox { font-size: inherit; width: 0.9em; height: 0.9em; margin: 0 0.3em 0 -1.2em; vertical-align: -0.1em; }
+.textBoxText blockquote { font-style: italic; }
+.textBoxText :is(code, pre) { font-family: "Courier New", Courier, "Liberation Mono", monospace; font-size: 1em; }
+.textBoxText pre { white-space: pre-wrap; }
+/* ds-allow-start: the PDF export's colours for code, links and marks */
+.textBoxText code { background: #f0f0f2; }
+.textBoxText a { color: #2959ad; }
+.textBoxText mark { background: #ffed8c; color: inherit; }
+/* ds-allow-end */
+/* The block editor in the box's own type, not the notes'. */
+.textBoxEditor.blockEditorCm { min-height: 0; }
+.textBoxEditor.blockEditorCm .cm-scroller { font-size: inherit; line-height: inherit; }
+.textBoxEditor.blockEditorCm .cm-content { color: inherit; caret-color: currentColor; }
+.textBoxEditor.blockEditorCm .cm-line.cmHeadLine { line-height: inherit; }
+/* Trailing spaces count toward an auto box's width, so the caret stays in it. */
+.textBoxEditor .cm-lineWrapping { white-space: break-spaces; }
+/* The outline after a jump from the notes. */
+.textBoxFlash {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  animation: inkFlashFade 1.8s ease-out forwards;
+}
+/* The box a drag with the Text tool is making. */
+.textBoxGhost { position: absolute; box-sizing: border-box; border: 1px dashed var(--accent); pointer-events: none; }
+/* The Text tool armed: the surface takes text, from fingers too. With an
+   ink tool armed, boxes are inert and ink draws over them. */
+:is(.pdfViewer, .nbViewer, .noteSheet).textArmed :is(.pdfPageWrap, .nbSheet) { cursor: text; touch-action: none; }
+:is(.pdfViewer, .nbViewer, .noteSheet).inkArmed .textBox { pointer-events: none; }

@@ -10,12 +10,15 @@ from gamma.pdf_export import annotate_pdf, parse_css_color
 PAGE_W, PAGE_H = 612, 792
 
 
-def _blank_pdf(pages=1, rotate=0):
+def _blank_pdf(pages=1, rotate=0, crop=None):
     from PyPDF2 import PdfWriter
+    from PyPDF2.generic import NameObject, RectangleObject
 
     w = PdfWriter()
     for i in range(pages):
         w.add_blank_page(width=PAGE_W, height=PAGE_H)
+        if crop:
+            w.pages[i][NameObject("/CropBox")] = RectangleObject(crop)
         if rotate:
             w.pages[i].rotate(rotate)
     buf = io.BytesIO()
@@ -188,6 +191,21 @@ def test_annotate_area_as_square():
     assert a["content"] == "figure note"
     assert a["color"] == "rgba(155, 205, 255, 0.65)"
     br = a["position"]["boundingRect"]
+    assert abs(br["x1"] - 100) < 0.01 and abs(br["y1"] - 72) < 0.01
+    assert abs(br["x2"] - 300) < 0.01 and abs(br["y2"] - 92) < 0.01
+
+
+def test_annotate_on_a_crop_box_larger_than_the_media_box():
+    """pdf.js, pdfium and MuPDF show the crop box clipped to the media box,
+    the frame the viewer stores rects in: a highlight lands where it was
+    drawn, and the import (a media-box flip) reads it back in place."""
+    from PyPDF2 import PdfReader
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    out, _ = annotate_pdf(_blank_pdf(crop=(-50, -60, 700, 900)), [{"position": _position(), "note": ""}])
+    rect = [float(v) for v in PdfReader(io.BytesIO(out)).pages[0]["/Annots"][0].get_object()["/Rect"]]
+    assert all(abs(a - b) < 0.01 for a, b in zip(rect, (100, 700, 300, 720)))
+    br = _extract_pdf_annotations(PdfReader(io.BytesIO(out)))[0]["position"]["boundingRect"]
     assert abs(br["x1"] - 100) < 0.01 and abs(br["y1"] - 72) < 0.01
     assert abs(br["x2"] - 300) < 0.01 and abs(br["y2"] - 92) < 0.01
 

@@ -19,6 +19,8 @@ from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pag
                        extract_text_pages, image_part, outline, page_count, page_label, render_page)
 from .server_settings import can_store
 from .storage import write_atomic
+from .notebook import is_sheet
+from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
 
 
@@ -286,24 +288,27 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                     children.sort(key=lambda r: r[2])
                 lines, used = [], 0
 
-                def line(row, depth):
+                def props_of(row):
                     try:
-                        props = json.loads(row[4] or "{}")
+                        return json.loads(row[4] or "{}")
                     except ValueError:
-                        props = {}
+                        return {}
+
+                def line(row, depth, on_sheet):
+                    props = props_of(row)
                     text = (row[3] or "").strip() or "(empty)"
                     quote = (props.get("quote") or "").strip()
                     if quote:
                         text = f'(highlight: "{quote[:200]}") {text}'
-                    elif label := handwriting_label(props):
+                    elif label := text_box_label(props, on_sheet) or handwriting_label(props):
                         text = f"{label} {text}"
                     pad = "  " * depth
                     return pad + f"- [{row[0]}] " + text.replace("\n", "\n" + pad + "  ")
 
-                def walk(parent, depth):
+                def walk(parent, depth, on_sheet):
                     nonlocal used
                     for row in by_parent.get(parent, []):
-                        entry = line(row, depth)
+                        entry = line(row, depth, on_sheet)
                         if used + len(entry) > budget:
                             lines.append("  " * depth + "- … (more sub-blocks not shown)")
                             return
@@ -311,16 +316,17 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                         lines.append(entry)
                         if notes_seen is not None:
                             notes_seen[row[0]] = row[3] or ""
-                        walk(row[0], depth + 1)
+                        walk(row[0], depth + 1, on_sheet or is_sheet(props_of(row)))
 
-                head = line(own, 0)
+                on_sheet = under_sheet(conn, block_id)
+                head = line(own, 0, on_sheet)
                 if len(head) > budget:
                     head = head[:budget] + "…"
                 elif notes_seen is not None:
                     notes_seen[own[0]] = own[3] or ""
                 used = len(head)
                 lines.append(head)
-                walk(block_id, 1)
+                walk(block_id, 1, on_sheet or is_sheet(props_of(own)))
                 return "\n".join(lines)
 
             if focus and focus not in pages:
@@ -383,6 +389,9 @@ _ELIDED_RESULT = "(older result elided to save space — call the tool again if 
 # the user, or by the agent's own later calls). Saying so on every replayed
 # result stops the model from answering "read X" from a stale outline.
 _REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
+# A change the user took back from its row under the reply (`reverted` on
+# the saved action, gamma/ai_revert.py): the model must not build on it.
+_REVERTED_NOTE = "[the user reverted this change afterwards — the notes no longer hold it]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -529,6 +538,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
+                    if a.get("reverted"):
+                        result = _REVERTED_NOTE + result
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
                                      "content": result})
         if not content.strip():
@@ -1168,8 +1179,12 @@ _AREA_PAD = 0.005
 def area_highlight(properties: dict) -> tuple[int, tuple] | None:
     """``(pdf page, box)`` of an area highlight — the box as page fractions,
     top-left origin, the shape ``render_page`` crops by — or None for a
-    text highlight or a block without a usable rectangle. The stored
-    rectangle is in pixels of a capture-time render of ``width`` × ``height``."""
+    text highlight, for any block that is not a highlight (a text box has
+    no quote either but is never one), or for one without a usable
+    rectangle. The stored rectangle is in pixels of a capture-time render
+    of ``width`` × ``height``."""
+    if not properties.get("highlight_id") or is_text_box(properties):
+        return None
     position = properties.get("pdf_position")
     if not isinstance(position, dict):
         return None
@@ -1190,6 +1205,37 @@ def area_highlight(properties: dict) -> tuple[int, tuple] | None:
     if page < 1 or box[2] <= box[0] or box[3] <= box[1]:
         return None
     return page, box
+
+
+def text_box_label(properties: dict, on_sheet: bool = False) -> str:
+    """A text box's block as the model is told of it, with where it is
+    placed: "(text box on p. N)", "(text box on a page of paper)" or
+    "(text box, not placed on a page)"; "" for any other block. The
+    nearest sheet wins: ``on_sheet`` says a sheet is among the block's
+    ancestors, as the walk that reached it knows."""
+    if not is_text_box(properties):
+        return ""
+    page = box_page(properties, on_sheet)
+    if page:
+        return f"(text box on p. {page})"
+    return "(text box on a page of paper)" if on_sheet else "(text box, not placed on a page)"
+
+
+def under_sheet(conn, block_id: str) -> bool:
+    """Whether a sheet of paper is among a block's ancestors: where a walk
+    starting at that block (a focused note, ``read_block`` of one block)
+    begins. The walks below it pass that on themselves."""
+    row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    for _ in range(10000):  # cycle guard, as page_root_id
+        if not row or row[0] in (None, "root"):
+            return False
+        row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (row[0],)).fetchone()
+        try:
+            if row and is_sheet(json.loads(row[1] or "{}")):
+                return True
+        except ValueError:
+            pass
+    return False
 
 
 def render_area_crops(ws: str, doc_id: str, areas: list) -> list[tuple[str, str]]:
@@ -1284,12 +1330,12 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     areas: list = []  # (page, box) of the area highlights whose picture goes along
     per_page: dict = {}
 
-    def walk(block_id, depth):
+    def walk(block_id, depth, on_sheet=False):
         for row in by_parent.get(block_id, []):
             child_properties = json.loads(row[4] or "{}")
             quote = (child_properties.get("quote") or "").strip()
             content = (row[3] or "").strip()
-            area = area_highlight(child_properties) if child_properties.get("highlight_id") else None
+            area = area_highlight(child_properties)
             shown_as = None
             if quote:
                 entry = f'- Highlighted: "{quote}"'
@@ -1311,11 +1357,12 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                 highlights.append(entry)
                 shown_as = entry
             elif content:
-                shown_as = "  " * depth + f"- {content}"
+                label = text_box_label(child_properties, on_sheet)
+                shown_as = "  " * depth + "- " + (f"{label} {content}" if label else content)
                 notes.append(shown_as)
             if shown_as and (quote or content):
                 seen_rows.append((row[0], row[3] or "", shown_as))
-            walk(row[0], depth + 1)
+            walk(row[0], depth + 1, on_sheet or is_sheet(child_properties))
 
     seen_rows: list = []  # (block id, its stored text, the lines that show it)
 

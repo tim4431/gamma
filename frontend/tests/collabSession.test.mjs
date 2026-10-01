@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyOps } from "../src/shared/model/blockOps.js";
 import { MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
+import { mergeTextBox } from "../src/markup/textBox.js";
 
 const ME = "this-client";
 const block = (id, content = id, properties = {}) => ({ id, content, properties, children: [], position: "a0" });
@@ -317,4 +318,145 @@ test("a merged ack waits while a newer set of ours is queued; that set's ack bri
   assert.equal(h.calls[1].body.ops[0].base, "mine"); // the queued set's base is the text we sent
   assert.equal(h.tree[0].content, "theirs mine more");
   assert.equal(h.session.hasPending(), false);
+});
+
+// --- a text box: two writers, one box -----------------------------------------------
+// Every change of a box sends it whole; the server merges it key by key
+// into the box it holds (gamma/text_box.py merge_text_box).
+
+const BOX = { x: 10, y: 10, w: 60, h: 23, auto: true, size: 12, color: "#1f1f1f", bg: null };
+const boxBlock = (content, textBox) => block("t", content, { text_box: textBox, pdf_page: 1 });
+// A server holding `srv.box`: each set of ours merged into it, the echo naming the result.
+function boxServer(srv, seq = 2) {
+  return async (url, init) => {
+    const { ops } = JSON.parse(init.body);
+    const echo = ops.map((op) => {
+      srv.box = op.base_props?.text_box ? mergeTextBox(srv.box, op.props.text_box, op.base_props.text_box) : op.props.text_box;
+      return { op: "set", id: op.id, ...(op.content !== undefined ? { content: op.content } : {}), props: { text_box: srv.box } };
+    });
+    return batch(seq, echo, ME);
+  };
+}
+
+test("a text box: a move arriving while our typing's size is queued keeps both, here and on the server", async (t) => {
+  const srv = { box: BOX };
+  const h = setup(t, boxServer(srv));
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello world", { ...BOX, w: 101.5 })]); // a keystroke, and the size the box measured at
+  srv.box = { ...BOX, x: 200 };
+  h.ops(batch(1, [{ op: "set", id: "t", props: { text_box: srv.box } }])); // their move, ordered first
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 200, w: 101.5 }, "their move, and our size on top");
+  h.edit([boxBlock("Hello world!", { ...BOX, x: 200, w: 120 })]); // typing on, before the flush
+  await h.session.flush();
+  const [op] = h.calls[0].body.ops;
+  assert.deepEqual(op.base_props, { text_box: BOX }, "the run names the box it began from");
+  assert.deepEqual(srv.box, { ...BOX, x: 200, w: 120 }, "the server keeps the move");
+  assert.deepEqual(h.tree[0].properties.text_box, srv.box);
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("a text box: a change arriving while ours is out lands with ours on top; once our fan-out came by, as it is", async (t) => {
+  const ack = deferred();
+  const srv = { box: BOX };
+  const h = setup(t, () => ack.promise);
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]); // we move it
+  h.fire(); // out
+  srv.box = { ...BOX, size: 24, h: 38 };
+  h.ops(batch(1, [{ op: "set", id: "t", props: { text_box: srv.box } }])); // their restyle, ordered before ours
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, size: 24, h: 38 });
+  srv.box = mergeTextBox(srv.box, { ...BOX, x: 50 }, BOX);
+  h.ops(batch(2, [{ op: "set", id: "t", props: { text_box: srv.box } }], ME)); // our fan-out, before the ack
+  srv.box = { ...srv.box, x: 300 };
+  h.ops(batch(3, [{ op: "set", id: "t", props: { text_box: srv.box } }])); // their move, after ours
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 300, size: 24, h: 38 }, "theirs came after ours: it stands");
+  ack.resolve(batch(2, [{ op: "set", id: "t", props: { text_box: { ...BOX, x: 50, size: 24, h: 38 } } }], ME));
+  await settle();
+  assert.deepEqual(h.tree[0].properties.text_box, srv.box);
+});
+
+test("a text box: our batch in its place in the order brings the box as the server stored it", async (t) => {
+  // (merged onto a change this tab has not seen: what it holds gives way)
+  const h = setup(t, async () => batch(1, [{ op: "set", id: "t", props: { text_box: { ...BOX, x: 50, bg: "#fff4b8" } } }], ME));
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]);
+  await h.session.flush();
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
+});
+
+test("a text box: our move still queued when their restyle arrives survives our next keystroke on the server", async (t) => {
+  const srv = { box: BOX };
+  const h = setup(t, boxServer(srv));
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]); // our move, queued
+  srv.box = { ...BOX, size: 24, h: 38 };
+  h.ops(batch(1, [{ op: "set", id: "t", props: { text_box: srv.box } }])); // their restyle, ordered first
+  // a keystroke on the box as the screen shows it: the queued set takes it whole
+  h.edit([boxBlock("Hello!", { ...h.tree[0].properties.text_box, w: 75 })]);
+  await h.session.flush();
+  assert.deepEqual(srv.box, { ...BOX, x: 50, size: 24, h: 38, w: 75 }, "the move and the restyle both hold");
+  assert.deepEqual(h.tree[0].properties.text_box, srv.box);
+});
+
+test("a text box: after a refetch laid our batch over a box changed meanwhile, our ack brings the box as stored", async (t) => {
+  const ack = deferred();
+  const h = setup(t, () => ack.promise);
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]); // our move, out
+  h.fire();
+  // their restyle landed (seq 1), and this tab refetched instead of hearing of it
+  h.tree = h.session.overlay("page-a", [boxBlock("Hello", { ...BOX, size: 24, h: 38 })]);
+  h.session.commit(h.tree, { isLoad: true, seq: 1 });
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50 }, "the overlay replaces the box whole");
+  ack.resolve(batch(2, [{ op: "set", id: "t", props: { text_box: { ...BOX, x: 50, size: 24, h: 38 } } }], ME));
+  await settle();
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, size: 24, h: 38 });
+});
+
+// An older batch of ours read late must not count as the one out: its box
+// would land over the newer change still on its way.
+test("a text box: an older batch's ack read after a refetch leaves the batch out on screen", async (t) => {
+  const acks = [deferred(), deferred()];
+  let n = 0;
+  const h = setup(t, () => acks[n++].promise);
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]); // a move, out
+  h.fire();
+  h.message({ t: "reload" }); // a refetch: batches wait for it
+  acks[0].resolve(batch(2, [{ op: "set", id: "t", props: { text_box: { ...BOX, x: 50 } } }], ME));
+  await settle();
+  h.edit([boxBlock("Hello", { ...BOX, x: 50, bg: "#fff4b8" })]); // a background, out next
+  h.fire();
+  // the refetch answers as of seq 1, before the move landed, with ours laid over it
+  h.tree = h.session.overlay("page-a", [boxBlock("Hello", BOX)]);
+  h.session.commit(h.tree, { isLoad: true, seq: 1 });
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
+  acks[1].resolve(batch(3, [{ op: "set", id: "t", props: { text_box: { ...BOX, x: 50, bg: "#fff4b8" } } }], ME));
+  await settle();
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
+});
+
+test("a text box: an older batch acked while its page was away, read from the log, leaves the batch out on screen", async (t) => {
+  const acks = [deferred(), deferred()];
+  let n = 0;
+  const move = { op: "set", id: "t", props: { text_box: { ...BOX, x: 50 } } };
+  const h = setup(t, (url) => (url.includes("?since=") ? Promise.resolve({ seq: 2, batches: [batch(2, [move], ME)] }) : acks[n++].promise));
+  h.load("page-a", [boxBlock("Hello", BOX)]);
+  h.edit([boxBlock("Hello", { ...BOX, x: 50 })]); // the move, out
+  h.fire();
+  h.edit([boxBlock("Hello", { ...BOX, x: 50, bg: "#fff4b8" })]); // a background, queued behind it
+  h.options.pageId = "page-b"; // to another page
+  h.session.connect("page-b");
+  h.load("page-b", [block("p")]);
+  acks[0].resolve(batch(2, [move], ME));
+  await settle();
+  h.fire(); // the background goes out
+  assert.equal(n, 2, "the background went out");
+  h.options.pageId = "page-a"; // back: the refetch answers as of seq 1, ours laid over it
+  h.session.connect("page-a");
+  h.tree = h.session.overlay("page-a", [boxBlock("Hello", BOX)]);
+  h.session.commit(h.tree, { isLoad: true, seq: 1 });
+  h.message({ t: "hello", client: ME, seq: 2, peers: [] });
+  await settle();
+  assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
 });

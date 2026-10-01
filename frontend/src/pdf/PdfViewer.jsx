@@ -15,7 +15,8 @@ import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
-import { InkLayer } from "../ink/InkLayer";
+import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
+import { armedClasses, usePageTools } from "../markup/PageTools";
 import { canvasSize } from "../shared/lib/canvasSize.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
@@ -29,6 +30,8 @@ import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
+import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
+import { installViewerZoom } from "../shared/lib/viewerZoom.js";
 // Bypass immutable responses cached with text/plain before the server MIME
 // fix. Keep this stable: Vite's content hash handles later worker upgrades.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
@@ -49,11 +52,6 @@ try {
 const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } : params);
 
 const EMPTY_MARKS = [];
-
-// One zoom policy for every entry point (toolbar buttons in App, Ctrl+scroll
-// here) — a limit change must not leave the two out of agreement.
-export const ZOOM_MIN = 0.2, ZOOM_MAX = 4;
-export const clampZoom = (s) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s));
 
 // Page layout model shared by the placeholder styles and all scroll math:
 // page boxes stack with a fixed gap, and unmeasured pages assume page 1's
@@ -351,14 +349,16 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
   }
 }
 
-// Handwriting (ink/InkLayer.jsx): inkBlocks are the page's ink groups (blocks
-// with properties.ink_url / pdf_page), inkTool the armed tool or null,
-// inkPenTool what a stylus draws with when nothing is armed, inkFlash
-// {id, nonce} outlines a group after a jump; strokes and erasures report
-// back through onInkStroke / onInkErase, a click on ink through onInkJump.
+// Handwriting, text boxes and the other page marks (markup/MarkupLayers.jsx):
+// `marks` maps a page number to what its layers draw (App's useMarks); the
+// tools and their handlers come from PageToolsContext (markup/PageTools.jsx).
+// scrollRef.current({position, box?, offset?, behavior?}) scrolls to a
+// highlight's position, or with `box` (a text box in the page's points) to
+// that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, flashHighlightId = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null }) {
+  const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -382,7 +382,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateState, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateState };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
@@ -390,13 +390,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     onHighlightContext: (...a) => cbRef.current.onHighlightContext?.(...a),
     onExternalLink: (...a) => cbRef.current.onExternalLink?.(...a),
     onLinkContext: (...a) => cbRef.current.onLinkContext?.(...a),
-    onInkStroke: (...a) => cbRef.current.onInkStroke?.(...a),
-    onInkErase: (...a) => cbRef.current.onInkErase?.(...a),
-    onInkErasePartial: (...a) => cbRef.current.onInkErasePartial?.(...a),
-    onInkSelect: (...a) => cbRef.current.onInkSelect?.(...a),
-    onInkAction: (...a) => cbRef.current.onInkAction?.(...a),
-    onInkMoveSelection: (...a) => cbRef.current.onInkMoveSelection?.(...a),
-    onInkJump: (...a) => cbRef.current.onInkJump?.(...a),
   }), []);
 
   // Alt held while any page shows its translation = peek at the original:
@@ -433,125 +426,46 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     cbRef.current.onLoadState?.(u, { phase: "painted" });
   }, []);
 
-  // Ctrl/Cmd + scroll zooms (this is also what a trackpad pinch reports).
-  // Native non-passive listener on purpose: React's root wheel listener is
-  // passive, so preventDefault (needed to block the browser's own page zoom)
-  // wouldn't work from an onWheel prop. The scale compounds per event in
-  // wheelScaleRef (the committed prop lags behind a fast train), but the
-  // dispatch is coalesced to one per frame — every dispatch re-renders every
-  // page, and a trackpad pinch fires far more events than commits are worth.
-  const wheelScaleRef = useRef(1); // what the next wheel step compounds on
-  const wheelRafRef = useRef(0);
+  // Ctrl/⌘ + scroll and the two-finger pinch are read by
+  // shared/lib/viewerZoom.js (the notebook viewer shares it). What is left
+  // here is each commit — the part that knows this viewer's layout.
   const zoomAnchorRef = useRef(null); // viewport point to zoom around; consumed by the anchor effect, null → viewport center
   // Set when a new document mounts; consumed by the next scale change so the
   // anchor effect can tell "fit-width settling for the swapped-in document"
   // apart from a user zoom — the two need different anchoring (see below).
   const docSwapPendingRef = useRef(false);
-  useEffect(() => {
-    const el = viewerRef.current;
-    if (!el) return;
-    const onWheel = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // LINE mode (Firefox) → ~px
-      const cur = wheelScaleRef.current;
-      const next = clampZoom(cur * Math.exp(-dy * 0.0015));
-      if (next === cur) return; // pinned at a clamp limit — don't leave a stale anchor behind
-      const r = el.getBoundingClientRect();
-      zoomAnchorRef.current = { x: e.clientX - r.left, y: e.clientY - r.top };
-      wheelScaleRef.current = next;
-      docSwapPendingRef.current = false; // an explicit zoom, whatever mounted before it
-      if (!wheelRafRef.current) {
-        wheelRafRef.current = requestAnimationFrame(() => {
-          wheelRafRef.current = 0;
-          cbRef.current.onZoomTo?.(wheelScaleRef.current);
-        });
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => { el.removeEventListener("wheel", onWheel); cancelAnimationFrame(wheelRafRef.current); };
-  }, []);
-
-  // Two-finger pinch zoom. Committing a real zoom per move event (the wheel
-  // path) is hopelessly janky on phones — every commit re-lays-out and
-  // re-renders every page. Instead the gesture only moves a CSS transform on
-  // the page stack (compositing, no layout; blurry while the fingers are
-  // down, like every native PDF app), and the real zoom is committed ONCE on
-  // finger-lift: scroll is re-based so the content under the fingers' final
-  // midpoint is what the zoom-anchor effect (keyed on that midpoint) holds
-  // in place through the re-layout. preventDefault on the two-finger move
-  // blocks both native scrolling and the browser's own page zoom.
   const zoomLayerRef = useRef(null);
+  const viewerZoomRef = useRef(null);
   useEffect(() => {
     const el = viewerRef.current;
-    if (!el) return;
-    let start = null; // gesture-start snapshot: finger distance/midpoint, committed scale, scroll
-    let cur = null; // latest preview: effective ratio + midpoint
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const mid = (t, r) => ({
-      x: (t[0].clientX + t[1].clientX) / 2 - r.left,
-      y: (t[0].clientY + t[1].clientY) / 2 - r.top,
-    });
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 2) return;
-      const m = mid(e.touches, el.getBoundingClientRect());
-      start = {
-        dist: dist(e.touches), scale: wheelScaleRef.current,
-        m0x: m.x, m0y: m.y, sl: el.scrollLeft, st: el.scrollTop,
-      };
-      cur = null;
-      if (zoomLayerRef.current) zoomLayerRef.current.style.willChange = "transform";
-    };
-    const onTouchMove = (e) => {
-      if (!start || e.touches.length !== 2) return;
-      e.preventDefault();
-      const m = mid(e.touches, el.getBoundingClientRect());
-      // Clamp the previewed scale too, so the preview never shows a zoom the
-      // commit would refuse.
-      const k = clampZoom(start.scale * (dist(e.touches) / start.dist)) / start.scale;
-      cur = { k, m1x: m.x, m1y: m.y };
-      // origin 0 0: keep the content that started under the midpoint glued to
-      // the (moving) midpoint — visual = t + k·content − scroll, solve for t.
-      const tx = m.x + start.sl - k * (start.sl + start.m0x);
-      const ty = m.y + start.st - k * (start.st + start.m0y);
-      const l = zoomLayerRef.current;
-      if (l) l.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
-    };
-    const finish = () => {
-      if (!start) return;
-      const l = zoomLayerRef.current;
-      if (l) { l.style.transform = ""; l.style.willChange = ""; }
-      if (cur) {
-        // Re-base scroll by the midpoint's travel: afterwards the content at
-        // the final midpoint (at the old scale) is the pinched content, which
-        // the anchor effect then re-places there at the committed scale. The
-        // refs get the unclamped values on purpose — the anchor effect reads
-        // them instead of live scroll to survive pre-layout clamping.
-        const sl = start.sl + start.m0x - cur.m1x;
-        const st = start.st + start.m0y - cur.m1y;
+    if (!el) return undefined;
+    const zoom = installViewerZoom(el, {
+      layer: () => zoomLayerRef.current,
+      clamp: clampZoom,
+      onWheelZoom: (next, at) => {
+        zoomAnchorRef.current = at;
+        docSwapPendingRef.current = false; // an explicit zoom, whatever mounted before it
+        cbRef.current.onZoomTo?.(next);
+      },
+      onPinchZoom: (next, g) => {
+        // Re-base scroll by the midpoint's travel. That alone is what moves
+        // the view when the fingers only dragged; after a pinch it also means
+        // the content at the final midpoint (at the old scale) is the pinched
+        // content, which the anchor effect below then re-places there at the
+        // committed scale. The refs get the unclamped values on purpose — the
+        // anchor effect reads them instead of live scroll to survive
+        // pre-layout clamping.
+        const sl = g.sl + g.mx - g.vx, st = g.st + g.my - g.vy;
         el.scrollLeft = sl; el.scrollTop = st;
         lastScrollLeftRef.current = sl; lastScrollRef.current = st;
-        const next = clampZoom(start.scale * cur.k);
-        if (next !== wheelScaleRef.current) {
-          zoomAnchorRef.current = { x: cur.m1x, y: cur.m1y };
-          wheelScaleRef.current = next;
-          docSwapPendingRef.current = false;
-          cbRef.current.onZoomTo?.(next);
-        }
-      }
-      start = null; cur = null;
-    };
-    const onTouchEnd = (e) => { if (e.touches.length < 2) finish(); };
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    el.addEventListener("touchend", onTouchEnd, { passive: true });
-    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
-    return () => {
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
-      el.removeEventListener("touchcancel", onTouchEnd);
-    };
+        if (next === g.scale) return; // a drag, or a pinch already against a limit
+        zoomAnchorRef.current = { x: g.vx, y: g.vy };
+        docSwapPendingRef.current = false;
+        cbRef.current.onZoomTo?.(next);
+      },
+    });
+    viewerZoomRef.current = zoom;
+    return () => { viewerZoomRef.current = null; zoom.dispose(); };
   }, []);
 
   // Reset pending touch alignment on zoom/document changes. The helper never
@@ -587,19 +501,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     }
     return map;
   }, [highlights, displayedUrl, url]);
-
-  // Ink groups per page, same document guard as the highlights.
-  const inkByPage = useMemo(() => {
-    const map = new Map();
-    if (displayedUrl !== url) return map;
-    for (const b of inkBlocks || []) {
-      const p = b.properties?.pdf_page;
-      if (!p) continue;
-      if (!map.has(p)) map.set(p, []);
-      map.get(p).push(b);
-    }
-    return map;
-  }, [inkBlocks, displayedUrl, url]);
 
   // Expose full-text search over the loaded document (used by the search
   // panel). Each page's text runs are joined into one string — so matches can
@@ -714,13 +615,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
   const scale = isFitWidth ? fitWidthScale : numericScale;
-  // Resync the wheel's compounding base to the committed scale — but not
-  // while a coalesced dispatch is still in flight: events that arrived since
-  // are compounded into the ref, and overwriting it here would drop them
-  // (measurably: a 6-notch train only zoomed ~3 notches' worth).
-  useEffect(() => {
-    if (!wheelRafRef.current) wheelScaleRef.current = scale;
-  }, [scale]);
+  // A zoom from elsewhere (the buttons, fit-width, a new document) is what the
+  // next gesture compounds on; sync() ignores it while a dispatch is in flight.
+  useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
   useEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;
@@ -1036,7 +933,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // scrolling across many pages is what made find-next feel sluggish.
   const scrollToPositionRef = useRef(null);
   useEffect(() => {
-    scrollToPositionRef.current = async ({ position, behavior, offset }) => {
+    scrollToPositionRef.current = async ({ position, box, behavior, offset }) => {
       const pn = position?.pageNumber || position?.boundingRect?.pageNumber;
       if (!pn || !viewerRef.current || !pdfDoc) return;
       const r = position?.boundingRect;
@@ -1056,7 +953,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       const pageTop = pageTopAt(heights, pn - 1, scale);
       const curH = (heights[pn - 1] || FALLBACK_H) * scale;
       const storedH = r?.height || 1;
-      const highlightY = r ? r.y1 * curH / storedH : 0;
+      // (the cached heights are the pages at scale 1, the frame a box's points are in)
+      const highlightY = box ? box.y * scale : r ? r.y1 * curH / storedH : 0;
       const targetTop = pageTop + highlightY - (offset ?? 80);
       const dist = Math.abs(targetTop - viewerRef.current.scrollTop);
       viewerRef.current.scrollTo({ top: targetTop, behavior: behavior || (dist > 1500 ? "auto" : "smooth") });
@@ -1634,7 +1532,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       ) : null}
       {/* overflow-anchor off: the browser's own scroll anchoring would fight
           the zoom re-placement above with adjustments of its own. */}
-      <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + (inkTool ? " inkArmed" : "") + (inkTool && !inkPenOnly ? " inkTouchDraw" : "") + (inkTool?.tool === "select" ? " inkSelect" : "")}
+      <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
         style={{ height: "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none" }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
@@ -1665,23 +1563,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           onExternalLink={stableCbs.onExternalLink}
           onLinkContext={stableCbs.onLinkContext}
           onPainted={onPagePainted}
-          inkBlocks={inkByPage.get(i + 1) || EMPTY_MARKS}
-          inkTool={inkTool}
-          inkPenTool={inkPenTool}
-          inkPenOnly={inkPenOnly}
-          inkPressure={inkPressure}
-          inkEraserMode={inkEraserMode}
-          inkEraserSize={inkEraserSize}
-          inkLassoMode={inkLassoMode}
-          inkSelection={inkSelection && inkSelection.page === i + 1 ? inkSelection : null}
-          inkFlash={inkFlash && inkByPage.get(i + 1)?.some((b) => b.id === inkFlash.id) ? inkFlash : null}
-          onInkStroke={onInkStroke ? stableCbs.onInkStroke : undefined}
-          onInkErase={onInkErase ? stableCbs.onInkErase : undefined}
-          onInkErasePartial={onInkErasePartial ? stableCbs.onInkErasePartial : undefined}
-          onInkSelect={onInkSelect ? stableCbs.onInkSelect : undefined}
-          onInkAction={onInkAction ? stableCbs.onInkAction : undefined}
-          onInkMoveSelection={onInkMoveSelection ? stableCbs.onInkMoveSelection : undefined}
-          onInkJump={onInkJump ? stableCbs.onInkJump : undefined}
+          toolArmed={!!ink.tool || text.armed}
+          // same document guard as the highlights
+          marks={(displayedUrl === url && marks.get(i + 1)) || NO_MARKS}
         />
       ))}
       </div>
@@ -1871,7 +1755,7 @@ function TransPending({ lines, busy }) {
   );
 }
 
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, inkBlocks = EMPTY_MARKS, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, inkSelection, inkFlash, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, toolArmed, marks }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
@@ -2175,19 +2059,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           })()}
         </div>
       ) : null}
+      {/* No text selection on a read-only page, nor while a tool is armed: the tool takes the pointer. */}
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
-        userSelect: readOnly || inkTool ? "none" : "text", WebkitUserSelect: readOnly || inkTool ? "none" : "text",
+        userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
         ready={textReady?.scale === scale && textReady?.pdfDoc === pdfDoc ? textReady : null} />
-      {inkBlocks.length || onInkStroke ? (
-        <InkLayer pageNumber={pageNumber} wrapRef={wrapRef}
-          width={baseW} height={baseH}
-          blocks={inkBlocks} tool={onInkStroke ? inkTool : null} penTool={onInkStroke ? inkPenTool : null}
-          penOnly={inkPenOnly} pressure={inkPressure} eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode} selection={inkSelection} flash={inkFlash}
-          onStroke={onInkStroke} onErase={onInkErase} onErasePartial={onInkErasePartial}
-          onSelect={onInkSelect} onAction={onInkAction} onMoveSelection={onInkMoveSelection} onJump={onInkJump} />
-      ) : null}
       {links.map((l, i) => (
         <div
           key={`lnk-${i}`}
@@ -2292,6 +2169,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         }
         return elements;
       })}
+      {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
+      <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} />
       {marquee ? (
         <div className="pdfAreaMarquee" style={{
           left: marquee.x1, top: marquee.y1,
