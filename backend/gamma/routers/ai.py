@@ -18,8 +18,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (ai_catalog, ai_permissions, ai_protocols, ai_usage, chatgpt_oauth, paper_research,
-                search_services, translate_engines)
+from .. import (ai_catalog, ai_permissions, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
+                paper_research, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -83,7 +83,7 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import can_write, require_personal_user, require_user, require_ws
+from ..auth import actor_of, can_write, require_personal_user, require_user, require_ws
 from ..db import connect_data_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
@@ -1548,6 +1548,31 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     if not ai_permissions.answer(approval_id, request.state.user or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}
+
+
+class AIRevert(BaseModel):
+    kind: Literal["edit", "create", "move"]
+    block_id: str = Field(max_length=64)
+    revert: dict   # the action's `revert`, as the note tool recorded it
+    force: bool = False
+
+
+@router.post("/ai/revert")
+def ai_revert_change(payload: AIRevert, request: Request):
+    """Take back one change the agent made to the notes, from its row under
+    the reply (gamma/ai_revert.py): ``{page_id, noop}``. 409
+    ``{detail, conflict, preview?}`` when the note changed since —
+    ``preview`` is what ``force`` would do — or can't go back; 404 when it
+    is gone. A workspace editor's, like the chat's writes; the change is
+    theirs to make by hand anyway. Sync: it waits on the write lock."""
+    ws = require_ws(request, write=True)
+    try:
+        return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
+                                       force=payload.force, actor=actor_of(request))
+    except ai_revert.RevertError as e:
+        return JSONResponse(status_code=e.status, content={
+            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
+            **({"preview": e.preview} if e.preview else {})})
 
 
 class ResearchJob(BaseModel):

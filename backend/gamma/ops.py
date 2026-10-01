@@ -766,6 +766,19 @@ def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> i
     return seq
 
 
+def move_across_pages(ws: str, conn, block_id: str, parent_id: str, position: str,
+                      src_page_id: str, page_id: str, *, actor: str) -> None:
+    """Move a block with its subtree under ``parent_id`` on another page.
+    The op vocabulary is per page, so this is its own SQL: a delete logged
+    on the page it leaves and a reload on the page it joins. Commits."""
+    now = page_now()
+    conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",
+                 (parent_id, position, now, block_id))
+    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id IN (?, ?)", (now, src_page_id, page_id))
+    record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block_id}], actor=actor)
+    note_reload(ws, conn, page_id, actor)
+
+
 def note_reload(ws: str, conn, page_id: str, actor: str) -> int:
     """``log_reload`` + commit + fan-out, for writers that rewrote a page's
     tree wholesale (the subtree replace, imports into an existing page)."""

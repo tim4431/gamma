@@ -1029,11 +1029,14 @@ instead of re-listing. Every replayed result is prefixed with a note
 call again before quoting or editing. The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
-returns). Results share `TOOL_REPLAY_BUDGET` chars newest-first
+returns). A change the user reverted from its row (`reverted` on the
+action) gets a second note in front, `_REVERTED_NOTE`: the notes no longer
+hold it ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never
-the pictures, coverage and counts saved with it. Plain chats never replay
+the pictures, coverage and counts saved with it, nor the texts an action
+keeps for reverting (`revert`). Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

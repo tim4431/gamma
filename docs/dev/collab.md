@@ -127,7 +127,9 @@ spot.
 (`db.PAGES_SCHEMA`), one row per applied batch, `seq` counting up per page
 (the write lock is taken up front with `BEGIN IMMEDIATE`, so it never
 collides). `actor` is the account that made the change (a share editor's own
-name), `client` the tab's id, `"ai"` (the agent's tools) or `"meta"` (the
+name), `client` the tab's id, `"ai"` (the agent's tools), `"revert"` (the
+user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
+"Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a
 page can cause, [paper_metadata.md](paper_metadata.md)).
 

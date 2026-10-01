@@ -56,9 +56,9 @@ from fractional_indexing import generate_key_between
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, pdf_path, render_area_crops, under_sheet)
-from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
-from .db import connect_data_db, connect_pages_db, page_now
-from .ops import after_commit, apply_ops, note_reload, record_ops
+from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages, write_lock
+from .db import connect_data_db, connect_pages_db
+from .ops import after_commit, apply_ops, move_across_pages
 from .foldertags import add_tag, clean_path, parse_tags, path_within
 from .logbuf import log
 from .notebook import is_sheet
@@ -1131,10 +1131,16 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
     # `base`: the text the agent edited from — for a replace the text it
     # read, for the other modes the text they were applied to — so a person
     # typing in the same block meanwhile keeps their keystrokes (three-way
-    # merge in ops.py).
-    after_commit(ws, conn, apply_ops(
+    # merge in ops.py). The text just before and after the write, read under
+    # the write lock, is what the user's revert takes back (gamma/ai_revert.py).
+    write_lock(conn)
+    before = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block["id"],)).fetchone()
+    result = apply_ops(
         conn, page_id, [{"op": "set", "id": block["id"], "content": content, "base": plan["base"] or ""}],
-        actor=scope.get("actor", ""), client="ai"))
+        actor=scope.get("actor", ""), client="ai")
+    after_commit(ws, conn, result)
+    revert = {"before": (before[0] if before else "") or "",
+              "after": result["ops"][0].get("content", content)}
     # What the model now knows the block says: its own replace. After the
     # other modes it holds only part of the text — a later replace reads again.
     seen = notes_seen(scope)
@@ -1151,7 +1157,8 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
             "patch": "Edited part of", "selection": "Edited the selection in"}[mode]
     return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
             {"kind": "edit", "page_id": page_id, "block_id": block["id"], "mode": mode,
-             "title": page_title, "summary": f"{verb} a note in “{page_title[:60]}”"})
+             "title": page_title, "summary": f"{verb} a note in “{page_title[:60]}”",
+             "revert": revert})
 
 
 def _plan_create_block(conn, scope: dict, args: dict):
@@ -1193,7 +1200,8 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
     notes_seen(scope)[block_id] = content  # the model wrote it: a later replace starts from it
     return (f"ok — created block [{block_id}]",
             {"kind": "create", "page_id": page_id, "block_id": block_id,
-             "title": page_title, "summary": f"Added a note in “{page_title[:60]}”"})
+             "title": page_title, "summary": f"Added a note in “{page_title[:60]}”",
+             "revert": {"after": content}})
 
 
 def _plan_move_block(conn, scope: dict, args: dict):
@@ -1215,17 +1223,9 @@ def _plan_move_block(conn, scope: dict, args: dict):
     if parent["id"] in subtree_ids:
         return None, "error: cannot move a block into itself or its own children"
     if page_id != src_page_id:
-        # Highlight blocks anchor to a PDF region of their own paper; on
-        # another page that anchor points into the wrong document.
-        rows = fetch_subtree(conn, block["id"])
-        if any("highlight_id" in (row[4] or "") for row in rows):
-            return None, ("error: highlight blocks are anchored to their paper — "
-                          "they can only move within the same page")
-        # So is a text box's place, on its PDF page or its sheet, unless the
-        # sheet it is on moves along.
-        if _loose_text_box(rows, block["id"]):
-            return None, ("error: text boxes are placed on their page — they can only move "
-                          "within the same page, or with the page of paper they are on")
+        refusal = cross_page_refusal(conn, block["id"])
+        if refusal:
+            return None, f"error: {refusal}"
     position, error = _sibling_position(conn, parent["id"], args.get("after_id"),
                                         block["id"])
     if error:
@@ -1235,6 +1235,23 @@ def _plan_move_block(conn, scope: dict, args: dict):
         return None, "ok — the block is already there"
     return {"block": block, "src_page_id": src_page_id, "src_title": src_title, "parent": parent,
             "page_id": page_id, "page_title": page_title, "position": position}, None
+
+
+def cross_page_refusal(conn, block_id: str) -> str:
+    """Why the block's subtree can't move to another page ("" when it can).
+    The agent's move_block and the user's revert of one (gamma/ai_revert.py)
+    both ask."""
+    rows = fetch_subtree(conn, block_id)
+    # Highlight blocks anchor to a PDF region of their own paper; on
+    # another page that anchor points into the wrong document.
+    if any("highlight_id" in (row[4] or "") for row in rows):
+        return "highlight blocks are anchored to their paper — they can only move within the same page"
+    # So is a text box's place, on its PDF page or its sheet, unless the
+    # sheet it is on moves along.
+    if _loose_text_box(rows, block_id):
+        return ("text boxes are placed on their page — they can only move "
+                "within the same page, or with the page of paper they are on")
+    return ""
 
 
 def _loose_text_box(rows, root_id: str) -> bool:
@@ -1288,18 +1305,17 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
             conn, page_id, [{"op": "move", "id": block["id"], "parent": parent["id"],
                              "position": position}], actor=scope.get("actor", ""), client="ai"))
     else:
-        now = page_now()
-        conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? "
-                     "WHERE id = ?", (parent["id"], position, now, block["id"]))
-        conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id IN (?, ?)",
-                     (now, src_page_id, page_id))
-        record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block["id"]}], actor=scope.get("actor", ""))
-        note_reload(ws, conn, page_id, scope.get("actor", ""))
+        move_across_pages(ws, conn, block["id"], parent["id"], position, src_page_id, page_id,
+                          actor=scope.get("actor", ""))
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
+    # Where it was, for the user's revert: its old parent and key, and the
+    # parent it went to (moved on from there since, the revert asks first).
     action = {"kind": "move", "page_id": page_id, "block_id": block["id"], "title": page_title,
               "summary": f"Moved a note within {where}" if page_id == src_page_id
-                         else f"Moved a note “{src_title[:40]}” → {where}"}
+                         else f"Moved a note “{src_title[:40]}” → {where}",
+              "revert": {"parent": block["parent_id"], "position": block["position"],
+                         "to_parent": parent["id"]}}
     if page_id != src_page_id:
         action["src_page_id"] = src_page_id
     return f'ok — block [{block["id"]}] moved', action

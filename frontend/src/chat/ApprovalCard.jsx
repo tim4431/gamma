@@ -15,13 +15,18 @@ import { ALLOWING, approvalTitle } from "./approvals.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
 
+// A server word diff (`[[kind, text], …]`, ai_tools.text_diff): what goes
+// struck out, what comes in tinted. The revert prompt shows one too
+// (chat/AgentChanges.jsx).
+export function WordDiff({ diff }) {
+  return <div className="chatApprovalDiff">
+    {diff.map(([kind, text], i) => (kind === "del" ? <del key={i}>{text}</del>
+      : kind === "ins" ? <ins key={i}>{text}</ins> : <span key={i}>{text}</span>))}
+  </div>;
+}
+
 function ApprovalPreview({ preview = {}, args = {} }) {
-  if (preview.diff?.length) {
-    return <div className="chatApprovalDiff">
-      {preview.diff.map(([kind, text], i) => (kind === "del" ? <del key={i}>{text}</del>
-        : kind === "ins" ? <ins key={i}>{text}</ins> : <span key={i}>{text}</span>))}
-    </div>;
-  }
+  if (preview.diff?.length) return <WordDiff diff={preview.diff} />;
   if ("to" in preview) {
     return <div className="chatApprovalDiff">
       {preview.from ? <del>{preview.from}</del> : null}

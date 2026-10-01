@@ -926,8 +926,10 @@ pages also `src_page_id`) and `block_id` (the edited/moved block, or the
 created block's new id; `read_block` actions carry it too). The frontend
 reloads the open page's block tree when it was touched and lights the block
 up; edit/create calls are previewed in the block while the model is still
-writing them (see "Watching the agent work" in [ai.md](ai.md)). There is still no delete under any permission: an
-unwanted block is emptied or left for the user.
+writing them (see "Watching the agent work" in [ai.md](ai.md)). Each of
+the three records what undoing it needs, so the user can revert it from the
+reply ("Reverting a note change" below). No tool deletes under any
+permission: an unwanted block is emptied or left for the user.
 
 Typical uses: *"rename these to AuthorYear style"*, *"file the readout papers
 into a subfolder"*, *"which of these papers measure T1? summarize the
@@ -967,10 +969,67 @@ rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
-`chat/ChatDock.jsx`: list, book, search, eye, pen, quote, globe, download,
+`chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
 file-plus, history, pencil, folder, plus). Each line expands to the
 arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved and
 restored pages) and "Changed in your notes" (edited, added and moved
 blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.
+
+### Reverting a note change
+
+Each row under "Changed in your notes" has a revert button, and the list a
+"Revert all" when it holds more than one change. The user takes back one
+change at a time, in any order, and whatever anyone wrote since stays.
+
+The note tools record what undoing their change needs, as `revert` on the
+action:
+
+| Tool | `revert` |
+| --- | --- |
+| `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
+| `create_block` | `after`: the text the block was made with |
+| `move_block` | `parent` and `position`: where the block was; `to_parent`: where it went |
+
+The chat saves the action with the reply. A revert sends it to
+`POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
+one write lock:
+
+| Change | Reverted by | Stops (409) when |
+| --- | --- | --- |
+| edit | merging the change `after → before` into the text stored now (`textmerge.merge`, the merge the agent's own writes use) | `changed`: someone changed the agent's own text |
+| new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
+| move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
+
+Typing elsewhere in an edited block survives the merge. So two edits to
+different parts of one block revert independently. A change taken back
+already is a no-op (`noop`): an edit the text still holds reverted
+(`textmerge.contains`), or a new block that is gone.
+
+A stop carries `preview.diff`, what `force` would write. A forced edit
+writes `before` with the later changes that don't overlap the agent's
+text. The user's overlapping words are lost, and the diff shows them struck
+out first. Some stops are `gone` and cannot be forced: the old parent was
+deleted or is now inside the block, or the highlight or text-box rule
+refuses the move back across pages. A deleted note answers 404.
+
+A revert is the user's own write: `actor` is the account and the op log's
+`client` is `"revert"`. It fans out like any edit, so the open page and
+collaborators see it live. The chat then marks the action `reverted`, saves
+the conversation (`chatSession.edit`), and reloads the touched pages when no
+socket brought the ops.
+
+In the list, a reverted row shows "Reverted". A stopped row says why, shows
+the diff, and offers "Revert anyway", "Delete anyway" or "Move back anyway"
+beside "Keep it". "Revert all" goes newest first and stops at the first row
+that asks. The buttons wait while a reply streams. A viewer and the share
+view get none.
+
+The request's history leaves `revert` out of the actions it sends
+(`chat/aiRevert.js` `forReplay`). The replay puts "the user reverted this
+change afterwards" before a reverted action's result, so the model does not
+build on it ([ai.md](ai.md) "Replay across turns"). An action without
+`revert`, saved by an older version, shows no button. Ctrl+Z does not
+reach any of this: the agent's writes and the reverts both arrive as remote
+ops, which the undo history never records ([collab.md](collab.md)).

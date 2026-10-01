@@ -3,14 +3,16 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
-import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
+import AgentChanges, { ACTION_ICONS } from "./AgentChanges";
+import { forReplay, markReverted } from "./aiRevert.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
@@ -21,7 +23,7 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { changePlace, chipNote, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { chipNote, isChange, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -30,7 +32,7 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FilePlusIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -57,11 +59,6 @@ function relAge(iso) {
   return d < 365 ? `${Math.floor(d / 30)}mo` : `${Math.floor(d / 365)}y`;
 }
 
-// Folder-agent tool chips: icon per action kind; rename/move are the kinds
-// that changed the library (they trigger the home-feed refresh). Every chip
-// carries the raw call the server ran (tool/args/result, both truncated), so
-// clicking one expands the arguments and the output the model saw.
-const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
@@ -167,53 +164,6 @@ function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, childr
       {open ? children : null}
     </div>
   );
-}
-
-function AgentChanges({ actions, onOpenPage }) {
-  const nav = useContext(GammaNavContext);
-  const { library, notes } = splitActions(actions);
-  if (!library.length && !notes.length) return null;
-  const pageLink = (id, label) => id
-    ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
-    : <span>{label}</span>;
-  const blockLink = (a, label) => a.block_id && nav?.openBlock
-    ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
-    : pageLink(a.page_id, label);
-  const libraryRow = (a) => {
-    if (a.kind === "rename" && a.to) {
-      return <><s className="chatChangeOld">{a.from}</s> → {pageLink(a.page_id, a.to)}</>;
-    }
-    if (a.kind === "move" && a.title) {
-      return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
-        {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
-      </span>;
-    }
-    if ((a.kind === "save" || a.kind === "restore") && a.title) {
-      const args = { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> };
-      return a.kind === "restore" ? t("Restored {page} to {folder}", args)
-        : a.existed ? t("{page}, already in your library, filed in {folder}", args)
-          : t("Saved {page} to {folder}", args);
-    }
-    return pageLink(a.page_id, a.summary); // saved before the structured fields
-  };
-  const noteRow = (a) => (a.title ? noteChangeText(a, blockLink(a, `“${a.title}”`)) : blockLink(a, a.summary));
-  const group = (rows, place) => rows.length ? (
-    <div className="chatChanges" key={place}>
-      <div className="chatChangesHead">
-        {place === "library" ? t("Changed in your library · {n}", { n: rows.length }) : t("Changed in your notes · {n}", { n: rows.length })}
-      </div>
-      {rows.map((a, j) => {
-        const Icon = ACTION_ICONS[a.kind] || PencilIcon;
-        return (
-          <div key={j} className="chatChange">
-            <Icon size={14} />
-            <span className="chatChangeText">{changePlace(a) === "library" ? libraryRow(a) : noteRow(a)}</span>
-          </div>
-        );
-      })}
-    </div>
-  ) : null;
-  return <>{group(library, "library")}{group(notes, "notes")}</>;
 }
 
 // The token line under a reply, Claude Code style: prompt in, reply out,
@@ -624,6 +574,28 @@ export default function ChatDock({
   // it, so a debounced save can't roll a rename back.
   const [chatTitle, setChatTitle] = useState("");
 
+  // A change under a reply was reverted (chat/AgentChanges.jsx): its action
+  // is marked in the saved conversation, so the model hears of it on the
+  // next turn, and the pages it touched reload where no live socket brought
+  // the ops. The conversation is the one the reply belongs to, even if the
+  // dock moved on while a "Revert all" ran.
+  const loadedRef = useRef(loadedMessages);
+  loadedRef.current = loadedMessages;
+  const changesReverted = (id, indexes, answer) => {
+    const current = session.getSnapshot().replies.get(chatKey)?.messages
+      || (chatKeyRef.current === chatKey ? loadedRef.current : null);
+    const message = current?.find((m) => m.id === id);
+    if (message) {
+      const next = markReverted(current, id, indexes);
+      if (next !== current) {
+        session.edit(chatKey, next, chatTitle)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
+      }
+    }
+    const touched = indexes.flatMap((i) => [message?.actions?.[i]?.page_id, message?.actions?.[i]?.src_page_id]);
+    const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
+    if (pages.length) onNotesChange?.(pages);
+  };
+
   // Show a conversation that came from the server (bucket switch, or a
   // history entry opened). PDF button: on until this document has been sent
   // in THIS conversation, then off. Messages record the doc ids they carried
@@ -1002,9 +974,10 @@ export default function ChatDock({
       page_id: focusedBlockId || "",
       // Only what the server replays: the text and the tool calls of
       // each turn — never the pictures, reports and counts saved with
-      // them (failed replies aren't answers).
+      // them, nor the texts kept for reverting a change (failed replies
+      // aren't answers).
       history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
-        role, text: turnText, ...(turnActions?.length ? { actions: turnActions } : {}) })),
+        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}) })),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
       selections: pdfSelections,
@@ -1850,7 +1823,10 @@ export default function ChatDock({
                       </div>
                       </AgentSteps>
                     ) : null}
-                    {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
+                    {!isUser && m.actions?.length ? (
+                      <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
+                        onReverted={!readOnly && m.id ? (indexes, answer) => changesReverted(m.id, indexes, answer) : undefined} />
+                    ) : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
                     </div> : null}

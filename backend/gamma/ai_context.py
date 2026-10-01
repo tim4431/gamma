@@ -389,6 +389,9 @@ _ELIDED_RESULT = "(older result elided to save space — call the tool again if 
 # the user, or by the agent's own later calls). Saying so on every replayed
 # result stops the model from answering "read X" from a stale outline.
 _REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
+# A change the user took back from its row under the reply (`reverted` on
+# the saved action, gamma/ai_revert.py): the model must not build on it.
+_REVERTED_NOTE = "[the user reverted this change afterwards — the notes no longer hold it]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -535,6 +538,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
+                    if a.get("reverted"):
+                        result = _REVERTED_NOTE + result
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
                                      "content": result})
         if not content.strip():

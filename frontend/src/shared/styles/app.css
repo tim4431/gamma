@@ -4680,13 +4680,26 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.45;
 }
 .chatChangesHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-muted);
   font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
   font-weight: 600;
 }
 .chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
-.chatChangeText { min-width: 0; overflow-wrap: anywhere; }
+.chatChangeText { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* Taking a note change back (chat/AgentChanges.jsx): a frameless undo icon
+   at the row's end, "Revert all" in the head, a reverted row muted with its
+   tag, and the prompt a row shows when the note changed since. */
+.chatChange .ctlBtn.chatChangeRevert { flex: none; width: 22px; height: 22px; margin: -2px 0; }
+.chatChange.reverted .chatChangeText { color: var(--text-muted); }
+.chatChange.reverted .chatChangeLink { color: inherit; }
+.chatChangeTag { flex: none; color: var(--text-muted); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
+.uiBtn.chatChangesAll { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-2); }
+.chatRevertAsk { margin: 0 0 4px 21px; color: var(--text-secondary); }
+.chatRevertAsk .chatApprovalActions { margin-top: 6px; }
 .chatChangeOld { color: var(--text-muted); }
 .chatChangeLink {
   padding: 0;

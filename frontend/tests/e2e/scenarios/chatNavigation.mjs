@@ -971,6 +971,100 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: the agent's note changes revert from their rows — at once, or after asking when the note changed since", async () => {
+    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Revert page" } });
+    const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "First draft" } });
+    const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Second draft", before: one.position } });
+    // What the agent's edit_block calls wrote, and what their actions recorded.
+    const edited = async (block, before, after) => {
+      await alice.api(`/api/blocks/${block.id}`, { method: "PUT", body: { content: after } });
+      return { kind: "edit", tool: "edit_block", mode: "replace", page_id: notesPage.id, block_id: block.id,
+        title: "Revert page", summary: "Edited a note in “Revert page”", args: { block_id: block.id },
+        result: `ok — block [${block.id}] updated`, revert: { before, after } };
+    };
+    const actions = [await edited(one, "First draft", "First draft, improved by AI"),
+      await edited(two, "Second draft", "Second draft, improved by AI")];
+    // The user rewrote the agent's words in the second note since.
+    await alice.api(`/api/blocks/${two.id}`, { method: "PUT", body: { content: "Second draft, improved by me" } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${notesPage.id}`);
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const send = async (text, n) => {
+      await input.fill(text);
+      await input.press("Enter");
+      await until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n), { what: `message ${n} is sent` });
+    };
+    const noteText = (id) => alice.api(`/api/blocks/${id}`).then((b) => b.content);
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await send("Improve both notes", 1);
+      await page.evaluate((list) => {
+        for (const action of list) window.chatStream.push({ action });
+        window.chatStream.push({ delta: "Improved both notes." });
+        window.chatStream.finish();
+        window.chatStream = null;
+      }, actions);
+      const changes = page.locator(".chatChanges", { hasText: "Changed in your notes · 2" });
+      await changes.waitFor();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      assertEq(await changes.getByRole("button", { name: "Revert all" }).count(), 1, "two changes offer Revert all");
+      const rows = changes.locator(".chatChange");
+      // A change nobody touched since goes back at once, on the open page too.
+      await rows.nth(0).getByRole("button", { name: "Revert this change" }).click();
+      await rows.nth(0).filter({ hasText: "Reverted" }).waitFor();
+      assertEq(await noteText(one.id), "First draft");
+      await page.locator(".blockRow", { hasText: "First draft" }).filter({ hasNotText: "improved" }).waitFor();
+      assertEq(await changes.getByRole("button", { name: "Revert all" }).count(), 0, "one change left: no Revert all");
+      // One the user changed since asks first and shows what forcing it does.
+      await rows.nth(1).getByRole("button", { name: "Revert this change" }).click();
+      const ask = changes.locator(".chatRevertAsk");
+      await ask.filter({ hasText: "The note was changed since." }).waitFor();
+      assert((await ask.locator("del").innerText()).includes("improved by me"), "the diff shows the user's words going");      assertEq(await noteText(two.id), "Second draft, improved by me", "nothing is written before the user decides");
+      await ask.getByRole("button", { name: "Revert anyway" }).click();
+      await rows.nth(1).filter({ hasText: "Reverted" }).waitFor();
+      assertEq(await ask.count(), 0);
+      assertEq(await noteText(two.id), "Second draft");
+      // The conversation keeps the marks, and the next request tells the model.
+      const saved = await until(async () => {
+        const chat = await alice.api(`/api/chats/${notesPage.id}`);
+        const marks = chat.messages.find((m) => m.role === "ai")?.actions?.map((a) => !!a.reverted) || [];
+        return marks.length === 2 && marks.every(Boolean) && chat;
+      }, { what: "the reverts are saved with the reply" });
+      assert(saved.messages.find((m) => m.role === "ai").actions.every((a) => a.revert), "the saved actions keep what reverting needs");
+      await send("Thanks", 2);
+      const history = await page.evaluate(() => window.chatBodies.at(-1).history);
+      const sent = history.find((m) => m.role === "ai").actions;
+      assert(sent.every((a) => a.reverted && !("revert" in a)), "the replay carries the marks, not the texts");
+      await page.evaluate(() => { window.chatStream.push({ delta: "You're welcome." }); window.chatStream.finish(); });
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      assertNoProblems(page, ["POST /api/ai/revert -> 409"]); // the row's question, answered above
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("chat navigation: the history popover ticks conversations and deletes them in one call", async () => {
     // Its own page: earlier steps left conversations in the other buckets.
     const histPage = await alice.api("/api/pages", { method: "POST", body: { title: "History page" } });
