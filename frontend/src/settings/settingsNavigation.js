@@ -32,6 +32,7 @@ const entries = [
   e("reading", t("Open-access fallback"), t("PDFs"), t("Fetch a free copy when a publisher blocks the PDF"), "download PDF publisher free library"),
   e("reading", t("Auto-fetch metadata"), t("PDFs"), t("Title, authors and BibTeX on first open"), "title authors BibTeX DOI library"),
   e("reading", t("Save external PDFs"), t("PDFs"), t("Keep a server copy of PDFs opened from a URL"), "download storage offline URL library"),
+  e("reading", t("Linked from"), t("Notes"), t("List the pages whose notes link to this one"), "backlinks linked mentions references links notes"),
   e("reading", t("Draws with"), t("Handwriting"), t("Pen only, or pen and finger"), "handwriting pen finger touch stylus ink"),
   e("reading", t("Stylus draws right away"), t("Handwriting"), t("Without opening the tools first"), "handwriting pen ink"),
   e("reading", t("Pressure-sensitive strokes"), t("Handwriting"), t("Pen strokes thicken with pressure"), "handwriting pen ink width"),

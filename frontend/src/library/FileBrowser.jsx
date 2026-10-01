@@ -19,7 +19,7 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
   const showFolders = (mode === "both" || mode === "folders") && folders?.length > 0;
   const showLabels = (mode === "both" || mode === "labels") && labels?.length > 0;
   return (
-    <span className={className}>
+    <span className={className} data-guide={showFolders || showLabels ? "home.cardLabels" : undefined}>
       {showFolders ? folders.map((f) => (
         <span key={`f:${f}`} className="folderTagBadge" title={t("In folder {f}", { f })}>
           <FolderIcon size={10} />

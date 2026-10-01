@@ -558,3 +558,12 @@ def require_ai_runtime(user: str) -> dict:
         raise HTTPException(status_code=503,
                             detail="AI not configured (add a connection and pick its models in Settings → AI)")
     return rt
+
+
+def resolve_model(runtime: dict, requested: str) -> dict:
+    """The runtime entry a request's model names — its registry id
+    (``<pid>:<model>``) or a bare model name — else the default."""
+    for entry in runtime["models"]:
+        if requested and requested in (entry["id"], entry["model"]):
+            return entry
+    return runtime["default"]

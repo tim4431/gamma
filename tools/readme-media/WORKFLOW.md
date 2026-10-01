@@ -7,10 +7,12 @@ library. Use its exported copy for recording, not synthetic replacement papers.
 
 | Demo | Story | Recording details |
 |---|---|---|
-| Highlight, annotate & draw | Select a sentence, save a text annotation, circle a claim, draw an arrow, highlight with ink | `record-ink.mjs --annotate`; isolated server, note and four strokes checked after reload; `render-feature-demos.py annotate-and-ink` |
-| Native agentic | One PDF Chat: ask a complex mechanism/evidence question, follow a passage citation, box-select Figure 1c,d and ask a follow-up | `record-native-agentic.mjs`; real model responses and Ctrl-drag; exact citation, PDF context, both saved answers and figure attachment verified; `render-feature-demos.py native-agentic` trims model waits |
-| Notes | Type markdown, a page reference, nested display math with autocomplete, a callout, then paste and resize a picture | `run-case.mjs notes`; isolated copy of the curated export; real clipboard PNG paste and edge drag; image and width checked after reload |
-| Library | Home search, title and PDF results, folder filter, open a highlighted match | `run-case.mjs library`; Quantum subfolders prepared, recents populated by navigation |
+| Highlight, annotate & draw | Highlight a phrase and note why it matters, circle the claim it makes possible, draw an arrow from one to the other, lasso the arrow and recolor it red | `record-ink.mjs --annotate`; isolated server; gestures placed from the text layer; note, three strokes and two recolored checked after reload; `render-feature-demos.py annotate-and-ink` |
+| Native agentic | One PDF Chat on Figure 1: Ctrl+drag panels c,d and ask about them, hover a passage citation for its quote and follow it, then ask it to find the two most-cited follow-ups and save them; allow the save in this chat | `record-native-agentic.mjs`; fresh workspace; real model responses and web search; figure attachment, exact citation, PDF context, two saved papers verified; `render-feature-demos.py native-agentic` trims model waits and closes in on the agent's steps |
+| AI in the notes | A notes page: cursor on a block, paste a slide's equation into the chat, ask for it under that block, allow the edit; the KaTeX block appears | `record-agentic-notes.mjs`; `rabi-slide.png` in the shot's directory; 130% interface size; block under the cursor holds the LaTeX and the request the picture, verified |
+| Notes | Type markdown, a page reference, nested display math with autocomplete, then `/page` makes a sheet and a stylus sketches on it | `run-case.mjs notes`; isolated copy of the curated export; 130% interface size; CDP pen input; text and sheet strokes checked after reload |
+| Search | In the atom-arrays paper, Ctrl+F finds "rydberg" and Enter steps through its matches; Ctrl+P finds the "quantum computing" label and opens its two papers | `run-case.mjs search`; topic labels prepared, the account's paper-view search reset to compact |
+| Library (website) | Home search, title and PDF results, folder filter, open a highlighted match | `run-case.mjs library`; Quantum subfolders prepared, recents populated by navigation |
 | Agent (scratch preview) | Ask to organize papers, show real tool calls and the resulting folders | `run-case.mjs agent`; requires configured AI |
 | Metadata | Fetch a paper, watch fields fill, copy BibTeX and slide citation | `run-case.mjs metadata`; arXiv 2312.03982 removed first; never fill metadata by hand |
 | Q&A (scratch preview) | Paste Attention paper URL, select and highlight a sentence, ask for a short explanation | `run-case.mjs download-and-chat`; requires configured AI |
@@ -25,8 +27,14 @@ library. Use its exported copy for recording, not synthetic replacement papers.
 - AI configuration belongs to the account, not the exported workspace. AI cases
   use a disposable personal workspace on the existing demo account. Ink and
   connector use isolated accounts because they need no AI.
-- Keep `recordVideo.size` equal to the CSS viewport. `deviceScaleFactor: 2` does
-  not mean the recording dimensions should double.
+- Capture with `launchRetina()` and `startCapture()`, not `recordVideo`: Chrome's
+  screencast is capped at the window's CSS size, so device-scale emulation still
+  records 1×, and CSS zoom on `<html>` misplaces the app's popups (the rects are
+  zoomed, the styles are not). A 2× screen with a 1440 × 900 window has neither
+  problem. For bigger UI use the app's Interface size (`gamma-ui-scale`).
+- Pin `locale: 'en-US'` (`RETINA` does): headless Chromium takes the system
+  locale, and the recorders find buttons by their English names. Tour offers are
+  switched off the way the e2e harness does it.
 - Move the pointer with timed samples. Playwright `steps` alone does not specify
   motion duration; `runtime.mjs` paces every `steps > 1` move.
 - Use real mouse drags for sentence highlights. PDF text spans provide start/end
@@ -40,7 +48,9 @@ library. Use its exported copy for recording, not synthetic replacement papers.
   ID, then wait for text to paint. An old page-1 selector can remain absent when
   the reader restores a later page.
 - Zoom the recorded frame if needed, not the app's PDF zoom: app zoom changes
-  wrapping and click coordinates. The exports use fixed detail crops.
+  wrapping and click coordinates. The camera's rects are recorded `framing`
+  boxes, and a box must hug its content: KaTeX's display wrappers and a block row
+  span the whole width.
 - Metadata must resolve on camera. Cached papers cannot reproduce the fetching
   state; prepare a fresh fetch in the disposable workspace.
 - The notes editor uses actual keyboard input for autocomplete and argument hops.

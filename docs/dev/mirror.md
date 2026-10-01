@@ -6,6 +6,9 @@ the copy go to the original, edits made on the original arrive in the copy.
 The everyday case is the desktop app: a local server that holds a copy of a
 workspace on the lab's NAS, so the library opens on the train and the notes
 written there land on the NAS when it is reachable again.
+The sync pill carries the `sync.pill` guide anchor: a hint beside it explains
+the pill once a workspace has a copy, before a conflict ever makes it loud
+([onboarding.md](onboarding.md)).
 
 Code: `gamma/sync_engine.py` (the engine and the mirror registry),
 `gamma/sync_tree.py` (snapshots and the diff between them),

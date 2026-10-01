@@ -1,12 +1,13 @@
 // README "Take notes" demo: a bare note page typed into, Obsidian-style live
 // preview — markdown marks, a [[ref]] chip, then a display equation typed
 // char by char ($ auto-pairing, \command autocomplete, Tab through {} args,
-// live math preview), then a callout, picture paste and drag resize.
+// live math preview), then /page turns the next block into a sheet of paper
+// and a stylus sketches the result on it, right among the notes.
 //
 // Prepared by `run-case.mjs notes` (an empty page whose id arrives as PAGE_ID).
-// Writes the webm path to video_path.txt and the pre-roll trim mark to
-// notes_marks.json (m0 = video-time of the first click).
-import { chromium, configureContext, addCursor, pointer, readSession, BASE } from './runtime.mjs';
+// Writes retina frames to frames/ and the edit marks to notes_marks.json
+// (capture seconds; m0 = the first click).
+import { RETINA, launchRetina, startCapture, configureContext, addCursor, pointer, readSession, BASE } from './runtime.mjs';
 import fs from 'fs';
 
 const SCRATCH = process.cwd();
@@ -37,31 +38,27 @@ async function reopenFocused() {
   await page.waitForSelector('.blockEditorCm .cm-content');
 }
 
-const browser = await chromium.launch({ headless: true, slowMo: 0 });
-let ctx = await browser.newContext({
-  colorScheme: 'light',
-  viewport: { width: VW, height: VH },
-  deviceScaleFactor: 2,
-  recordVideo: { dir: SCRATCH + '/video', size: { width: VW, height: VH } },
-});
+const browser = await launchRetina();
+const ctx = await browser.newContext(RETINA);
 await configureContext(ctx);
-await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
 await ctx.addCookies([{ name: 'session', value: SESSION, url: BASE }]);
 
-// UI scale: the note text is the whole story, so render it like a 125%-zoomed
-// window (standard CSS zoom on <html>; layout + rects follow, popups too).
-const ZOOM = '1.25';
-await ctx.addInitScript((zoom) => {
-  // Enter = new block (Settings → Notes); the default is Shift+Enter.
-  try { localStorage.setItem('gamma-enter-new-note', '1'); } catch {}
-  window.addEventListener('DOMContentLoaded', () => { document.documentElement.style.zoom = zoom; });
-}, ZOOM);
-await addCursor(ctx, { zoom: Number(ZOOM) });
+// The note text is the whole story: record at a 130% interface size
+// (Settings → Appearance). CSS zoom on <html> would misplace the editor's
+// popups in current Chromium.
+await ctx.addInitScript(() => {
+  try {
+    localStorage.setItem('gamma-ui-scale', '1.3');
+    // Enter = new block (Settings → Notes); the default is Shift+Enter.
+    localStorage.setItem('gamma-enter-new-note', '1');
+  } catch {}
+});
+await addCursor(ctx);
 
 const page = await ctx.newPage();
 const { glide, at } = pointer(page, VW / 2, VH / 2);
+let capture;
 try {
-const t0 = Date.now();
 page.on('console', m => { const t = m.text(); if (t.startsWith('SCRIPT:')) console.log(t); });
 
 // 0. open the empty page; close the chat dock so the notes take the width ---
@@ -74,12 +71,14 @@ if (await page.locator('[aria-label="Close Chat"]').count()) {
 }
 await page.waitForSelector('.blockRow');
 await beat(800);
+capture = await startCapture(page, SCRATCH + '/frames');
+const clock = capture.clock;
 
 // 1. click the empty first block ---------------------------------------------
 const row = await page.locator('.blockRow').first().boundingBox();
 await glide(row.x + 120, row.y + row.height / 2 + 6, 30);
 await beat(250);
-const m0 = (Date.now() - t0) / 1000;
+const m0 = clock();
 await page.mouse.click(at().x, at().y);
 await page.waitForSelector('.blockEditorCm .cm-content');
 await glide(row.x + 120, row.y + 420, 24);   // park the pointer well below the text
@@ -87,7 +86,7 @@ await beat(400);
 
 // 2. markdown that renders as the caret leaves each construct ----------------
 await T('A **two-level atom** driven on resonance undergoes ==Rabi oscillations==, cf. [[quantum processor');
-await page.waitForSelector('.refPopup .refPopupEntry', { timeout: 5000 });
+await page.waitForSelector('.refPopup .refPopupItem', { timeout: 5000 });
 await beat(900);
 await K('Enter');                                  // [[ref]] chip
 await beat(250);
@@ -130,7 +129,7 @@ await T(' - \\hbar\\Delta\\,|e\\rangle\\langle e|', MATH);
 console.log('SCRIPT: equation =', await value());
 await beat(1200);
 
-// 4. leave the equation, one callout below -----------------------------------
+// 4. leave the equation: /page makes the next block a sheet of paper -------
 await K('End');                                    // past the closing $$
 await beat(300);
 await K('Enter');
@@ -139,103 +138,92 @@ await K('Shift+Tab');
 await beat(350);
 await reopenFocused();
 await beat(500);
-await T('> [!note] Resonant driving');
-await beat(300);
-await K('Shift+Enter');                            // line break; "> " continues
-await beat(300);
-await T('Population oscillates as $P_e(t) = \\sin^2(\\Omega t/2)$.');
-console.log('SCRIPT: callout =', await value());
+await T('/page', 70);
+await page.waitForSelector('.slashMenu .slashMenuItem.selected');
+const pick = await page.locator('.slashMenu .slashMenuItem.selected .slashMenuLabel').innerText();
+if (pick !== 'Page to write on') throw new Error(`/page picked ${pick}`);
+await beat(700);
+const sheetAt = clock();
+await K('Enter');
+const sheet = page.locator('.noteSheet .nbSheet').first();
+await sheet.waitFor({ timeout: 5000 });
 await beat(900);
 
-// 5. Paste a PNG plot through the real clipboard and editor upload handler.
-// Plot the same analytic function as the note; no external image is needed.
-await K('Enter');
-await beat(400);
-await page.evaluate(async () => {
-  const canvas = document.createElement('canvas');
-  canvas.width = 680; canvas.height = 280;
-  const g = canvas.getContext('2d');
-  g.fillStyle = '#f8fafc'; g.fillRect(0, 0, 680, 280);
-  g.fillStyle = '#0f172a'; g.font = '600 19px Arial';
-  g.fillText('Resonant Rabi oscillations', 58, 32);
-  const x = t => 58 + t / (4 * Math.PI) * 590;
-  const y = p => 222 - p * 164;
-  g.font = '14px Arial';
-  for (const p of [0, 0.5, 1]) {
-    g.strokeStyle = '#dbe3ee'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(58, y(p)); g.lineTo(648, y(p)); g.stroke();
-    g.fillStyle = '#475569'; g.fillText(String(p), 25, y(p) + 5);
+// 5. write on it with a stylus: a pen draws on a sheet with the tools closed --
+let paper = await sheet.boundingBox();
+const room = 250;                                  // drawing height needed on screen
+if (paper.y + room > VH - 20) {
+  await glide(paper.x + paper.width * 0.8, Math.min(VH - 60, paper.y + 60), 24);
+  const need = paper.y + room - (VH - 20);
+  for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, need / 12); await page.waitForTimeout(28); }
+  await beat(500);
+  paper = await sheet.boundingBox();
+}
+const cdp = await ctx.newCDPSession(page);
+const pen = (type, [x, y], force = 0) => cdp.send('Input.dispatchMouseEvent',
+  { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'pen', force });
+async function write(points, ms) {
+  await glide(...points[0], 20);
+  await pen('mousePressed', points[0], 0.45);
+  const t0 = Date.now(), n = Math.ceil(ms / 16);
+  for (let i = 1; i <= n; i++) {
+    const u = i / n, f = u * (points.length - 1), j = Math.min(points.length - 2, Math.floor(f)), r = f - j;
+    const p = [0, 1].map(k => points[j][k] + (points[j + 1][k] - points[j][k]) * r);
+    await pen('mouseMoved', p, 0.45 + 0.2 * Math.sin(u * Math.PI));
+    const wait = t0 + ms * i / n - Date.now();
+    if (wait > 0) await page.waitForTimeout(wait);
   }
-  for (let n = 0; n <= 4; n++) {
-    g.fillText(n === 0 ? '0' : `${n === 1 ? '' : n}π`, x(n * Math.PI) - 8, 246);
-  }
-  g.fillText('Ωt', 340, 271); g.fillText('Pₑ', 20, 55);
-  g.strokeStyle = '#2563eb'; g.lineWidth = 3; g.beginPath();
-  for (let i = 0; i <= 600; i++) {
-    const t = i / 600 * 4 * Math.PI;
-    if (i === 0) g.moveTo(x(t), y(0));
-    else g.lineTo(x(t), y(Math.sin(t / 2) ** 2));
-  }
-  g.stroke();
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  await pen('mouseReleased', points.at(-1));
+  await page.mouse.move(...points.at(-1));
+  await beat(200);
+}
+// A hand sketch of the equation's result: P_e rising and falling twice.
+const x0 = paper.x + 70, y0 = paper.y + 36, w = 380, h = 150;
+const curve = Array.from({ length: 49 }, (_, i) => {
+  const t = i / 48 * 4 * Math.PI;
+  return [x0 + 12 + t / (4 * Math.PI) * w, y0 + h - Math.sin(t / 2) ** 2 * (h - 22) + Math.sin(i * 1.7) * 1.2];
 });
-const paste = (Date.now() - t0) / 1000;
-await K('Control+v');
-await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('/api/uploads/'));
-await beat(500);
-// Click away to render the pasted image and expose its hover resize grip.
-await glide(1320, 800, 30);
-await beat(200);
-await page.mouse.click(at().x, at().y);
-await page.waitForSelector('.blockEditorCm', { state: 'detached', timeout: 5000 });
-const picture = page.locator('.mdImg').last();
-await picture.waitFor();
-await picture.evaluate(img => img.decode());
-await picture.scrollIntoViewIfNeeded();
-await beat(1200);
-const before = await picture.boundingBox();
-await glide(before.x + before.width - 4, before.y + before.height / 2, 30);
-const grip = await page.locator('.mdImgResize').last().boundingBox();
-await glide(grip.x + grip.width / 2, grip.y + grip.height / 2, 20);
-await beat(600);
-const resize = (Date.now() - t0) / 1000;
-await page.mouse.down();
-const { x: startX, y: startY } = at();
-for (let i = 1; i <= 45; i++) {
-  await page.mouse.move(startX - 400 * i / 45, startY);
-  await page.waitForTimeout(24);
-}
-await page.mouse.up();
-await beat(600);
-await glide(1320, 170, 25);
-const after = await picture.boundingBox();
-if (after.width >= before.width - 100) throw new Error('Picture did not visibly shrink');
-await beat(2200);
-const m1 = (Date.now() - t0) / 1000;
+const peak = curve[12];
+const ring = Array.from({ length: 25 }, (_, i) => {
+  const a = -Math.PI / 2 + i / 24 * 2.15 * Math.PI;
+  return [peak[0] + Math.cos(a) * 26, peak[1] + 4 + Math.sin(a) * 18];
+});
+// The formula itself: KaTeX's display wrappers are full-width blocks.
+const equation = await page.locator('.katex-display .base').evaluateAll(els => {
+  const boxes = els.map(e => e.getBoundingClientRect());
+  const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
+  return { x, y, width: Math.max(...boxes.map(b => b.right)) - x, height: Math.max(...boxes.map(b => b.bottom)) - y };
+});
+const sketch = { x: x0 - 10, y: y0 - 16, width: w + 50, height: h + 30 };
+const drawAt = clock();
+await write([[x0, y0 - 6], [x0 + 1, y0 + h * 0.6], [x0, y0 + h], [x0 + w * 0.5, y0 + h + 1], [x0 + w + 30, y0 + h]], 900);
+await write(curve, 1500);
+await write(ring, 700);
+await page.waitForFunction(() => document.querySelectorAll('.noteSheet .inkLayer path').length === 3);
+await glide(Math.min(VW - 120, x0 + w + 260), y0 + 40, 30);
+await beat(2400);
+const m1 = clock();
+const frames = await capture.stop(); capture = null;
+// Where the note ended up, for the render's camera.
+const content = await page.locator('.blockRow').evaluateAll(rows => {
+  const boxes = rows.map(r => r.getBoundingClientRect()).filter(b => b.height);
+  const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
+  return { x, y, width: Math.max(...boxes.map(b => b.right)) - x, height: Math.max(...boxes.map(b => b.bottom)) - y };
+});
 await page.screenshot({ path: SCRATCH + '/notes-final.png' });
-const savedWidth = await picture.getAttribute('width');
-const savedSrc = await picture.getAttribute('src');
 await page.reload({ waitUntil: 'networkidle' });
-await picture.waitFor();
-await picture.evaluate(img => img.decode());
-if (await picture.getAttribute('width') !== savedWidth || await picture.getAttribute('src') !== savedSrc) {
-  throw new Error('Pasted picture or resized width did not persist after reload');
-}
+await page.waitForFunction(() => document.querySelectorAll('.noteSheet .inkLayer path').length === 3, null, { timeout: 15000 });
+if (!(await value() ?? await page.locator('.blockRow').first().innerText()).includes('two-level atom')) throw new Error('The note text did not persist');
 await page.screenshot({ path: SCRATCH + '/notes-reloaded.png' });
-fs.writeFileSync(SCRATCH + '/notes-verified.json', JSON.stringify({ savedWidth, savedSrc, before, after, persisted: true }, null, 2));
+fs.writeFileSync(SCRATCH + '/notes-verified.json', JSON.stringify({ sheet: true, strokes: 3, persisted: true }, null, 2));
 
-const video = page.video();
-await ctx.close();
-ctx = null;
-const vpath = await video.path();
-fs.writeFileSync(SCRATCH + '/video_path.txt', vpath);
-fs.writeFileSync(SCRATCH + '/notes_marks.json', JSON.stringify({ m0, paste, resize, m1, cropHeight: 820 }));
-console.log('SCRIPT: video saved', vpath, 'm0', m0.toFixed(2), 'm1', m1.toFixed(2));
+fs.writeFileSync(SCRATCH + '/notes_marks.json', JSON.stringify({ frames, m0, sheetAt, drawAt, m1, framing: { first: row, content, sheet: paper, equation, sketch } }));
+console.log('SCRIPT: frames saved', frames, 'm0', m0.toFixed(2), 'm1', m1.toFixed(2));
 } catch (error) {
   await page.screenshot({ path: SCRATCH + '/notes-error.png' });
   throw error;
 } finally {
+  if (capture) await capture.stop().catch(() => {});
   if (ctx) await ctx.close();
   await browser.close();
 }

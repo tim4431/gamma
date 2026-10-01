@@ -41,8 +41,9 @@ git diff <range>                       # read all of it; it is the input
 ```
 
 Read the diff in full before judging anything. Note every file touched and
-which `docs/dev/*.md` covers each area (the map is in `CLAUDE.md`); read
-those docs too — they define what "the existing way" is.
+which `docs/dev/*.md` covers each area (the topic table is in
+`docs/dev/README.md`); read those docs too — they define what "the existing
+way" is.
 
 ## Step 2 — the five checks
 
@@ -57,8 +58,8 @@ Each finding is a line: `file:line — what — fix / proposal`.
   `search/SearchPanel.jsx`/`pdf/PdfViewer.jsx`, `foldertags.py` ↔ `library/libraryUtils.js`) —
   those stay mirrored but must actually match.
 - A feature spread across App.jsx state + a component + a util when one
-  module would own it whole. Prefer the module the file map in CLAUDE.md
-  already assigns to that concern.
+  module would own it whole. Prefer the module the file map in
+  `frontend/src/README.md` already assigns to that concern.
 - New helpers that duplicate an existing one under another name
   (`grep -rn "def <name>\|function <name>\|const <name>"` before keeping
   a new one).
@@ -107,9 +108,9 @@ Reference: [docs/dev/ui-design.md](../../../docs/dev/ui-design.md) and
 
 ### 4. Documentation prose
 
-Applies to `docs/dev/*.md`, `README`, `desktop/docs/*`, and the CLAUDE.md
-lines that changed. The docs are reference material for someone who reads
-them once and then works; they are not a changelog and not marketing.
+Applies to the changed lines of `docs/dev/*.md`, `README` and
+`desktop/docs/*`. The docs are reference material for someone who reads them
+once and then works; they are not a changelog and not marketing.
 
 Remove or rewrite:
 
@@ -124,7 +125,7 @@ Remove or rewrite:
 - Sentences over ~25 words; chains joined by em-dashes or semicolons.
   Split them.
 - Bullets that are paragraphs. One or two sentences per bullet.
-- Repetition of what the code or CLAUDE.md already says nearby.
+- Repetition of what the code or a neighbouring doc already says nearby.
 - Headings that announce sections nobody needs ("Overview", "Summary",
   "Conclusion").
 

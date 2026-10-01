@@ -614,10 +614,11 @@ export async function chatNavigationScenarios(env) {
   // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
   // card opens the page through /go, follows the request on the server (the
   // Connector taking the tab shows), takes a PDF dropped on it — never the
-  // library underneath — and the chat continues once, by itself. The
-  // request's endpoints are faked here; the server's are in
-  // backend/tests/test_fetch_handoff.py.
-  await step("chat navigation: a blocked fetch's card gets the PDF from the browser and the chat continues", async () => {
+  // library underneath — and then offers to continue the conversation. This
+  // is the card a request left behind: while a reply is still running the
+  // server waits on the card itself, which the backend tests cover
+  // (backend/tests/test_fetch_handoff.py, along with these endpoints).
+  await step("chat navigation: a card left behind gets the PDF from the browser and offers to continue", async () => {
     const HID = "e2eHandoffRequest01";
     const handoff = { id: HID, host: "www.science.org", wall: "captcha", source: "doi:10.1126/e2e.handoff" };
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
@@ -628,6 +629,10 @@ export async function chatNavigationScenarios(env) {
     ] } });
     let request = { ...handoff, url: "https://www.science.org/doi/10.1126/e2e.handoff", pdf_url: "", detail: "",
       status: "waiting", watched: false, pages: 0, from_url: "" };
+    // This is the by-hand path: "Fetch blocked papers in the background" is
+    // on by default, and would hand the request over before the user clicks.
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { fetchInBackground: false } } });
     const uploads = [], prompts = [], libraryUploads = [];
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
@@ -707,19 +712,25 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
         { what: "the Connector lets its tab go" });
 
-      await until(() => prompts.length === 1, { what: "the chat continues by itself" });
+      // The chat never speaks in the user's name: the card offers to go on.
+      const goOn = page.locator(".chatHandoffContinue");
+      await goOn.waitFor();
+      assertEq(prompts.length, 0, "nothing was sent for the user");
+      await goOn.click();
+      await until(() => prompts.length === 1, { what: "Continue asks the chat to go on" });
       assertEq(prompts[0], `I got it in my browser — ${handoff.source} is available now. Please continue.`);
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("Reading the delivered PDF now."));
 
-      // A reload shows the settled card and sends nothing again.
+      // A reload shows the settled card and offers nothing again.
       await page.reload();
       await page.locator(".chatHandoff.done").waitFor();
       await page.waitForTimeout(500);
       assertEq(prompts.length, 1, "no second continuation");
-      assertEq(await page.locator(".chatHandoffContinue").count(), 0, "the conversation moved on: no Continue");
+      assertEq(await goOn.count(), 0, "the conversation moved on: no Continue");
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
@@ -781,7 +792,7 @@ export async function chatNavigationScenarios(env) {
         { what: "the card hands the request to the Connector without a click" });
       assertEq(JSON.stringify(await page.evaluate(() => window.connectorAsked)), JSON.stringify([{ do: "open", background: true }]));
       request = { ...request, watched: true, background: true };
-      await card.getByText("Gamma Connector is getting it in a minimized window").waitFor({ timeout: 8000 });
+      await card.getByText("Gamma Connector is getting it in a tab of its own").waitFor({ timeout: 8000 });
       // The page wants the user: the card says so and offers the tab.
       request = { ...request, note: "check" };
       await card.getByText("The site is showing a bot check or CAPTCHA").waitFor({ timeout: 8000 });
@@ -943,7 +954,12 @@ export async function chatNavigationScenarios(env) {
       await push({ delta: "Done." });
       await finish();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
-      const saved = await alice.api(`/api/chats/${notesPage.id}`);
+      // The final save queues behind the reply's checkpoints (one of which
+      // held the waiting card), so it can land after Stop goes.
+      const saved = await until(async () => {
+        const chat = await alice.api(`/api/chats/${notesPage.id}`);
+        return chat.messages.every((m) => !m.partial) && chat;
+      }, { what: "the finished reply is saved" });
       assert(saved.messages.every((m) => !m.approval), "a waiting card is never saved with the reply");
       assertEq(saved.messages.filter((m) => m.role === "ai").flatMap((m) => m.actions || []).map((a) => a.approval).join(),
         "chat,deny,always");
@@ -952,6 +968,57 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  await step("chat navigation: the history popover ticks conversations and deletes them in one call", async () => {
+    // Its own page: earlier steps left conversations in the other buckets.
+    const histPage = await alice.api("/api/pages", { method: "POST", body: { title: "History page" } });
+    const bucket = histPage.id;
+    const archived = {};
+    for (const title of ["Alpha talk", "Beta talk", "Gamma talk"]) {
+      const r = await alice.api("/api/chat-history/archive",
+        { method: "POST", body: { bucket, title, messages: [{ role: "user", text: title }] } });
+      archived[title] = r.id;
+    }
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${bucket}`);
+    try {
+      await page.getByRole("button", { name: "Chat history", exact: true }).click();
+      const rows = page.locator(".chatHistRow:not(.active)");
+      await until(async () => (await rows.count()) === 3, { what: "the three archived conversations list" });
+      const bulk = page.locator(".chatHistBulk");
+      assertEq(await bulk.count(), 0, "no bar until something is ticked");
+      const tick = (text) => page.locator(".chatHistRow", { hasText: text }).locator(".chatHistPick");
+      // The box comes up on hover; from the first tick on, every row has one.
+      await page.locator(".chatHistRow", { hasText: "Alpha talk" }).hover();
+      await tick("Alpha talk").check();
+      await tick("Beta talk").check();
+      assert((await bulk.innerText()).includes("2 selected"), "the bar counts the ticks");
+      // A search that hides a ticked row drops its tick, so Delete never
+      // takes a conversation the user cannot see.
+      await page.locator(".chatHistoryPop .searchInput").fill("Beta");
+      await until(async () => (await bulk.innerText()).includes("1 selected"), { what: "the hidden row's tick is dropped" });
+      await page.locator(".chatHistoryPop .searchInput").fill("");
+      await until(async () => (await rows.count()) === 3);
+      await bulk.getByRole("button", { name: "Select all", exact: true }).click();
+      await until(async () => (await bulk.innerText()).includes("3 selected"), { what: "Select all takes the listed rows" });
+      await tick("Alpha talk").uncheck();
+      await bulk.getByRole("button", { name: "Delete", exact: true }).click();
+      const confirm = page.locator(".confirmModal");
+      await confirm.waitFor();
+      assert((await confirm.innerText()).includes("2 conversations"), "the dialog says how many");
+      await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+      await until(async () => (await rows.count()) === 1, { what: "the ticked rows go" });
+      assertEq(await bulk.count(), 0, "the bar goes with the selection");
+      const left = (await alice.api(`/api/chat-history?bucket=${bucket}`)).sessions;
+      assertEq(left.map((e) => e.id).join(), archived["Alpha talk"], "only the unticked conversation is left");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/blocks/${histPage.id}`, { method: "DELETE" });
     }
   });
 }

@@ -4,9 +4,9 @@
 # folder on the VPS (/root/Container/gamma-demo/), next to the account
 # server's but independent of it:
 #
-#   - the image is the `sha-<short>` tag of a branch build (docker.yml
-#     dispatched on the branch), named by GAMMA_TAG in the folder's .env
-#     (.env.example); the update-demo-server skill writes that one line;
+#   - the image is main's, the `sha-<short>` tag a merge's docker.yml run
+#     pushes, named by GAMMA_TAG in the folder's .env (.env.example); the
+#     update-demo-server skill writes that one line;
 #   - its settings are demo.env (demo.env.example), its whole state ./data
 #     (disposable);
 #   - no host port: the account project's Caddy, which owns 80/443, reaches

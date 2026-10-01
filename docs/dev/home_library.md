@@ -1,6 +1,10 @@
 # Home library
 
 Folders, labels, the card surfaces, the recents strip, and cover snapshots.
+The **Organize your library** tour teaches this model once the library
+passes 20 pages: a label is anything you will look for later, a folder is a
+label that nests, and filing never copies the page
+([onboarding.md](onboarding.md)).
 Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 [libraryUtils.js](../../frontend/src/library/libraryUtils.js),
 [Menus.jsx](../../frontend/src/shared/ui/Menus.jsx), glue in App.jsx.
@@ -318,7 +322,10 @@ and index rows. The sweeper runs at startup and every hour (`lifespan`).
 Delete permanently and Empty take the same path at once. On a share host,
 whose pages are published copies, `DELETE /api/blocks/{id}` deletes for good
 directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners
-trash and restore; a viewer and a share link cannot. A trashed page's files
+trash and restore; a viewer and a share link cannot. A folder chat's agent
+can list the pages that were filed under its folder and restore one on
+request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
+cannot trash or delete. A trashed page's files
 stay referenced, so they count against the storage quota until the page is
 deleted for good. Then the orphan check takes over
 ([user_db.md](user_db.md) "Stored files").

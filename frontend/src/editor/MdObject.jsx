@@ -146,6 +146,18 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
         e.stopPropagation();
         if (e.button === 0) setSelected(true);
       }}
+      // A diagram has no editing of its own — a picture zooms on
+      // double-click and a table edits the cell under the pointer — so a
+      // double-click on one opens the block's editor on its source: the
+      // menu's "Edit markdown source" without the menu. The hover toolbar
+      // and the resize grips keep their own double-clicks.
+      onDoubleClick={kind === "mermaid" && editable ? (e) => {
+        const body = e.target.closest?.(".mermaidDiagram");
+        if (!body || !ref.current?.contains(body) || e.target.closest?.(".mermaidTools, .mdResizeGrip")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        act("editRaw", e);
+      } : undefined}
       onContextMenu={openMenu}
       onDragStart={(e) => {
         e.stopPropagation();
@@ -164,6 +176,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           <MenuItem icon={CodeIcon} title={t("Open the block's editor with the caret on this object's markdown")}
+            keys={kind === "mermaid" && editable ? t("Double-click") : undefined}
             onClick={(e) => act("editRaw", e)}>{t("Edit markdown source")}</MenuItem>
           {editable ? (
             <SubMenuItem id="move" icon={MoveVerticalIcon} label={t("Move to")}>

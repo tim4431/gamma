@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, conversationId, declinedSummary, grantsIn, readGrants, withGrant, withoutGrants, writeGrants,
+  approvalTitle, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+  withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
 test("the card's headline says what the call would do", () => {
@@ -14,6 +15,10 @@ test("the card's headline says what the call would do", () => {
   assert.equal(card("edit_block", { title: "N", mode: "replace" }), "Edit a note in “N”");
   assert.equal(card("create_block", { title: "N", parent: "Methods" }), "Add a note under “Methods” in “N”");
   assert.equal(card("move_block", { title: "N", src_title: "M" }), "Move a note from “M” to “N”");
+  assert.equal(card("save_paper", { title: "Attention", to: "refs" }), "Save “Attention” to refs");
+  assert.equal(card("save_paper", { title: "arXiv:1706.03762", to: "" }), "Save “arXiv:1706.03762” to the library root");
+  assert.equal(card("save_paper", { title: "Attention", to: "refs", existed: true }), "File “Attention” in refs");
+  assert.equal(card("restore_page", { title: "Old draft", to: "ML" }), "Restore “Old draft” from Recently deleted");
   // A reading tool the user set to ask names its arguments, a page by title.
   assert.equal(approvalTitle({ tool: "read_page", args: { page_id: "a" } }, { titleOf: (id) => (id === "a" ? "Attention" : "") }),
     "Read “Attention”");
@@ -58,4 +63,18 @@ test("grants survive a reload through storage, and bad storage asks again", () =
   const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("full"); } };
   assert.deepEqual(readGrants(broken), {});
   writeGrants({ x: 1 }, broken); // no throw
+});
+
+test("a conversation can stop waiting for blocked papers, without losing its grants", () => {
+  let store = withGrant({}, "ada", "c1", "move", 1);
+  assert.equal(waitsForPapers(store, "ada", "c1"), true);
+  store = withoutPaperWait(store, "ada", "c1", 2);
+  assert.equal(waitsForPapers(store, "ada", "c1"), false);
+  assert.deepEqual(grantsIn(store, "ada", "c1"), ["move"], "the grant survives the second decision");
+  // Another conversation, and another account, decide for themselves.
+  assert.equal(waitsForPapers(store, "ada", "c2"), true);
+  assert.equal(waitsForPapers(store, "bob", "c1"), true);
+  // A chat with no first message yet waits, and records nothing.
+  assert.equal(waitsForPapers(store, "ada", ""), true);
+  assert.deepEqual(withoutPaperWait(store, "ada", "", 3), store);
 });

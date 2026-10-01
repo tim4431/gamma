@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
+import PdfViewer from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
@@ -125,6 +126,7 @@ import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
+import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
 import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
 import { libraryAccess } from "../library/libraryAccess";
@@ -348,10 +350,10 @@ function captureViewerSnapshot() {
 }
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
-function CardCarousel({ label, children, className }) {
+function CardCarousel({ label, children, className, guide }) {
   const trackRef = useWheelPan();
   return (
-    <div className={"carouselRow" + (className ? " " + className : "")}>
+    <div className={"carouselRow" + (className ? " " + className : "")} data-guide={guide}>
       {label ? <div className="carouselLabel">{label}</div> : null}
       <div className="carouselTrack" ref={trackRef}>{children}</div>
     </div>
@@ -2488,7 +2490,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote,
+    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
@@ -2500,7 +2502,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
-    fetchInBackground, setFetchInBackground,
+    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -2835,12 +2837,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rewrites just that). Cleared on send, like pdfSelections; a page switch
   // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
+  const blockChip = (block) => ({ kind: "block", id: block.id, text: blockChipText(block).slice(0, 4000) });
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
+      ? prev : prev.length >= 12 ? prev : [...prev, blockChip(block)]);
     setStatus(t("Block attached to your next chat message."));
+  }
+  // "Transcribe with AI" on a handwriting block: the block goes to the chat
+  // as a chip (its picture rides with the message, ai_context) with the
+  // request, sent at once — the agent writes the text into its caption
+  // (view_ink, edit_block), or answers with it where it may not edit.
+  const [chatAsk, setChatAsk] = useState(null);
+  function transcribeInk(block) {
+    if (!block?.id) return;
+    // The block the request is about always goes: at 12 chips the oldest
+    // makes room.
+    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
+      ? prev : [...prev.slice(-11), blockChip(block)]);
+    showChat();
+    setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
   }
   // A Ctrl-selection inside one block's rendered view → its source range;
   // one that can't be pinned down (it spans blocks, or an end isn't the
@@ -3812,10 +3828,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     triggerFlash(land.id);
   }, [blocks]);
 
-  // Fetch backlinks for the focused block. Not in the share view: backlinks
-  // span the library, so the server refuses share tokens (403) by design.
+  // Fetch backlinks for the focused block, while the "Linked from" section
+  // is on (Settings → Reading & editing › Notes). Not in the share view:
+  // backlinks span the library, so the server refuses share tokens (403) by
+  // design.
   useEffect(() => {
-    if (!focusedBlockId || shareMode) { setBacklinks([]); return; }
+    if (!focusedBlockId || shareMode || !backlinksVisible) { setBacklinks([]); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -3824,7 +3842,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } catch { if (!cancelled) setBacklinks([]); }
     })();
     return () => { cancelled = true; };
-  }, [focusedBlockId, shareMode]);
+  }, [focusedBlockId, shareMode, backlinksVisible]);
 
   // The page's live session (collaboration/usePageCollab.js): the tree's transitions become ops
   // sent in debounced batches, other clients' batches arrive over the page
@@ -4363,6 +4381,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const a = ev.action;
     if (!a || a.error) return;
     if (a.page_id !== focusedBlockId && a.src_page_id !== focusedBlockId) return;
+    if (a.kind === "ink") {
+      if (a.block_id) markAiBlock(a.block_id, "read", 2500);
+      return;
+    }
     if (a.kind === "read") {
       if (a.block_id && a.block_id !== focusedBlockId) markAiBlock(a.block_id, "read", 2500);
       else {
@@ -4648,6 +4670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
+      guideEvents.emit("paper.fetched");
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(t("Open failed: {message}", { message: err.message }));
@@ -4697,6 +4720,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         client: "", ops: [{ op: "insert", id: sheet.id, parent: created.id, position: generateKeyBetween(null, null),
           content: "", props: sheet.properties }] }) });
       setNotebookView(created.id, true);
+      guideEvents.emit("sheet.created", { id: sheet.id });
       await fetchHomeBlocks();
       await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
@@ -5953,11 +5977,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setExportOpen(true);
     } else if (open === "import") {
       setImportReview({ jobId: task.id });
+    } else if (open === "page") {
+      // A finished research job: the report page it filed. The listing
+      // leaves results out, so ask for this one job.
+      if (isActive(task)) setStatus(t("Still working — its page appears when it finishes."));
+      else {
+        tasks.fetchJob(task.id)
+          .then((full) => { if (full?.result?.page_id) openBlock(full.result.page_id); })
+          .catch(() => {});
+      }
+    } else if (open === "handoff") {
+      // A paper the chat could not download: its /go page leads on to the
+      // publisher, and Gamma Connector knows the tab by that address.
+      window.open(`${API}/ai/handoffs/${encodeURIComponent(task.params?.request || "")}/go`,
+                  "_blank", "noopener");
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }
   }
   // Start a task's work again (a row's retry button, the export dialog's
+  // Hand a question to the background researcher (gamma/paper_research.py):
+  // it searches and reads for minutes and files a report page in the folder
+  // being viewed. The tray follows it, and its row opens that page.
+  async function startResearch(question) {
+    if (!question) return;
+    try {
+      await tasks.start("research", { question, folder: folderFilter || "",
+                                      model: chatModel || "", read_char_limit: agentReadChars || 0 },
+                        { pill: true });
+      setStatus(t("Researching in the background — Background tasks has it."));
+    } catch (err) {
+      setStatus(err.message || t("Could not start the research"));
+    }
+  }
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
   // watches, a workspace export was asked for from a menu), else offered.
@@ -6010,6 +6062,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else if (!shownInDialog && started && job.state === "failed") {
         setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
       }
+      return;
+    }
+    if (job.kind === "research") {
+      if (job.state !== "done") {
+        if (started && job.state === "failed") setStatus(t("Research failed: {msg}", { msg: t(job.error) }));
+        return;
+      }
+      if (here) fetchHomeBlocks();
+      // Its report is a page: offer to open it rather than open it over
+      // whatever the user is reading now.
+      tasks.fetchJob(job.id).then((full) => {
+        const pageId = full?.result?.page_id;
+        if (!pageId) return;
+        postPill(`job:${job.id}`, { msg: t("Research finished: {name}.", { name: full.result.title || title }),
+          action: { label: t("Open"), run: () => { openBlock(pageId); postPill(`job:${job.id}`, null); } } },
+        { after: [60000, null] });
+      }).catch(() => {});
       return;
     }
     if (!started || shownInDialog) return;
@@ -6419,6 +6488,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const sheet = newSheet(id, paperBefore(tree, afterId));
     setBlocks((prev) => (findBlock(prev, id) || !findBlock(prev, afterId) ? prev : insertSibling(prev, afterId, sheet, true)));
+    guideEvents.emit("sheet.created", { id });
     return id;
   }
   // The viewer's "Add page": after the last page.
@@ -6439,6 +6509,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fold = !block.children?.length;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({ ...b, content: "",
       properties: { ...b.properties, sheet, ...(fold ? { collapsed: true } : {}) } })));
+    guideEvents.emit("sheet.created", { id: blockId });
     saveNowRef.current = true;
     setView((v) => closeEditing(v, blockId));
   }
@@ -6821,6 +6892,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // A library big enough that folders and labels start to pay: the
+  // "Organize your library" tour is offered once, past the folders hint.
+  const growingLibrary = useMemo(() => homeBlocks.length >= 20, [homeBlocks]);
+  // The open page carries enough of the user's own work to be worth
+  // taking out of Gamma: the export hint.
+  const annotatedPage = useMemo(() => blocksToHighlights(blocks).length >= 5, [blocks]);
   // Nothing in the library yet but the seeded Welcome page, once the listing
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
@@ -6831,6 +6908,41 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
     return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
   }, [homeBlocks]);
+  // What the two "try this" hints need to know (guide/tours/hints.js), each
+  // learnt once per load and never again: whether Gamma Connector is in
+  // this browser (its content script answers; the desktop app's Connector
+  // lives in the system browser, out of reach, so it stays unknown and
+  // nothing is suggested), whether this account could link a Gamma Cloud
+  // account but has not, and whether a setting that travels with the
+  // account was changed here — the moment carrying settings elsewhere
+  // starts to mean something.
+  // Nothing is asked where nothing would be suggested ("Suggest tours" off).
+  const [connectorHere, setConnectorHere] = useState(undefined);
+  useEffect(() => {
+    if (shareMode || !authUser?.user || !suggestTours || IS_DESKTOP) return;
+    let live = true;
+    askConnectorHere().then((here) => { if (live) setConnectorHere(here); });
+    return () => { live = false; };
+  }, [shareMode, authUser?.user, suggestTours]);
+  const [cloudLink, setCloudLink] = useState(null); // {identity, enabled, connected}
+  const cloudLogin = !!serverConfig?.cloud?.enabled;
+  useEffect(() => {
+    if (shareMode || !cloudLogin || !authUser?.user || authUser.is_guest || !suggestTours) { setCloudLink(null); return; }
+    let live = true;
+    apiJson(`${API}/auth/cloud/status`).then((d) => { if (live) setCloudLink(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [shareMode, cloudLogin, authUser?.user, authUser?.is_guest, suggestTours]);
+  // A setting of this account's own making, not the profile arriving: the
+  // first push AFTER the sync has been quiet once (a profile the server
+  // never held reads as every entry pending until its seeding push lands,
+  // app/prefs.js).
+  const [prefsChanged, setPrefsChanged] = useState(false);
+  const syncQuiet = useRef(false);
+  useEffect(() => {
+    if (!profileSync.pending.size && !profileSync.inflight.size) {
+      if (profileSync.state === "loaded") syncQuiet.current = true;
+    } else if (syncQuiet.current) setPrefsChanged(true);
+  }, [profileSync.pending, profileSync.inflight, profileSync.state]);
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
@@ -6904,7 +7016,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       editable: !readOnly,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
+      growingLibrary,
+      annotatedPage,
+      // the notebook view: the sheets fill the viewer, so the notes view's
+      // own sheet and its tool row (the notebook tour's anchors) are not up
+      notebookView: !!notebook,
+      // this workspace has an offline copy or a publication, so it has a sync pill
+      clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
       installable: HOME_SCREEN_INSTALLABLE,
+      // Gamma Connector in this browser (undefined while it is asked, and
+      // in the desktop app), and a Gamma Cloud account this one could link.
+      connectorHere,
+      cloudLinkable: cloudLink ? !!cloudLink.enabled && cloudLink.connected !== false && !cloudLink.identity : undefined,
+      prefsChanged,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
       welcomePdf,
@@ -7695,7 +7819,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Who links here (editor/BacklinksPanel.jsx), under the notes and above
   // the tail; an entry opens its page at the linking block, a link jump
-  // like a [[ref]] chip's.
+  // like a [[ref]] chip's. Nothing to show while the section is off — the
+  // list is only fetched when `backlinksVisible` is on.
   const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
     <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
       refCache={refCache} onFetchRefs={onFetchRefs} onOpen={(bl) => openBlockLink(bl.id, bl.page_root_id)}
@@ -8248,7 +8373,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
             {homeMode && lib.history && recentViewedPages.length > 0 ? (
-              <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
+              <CardCarousel label={t("Recently viewed")} className="recentsCarousel" guide="home.recents">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
@@ -8270,7 +8395,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={14} /> {t("Pinned")}</div>
-                <div className="pinnedStrip" ref={pinnedStripRef}>
+                <div className="pinnedStrip" ref={pinnedStripRef} data-guide="home.pinned">
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
                       key={item.key}
@@ -8412,7 +8537,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
                 {lib.organize && !folderFilter && !categoryFilter ? (
-                  <button type="button" className="ctlBtn" title={t("Recently deleted")}
+                  <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}>
                     <Trash2Icon size={16} />
                   </button>
@@ -8522,6 +8647,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <PageCard
                           key={id}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
                           preview={b._preview}
                           title={b.content}
@@ -8670,6 +8796,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div
                           key={id}
                           className={`fileRow ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          data-guide="home.card"
                           draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
@@ -8885,6 +9012,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
+                  // A handwriting block's "Transcribe with AI".
+                  onTranscribe: shareMode ? null : transcribeInk,
                   // `above` puts the copy before the original (Duplicate
                   // block above).
                   onDuplicate: (id, { above = false } = {}) => {
@@ -9117,8 +9246,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
-          fetchInBackground={fetchInBackground}
+          fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
+          askSignal={chatAsk}
+          onResearch={startResearch}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -9206,6 +9337,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem
             key="export"
             icon={ExportIcon}
+            data-guide="page.export"
             onClick={() => {
               setOpenPopover(null);
               setExportFolder(homeMode ? folderFilter : null);
@@ -9308,11 +9440,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
-            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
             <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
-            <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
-            <MenuItem icon={NotebookIcon} onClick={() => createNotebook()}
+            <MenuItem icon={FilePlusIcon} data-guide="add.newPage" onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <MenuItem icon={NotebookIcon} data-guide="add.newNotebook" onClick={() => createNotebook()}
               title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
             <input
               ref={addFilesRef}
@@ -10423,6 +10555,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFileLabels,
           syncPillScope,
           setSyncPillScope,
+          backlinksVisible,
+          setBacklinksVisible,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -10508,6 +10642,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setAgentEnabled,
           fetchInBackground,
           setFetchInBackground,
+          delegateReads,
+          setDelegateReads,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

@@ -623,6 +623,16 @@ notes. The server resolves all three against the request's context pages.
   the agent prompt lists the ids, so *"rewrite these"* means them. Capped at
   12 chips / 12k chars (`MAX_CONTEXT_BLOCKS`, `MAX_BLOCK_SECTION_CHARS`).
   Ids outside the context pages, and page ids, are dropped silently.
+  Handwriting blocks and pages of paper are labelled the way `read_block`
+  labels them, in the cursor block too. An attached one also sends its
+  picture with the message, the same picture `view_ink` gives (up to
+  `MAX_INK_PICTURES`, 2, riding with the selection crops). The cursor block
+  never sends a picture, since it goes with every message. A handwriting
+  block's **Transcribe with AI** (⋮⋮ menu, `onTranscribe` → App's
+  `transcribeInk`) attaches the block and sends "Transcribe this
+  handwriting into its caption." through ChatDock's `askSignal`. The send
+  waits until the conversation has loaded, and while a reply streams the
+  request goes into the composer instead.
 - `note_selections` — selected note text as exact ranges of block sources,
   `[{block_id, from, to, text}]`; `text` is the source slice the client saw.
   Two sources feed it:
@@ -701,8 +711,12 @@ governs tool use in every chat. The chat header's Tools button and settings
 popover edit the same account preference; New chat does not reset it.
 Under the permission table, **Fetch blocked papers in the background**
 (`gamma-ai-fetch-background`, default off) lets a blocked fetch's card hand
-the page to Gamma Connector without a click
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
+the page to Gamma Connector without a click, and **Read long papers with a
+helper** (`gamma-ai-delegate-reads`, default on) offers `read_paper`, which
+gives one document to a second agent and keeps only its cited answer
+([ai_tools.md](ai_tools.md#read_paper)). Both are account-wide, not
+per-chat-kind: they change how a tool works rather than what a chat may
+reach.
 
 Which tools a chat may use is configured per chat KIND — there are three
 (`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
@@ -719,8 +733,8 @@ server, `chat/chatSettings.js` in the client):
   on an approval card in the reply ([Asking before a call](#asking-before-a-call-approvals)).
 - **Off**: its tools are not offered, and a call is refused.
 
-Reading is allowed by default and changes ask: Rename pages, Move pages and
-Edit note blocks start at Ask. The server gives a permission the request
+Reading is allowed by default and changes ask: Save papers, Rename pages,
+Move pages, Restore deleted pages and Edit note blocks start at Ask. The server gives a permission the request
 leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
@@ -740,12 +754,12 @@ sit below its description. Each column offers four presets:
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
 `{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, rename, move, block_edit}` → `"allow"` / `"ask"` /
-`"off"`, and a pre-kind flat map is applied to every kind on read. A stored
-boolean is the older on / off value (`normalizePerm`): `false` is Off, and
-`true` is the permission's default. So a change that was on asks, and
-reading stays allowed. The server reads a sent boolean as on / off, `true`
-meaning Allow, which is what an older tab sends.
+publisher_cookies, save, rename, move, restore, block_edit}` → `"allow"` /
+`"ask"` / `"off"`, and a pre-kind flat map is applied to every kind on read.
+A stored boolean is the older on / off value (`normalizePerm`): `false` is
+Off, and `true` is the permission's default. So a change that was on asks,
+and reading stays allowed. The server reads a sent boolean as on / off,
+`true` meaning Allow, which is what an older tab sends.
 The chat header's ⚙ popover carries the same picker for the kind of chat it
 is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so
@@ -754,15 +768,18 @@ a change in either place is the same change.
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
-One permission per capability: List pages (`list_pages` and the folder tree
-`list_folders`), Read pages (`read_page` and the page and folder chats
-`read_chats`), Read note blocks, View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
-scan or a figure), Search library (`search_library` — notes and PDF text; the stored key is
+One permission per capability: List pages (`list_pages`, the folder tree
+`list_folders` and Recently deleted `list_deleted`), Read pages (`read_page`, the page and folder chats
+`read_chats`, and the citation records `cite`), Read note blocks, View pages
+and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
+scan or a figure, and `view_ink`, the user's handwriting), Search library (`search_library` — notes and PDF text; the stored key is
 still `search`), Search papers online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
-"search_web" section), Rename pages, Move pages, and Edit
+"search_web" section), Save papers (`save` → `save_paper`, in every chat
+kind), Rename pages, Move pages, Restore deleted pages (`restore` →
+`restore_page`, folder chats only), and Edit
 note blocks (one permission for `edit_block`/`create_block`/`move_block`
 together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
@@ -801,7 +818,10 @@ A call of a tool whose permission is Ask waits for the user
    `del` removed, `ins` added (`ai_tools.text_diff`). Words are compared one
    by one, and CJK text character by character; long kept stretches are cut
    around "…". A page move has `from` / `to` instead. A created or moved
-   block has its `parent`, and `src_title` when it leaves its page.
+   block has its `parent`, and `src_title` when it leaves its page. A
+   saved paper has the folder it goes `to` and its source as the `diff`,
+   plus `existed` and `page_id` when the library holds it already. A
+   restored page has the folders it goes back `to`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -834,6 +854,9 @@ streams no `progress`, so the note is not typed in before the user decides.
 In the client (`chat/ApprovalCard.jsx`, its rules in `chat/approvals.js`),
 the card takes the Thinking pill's place in the streaming reply. The steps
 pill reads "Waiting for your approval" until the user answers. The card
+carries the `chat.approval` guide anchor and emits `approval.shown` while it
+is up, so a hint beside the first one ever shown explains the four answers
+([onboarding.md](onboarding.md)). The card
 names the change ("Add to a note in “Paper”") and the permission, and shows
 the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one
@@ -861,19 +884,62 @@ only where `auth.can_write` allows them, and the permission map and
 
 ### The tool loop
 
-The router runs a loop (`agent_events`) over `ai_client.sse_events`, which
-parses tool calls from every wire's SSE (`Protocol.events`): the model calls
-tools → the server executes them → results go back → repeat until it
-answers. Each adapter's `request` maps the tool defs and the
-`tool_calls`/`role:"tool"` turns to its wire. The Responses body enables
-`parallel_tool_calls` when tools ride along, so bulk renames batch per round.
+```mermaid
+flowchart LR
+  ask["POST /api/ai/chat"] --> build["context + prompt, fitted to the window"]
+  build --> arm["arm the tools"] --> turn["one provider turn"]
+  turn --> calls{"tool calls?"}
+  calls -- none --> saved(["reply saved"])
+  calls -- some --> group["group: reads batch, changes serial"]
+  group --> gate{"Ask?"}
+  gate -- yes --> card["{approval} card, wait"] --> run
+  gate -- no --> run["run, 4 reads at once"]
+  run --> settle{"hit a wall?"}
+  settle -- yes --> hand["{handoff} card, wait"] --> back
+  settle -- no --> back["{action} chips, results appended"]
+  back --> turn
+```
+
+The loop is `ai_agent.AgentLoop` (`gamma/ai_agent.py`) over
+`ai_client.sse_events`, which parses tool calls from every wire's SSE
+(`Protocol.events`): the model calls tools → the server executes them →
+results go back → repeat until it answers. Each adapter's `request` maps
+the tool defs and the `tool_calls`/`role:"tool"` turns to its wire. The
+Responses body enables `parallel_tool_calls` when tools ride along, so bulk
+renames batch per round.
+
+The router owns the HTTP and the connection and passes the loop what
+differs: `open_round(conversation)` opens one provider turn, `read_events`
+parses it, and two hooks hold the places where the reply stops for the
+user. `gate` is `ApprovalGate` — a permission set to Ask shows its card
+first. `settle` is `PaperWait` — a fetch a publisher blocked waits for the
+PDF from the user's own browser
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A caller with
+no user to ask passes neither: the background research job drives the same
+loop headless ([tasks.md](tasks.md)).
+
+**A round's reads run together.** The calls of one turn are grouped
+(`AgentLoop._groups`): a run of armed reads that cannot stop on a card is
+one batch of up to `MAX_PARALLEL_CALLS` (4), executed in threads with a
+connection each, and everything else is a batch of one in call order. So
+four papers are fetched side by side instead of one after another, while
+changes still happen one at a time — the user watches them in order and the
+`MAX_TOOL_ACTIONS` budget stays exact. A batch's tool results are appended
+in call order whatever order they finished in. What the calls of one message
+have spent — papers saved, web searches used, the works a search already
+listed — lives in one `ai_tools.Tally` behind a lock, so two parallel calls
+cannot take the same last unit of a budget.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs; a call that waits for the user's approval then sends an
-`{"approval"}` line ([Asking before a call](#asking-before-a-call-approvals)).
+it runs; a batch sends one step with `batch: n` (and `tools` when they are
+not all the same tool), which the chat reads as "Fetching 4 documents…". A
+call that waits for the user's approval then sends an `{"approval"}` line
+([Asking before a call](#asking-before-a-call-approvals)), and a blocked
+fetch a `{"handoff"}` line.
 The step's `args` are only the short ones the running label reads
-(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
-`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
+(`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
+`label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
+Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -904,12 +970,17 @@ also carries the rendered page: the loop lifts it off the action into the
 tool message's `images` before yielding the chip, so the model sees the
 picture and the saved chat never holds it ([ai_tools.md](ai_tools.md)).
 A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
-`handoff`; after the reply's text the chat shows a card for it
-(`chat/FetchHandoffCards.jsx`) that gets the PDF through the user's browser and
-continues the conversation once it arrives
-([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A reply that read
+`handoff`, and the reply stops on a card for it while the user's browser
+gets the PDF
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). Every chip also
+carries `ms` (how long the call took) and, for a fetch, the `version` it
+read and whether it was a `probe` or `delivered` by the browser, which the
+chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A reply that read
 or named papers ends with a **Save to library** list of them
-(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`.
+(`chat/ReplyPapers.jsx`), saved through `POST /api/clip`. The agent's
+`save_paper` runs the same ingest itself. Its request carries the Reading
+choices the list uses as `paper_save` (`{allow_oa, save_copy,
+fetch_metadata}`), which the router puts in the tool scope.
 
 ### Watching the agent work (live footprint)
 
@@ -1301,6 +1372,13 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     never sends a title, so it can't roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
+  - Several at once: each archived row carries a tick box (on hover, and on
+    every row while anything is ticked). The bar under the list says how
+    many, offers **Select all** (the rows the search leaves listed) and
+    **Clear**, and its **Delete** confirms once and sends them in one call
+    (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
+    popover: closing it, or a search that hides a ticked row, drops them, so
+    Delete never takes a row the user cannot see.
 - History follows its bucket: `POST /folders/rename` rewrites entry
   buckets along with the active rows (a folder delete leaves them), and
   `purge_page_data` drops the entries of a page deleted for good (a page in

@@ -30,6 +30,8 @@ import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
+import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
+import { installViewerZoom } from "../shared/lib/viewerZoom.js";
 // Bypass immutable responses cached with text/plain before the server MIME
 // fix. Keep this stable: Vite's content hash handles later worker upgrades.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
@@ -50,11 +52,6 @@ try {
 const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } : params);
 
 const EMPTY_MARKS = [];
-
-// One zoom policy for every entry point (toolbar buttons in App, Ctrl+scroll
-// here) — a limit change must not leave the two out of agreement.
-export const ZOOM_MIN = 0.2, ZOOM_MAX = 4;
-export const clampZoom = (s) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s));
 
 // Page layout model shared by the placeholder styles and all scroll math:
 // page boxes stack with a fixed gap, and unmeasured pages assume page 1's
@@ -429,125 +426,46 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     cbRef.current.onLoadState?.(u, { phase: "painted" });
   }, []);
 
-  // Ctrl/Cmd + scroll zooms (this is also what a trackpad pinch reports).
-  // Native non-passive listener on purpose: React's root wheel listener is
-  // passive, so preventDefault (needed to block the browser's own page zoom)
-  // wouldn't work from an onWheel prop. The scale compounds per event in
-  // wheelScaleRef (the committed prop lags behind a fast train), but the
-  // dispatch is coalesced to one per frame — every dispatch re-renders every
-  // page, and a trackpad pinch fires far more events than commits are worth.
-  const wheelScaleRef = useRef(1); // what the next wheel step compounds on
-  const wheelRafRef = useRef(0);
+  // Ctrl/⌘ + scroll and the two-finger pinch are read by
+  // shared/lib/viewerZoom.js (the notebook viewer shares it). What is left
+  // here is each commit — the part that knows this viewer's layout.
   const zoomAnchorRef = useRef(null); // viewport point to zoom around; consumed by the anchor effect, null → viewport center
   // Set when a new document mounts; consumed by the next scale change so the
   // anchor effect can tell "fit-width settling for the swapped-in document"
   // apart from a user zoom — the two need different anchoring (see below).
   const docSwapPendingRef = useRef(false);
-  useEffect(() => {
-    const el = viewerRef.current;
-    if (!el) return;
-    const onWheel = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // LINE mode (Firefox) → ~px
-      const cur = wheelScaleRef.current;
-      const next = clampZoom(cur * Math.exp(-dy * 0.0015));
-      if (next === cur) return; // pinned at a clamp limit — don't leave a stale anchor behind
-      const r = el.getBoundingClientRect();
-      zoomAnchorRef.current = { x: e.clientX - r.left, y: e.clientY - r.top };
-      wheelScaleRef.current = next;
-      docSwapPendingRef.current = false; // an explicit zoom, whatever mounted before it
-      if (!wheelRafRef.current) {
-        wheelRafRef.current = requestAnimationFrame(() => {
-          wheelRafRef.current = 0;
-          cbRef.current.onZoomTo?.(wheelScaleRef.current);
-        });
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => { el.removeEventListener("wheel", onWheel); cancelAnimationFrame(wheelRafRef.current); };
-  }, []);
-
-  // Two-finger pinch zoom. Committing a real zoom per move event (the wheel
-  // path) is hopelessly janky on phones — every commit re-lays-out and
-  // re-renders every page. Instead the gesture only moves a CSS transform on
-  // the page stack (compositing, no layout; blurry while the fingers are
-  // down, like every native PDF app), and the real zoom is committed ONCE on
-  // finger-lift: scroll is re-based so the content under the fingers' final
-  // midpoint is what the zoom-anchor effect (keyed on that midpoint) holds
-  // in place through the re-layout. preventDefault on the two-finger move
-  // blocks both native scrolling and the browser's own page zoom.
   const zoomLayerRef = useRef(null);
+  const viewerZoomRef = useRef(null);
   useEffect(() => {
     const el = viewerRef.current;
-    if (!el) return;
-    let start = null; // gesture-start snapshot: finger distance/midpoint, committed scale, scroll
-    let cur = null; // latest preview: effective ratio + midpoint
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const mid = (t, r) => ({
-      x: (t[0].clientX + t[1].clientX) / 2 - r.left,
-      y: (t[0].clientY + t[1].clientY) / 2 - r.top,
-    });
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 2) return;
-      const m = mid(e.touches, el.getBoundingClientRect());
-      start = {
-        dist: dist(e.touches), scale: wheelScaleRef.current,
-        m0x: m.x, m0y: m.y, sl: el.scrollLeft, st: el.scrollTop,
-      };
-      cur = null;
-      if (zoomLayerRef.current) zoomLayerRef.current.style.willChange = "transform";
-    };
-    const onTouchMove = (e) => {
-      if (!start || e.touches.length !== 2) return;
-      e.preventDefault();
-      const m = mid(e.touches, el.getBoundingClientRect());
-      // Clamp the previewed scale too, so the preview never shows a zoom the
-      // commit would refuse.
-      const k = clampZoom(start.scale * (dist(e.touches) / start.dist)) / start.scale;
-      cur = { k, m1x: m.x, m1y: m.y };
-      // origin 0 0: keep the content that started under the midpoint glued to
-      // the (moving) midpoint — visual = t + k·content − scroll, solve for t.
-      const tx = m.x + start.sl - k * (start.sl + start.m0x);
-      const ty = m.y + start.st - k * (start.st + start.m0y);
-      const l = zoomLayerRef.current;
-      if (l) l.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
-    };
-    const finish = () => {
-      if (!start) return;
-      const l = zoomLayerRef.current;
-      if (l) { l.style.transform = ""; l.style.willChange = ""; }
-      if (cur) {
-        // Re-base scroll by the midpoint's travel: afterwards the content at
-        // the final midpoint (at the old scale) is the pinched content, which
-        // the anchor effect then re-places there at the committed scale. The
-        // refs get the unclamped values on purpose — the anchor effect reads
-        // them instead of live scroll to survive pre-layout clamping.
-        const sl = start.sl + start.m0x - cur.m1x;
-        const st = start.st + start.m0y - cur.m1y;
+    if (!el) return undefined;
+    const zoom = installViewerZoom(el, {
+      layer: () => zoomLayerRef.current,
+      clamp: clampZoom,
+      onWheelZoom: (next, at) => {
+        zoomAnchorRef.current = at;
+        docSwapPendingRef.current = false; // an explicit zoom, whatever mounted before it
+        cbRef.current.onZoomTo?.(next);
+      },
+      onPinchZoom: (next, g) => {
+        // Re-base scroll by the midpoint's travel. That alone is what moves
+        // the view when the fingers only dragged; after a pinch it also means
+        // the content at the final midpoint (at the old scale) is the pinched
+        // content, which the anchor effect below then re-places there at the
+        // committed scale. The refs get the unclamped values on purpose — the
+        // anchor effect reads them instead of live scroll to survive
+        // pre-layout clamping.
+        const sl = g.sl + g.mx - g.vx, st = g.st + g.my - g.vy;
         el.scrollLeft = sl; el.scrollTop = st;
         lastScrollLeftRef.current = sl; lastScrollRef.current = st;
-        const next = clampZoom(start.scale * cur.k);
-        if (next !== wheelScaleRef.current) {
-          zoomAnchorRef.current = { x: cur.m1x, y: cur.m1y };
-          wheelScaleRef.current = next;
-          docSwapPendingRef.current = false;
-          cbRef.current.onZoomTo?.(next);
-        }
-      }
-      start = null; cur = null;
-    };
-    const onTouchEnd = (e) => { if (e.touches.length < 2) finish(); };
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    el.addEventListener("touchend", onTouchEnd, { passive: true });
-    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
-    return () => {
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
-      el.removeEventListener("touchcancel", onTouchEnd);
-    };
+        if (next === g.scale) return; // a drag, or a pinch already against a limit
+        zoomAnchorRef.current = { x: g.vx, y: g.vy };
+        docSwapPendingRef.current = false;
+        cbRef.current.onZoomTo?.(next);
+      },
+    });
+    viewerZoomRef.current = zoom;
+    return () => { viewerZoomRef.current = null; zoom.dispose(); };
   }, []);
 
   // Reset pending touch alignment on zoom/document changes. The helper never
@@ -697,13 +615,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
   const scale = isFitWidth ? fitWidthScale : numericScale;
-  // Resync the wheel's compounding base to the committed scale — but not
-  // while a coalesced dispatch is still in flight: events that arrived since
-  // are compounded into the ref, and overwriting it here would drop them
-  // (measurably: a 6-notch train only zoomed ~3 notches' worth).
-  useEffect(() => {
-    if (!wheelRafRef.current) wheelScaleRef.current = scale;
-  }, [scale]);
+  // A zoom from elsewhere (the buttons, fit-width, a new document) is what the
+  // next gesture compounds on; sync() ignores it while a dispatch is in flight.
+  useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
   useEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;

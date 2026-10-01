@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { ROOT } from './runtime.mjs';
 import { Server, Account } from '../../frontend/tests/e2e/harness.mjs';
 const name = process.argv[2];
-const names = ['notes', 'library', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector'];
+const names = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector'];
 if (!names.includes(name)) throw new Error(`Choose: ${names.join(', ')}`);
 const suite = path.join(ROOT, 'artifacts/readme-media/suite');
 const isolatedNotes = name === 'notes';

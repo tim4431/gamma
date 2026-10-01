@@ -499,6 +499,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
     <span data-popover="mirror" className="popoverAnchor">
       <button
         className={`iconBtn mirrorPill ${st.tone} ${open ? "activeIcon" : ""}`}
+        data-guide="sync.pill"
         data-state={st.state}
         onClick={onToggle}
         title={[publication ? name : t("Clone of {name}", { name: mirrorOf }), host ? t("on {host}", { host }) : "", "—", t(st.text)].filter(Boolean).join(" ")}

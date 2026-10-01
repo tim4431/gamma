@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
+import { changePlace, chipNote, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -34,6 +34,21 @@ test("changes are split by where they landed; failures and no-ops are not change
   assert.equal(isChange(declined), false);
 });
 
+test("saved and restored pages are library changes; handwriting and citations are reading steps", () => {
+  const more = [
+    { kind: "ink", tool: "view_ink", summary: "Looked at handwriting in “N”", page_id: "n", block_id: "i1" },
+    { kind: "ink", tool: "view_ink", summary: "Looked at handwriting in “N”", page_id: "n", block_id: "i2" },
+    { kind: "cite", tool: "cite", summary: "Cited 3 pages" },
+    { kind: "save", tool: "save_paper", summary: "Saved “P” to ML", page_id: "p", title: "P", to: "ML" },
+    { kind: "restore", tool: "restore_page", summary: "Restored “Q”", page_id: "q", title: "Q", to: "" },
+    { kind: "save", tool: "save_paper", summary: "ok — [P](/?page=p) is already in the library; nothing changed", noop: true },
+  ];
+  assert.equal(stepsSummary(more), "6 steps · looked at handwriting 2 times, cited");
+  const { library, notes } = splitActions(more);
+  assert.deepEqual(library.map((a) => a.page_id), ["p", "q"]);
+  assert.deepEqual(notes, []);
+});
+
 test("the running step reads as what the agent is doing", () => {
   const titleOf = (id) => (id === "a" ? "Attention" : "");
   assert.equal(runningLabel({ tool: "search_library", args: { query: "scaled dot-product" } }), "Searching library for “scaled dot-product”…");
@@ -55,4 +70,29 @@ test("the running step reads as what the agent is doing", () => {
   assert.equal(runningLabel({ tool: "read_block", args: { block_id: "b7" } }, titleOf), "Reading notes…");
   assert.equal(runningLabel({ tool: "list_pages", args: { folder: "ML" } }), "Listing pages in ML…");
   assert.equal(runningLabel({ tool: "list_pages", args: { label: "to-read", folder: "ML" } }), "Listing pages labelled “to-read”…");
+  assert.equal(runningLabel({ tool: "view_ink", args: { block_id: "i1" } }), "Looking at handwriting…");
+  assert.equal(runningLabel({ tool: "save_paper", args: { source: "arXiv:2601.1", title: "Attention" } }), "Saving Attention to your library…");
+  assert.equal(runningLabel({ tool: "save_paper", args: { source: "arXiv:2601.1" } }), "Saving arXiv:2601.1 to your library…");
+  assert.equal(runningLabel({ tool: "restore_page", args: { page_id: "a" } }, titleOf), "Restoring “Attention”…");
+  assert.equal(runningLabel({ tool: "list_deleted", args: {} }), "Looking in Recently deleted…");
+});
+
+test("a batch of calls reads as how many, not as one of them", () => {
+  assert.equal(runningLabel({ tool: "fetch_paper", batch: 4 }), "Fetching 4 documents…");
+  assert.equal(runningLabel({ tool: "read_page", batch: 2 }), "Reading 2 pages…");
+  assert.equal(runningLabel({ tool: "", batch: 3, tools: ["read_page", "search_library"] }),
+    "Running 3 steps at once…");
+  // One call still names what it is doing.
+  assert.equal(runningLabel({ tool: "fetch_paper", batch: 1, args: { source: "doi:10.1/x" } }),
+    "Fetching doi:10.1/x…");
+});
+
+test("a chip says which copy was read, how it came and how long it took", () => {
+  assert.equal(chipNote({ version: "publisher", ms: 2400 }), "publisher PDF · 2.4s");
+  assert.equal(chipNote({ version: "submitted" }), "open-access, preprint");
+  assert.equal(chipNote({ probe: true }), "front matter only");
+  assert.equal(chipNote({ delivered: true }), "from your browser");
+  // Nothing worth saying: a fast call of unknown version.
+  assert.equal(chipNote({ ms: 120 }), "");
+  assert.equal(chipNote(null), "");
 });

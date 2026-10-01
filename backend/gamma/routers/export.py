@@ -55,7 +55,7 @@ from ..storage import attachment_disposition, upload_refs
 from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
 from ..pdf_document import render_document
-from ..pdf_export import annotate_pdf, highlight_note_text
+from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
 from ..pdf_notes import render_notes
 from ..zotero_export import (
     IMAGE_MIME,
@@ -129,15 +129,15 @@ def _children_by_id(blocks) -> dict:
 def _collect_marks(blocks) -> list[dict]:
     """Highlight blocks → annotate_pdf marks (position/color/popup note).
     Skips annotations that came from the PDF itself and are STILL embedded in
-    it (annot_stripped marks ones the import removed from the file), and link
-    regions (Gamma navigation aids, not annotations)."""
+    it (``still_embedded``), and link regions (Gamma navigation aids, not
+    annotations)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
         if not props.get("highlight_id") or not props.get("pdf_position"):
             continue
-        if props.get("imported_annot") and not props.get("annot_stripped"):
+        if still_embedded(props):
             continue
         if props.get("link_url") or props.get("link_page_id"):
             continue
@@ -161,7 +161,7 @@ def _collect_ink(blocks, uploads_dir) -> list[dict]:
     for b in blocks:
         props = b["properties"]
         url = props.get("ink_url")
-        if not url or (props.get("imported_annot") and not props.get("annot_stripped")):
+        if not url or still_embedded(props):
             continue
         ink_file = inkmod.read_upload(uploads_dir, url)
         if not ink_file:
@@ -185,7 +185,7 @@ def _collect_text_boxes(blocks, page_id) -> tuple[list[dict], set]:
         props = b["properties"]
         if not is_text_box(props):
             continue
-        if props.get("imported_annot") and not props.get("annot_stripped"):
+        if still_embedded(props):
             replaced.add(props["imported_annot"])
         page = box_page(props, on_sheet=b["id"] in on_sheets)
         if page and b["content"].strip():
@@ -857,8 +857,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         uploads = ws_uploads_dir(ws)
         sheets, drawn = [], 0
         for sheet in page_sheets:
-            boxes = [(b["content"], box) for b in sheet["blocks"] if b["content"].strip()
-                     if (box := normalize_text_box((b["properties"] or {}).get("text_box"))) is not None]
+            boxes = notebook.sheet_text_boxes(sheet["blocks"])
             inks = [ink for b in sheet["blocks"] if (b["properties"] or {}).get("ink_url")
                     if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
             drawn += len(boxes) + len(inks)

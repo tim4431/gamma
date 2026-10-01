@@ -29,7 +29,7 @@ Your library lives on your server and opens from any browser: the office desktop
 
 ## Highlight, annotate and draw
 
-<a href="./docs/user_guide.md#reading-and-highlighting"><img alt="Highlight a sentence, add a linked annotation, then circle a claim, draw an arrow, and highlight with ink" src="./docs/assets/demos/demo-annotate-and-ink.webp" width="100%"></a>
+<a href="./docs/user_guide.md#reading-and-highlighting"><img alt="Highlight a phrase and note why it matters, circle the claim it makes possible and draw an arrow from one to the other, then lasso the arrow and recolor it red" src="./docs/assets/demos/demo-annotate-and-ink.webp" width="100%"></a>
 
 Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma finds the PDF and falls back to a legal open-access copy when the DOI is paywalled — or drag the file in. Then:
 
@@ -42,24 +42,29 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 
 ## Take notes
 
-<a href="./docs/user_guide.md#notes"><img alt="Type markdown and a live LaTeX equation, add a callout, then paste a picture and drag to resize it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
+<a href="./docs/user_guide.md#notes"><img alt="Type markdown, a page link and a live LaTeX equation, then /page drops a sheet of paper into the notes and a pen sketches the result on it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
 
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
 - **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
 - **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts and tables render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
 - **Pictures and tables** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown.
+- **Pages to write on** — type `/page` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
 - **Link and embed** — `[[page]]` mentions, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
 → Guide: [Notes](./docs/user_guide.md#notes)
 
 ## Ask an AI about your papers
 
-<a href="./docs/user_guide.md#ai-chat"><img alt="Ask a complex question in PDF Chat, follow a citation to the source passage, then box-select a figure and ask a follow-up question" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
+<a href="./docs/user_guide.md#ai-chat"><img alt="Ctrl+drag a figure into the chat and ask about it, follow a cited passage, then ask for the most-cited follow-up papers: the assistant searches online and saves them once you allow it" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
 
-- **Chat with the open paper** — ask about it, paste figures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
+- **Chat with the open paper** — ask about it, Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
 - **Mention a paper** — type `@` to attach a library page; its text stays in context for follow-ups.
-- **Put the agent to work** — ask it to search your library, read papers, compare findings, rename pages or file them into folders. Expand each tool step to inspect what it did; it can never delete anything.
+- **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages or file them into folders. It asks before each change (once, or for the whole chat), each tool step expands to show what it did, and it can never delete anything.
+
+<a href="./docs/user_guide.md#the-library-agent"><img alt="Paste a slide's equation into the chat and ask for it in the note: after an approval card, it lands as a KaTeX block under the cursor" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
+
+- **Write into your notes** — paste a slide or a screenshot into the chat and ask: the new block goes where your cursor is, math as KaTeX, once you approve the edit.
 
 → Guide: [AI chat](./docs/user_guide.md#ai-chat) · [The library agent](./docs/user_guide.md#the-library-agent)
 
@@ -71,8 +76,10 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 - **Labels** are flat tags for facets like an author or a keyword — one click to filter by.
 - **Metadata** fills itself on open (arXiv → DOI → AI) and is editable; one click copies BibTeX or a slide-ready citation with real italics.
 
-<a href="./docs/user_guide.md#search"><img alt="Search titles and PDF text from home, narrow with a folder chip, and open a highlighted match" src="./docs/assets/demos/demo-library.webp" width="100%"></a>
+<a href="./docs/user_guide.md#search"><img alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers" src="./docs/assets/demos/demo-search.webp" width="100%"></a>
 
+- **Find in the paper** — in an open PDF, `Ctrl+F` counts the matches and Enter steps through them, marked in the page.
+- **Jump anywhere** — `Ctrl+P` opens any page, folder or label as you type, typos forgiven; `Ctrl+Enter` there searches notes and PDFs, and `Ctrl+Shift+P` runs any command by name.
 - **Search everything** — `Ctrl+F` searches notes, highlights and the full text of every PDF at once; narrow with label and folder chips. Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 
 → Guide: [Library and organization](./docs/user_guide.md#library-and-organization) · [Search](./docs/user_guide.md#search) · [Metadata and citations](./docs/user_guide.md#metadata-and-citations)

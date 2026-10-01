@@ -8,11 +8,11 @@ import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } 
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
-import FetchHandoffCards from "./FetchHandoffCards";
+import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
-import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, withGrant, withoutGrants,
-  writeGrants } from "./approvals.js";
+import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+  withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -21,7 +21,7 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { changePlace, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { changePlace, chipNote, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -30,8 +30,8 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
-import { T, getLocale, t } from "../shared/i18n/i18n.js";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FilePlusIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -61,7 +61,7 @@ function relAge(iso) {
 // that changed the library (they trigger the home-feed refresh). Every chip
 // carries the raw call the server ran (tool/args/result, both truncated), so
 // clicking one expands the arguments and the output the model saw.
-const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, error: XIcon };
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
@@ -145,7 +145,8 @@ function ChatErrorCard({ message, compact, actions }) {
 // under it the changes — renamed or filed pages, edited or added notes —
 // each old → new with a link to what changed. While the reply streams, the
 // pill names the step running now.
-// `waiting`: the running call waits on its approval card, so nothing spins.
+// `waiting`: what the running call waits for — the user's answer on an
+// approval card, or a blocked paper from their browser — so nothing spins.
 function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const live = !!running;
@@ -154,7 +155,11 @@ function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, childr
       <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatPillText">{waiting ? t("Waiting for your approval") : live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        <span className="chatPillText">
+          {waiting === "paper" ? t("Waiting for the paper from your browser")
+            : waiting ? t("Waiting for your approval")
+              : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
+        </span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
@@ -182,6 +187,12 @@ function AgentChanges({ actions, onOpenPage }) {
       return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
         {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
       </span>;
+    }
+    if ((a.kind === "save" || a.kind === "restore") && a.title) {
+      const args = { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> };
+      return a.kind === "restore" ? t("Restored {page} to {folder}", args)
+        : a.existed ? t("{page}, already in your library, filed in {folder}", args)
+          : t("Saved {page} to {folder}", args);
     }
     return pageLink(a.page_id, a.summary); // saved before the structured fields
   };
@@ -388,9 +399,13 @@ export default function ChatDock({
   // Opens a page the reply links to (/?page=<id>) in place.
   onOpenPage,
   // A blocked fetch's card hands it to Gamma Connector by itself, to fetch
-  // out of sight (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
-  // fetchMetadata}, how a reply's "Save to library" saves (Settings → Reading).
-  fetchInBackground = false, paperSave = {},
+  // in a background tab (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
+  // fetchMetadata}, how a reply's "Save to library" and save_paper save
+  // (Settings → Reading).
+  fetchInBackground = false, delegateReads = true, paperSave = {}, onResearch,
+  // {id, text}: a message App asks the chat to send (a handwriting block's
+  // "Transcribe with AI"), with whatever is attached at that moment.
+  askSignal = null,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState([]);
@@ -483,9 +498,20 @@ export default function ChatDock({
     return scope
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
           permissions: chatToolPerms, agent_system: agentSystem || "",
-          granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)) }
+          granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)),
+          // Whether a blocked paper holds the reply open on its card, or
+          // leaves the card under it ("Skip, and don't wait in this chat").
+          paper_wait: waitsForPapers(readGrants(), activeUser(), conversationId(prevMessages)),
+          delegate_reads: delegateReads !== false,
+          // save_paper stores a paper the way the reply's Save to library does.
+          paper_save: { allow_oa: paperSave.allowOa !== false, save_copy: paperSave.saveCopy !== false,
+                        fetch_metadata: paperSave.fetchMetadata !== false } }
       : {};
   };
+  // "Skip, and don't wait in this chat": later blocked papers of this
+  // conversation leave their card under the reply instead of holding it.
+  const neverWaitHere = () =>
+    updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
   // The user's answer on an approval card: the server runs the call or
   // leaves it; "Allow in this chat" is kept for the conversation and
   // "Always allow" sets the permission in Settings — once the server took it.
@@ -620,6 +646,9 @@ export default function ChatDock({
     setAttachPdf(!sent && nativePdf);
   }
 
+  // The bucket whose stored conversation has been read (or failed to): an
+  // ask from App waits for it, so it never starts over the history.
+  const [loadedFor, setLoadedFor] = useState("");
   // Load chat from backend whenever the chat bucket changes.
   useEffect(() => {
     let cancelled = false;
@@ -648,8 +677,13 @@ export default function ChatDock({
           showLoaded(latest?.messages || data.messages || [], data.title);
           if (!latest) session.seen(chatKey, data.messages || [], data.updated_at);
         }
+        setLoadedFor(chatKey);
       })
-      .catch((err) => { if (!cancelled && !session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message })); });
+      .catch((err) => {
+        if (cancelled) return;
+        if (!session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message }));
+        setLoadedFor(chatKey);
+      });
     return () => { cancelled = true; };
   }, [chatKey, docId, readOnly, session]);
 
@@ -693,9 +727,12 @@ export default function ChatDock({
   const [history, setHistory] = useState(null); // null = not loaded yet
   const [historyQuery, setHistoryQuery] = useState("");
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
+  const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
   const historyOpen = openPopover === "chathistory";
   useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
+  // The selection belongs to the open popover: closing it drops the ticks.
+  useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
   useEffect(() => {
     if (readOnly || !historyOpen || history != null) return;
     let cancelled = false;
@@ -801,6 +838,7 @@ export default function ChatDock({
   function deleteHistory(entry) {
     const run = async () => {
       setHistory((prev) => (prev || []).filter((s) => s.id !== entry.id));
+      setPicked((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
       try {
         await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
       } catch (err) {
@@ -815,6 +853,30 @@ export default function ChatDock({
     });
   }
 
+  // The ticked entries in one call (POST /chat-history/delete). The active
+  // conversation is never among them: it has no history row to delete.
+  function deletePicked() {
+    const ids = [...picked];
+    if (!ids.length) return;
+    const run = async () => {
+      setHistory((prev) => (prev || []).filter((s) => !ids.includes(s.id)));
+      setPicked(new Set());
+      try {
+        await apiJson(`${API}/chat-history/delete`,
+          { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ids }) });
+      } catch (err) {
+        setStatus(t("Couldn't delete the conversations: {message}", { message: err.message }));
+        setHistory(null);
+      }
+    };
+    askConfirm({
+      title: T("Delete conversations"),
+      message: tn("Delete {n} conversation from this chat's history? This can't be undone.",
+        "Delete {n} conversations from this chat's history? This can't be undone.", ids.length),
+      confirmLabel: t("Delete"), danger: true, onConfirm: run,
+    });
+  }
+
   // Rows of the history popover: the active conversation first, then the
   // archived ones newest-first, filtered by the search box.
   const historyRows = useMemo(() => {
@@ -823,6 +885,16 @@ export default function ChatDock({
     const rows = [active, ...(history || [])];
     return q ? rows.filter((s) => `${s.title} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
   }, [history, historyQuery, activeTitle, chatMessages]);
+  // The rows a selection can hold: the listed archived ones ("Select all"
+  // takes the search's results, not the whole history). A tick survives
+  // only while its row is listed, so Delete never takes a hidden one.
+  const archivedRows = useMemo(() => historyRows.filter((s) => !s.active), [historyRows]);
+  const listedKey = archivedRows.map((s) => s.id).join(",");
+  useEffect(() => {
+    const listed = new Set(listedKey ? listedKey.split(",") : []);
+    setPicked((prev) => (prev.size && [...prev].some((id) => !listed.has(id))
+      ? new Set([...prev].filter((id) => listed.has(id))) : prev));
+  }, [listedKey]);
 
   // Attach picked/pasted files: images join the pasted-figures row, PDFs
   // become one-shot native attachments (same as the library PDF button).
@@ -1067,6 +1139,7 @@ export default function ChatDock({
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
     let approval = null; // its approval card ({"approval"} line), while the user decides
+    const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
@@ -1111,6 +1184,10 @@ export default function ChatDock({
             running = ev.step;
           } else if (ev.approval) {
             approval = ev.approval;
+          } else if (ev.handoff) {
+            // A fetch met a wall: the reply waits on this card until the
+            // user's browser sends the PDF, or they skip it.
+            handoffs.push(ev.handoff);
           } else if (ev.action) {
             running = null;
             approval = null;
@@ -1143,9 +1220,10 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage || running) {
+        if (acc || actions.length || usage || running || handoffs.length) {
           showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}),
-            ...(approval ? { approval } : {}) }));
+            ...(approval ? { approval } : {}),
+            ...(handoffs.length ? { handoffs: [...handoffs] } : {}) }));
         }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
@@ -1181,6 +1259,18 @@ export default function ChatDock({
   }
 
   sendChatRef.current = sendChat;
+
+  // App's asks go out once the chat knows its AI and holds its stored
+  // conversation: sent as the user's message, or left in the composer while
+  // a reply is still streaming here.
+  const askedRef = useRef(0);
+  useEffect(() => {
+    if (!askSignal?.id || askSignal.id === askedRef.current || !aiInfo || loadedFor !== chatKey) return;
+    askedRef.current = askSignal.id;
+    if (aiOff || readOnly) return;
+    if (busyHere) setChatInput(askSignal.text);
+    else sendChatRef.current?.(askSignal.text);
+  }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
 
   function sendChatMessage() {
     const text = chatInput;
@@ -1507,7 +1597,7 @@ export default function ChatDock({
                 placeholder={t("Search conversations…")}
                 onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
               />
-              <div className="chatHistList">
+              <div className={`chatHistList${picked.size ? " picking" : ""}`}>
                 {historyRows.map((s) => renaming?.id === s.id ? (
                   <div key={s.id} className="chatHistRow renaming">
                     <input
@@ -1529,6 +1619,16 @@ export default function ChatDock({
                     title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
                     onClick={() => { if (!s.active) openHistory(s.id); }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
+                    {s.active ? null : (
+                      <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
+                        aria-label={t("Select this conversation")} title={t("Select for deleting")}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setPicked((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(s.id); else next.delete(s.id);
+                          return next;
+                        })} />
+                    )}
                     <span className="chatHistTitle">{s.title || t("Untitled")}</span>
                     <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
@@ -1550,6 +1650,17 @@ export default function ChatDock({
                   : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
                   : null}
               </div>
+              {picked.size ? (
+                <div className="chatHistBulk">
+                  <span>{tn("{n} selected", "{n} selected", picked.size)}</span>
+                  {picked.size < archivedRows.length ? (
+                    <button type="button" className="uiBtn sm ghost"
+                      onClick={() => setPicked(new Set(archivedRows.map((s) => s.id)))}>{t("Select all")}</button>
+                  ) : null}
+                  <button type="button" className="uiBtn sm ghost" onClick={() => setPicked(new Set())}>{t("Clear")}</button>
+                  <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </span> : (
@@ -1702,7 +1813,9 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
-                        waiting={isResponding && !!m.approval && !answeredApprovals.has(m.approval.id)}
+                        waiting={!isResponding ? ""
+                          : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"
+                            : m.handoffs?.length ? "paper" : ""}
                         open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
                         titleOf={pageTitleOf}>
                       <div className="chatToolActions">
@@ -1721,6 +1834,7 @@ export default function ChatDock({
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={14} />
                                   <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
+                                  {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
                                 </button>
                               ) : (
@@ -1747,7 +1861,11 @@ export default function ChatDock({
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
                         titleOf={pageTitleOf} onDecide={decideApproval} />
                     ) : null}
-                    {!isUser && m.actions?.some((a) => a.handoff) ? (
+                    {isResponding && m.handoffs?.length ? (
+                      <LiveHandoffCards handoffs={m.handoffs} readOnly={readOnly || aiOff}
+                        autoOpen={fetchInBackground} onNeverWait={neverWaitHere} />
+                    ) : null}
+                    {!isUser && !isResponding && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
                         autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
@@ -1948,6 +2066,19 @@ export default function ChatDock({
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                   <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
                 </button>
+                {onResearch && agentReads ? (
+                  <button type="button" className="chatPlusMenuItem" disabled={!chatInput.trim()}
+                    onClick={() => { setOpenPopover(null); onResearch(chatInput.trim()); setChatInput(""); }}>
+                    <span className="chatPlusMenuIcon">
+                      <SparklesIcon size={16} />
+                    </span>
+                    <span className="chatPlusMenuLabel">{t("Research this in the background")}</span>
+                    <span className="chatPlusMenuHint">
+                      {chatInput.trim() ? t("Searches and reads for minutes, then files a report page")
+                        : t("Type the question first")}
+                    </span>
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </span>

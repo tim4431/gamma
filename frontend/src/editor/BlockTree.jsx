@@ -42,7 +42,7 @@ import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
-import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, Trash2Icon } from "../shared/ui/Icons";
+import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import { pageKindLabel } from "../library/libraryUtils";
@@ -1981,6 +1981,13 @@ function SortableBlockRow({ block, ...rowProps }) {
               title={t("Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same")}
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
             >{t("Add to chat")}</MenuItem>
+          ) : null}
+          {block.properties?.ink_url !== undefined && rowProps.onTranscribe ? (
+            <MenuItem
+              icon={SparklesIcon}
+              title={t("Ask the chat to read this handwriting and write it out as text in the caption")}
+              onClick={() => { setHandleMenu(null); rowProps.onTranscribe(block); }}
+            >{t("Transcribe with AI")}</MenuItem>
           ) : null}
           {block.id !== "root" && rowProps.onAddSheetAfter && !rowProps.readOnly ? (
             <MenuItem

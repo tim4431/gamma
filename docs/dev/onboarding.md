@@ -1,11 +1,12 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), seven
-triggered tours, seven hints and the welcome page with its sample PDF are
+**Status: the engine, the two manual tours (first paper, AI chat), eleven
+triggered tours, twelve hints and the welcome page with its sample PDF are
 built. The first paper tour is also offered to every new library.** A synced
 `onboarding` pref and a checklist are not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
+the illustration registry `media.js` with its drawings in `media/`,
 one file per tour in `tours/`, the hints in `tours/hints.js`), the node test
 `tests/guide.test.mjs` and the e2e scenarios `guide.mjs` (first paper),
 `contextualGuide.mjs` (AI chat) and `triggeredGuide.mjs` (offers and hints).
@@ -64,11 +65,15 @@ anchor, or the control that reveals it, is on screen. A tour with `show`
 brings up its own surface first (AI chat opens the chat). So **Your first
 paper** is always listed, and so is **AI chat** once `/api/ai/models` has
 answered, except for a guest with no AI connected (no step applies there).
-**Sharing a page** is listed on
-any open page, **Editing tables** on any page you can edit and
-**Handwriting** on any PDF you can edit; each begins by having you make the
+**Adding to your library** and **Organize your library** are listed
+wherever you can write, the first from its own popover. **Sharing a page**
+is listed on
+any open page, **Editing tables** on any page you can edit,
+**Handwriting** on any PDF you can edit and **Pages to write on** on any
+page you can edit; each begins by having you make the
 thing it explains when there is none yet (see "Steps that have the user
-make something"). **Shared workspaces** is listed once you belong to one.
+make something"). **Background tasks** is listed on the desktop layout.
+**Shared workspaces** is listed once you belong to one.
 **Working together** and **Citations in answers** are listed only while
 their subject is on screen: someone else on the page, a cited reply. Hints
 are never listed. `?guide=` URLs never start a tour, and the chat header has
@@ -150,11 +155,15 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 | Guide | Offered when | Points at |
 |---|---|---|
+| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | the address box (a drawing of the fetch), Upload files, New page, New notebook (a drawing of the one page behind both views) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: double-click to collapse and expand, drag to dock; Notes' title when docked; View to reopen closed windows |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
+| Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a drawing of the next page arriving), its pen, the paper menu (a drawing of the paper changing), the notebook view |
+| Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button, with a drawing of the job outliving the window; a task's row; Clear finished. The last two are `optional`: a tour started from the menu may find no rows |
+| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (its menu), the label chips with a drawing of one paper in several folders, the pinned strip, Recently viewed, Recently deleted; everything but the first step is `optional`, so a library with nothing pinned passes over it |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
@@ -164,6 +173,11 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: conflict | a clone conflict's versions show (`conflict.shown`) | the versions: nothing was lost, both are kept; pick one, then Apply |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
+| hint: approvals | the assistant asks before a change (`approval.shown`, from `ApprovalCard`) | the card: allow once or for the whole chat, and that Don't allow can say what to do instead |
+| hint: export | the View menu opens (`popover.opened {name: "menu"}`) on a page with 5+ highlights (`annotatedPage`) — the Export row is on screen only while that menu is | Export…: the PDF with the highlights drawn on it, or Markdown |
+| hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
+| hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, so nothing is suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
+| hint: Gamma Cloud | a setting that travels with the account was changed here (`prefsChanged`: the first push after the profile sync has been quiet once, so a profile arriving or seeding itself does not count) on a server offering cloud sign-in to an account that has not linked one (`cloudLinkable`, from `GET /api/auth/cloud/status`) — state, so the card comes once Settings is closed again | the account button: linking carries these settings to the user's other Gamma servers |
 | Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
@@ -343,6 +357,51 @@ step completes only for its matching type.
 
 The survey behind these choices is [docs/research/onboarding.md](../research/onboarding.md).
 
+## Illustrations
+
+A step may carry a drawing above its copy: `media: "<id>"`, an id of the
+registry in `guide/media.js`, whose file is `guide/media/<id>.svg`. It is the
+same contract as an anchor — a tour names an illustration and never a path,
+and `npm test` fails on an id with no file, a file no step shows, and a file
+the registry does not know.
+
+**What a drawing is for.** The guide points at the real UI. A drawing is for
+what the still UI cannot show: a sequence (an address becoming a saved
+paper), a before and after (the paper of a page changing), or a relationship
+(one paper in several folders; the one page behind both views). It never
+replaces the spotlight, so a step whose picture would only be a portrait of
+the control it already points at does not get one.
+
+**Why it is inlined.** `GuideOverlay` puts the file's markup straight into
+the card rather than loading it as an `<img>`, so it paints from the theme's
+tokens (`var(--accent)`, `currentColor`). There are eight themes, so a
+drawing carrying its own colours — or deciding them from
+`prefers-color-scheme` — would be wrong in most of them. The files are this
+repository's own, built into the bundle by `import.meta.glob(… "?raw")`;
+nothing a user supplies is ever inlined.
+
+**What a drawing must do**, each checked by `tests/guide.test.mjs`:
+
+- **Scope its rules.** Inlined, its `<style>` is the document's, so every
+  selector begins `[data-media="<id>"]` and the only at-rule is
+  `@keyframes`. Otherwise a drawing could paint the app.
+- **Take its colours from tokens.** No `#hex`, `rgb()` or `rgba()`.
+- **Size itself from CSS.** A `viewBox` and no `width`/`height` on the root.
+  The registry's `ratio` (1.4–2.2 — the card is 320 px wide) gives the box
+  an `aspect-ratio`, so the card is its final height when `place.js`
+  measures it and a picture never moves its own card.
+- **Say nothing in words.** Copy belongs on the card, where it is
+  translated ([i18n.md](i18n.md)); a drawing holds shapes and glyphs, so it
+  needs no per-language version.
+- **Keep its animation to itself.** Each file carries its own `@keyframes`,
+  so a drawing is one file to read and change. `guide.css` stops all of them
+  at once under `prefers-reduced-motion`
+  (`.guideMedia svg * { animation: none }`), so an asset never has to
+  remember to.
+
+A drawing goes on a step of a running tour only. An offer and a hint stay a
+card of words: they interrupt, so they stay small.
+
 ## Goals
 
 1. A new account reaches the "aha" (a highlight that became a note block under
@@ -401,8 +460,10 @@ anchors are the only thing the guide needs from it. No guide code imports App
 state directly; App passes what the engine needs through one `useGuide()`
 call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
-`phone`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
-`unfiledLibrary`, `emptyLibrary`, `installable`, `demo`, `welcomePdf`), the
+`phone`, `dockedNotes`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
+`unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
+`notebookView`, `clonedWorkspace`, `installable`, `connectorHere`,
+`cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
 services demos and tour ends call (`show`, `restore`, `openSettings`,
 `findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`) and `tidy`.
 
@@ -458,6 +519,8 @@ Step fields:
   bottom-left corner), `title` (one short line) and `body` (at most one
   sentence; `bodyTouch` words it for a touch screen). Both take `**bold**`,
   `*italic*`, `` `code` `` and `{key:…}`.
+- `media`: an illustration id from `guide/media.js`, drawn above the copy
+  (Illustrations, below).
 - `placement`: the card's preferred side (`top`, `bottom`, `left`, `right`),
   or `inside` to tuck it into the anchor's bottom-right corner (the whole
   PDF viewer). `avoid`: another anchor whose box the card keeps clear of as
@@ -496,6 +559,10 @@ where the thing happens:
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
 | `table.shown` | MdTableWrap, when an editable table mounts |
+| `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/page` in an empty block) and `createNotebook` |
+| `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
+| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up ([ai.md](ai.md) "Asking before a call") |
+| `paper.fetched` | App's `openPdf`, once a paper fetched from an address (a URL, a DOI, an arXiv id) is open — not for a page the library already had |
 | `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
@@ -632,6 +699,8 @@ frontend/src/guide/
   events.js         guideEvents bus + the catalog
   triggers.js       when a tour is offered; per-account progress
   keys.js           {key:…} in copy: a command's chord for this account
+  media.js          illustration registry: id → {ratio, description}
+  media/*.svg       one drawing per id, scoped to its own [data-media] and painted from tokens
   finish.js         a tour's finish card: what the run made
   place.js          where a card goes beside its spotlight
   useGuide.js       state machine, offers, reveal, demo actions
@@ -659,7 +728,11 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 ## Validation
 
 - `npm test` (`guide.test.mjs`): every step's `anchor`, `creates`, `reveal`
-  and `avoid` and every offer anchor is in the registry; every registered
+  and `avoid` and every offer anchor is in the registry; every step's
+  `media` is a registered id with a file, every registered drawing is shown
+  by a step, and each one scopes its rules to its own `[data-media]`, takes
+  its colours from tokens, sizes itself from a `viewBox` and declares a
+  ratio between 1.4 and 2.2; every registered
   anchor is carried by an element and every `data-guide` in the source is
   registered; every `advanceOn`, trigger, `doneOn` and finish-card event is
   in the catalog; ids are unique; `version` is an integer; a hint is one
@@ -700,6 +773,10 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 - New feature worth a triggered tour: emit an event where it happens (one
   line, catalogued), write `tours/<name>.js` with a `trigger`, register it in
   `tours/index.js`, add its strings to the catalog. A single card is a hint.
+- Something the still UI cannot show (a sequence, a before and after, a
+  relationship): add a drawing — `guide/media/<id>.svg` and a row in
+  `guide/media.js` — and name it from the step's `media`. Keep pointing at
+  the real control (Illustrations).
 - Renaming or removing a control: update the registry row; the tests name the
   affected steps.
 - Copy changes: edit the tour file or `welcome.md`. Bump `version` only when a

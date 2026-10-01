@@ -10,7 +10,7 @@ import html
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import fetch_handoff as handoff
 from ..ai_web import FETCH_MAX_BYTES, FetchError
@@ -51,9 +51,16 @@ def watch(rid: str, request: Request, payload: WatchNote | None = None):
     return _found(handoff.watch(_user(request), rid, payload.note, payload.background))
 
 
+class SkipNote(BaseModel):
+    # Skipping a card the reply waits on may tell the assistant what to do
+    # instead (only the model reads it), like declining an approval.
+    note: str = Field(default="", max_length=handoff.MAX_NOTE)
+
+
 @router.delete("/{rid}")
-def dismiss(rid: str, request: Request):
-    return _found(handoff.dismiss(_user(request), rid))
+def dismiss(rid: str, request: Request, payload: SkipNote | None = None):
+    payload = payload or SkipNote()
+    return _found(handoff.dismiss(_user(request), rid, payload.note))
 
 
 # Sync def: reading the spooled upload and extracting its text run in the

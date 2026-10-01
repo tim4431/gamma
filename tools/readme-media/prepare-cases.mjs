@@ -27,7 +27,7 @@ if (['metadata', 'download-and-chat', 'reference-links', 'agent'].some(n => requ
   await account.api('/api/prefs/open-tabs', { method: 'PUT', body: { value: [] } });
   if (requested.has('agent') || requested.has('download-and-chat')) await account.api('/api/chats/home', { method: 'DELETE' });
 }
-if (requested.has('library')) {
+if (requested.has('library') || requested.has('search')) {
   const { children: roots } = await account.api('/api/blocks/root/children');
   const qec = roots.find(p => p.properties?.meta?.arxiv_id === '0904.2557');
   if (!qec) throw new Error('The curated QEC paper is missing');
@@ -37,5 +37,18 @@ if (requested.has('library')) {
     await account.api(`/api/blocks/${id}`, { method: 'PUT', body: { properties: { folder } } });
   }
   await account.api('/api/prefs/recent-views', { method: 'PUT', body: { value: [] } });
+}
+if (requested.has('search')) {
+  // The paper view's default find bar, matches shown in the page only (the
+  // account keeps this choice; the library shot turns the details on).
+  const profile = (await account.api('/api/prefs/profile')).value || {};
+  await account.api('/api/prefs/profile', { method: 'PUT', body: { value: { ...profile, searchDetailsPaper: false } } });
+  // Topic labels, for Ctrl+P to find one by name.
+  const { children: roots } = await account.api('/api/blocks/root/children');
+  const topics = { 'fy0-h_BqOHcH': 'quantum computing, neutral atoms', [cases.qec]: 'quantum computing, error correction' };
+  for (const p of roots) {
+    const category = topics[p.id] || (p.content === 'Attention Is All You Need' ? 'machine learning' : null);
+    if (category) await account.api(`/api/blocks/${p.id}`, { method: 'PUT', body: { properties: { category } } });
+  }
 }
 console.log('Prepared case pages:', cases);

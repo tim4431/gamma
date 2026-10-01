@@ -409,6 +409,19 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   shows the build and the update check. Backend code must log through
   `gamma/logbuf.py`'s `log` (never `print()`); use `log.warning` for what an
   admin should notice. Secrets are masked at insert time. Gone on restart.
+- **Two request lines, on purpose.** The console carries uvicorn's access
+  log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
+  and, interleaved with it, Gamma's own line for the ones worth reading
+  (`auth.py` `_finish_request_log`): `[http] request=<id> GET /api/… status=…
+  duration_ms=… session=… expected=… reason=…`. It is emitted only for a
+  4xx/5xx, a request on an auth path, or one that took over 2 s, so a quiet
+  log means nothing failed and nothing was slow. `reason` says which kind it
+  was: `authentication-required` (401), `forbidden` (403), `not-found` (404 —
+  nothing was rejected, so a client polling something the server let go
+  reads as routine), `server-error`, `session-operation`, `slow-request`,
+  `bad-token`, `session-mismatch`, or `request-rejected` for the rest.
+  `request=<id>` is the `X-Gamma-Request-ID` header the answer carried, so a
+  browser failure and its server line can be matched up.
 - **Session log + debug tracing** — Settings → Help & diagnostics: browser-side event
   log; the "Debug logging" toggle traces reading-position/restore/sync
   events into it and the console. Every PDF load phase lands here as
@@ -520,6 +533,8 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   streams send a keepalive line every 15 s of silence ([ai.md](ai.md)) and
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
+- The docks use `react-resizable-panels` v2, pinned on purpose: v4 changed
+  the API incompatibly. Do not let a dependency refresh move it.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is

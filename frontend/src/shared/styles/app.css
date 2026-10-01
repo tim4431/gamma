@@ -3235,6 +3235,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
+/* Deleting several at once: the tick box comes up on hover and stays while
+   anything is ticked; the bar under the list says how many and removes them. */
+.chatHistPick { flex: none; margin: 0; display: none; }
+.chatHistRow:hover .chatHistPick, .chatHistRow:focus-within .chatHistPick,
+.chatHistList.picking .chatHistPick { display: block; }
+.chatHistBulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px 2px 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+}
+.chatHistBulk > span { flex: 1; }
 /* One tool-permission checkbox row (layout only — shared look via popover) */
 .chatToolPermRow {
   display: flex;
@@ -3416,6 +3431,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffError { margin-top: 4px; color: var(--danger); }
 .chatHandoffActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffContinue { align-self: flex-start; }
+/* Skipping a card the reply waits on may say what to do instead, like
+   declining an approval. */
+.chatHandoffInstead { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatHandoffInstead .aiKeyInput { flex: 1 1 14rem; min-width: 0; }
 /* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
    would do, the change as a word diff, the four answers. It looks like a
    fetch handoff's card, the other place the chat waits for the user. */
@@ -4698,6 +4717,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatToolActionHead.plain { cursor: default; }
+/* What a call turned out to be, beside its summary: the version fetched,
+   how long it took (chat/agentSteps.js chipNote). */
+.chatToolActionNote { flex: none; color: var(--text-muted); opacity: 0.8; }
+.chatToolActionNote::before { content: "·"; margin-right: 6px; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */
@@ -5027,12 +5050,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which
-   sits at content (0,0) as the scroller's first in-flow child — the pinch
-   math assumes exactly that. No width rules on purpose: width:auto keeps
-   pages laid out against the viewer width like they always were (max-content
-   ballooned the layer to the widest placeholder page — fit-width looked
-   broken on desktop, page adrift in white space); zoomed-in pages simply
-   overflow, as they did before the wrapper existed. */
+   sits at content (0,0) as the scroller's first in-flow child — what the
+   gesture math in shared/lib/viewerZoom.js assumes. No width rules on purpose:
+   width:auto keeps pages laid out against the viewer width like they always
+   were (max-content ballooned the layer to the widest placeholder page —
+   fit-width looked broken on desktop, page adrift in white space); zoomed-in
+   pages simply overflow, as they did before the wrapper existed. */
 .pdfZoomLayer {
   transform-origin: 0 0;
 }

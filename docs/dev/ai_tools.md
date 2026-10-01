@@ -31,11 +31,12 @@ Folder semantics mirror
 [frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
-Pages in Recently deleted are out of every tool's reach, the MCP adapter's
+Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
 `blocks_store.page_root_id` find no page for them or their blocks
-([home_library.md](home_library.md) "Recently deleted"). The agent cannot
-delete pages.
+([home_library.md](home_library.md) "Recently deleted"). Two folder-chat
+tools are the exception: `list_deleted` lists them and `restore_page` brings
+one back. The agent cannot delete pages.
 
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
@@ -47,9 +48,9 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes its fixed allowlist of the seven read tools below that stay
-inside the library (everything but the web and write tools) and a
-non-writable workspace scope.
+set; MCP passes its fixed allowlist of seven read tools that stay inside
+the library (not the web and write tools, `view_ink`, `cite` or
+`list_deleted`) and a non-writable workspace scope.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -58,14 +59,19 @@ non-writable workspace scope.
 | `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
-| `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
+| `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
+| `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
 | `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
 | `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
 | `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `save_paper` | Save papers | folder + page | Add a paper to the library by DOI, arXiv id or URL, through the ingest the reply's Save to library and the Connector use |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
+| `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
+| `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
@@ -220,11 +226,96 @@ an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
 
+### view_ink (both scopes)
+
+The model's eyes on handwriting ([handwriting.md](handwriting.md)). An ink
+group's text is only its caption, so read_block labels the block
+("handwriting on p. N, K strokes" or "on the page of paper above") and
+view_ink shows the strokes. `block_id` names a handwriting block or a page
+of paper (a sheet). A group is drawn where it was written, cropped to its
+strokes with a margin (`ink_view.crop_box`: a tenth of the strokes' larger
+side or 18 pt, and at least 2 inches a side, so one word is seen with what
+surrounds it). `area: "page"` shows the whole PDF page or sheet with all its
+handwriting instead. A sheet's id always shows the whole sheet.
+
+Nothing is drawn by hand. Both paths reuse an export
+(`gamma/ink_view.py`):
+
+- **A sheet** (a `canvas` group, or the sheet itself) is the notebook
+  export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
+  strokes as vectors.
+- **A PDF page** is that page on its own with the groups written on it as
+  the annotated export's `/Ink` annotations
+  (`pdf_export.page_with_ink`). pdfium generates their appearance when it
+  renders, so highlighters stay translucent over the text. Ink imported
+  from the PDF and still embedded in it (`pdf_export.still_embedded`) is
+  not added twice. When the PDF
+  is missing or PyPDF2 cannot copy the page (an encrypted file), the
+  strokes are drawn on blank paper of the page's size, and the result says
+  so.
+
+`pdf_text.render_page` rasterizes either, whole at `RENDER_MAX_SIDE` or
+cropped under its 4× zoom cap, and `pdf_text.image_part` encodes the picture
+as every tool picture is. It rides on the chip's `images` like
+`view_pdf_page`'s and is never saved. The result names the block, the
+page and the stroke count, quotes the caption, and asks the model to mark a
+word it cannot read `[illegible]` rather than guess. Its chip is ✎
+"Looked at handwriting in …" (kind `ink`, with `block_id`), and the open
+page rings that block. It shares the View permission with `view_pdf_page`.
+
+With `edit_block` armed, the agent prompt also says how to transcribe:
+look with view_ink, then write the text into the group's caption, as an
+append when it has one. The notes' **Transcribe with AI** (a handwriting
+block's ⋮⋮ menu) sends exactly that request with the block attached as a
+chip, and an attached handwriting block's picture rides with the message
+(see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
+tools still answers with the transcription.
+
+### cite (both scopes)
+
+The citation records Gamma keeps with pages, so a bibliography is built
+from the records and not from the model's memory. `page_ids` takes up to
+50 pages; in a page chat the default is the open page. For each page the
+result gives:
+
+- the record from `properties.meta` (authors, year, venue, volume, pages,
+  publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
+  and the paper's own title when it differs from the page's;
+- the stored BibTeX, else one built from the record the way a hand edit
+  builds it (`routers/metadata._build_bibtex`);
+- the slide citation when one was made (`ppt_cite`). None is generated,
+  since that is an AI call.
+
+A record flagged `unverified` says so. A page without metadata says so
+too, and the model is told not to invent one. Nothing is looked up or
+stored. Pages outside the scope are refused one by one, and a call where
+every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
+`cite`), under the Read permission.
+
 ### The web tools (both scopes)
+
+```mermaid
+flowchart LR
+  q["a paper the library lacks"] --> lib["search_library, read_page"]
+  lib --> held{"already a page?"}
+  held -- yes --> read
+  held -- no --> find["search_papers: Crossref + arXiv + OpenAlex"]
+  find --> more["search_web, related_papers"]
+  more --> probe
+  find --> probe["fetch_paper mode=probe"]
+  probe --> right{"the right paper?"}
+  right -- no --> find
+  right -- yes --> long{"answer could be anywhere in it?"}
+  long -- yes --> helper["read_paper: a helper reads it"]
+  long -- no --> read["fetch_paper, window by window"]
+  helper --> ans(["answer, citing pages"])
+  read --> ans --> keep["save_paper"]
+```
 
 The agent's reach outside the library, read-only: `search_papers`,
 `related_papers` and `search_web` under **Search papers online**
-(`web_search`), `fetch_paper` under **Fetch documents** (`web_read`). The
+(`web_search`), `fetch_paper` and `read_paper` under **Fetch documents**
+(`web_read`). The
 code is `gamma/ai_web.py` (registries, citation graph, fetching),
 `gamma/openalex.py`, `gamma/paper_links.py` and `gamma/search_services.py`
 (general web search); the executors are in `ai_tools.py`.
@@ -277,11 +368,26 @@ whatever the order. A query that is itself a DOI or arXiv id (bare,
 and OpenAlex's record of it (a lookup by id, which costs nothing) adds the
 abstract, citation count and open-access PDF.
 
+`kind` and `open_access` narrow the search instead of the model spelling
+"journal", "PDF" or "preprint" into the query, where those words only
+confuse the match. `kind` is `any`, `article` (published in a journal) or
+`preprint`, and each goes to the registries that can answer it: an
+`article` search skips arXiv and asks Crossref for `type:journal-article`
+and OpenAlex for `type:article`; a `preprint` search skips Crossref's
+bibliographic index, which is about the published record. `open_access`
+asks OpenAlex for `is_oa:true` and drops merged records that name no PDF
+anyone can read (`ai_web._free_full_text`: an arXiv copy or an
+open-access location). The head names whatever was narrowed, and says so
+again when nothing was found.
+
 `limit` defaults to 8 (max 20). Each record is one line (title, up to three
 authors, year, venue, `cited by N`, DOI, arXiv id with its PDF URL, else the
 open-access PDF) ending with the `fetch_paper(source=…)` call that reads it —
 both calls, the arXiv version first, when it has both — and a second line with
-the first 400 characters of its abstract. The result reminds the model these
+the first 400 characters of its abstract. A work this reply already listed
+shrinks to one line pointing back (`format_records(first_sight=…)`, from the
+message's `ai_tools.Tally`), so the second and third query of a search cost
+a line per repeat instead of a whole record. The result reminds the model these
 are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
@@ -375,6 +481,11 @@ store keys. The routes are in [api.md](api.md).
 document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
 from the Read window preference, shared through `_window_args`), `pdf_page`,
 `pdf_offset`, and an excerpt that names the next offset while text remains.
+`mode: "probe"` reads only `PROBE_CHARS` (1 500) of front matter with the
+version and the identity check, for deciding whether a candidate is the
+right paper before a full read costs a window; its excerpt ends by saying
+to call again without `mode` to read it, and its chip reads "front matter
+only".
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
 resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags fetched with the article page as `Referer`,
@@ -444,6 +555,27 @@ online".
 
 #### Walls and the browser handoff
 
+```mermaid
+flowchart LR
+  src["fetch_paper(source)"] --> got{"browser already sent one?"}
+  got -- yes --> text
+  got -- no --> resolve["resolve_source: arXiv, citation_pdf_url, 4 Unpaywall copies"]
+  resolve --> dl["download: SSRF guard, one cookie jar, publisher sign-ins"]
+  dl --> pdf{"a PDF with text?"}
+  pdf -- yes --> text(["text, [p. N] prefixed, version named"])
+  pdf -- no --> wall{"a wall?"}
+  wall -- no --> page["the article page, its PDF links ranked"] --> text
+  wall -- yes --> req["open_request: one per work, 6 h"]
+  req --> waits{"paper_wait?"}
+  waits -- no --> under["card under the reply; the model stops there"]
+  waits -- yes --> card["{handoff} card + a Background tasks row"]
+  card --> who["Gamma Connector from the tab, or the user drops the PDF"]
+  who --> out{"wait_for_all"}
+  out -- delivered --> again["the call runs again"] --> text
+  out -- dismissed --> skip["skipped, with what to do instead"]
+  out -- expired --> gave["nothing arrived; the card stays"]
+```
+
 What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
 
 - `captcha`: a bot check or CAPTCHA page, served as 200, 403 or 503. It is
@@ -476,19 +608,51 @@ sign-in or bot-check address the page it would return to is taken from its
 query (Radware's `ssc=` on `validate.perfdrive.com` in front of IOP, a sign-in
 page's `next=` / `uri=`): starting from the paper's page, the site sends the
 person through its check and back. The action carries `handoff: {id, host, wall,
-source}`. A blocked fetch is an error action ("Needs your browser: host")
-whose result tells the model to say briefly what blocked it and end its
-reply, without retrying, switching versions or answering from memory. With
-`search_web` armed, the model may first run one search for the paper's exact
-title to read another legitimate copy (an author's or lab's page, a
-repository) and say which version it read, unless the user asked for the
-publisher's own copy. The resolver has already tried the open-access copies
-by then; the card stays either way. An article-page-only read returns the
-page with the same instruction for questions that need more. The armed
-prompt says the same.
+source}`, and the chip reads "Needs your browser: host".
 
-The chat renders a card per request under the reply
-(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`):
+**The reply waits on the card.** A blocked fetch does not end the turn: the
+loop's `settle` hook (`ai_agent.PaperWait`) sends a `{"handoff"}` line for
+each request the round opened and blocks on
+`fetch_handoff.wait_for_all`, exactly as an Ask permission blocks on its
+approval card. The calls of one round wait together, so four blocked papers
+cost one wait. What happens next:
+
+- **Delivered.** The same call runs again. `fetch_paper` reads a delivered
+  PDF before it fetches anything, so the model gets the paper's text where
+  it asked for it, with `delivered: true` on the chip. No second turn, and
+  no message in the user's name.
+- **Skipped.** The card's Skip settles the request (`DELETE …/<id>` with an
+  optional `note`, like declining an approval): the model hears that the
+  user did not want it and what to do instead (`ai_tools.skipped_fetch`),
+  and carries on.
+- **Unanswered.** The wait gives up after `IDLE_TIMEOUT` (5 minutes of
+  nothing happening; every report from Gamma Connector starts that stretch
+  over, up to `MAX_WAIT`, 15 minutes). The model is told what blocked the
+  paper and that nothing arrived (`ai_tools.unanswered_fetch`), the request
+  stays open for its 6 hours, and its card stays under the reply.
+
+A wall on the PDF still falls back to the page's text, so the model keeps
+what was readable; an article-page-only read carries the same card. With
+`search_web` armed and the chat told not to wait, the model may first run
+one search for the paper's exact title to read another legitimate copy (an
+author's or lab's page, a repository) and say which version it read, unless
+the user asked for the publisher's own copy. The resolver has already tried
+the open-access copies by then; the card stays either way. The armed prompt
+says which of the two it is — the reply waits, or the card is under it.
+
+**"Don't wait in this chat."** Skip's second button
+(`withoutPaperWait` in `chat/approvals.js`) records the choice for that
+conversation in this browser, beside the permissions its approval cards
+allowed, and its requests then send `paper_wait: false`. The reply ends on
+the card instead, the model is told to finish, and **Continue with the PDF**
+under the reply asks the chat to go on once something arrived. The chat
+never sends that continuation by itself: a message in the user's name is
+the user's to send.
+
+The card is the same component live and afterwards
+(`chat/FetchHandoffCards.jsx`; its rules, tested, in `chat/fetchHandoff.js`)
+— `LiveHandoffCards` while the reply waits, `FetchHandoffCards` over a
+finished reply's actions for the requests it left behind:
 
 - **Open {host}** has Gamma Connector open the publisher's page in a new
   tab when it answered the card (`openRoute`: `connector-tab` `open`
@@ -502,12 +666,15 @@ The chat renders a card per request under the reply
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
 - **Fetch blocked papers in the background** (Settings → AI → Tools,
-  `fetchInBackground`, account-wide, off by default): a card in the
+  `fetchInBackground`, account-wide, **on** by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
-  Connector tries in a minimized window of its own, three requests at a
-  time, and closes the tab after delivery; the card reads "getting it in a
-  minimized window", or that the request waits for the papers before it.
+  Connector tries in an ordinary tab next to the Gamma one — unfocused, so
+  the user keeps reading, but there in the tab strip to switch to — three
+  requests at a time, and closes the tab after delivery; the card reads
+  "getting it in a tab of its own", or that the request waits for the papers
+  before it. A tab the user switches to is theirs from then on: it stays
+  open, and frees its turn (`chrome.tabs.onActivated` in the worker).
   Nothing solves a CAPTCHA: what completes by itself is what the browser gets
   unasked — the user already signed in (or on the institution's network), or
   a check that passes a real browser on its own. When the page needs the user
@@ -532,8 +699,10 @@ The chat renders a card per request under the reply
   the card is back to Open, saying so.
 - **Upload PDF**, or a PDF dropped on the card, sends a file the user
   downloaded; the drop never reaches the page underneath.
-- **Dismiss** settles the request; the Connector closes a tab it kept out of
-  sight for it.
+- **Skip** (live) or **Dismiss** (afterwards) settles the request; the
+  Connector closes a background tab it kept for it. Skip opens one line,
+  "What should the assistant do instead? (optional)", with **Skip** and
+  **Skip, and don't wait in this chat**.
 
 The card asks the server every 2.5 s while the user is at the page, every
 10 s while the request waits in the conversation's last reply, and otherwise
@@ -544,12 +713,14 @@ settled) is extracted and kept with the request for its account only
 held for saving (200 MB across requests, the oldest let go first; its text
 stays). `fetch_paper` reads it
 before any fetch, for the same work in any spelling or the request's URLs,
-with a source note saying the user fetched it in their browser. When every
-request of the reply is settled with a PDF delivered, the reply is the
-conversation's last, the chat is idle, the composer is empty, and this tab saw
-a request waiting, the chat sends "I got it in my browser — {source} is
-available now. Please continue." by itself. Otherwise the card offers
-**Continue with the PDF**; a reload never resends.
+with a source note saying the user fetched it in their browser.
+
+A request still waiting also shows in **Background tasks** as a read-only
+`paper-handoff` row (`GET /api/jobs` adds them from
+`fetch_handoff.waiting`, the way it adds a running scheduled backup), so a
+card whose reply has scrolled away is still somewhere to find; a click on
+the row opens the publisher's page through `/go`
+([tasks.md](tasks.md)).
 
 Every reply that read or named papers ends with a **Save to library** pill
 (`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
@@ -577,6 +748,90 @@ a challenge bound to that browser or IP. The model is told not to repeatedly
 retry a blocked URL and to respect rate limits. Reading an uploaded library
 page requires **Read pages** and selecting that page as context.
 
+#### read_paper
+
+Delegation, under the same **Fetch documents** permission as `fetch_paper`.
+`read_paper(source, question, title, version)` hands one document and one
+question to a second agent (`ai_agent.Helper`): it fetches the paper, reads
+as many windows as the question needs, and hands back one cited paragraph.
+The windows stay in the helper's own conversation, so the chat carries an
+answer of at most `_HELPER_ANSWER_MAX` (4 000) characters instead of a
+forty-page paper it would have to re-send every round for the rest of the
+reply. Four papers asked the same question cost about what one full read
+would.
+
+The helper runs the same `AgentLoop` with `fetch_paper` as its only tool,
+no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
+own connection with its own prompt (`READ_PAPER_PROMPT`: one document, one
+question, a page number beside every number, say plainly when the document
+does not answer it). Nothing it does can change the library, its pictures
+never leave it, and its cache key is the conversation's with `:helper`
+appended so the two prompts do not fight over one prefix cache.
+
+The parent's chip carries the document the helper actually read (`url`,
+`title`, `pdf`, `version`), its calls as `children` (up to 12, without
+their output — a child's text is the helper's, not the chat's), and
+`spent`, the helper's token counts, which the loop yields as a `usage`
+event so the reply's footer counts the whole answer. A wall the helper met
+cannot show a card from in there, so its request rides up on the parent
+action as the `handoff`, and the chat's own card and wait take over
+([above](#walls-and-the-browser-handoff)).
+
+The tool is offered only when **Read long papers with a helper**
+(`gamma-ai-delegate-reads`, account-wide, on by default) is set — the
+request's `delegate_reads`, which the scope carries as `delegates` and
+`available()` turns into the entry's `needs: "helper"`. The armed prompt
+says when to reach for it (the answer could be anywhere in a long
+document, or the same question over several papers) and when not (the
+document's own wording, a table, a quotation, or an abstract that already
+settles it).
+
+### save_paper (both scopes)
+
+Adds a paper to the library when the user asks, the same way the reply's
+**Save to library** does. `source` is a DOI, an arXiv id or an http(s)
+URL; `title` is the exact title when known. The call goes through the clip
+ingest (`routers/clip.py` `save_clip`, the body of `POST /api/clip`):
+
+- the usual dedup by identifier;
+- the PDF resolved, fetched and stored, or a page carrying the paper's web
+  address when none is reachable;
+- the page filed;
+- the metadata lookup started in the background.
+
+The request is built as `chat/chatPapers.js` builds it. An identifier's
+DOI or arXiv page is the page's source, and a URL is also the address to
+resolve. The account's Reading choices ride in the request as
+`paper_save` (`{allow_oa, save_copy, fetch_metadata}`, missing means on),
+the same ones the pill uses. When the user's browser delivered this source
+through a fetch handoff, the held PDF is stored first (`storage.store_pdf`)
+and the clip uses it. Journal sign-ins are bound from the chat scope like
+`fetch_paper`'s.
+
+`folder` files the paper. A folder chat resolves it inside its folder
+(`move_page`'s rule); a page chat takes it as given, else the open page's
+first folder, which is where the pill files. A paper already in the
+library is only filed. When it is in that folder already, `_plan_save_paper`
+answers that nothing changed, so there is no card and the chip is a no-op.
+In a page chat the new page is outside the chat's reach, and the result
+says to read the paper with `fetch_paper`.
+
+The approval card's preview has the paper's `title` (the one passed, else
+the library page's, else the source), the folder it goes `to` and the source
+as its `diff`. A paper the library holds adds `existed` and its `page_id`,
+and the card reads "File … in …" instead of "Save … to …". Planning looks
+nothing up online; the PDF is fetched only once the call runs.
+
+One message saves at most `MAX_SAVES` (20) papers. The count lives in
+`scope["tally"]`, which `run_agent_tool` creates before it copies the scope
+for a mutation, so the copies share it. The action (kind `save`) carries
+`page_id`, `title`, `to` (the folder, `""` for the library root),
+`existed` and `pdf`. The chat lists it under "Changed in your library" as
+"Saved {page} to {folder}", or as filed there when it was already in the
+library. The agent prompt says to save only on request, never as a side
+effect of reading. The permission is **Save papers** (`save`), a change
+permission in every chat kind, Ask by default.
+
 ### rename_page / move_page (folder only)
 
 `rename_page` changes a page's title. `move_page` files a page into a
@@ -585,6 +840,28 @@ current folder are kept. Both are reversible with another call. Their
 actions name the change for the chat's change list: `title` (the page's
 title before the call), `from` / `to` (the old and new title; the old
 folder paths, comma-joined, and the new one, `""` for the library root).
+
+### list_deleted / restore_page (folder only)
+
+Recently deleted ([home_library.md](home_library.md)). A deleted page is in
+a folder chat's reach when it was filed under the chat's folder; at the
+library root, every deleted page is. A permission either reads or changes,
+so the two tools have one each:
+
+- `list_deleted`, under **List pages**, lists such pages, the last deleted
+  first: id, title, the folders a restore puts the page back in, when and
+  by whom it was deleted, and when it goes for good (`trash.list_trash`).
+  `title_contains` filters by title. Its chip is a `list` one.
+- `restore_page`, under **Restore deleted pages** (`restore`, Ask by
+  default), runs `ops.restore_page`, the route's restore. The page goes
+  back under the library root in its folders, with its notes, highlights,
+  files and chats. `_plan_restore_page` answers a page that is not deleted
+  (a no-op) or was filed outside the chat's folder (refused) without a card.
+
+The approval card's preview has the page's `title` and the folders it goes
+back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
+and `to` (its folders). The chat lists it under "Changed in your library".
+Deleting is not offered.
 
 ### edit_block / create_block / move_block (both scopes, one permission)
 
@@ -658,7 +935,10 @@ approaches"*, *"where did I note something about bias-preserving gates?"*
 (a notes hit with its block id), *"tidy my notes on this page into
 sections"* — and in a page chat, *"where does this paper define the
 protocol?"* (it searches inside the PDF and quotes page numbers) or *"add a
-summary block to my notes"*.
+summary block to my notes"*. Handwriting, citations, saving and Recently
+deleted: *"transcribe my handwriting on this page"*, *"BibTeX for everything
+in this folder"*, *"save the three most cited follow-ups into refs"*, *"bring
+back the page on Rydberg blockade I deleted last week"*.
 
 ## Guardrails
 
@@ -670,8 +950,9 @@ Deliberately not offered under any permission:
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads, share links, settings, or other users' data.
-- Adding a fetched paper to the library — `fetch_paper` reads, it never
-  creates a page; the user drops the PDF or uses the extension for that.
+- Adding a paper as a side effect of reading it: `fetch_paper` never
+  creates a page. Only `save_paper` does, under its own permission and on
+  the user's request.
 
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
@@ -686,10 +967,10 @@ rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
-`chat/ChatDock.jsx`: list, book, search, eye, globe, download, pencil,
-folder, plus). Each line expands to the arguments and the output the model
-got. Everything that changed is listed again under the pill: "Changed in
-your library" (renamed and filed pages, old → new) and "Changed in your
-notes" (edited, added and moved blocks), each entry a link to the page or
-block. The note tools' actions carry their page's `title` for that list; a
+`chat/ChatDock.jsx`: list, book, search, eye, pen, quote, globe, download,
+file-plus, history, pencil, folder, plus). Each line expands to the
+arguments and the output the model got. Everything that changed is listed
+again under the pill: "Changed in your library" (renamed, filed, saved and
+restored pages) and "Changed in your notes" (edited, added and moved
+blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.

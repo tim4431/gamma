@@ -307,6 +307,43 @@ pill (the panel's first child, sticky, zero height) reads out the
 percentage. Nothing is stored: reload resets it. On the home library the
 gesture is left to the browser.
 
+### Zoom gestures in a viewer
+
+The viewport meta turns the browser's own zoom off, so a viewer that zooms
+reads the gestures itself. Both of them come from one place,
+`shared/lib/viewerZoom.js`, so the PDF's pages and the notebook's sheets
+cannot drift apart in how zooming feels. A native non-passive `wheel`
+listener, because React's root listener is passive and `preventDefault` —
+which is what stops the browser zooming the page — would not work from an
+`onWheel` prop.
+
+**Ctrl/⌘ + wheel** (which is also what a trackpad pinch reports) zooms by
+`e^(-deltaY · 0.0015)` per event, so a notch is a fixed ratio whatever the
+device reports in pixels; Firefox's line-mode deltas are converted first.
+Two details keep a fast train honest: the scale compounds on the module's
+own `live` value rather than on the committed scale, which is a frame or
+two behind, and the dispatch is coalesced to one per frame, because every
+commit re-renders every page. A viewer pushes its committed scale back in
+with `sync()` — ignored while a dispatch is in flight, or the events that
+arrived since would be dropped (measurably: a 6-notch train zoomed about 3
+notches' worth).
+
+**Two fingers** pinch to zoom and drag to pan. The pinch does not commit
+while they are down: it previews as a CSS transform on the content layer,
+compositing only, since a commit per move event is more re-layout than any
+tablet can keep up with — so it is blurry until they lift, like every
+native PDF app. The layer must be the scroller's first in-flow child with
+`transform-origin: 0 0`, which is what the math assumes. `preventDefault`
+on the two-finger move blocks native scrolling along with the browser's
+zoom, which is why panning is the caller's job too: fingers held the same
+distance apart are a drag, and the commit gets the midpoint's travel to
+move the view by.
+
+Each viewer supplies only the two commits, since anchoring is the part that
+knows its own layout — the PDF's re-bases scroll and lets its zoom-anchor
+effect re-place the point (`pdf/PdfViewer.jsx`), the notebook's names the
+sheet and the fraction of it to hold ([notebooks.md](notebooks.md)).
+
 ### Fullscreen on touch devices
 
 The fullscreen button asks for native fullscreen first. App fullscreen
@@ -483,6 +520,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation) classified once and drawn as one card in the chat and in notes; a citation in a chat answer is a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
 | `shared/lib/canvasSize.js`, `pdf/verticalScrollSnap.js` | the canvas backing-store cap and the one-finger vertical scroll alignment ([pdf_loading.md](pdf_loading.md)) |
+| `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
 | `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour rides in `--hl`; a palette colour is also tagged with its `COLORS` index (`paletteIndex` in `shared/model/highlightColors.js`, `data-hl-color`), so on a dark page — Flip page colors or Gamma Dark — app.css draws a dark-tuned set with normal blending in place of the screened pastels, while colours from other apps keep the screen blend. A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
 | `ink/ink.js`, `ink/inkStore.js`, `ink/inkInput.js`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the files/drafts store, pointer sampling, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row and a text box's style share |
@@ -504,7 +542,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `editor/mdMarks.js` | the inline-mark table (regex + class per marker) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections). `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters |
 | `editor/SlashMenu.jsx` | the "/" command catalog + popup (link, embed, equations, highlight, headings, to-do, lists, quote, callout, code, mermaid, divider, table, image, date, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches) and the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link); the bare "/" list comes under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style) with a key-hint footer, a typed query as one ranked list; blockTree owns trigger detection and key handling |
 | `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip. blockTree owns the trigger, the keys and the insertion |
-| `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the fold is the browser pref `backlinksCollapsed` |
+| `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (used by mdPreprocess's exclusions and BlockTree's Enter/Tab-in-fence handling) and `fenceInnerAt` |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |

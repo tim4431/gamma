@@ -61,27 +61,36 @@ try {
     await page.waitForTimeout(100);
     return b;
   }
+  // The story: highlight the mechanism, note why it matters, circle the claim
+  // it enables and draw the link from one to the other.
+  const HIGHLIGHT = 'robust quantum information storage';
+  const NOTE = 'Robust storage is what lets qubits move.';
+  const CLAIM = 'non-local connectivity';
+  const phraseBox = (locator, phrase) => locator.evaluate((el, phrase) => {
+    const text = el.firstChild, i = text.textContent.indexOf(phrase);
+    const r = document.createRange();
+    r.setStart(text, i); r.setEnd(text, i + phrase.length);
+    const box = r.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }, phrase);
   // Optional first README story: text highlight and a real annotation before ink.
   if (process.argv.includes('--annotate')) {
     marks.start = at();
-    const span = page.locator('[data-page="1"] .textLayer span').filter({ hasText: 'used for robust quantum information storage, and excitation into Rydberg states is' }).first();
-    const b = await span.evaluate(el => {
-      const a=document.createRange(), z=document.createRange();
-      a.setStart(el.firstChild,0); a.setEnd(el.firstChild,1);
-      z.setStart(el.firstChild,el.textContent.length-1); z.setEnd(el.firstChild,el.textContent.length);
-      const first=a.getBoundingClientRect(), last=z.getBoundingClientRect();
-      return {x:first.x,y:first.y,width:last.right-first.x,height:first.height};
-    });
+    const span = page.locator('[data-page="1"] .textLayer span').filter({ hasText: HIGHLIGHT }).first();
+    const b = await phraseBox(span, HIGHLIGHT);
     framing.sentence = b;
     await page.waitForTimeout(400);
-    await glide([b.x+8,b.y+b.height/2], 650);
+    // A double-press drag selects whole words, from "robust" to "storage".
+    await glide([b.x+10,b.y+b.height/2], 650);
     await page.waitForTimeout(250);
     await page.mouse.down({clickCount:2});
-    await motion([pointer, [b.x+b.width-8,b.y+b.height/2]], 800);
+    await motion([pointer, [b.x+b.width-10,b.y+b.height/2]], 700);
     await page.mouse.up();
-    const selected = await page.evaluate(() => window.getSelection()?.toString());
-    if (!selected?.includes('quantum information storage')) throw new Error(`Text drag missed the claim: ${selected}`);
+    const selected = (await page.evaluate(() => window.getSelection()?.toString()))?.trim();
+    if (selected !== HIGHLIGHT) throw new Error(`Text drag selected "${selected}"`);
     await page.locator('.plainTip .colorBtn').first().waitFor();
+    framing.tip = await page.locator('.plainTip').boundingBox();
+    framing.notesHead = await page.getByRole('button', { name: 'Close Notes', exact: true }).boundingBox();
     await page.waitForTimeout(450);
     await click(page.locator('.plainTip .colorBtn').first());
     await page.waitForTimeout(700);
@@ -93,16 +102,17 @@ try {
     framing.note = await editor.boundingBox();
     if (!await editor.evaluate(el => el.contains(document.activeElement))) throw new Error('The new annotation is not focused');
     await glide([framing.note.x + framing.note.width * 0.7, framing.note.y + 70], 600);
-    await page.keyboard.type('Long-lived storage supports entanglement.', {delay:42});
+    await page.keyboard.type(NOTE, {delay:42});
     await page.keyboard.press('Escape');
     await page.waitForTimeout(1100);
     marks.annotation = at();
     const moved = await span.evaluate((el, y) => Math.abs(el.getBoundingClientRect().y - y) > 2, b.y);
-    if (moved) throw new Error('The reader scrolled while annotating; the ink gestures assume the first framing');
+    if (moved) throw new Error('The reader scrolled while annotating; the camera framing assumes the first view');
   }
   marks.start ??= at();
   framing.toolbar = await click(page.getByRole('button', { name: 'Handwriting tools', exact: true }));
   await page.waitForTimeout(500);
+  framing.inkBar = await page.locator('.pdfInkBar').boundingBox();
   const spans = await page.locator('[data-page="1"] .textLayer span').evaluateAll(es => es.map(e => { const b = e.getBoundingClientRect(); return { text: e.textContent, x: b.x, y: b.y, w: b.width, h: b.height }; }).filter(e => e.y > 50 && e.y < 900));
   fs.writeFileSync(path.join(scratch, 'ink-layout.json'), JSON.stringify({ spans, buttons: await page.locator('.pdfInkBar button').evaluateAll(es => es.map(e => e.getAttribute('aria-label'))) }, null, 2));
   if (!process.argv.includes('--inspect')) {
@@ -125,14 +135,43 @@ try {
       }
       return [...out, points.at(-1)];
     }
+    // Hand-plotted from the text layer: an ellipse round the claim with an open
+    // seam, and a bowed arrow from the highlighted phrase up to it.
+    const claim = await phraseBox(page.locator('[data-page="1"] .textLayer span').filter({ hasText: CLAIM }).first(), CLAIM);
+    const source = await phraseBox(page.locator('[data-page="1"] .textLayer span').filter({ hasText: HIGHLIGHT }).first(), HIGHLIGHT);
+    framing.claim = claim;
+    const cx = claim.x + claim.width / 2, cy = claim.y + claim.height / 2, rx = claim.width / 2 + 14, ry = claim.height / 2 + 9;
+    const circle = Array.from({ length: 13 }, (_, i) => {
+      const a = -0.35 + i / 12 * 2.15 * Math.PI, wobble = 1 + 0.04 * Math.sin(i * 2.3);
+      return [cx + Math.cos(a) * rx * wobble, cy + Math.sin(a) * ry * wobble - 1.5 * Math.cos(a)];
+    });
+    const tail = [source.x + source.width * 0.3, source.y - 4], tip = [claim.x + claim.width * 0.28, claim.y + claim.height + 11];
+    const along = (u, dx) => [tail[0] + (tip[0] - tail[0]) * u + dx, tail[1] + (tip[1] - tail[1]) * u];
+    const arrow = [tail, along(0.35, -12), along(0.7, -9), tip];
+    const angle = Math.atan2(tip[1] - arrow[2][1], tip[0] - arrow[2][0]);
+    const barb = side => [tip[0] - 12 * Math.cos(angle + side * 0.5), tip[1] - 12 * Math.sin(angle + side * 0.5)];
+    const ax = arrow.map(p => p[0]), ay = arrow.map(p => p[1]);
+    const box = [Math.min(...ax) - 16, Math.min(...ay) - 14, Math.max(...ax) + 16, Math.max(...ay) + 14];
     const gestures = {
-      circle: [[755,480],[721,475],[661,474],[596,477],[557,484],[552,493],[587,501],[654,503],[718,500],[760,492],[769,484],[757,479]],
-      arrow: [[268,527],[284,511],[312,497],[340,490],[365,491]],
-      head: [[355,482],[368,491],[354,500]],
-      highlight: [[380,561],[444,559],[531,560],[627,561],[730,559],[822,560]],
+      circle,
+      arrow,
+      head: [barb(1), tip, barb(-1)],
+      lasso: [[box[0] + 6, box[3]], [box[0], (box[1] + box[3]) / 2], [box[0] + 10, box[1]], [(box[0] + box[2]) / 2, box[1] - 4],
+        [box[2], box[1] + 6], [box[2] + 4, (box[1] + box[3]) / 2], [box[2] - 8, box[3]], [(box[0] + box[2]) / 2, box[3] + 4], [box[0] + 6, box[3]]],
     };
     const xs = Object.values(gestures).flat().map(p => p[0]), ys = Object.values(gestures).flat().map(p => p[1]);
     framing.ink = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+    // The page's saved ink block, once `ready(ink)` holds.
+    async function savedInk(ready) {
+      for (let i = 0; i < 60; i++) {
+        const tree = await account.api(`/api/blocks/${pageId}/subtree`);
+        const block = tree.block.children?.find(b => b.properties?.ink_url?.endsWith('.ink'));
+        const ink = block && await account.api(block.properties.ink_url);
+        if (ink && ready(ink)) return ink;
+        await page.waitForTimeout(150);
+      }
+      throw new Error('The ink block did not reach the expected state');
+    }
     await page.waitForTimeout(300);
     await click(page.locator('.pdfInkBar button[aria-label^="Blue pen"]'));
     marks.draw = at();
@@ -141,10 +180,19 @@ try {
     await stroke(freehand(gestures.head), 270);
     await count(3);
     await page.locator('.blockInkCard').first().waitFor();
-    marks.highlight = at();
-    await click(page.locator('.pdfInkBar button[aria-label^="Yellow highlighter"]'));
-    await stroke(freehand(gestures.highlight), 950);
-    await count(4);
+    const drawn = await savedInk(ink => ink.strokes.length === 3);
+    // Edit the ink: lasso the arrow and make the link red.
+    marks.lasso = at();
+    await click(page.locator('.pdfInkBar button[aria-label^="Lasso"]'));
+    await stroke(freehand(gestures.lasso), 900);
+    const menu = page.locator('.inkEditMenu');
+    await menu.waitFor();
+    await page.waitForTimeout(350);
+    marks.recolor = at();
+    await click(menu.getByRole('button', { name: 'Color', exact: true }));
+    await page.waitForTimeout(250);
+    await click(menu.locator('.inkEditOptions button[aria-label="Red"]'));
+    await page.waitForTimeout(900);
     await click(page.getByRole('button', { name: 'Hand', exact: true }));
     marks.notes = at();
     framing.inkCard = await page.locator('.blockInkCard').first().boundingBox();
@@ -153,27 +201,18 @@ try {
     marks.end = at();
     const frames = await capture.stop(); capture = null;
     await page.screenshot({ path: path.join(scratch, 'ink-final.png') });
-    // Verify that the on-screen ink really persisted, then reload off camera.
-    await page.waitForFunction(() => document.querySelectorAll('.blockInkCard').length > 0);
-    let saved;
-    for (let i = 0; i < 40; i++) {
-      const tree = await account.api(`/api/blocks/${pageId}/subtree`);
-      saved = tree.block.children?.find(b => b.properties?.ink_strokes === 4 && b.properties?.ink_url?.endsWith('.ink'));
-      if (saved) break;
-      await page.waitForTimeout(150);
-    }
-    if (!saved) throw new Error('Four strokes were not saved to a real ink block');
-    const ink = await account.api(saved.properties.ink_url);
-    if (ink.strokes.filter(s => s.tool === 'pen').length !== 3) throw new Error('Three pen strokes were not saved');
-    if (!ink.strokes.some(s => s.tool === 'highlighter')) throw new Error('Highlighter was not saved');
+    // Verify that the edit really persisted, then reload off camera.
+    const red = ink => ink.strokes.filter(s => s.color === '#dc2626');
+    const edited = await savedInk(ink => ink.strokes.length === 3 && red(ink).length === 2);
+    if (!red(edited).every(s => drawn.strokes.some(d => d.id === s.id))) throw new Error('The recolored strokes are not the drawn arrow');
     await page.reload();
-    await count(4);
+    await count(3);
     if (process.argv.includes('--annotate')) {
       const tree = await account.api(`/api/blocks/${pageId}/subtree`);
-      if (!JSON.stringify(tree).includes('Long-lived storage supports entanglement.')) throw new Error('Annotation did not persist');
+      if (!JSON.stringify(tree).includes(NOTE)) throw new Error('Annotation did not persist');
     }
-    fs.writeFileSync(path.join(scratch, 'ink-timeline.json'), JSON.stringify({ frames, width: W, height: H, marks, framing, verified: { strokes: 4, pen: 3, highlighter: true, reload: true, annotation: process.argv.includes('--annotate') } }, null, 2));
-    console.log('Recorded ink demo; three pen strokes, highlight and reload verified.');
+    fs.writeFileSync(path.join(scratch, 'ink-timeline.json'), JSON.stringify({ frames, width: W, height: H, marks, framing, verified: { strokes: 3, recolored: 2, reload: true, annotation: process.argv.includes('--annotate') } }, null, 2));
+    console.log('Recorded ink demo; strokes and the lasso recolor verified after reload.');
   }
   if (errors.length) throw new Error(errors.join('\n'));
   if (process.argv.includes('--inspect')) console.log('Inspected curated paper; see ink-layout.json.');

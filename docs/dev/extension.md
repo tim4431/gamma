@@ -76,9 +76,9 @@ helpers — never re-implement it in the extension.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`, `handoff:window`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-probe` / `connector-tab`) |
-| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every out-of-sight turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
-| `bridge.js` | content script between a chat card and the worker: a `connector-probe` window message gets the worker's verdict (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`); nothing to a page the worker gives no answer for; a question a second per request and kind |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
+| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
+| `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
@@ -281,15 +281,19 @@ Connector knows the tab by:
    the same way. A tab the bound tab opens (a "PDF" link with
    `target=_blank`) is bound to the same request.
 
-   **Out of sight.** With the chat's "Fetch blocked papers in the
-   background" setting the card sends `open` with `background` by itself.
-   The tab then loads in a minimized, unfocused window of the Connector's
-   own (`handoff:window`, made when there is none, closing with its last
-   tab), `MAX_BACKGROUND` (3) requests at a time; more wait in
-   `handoff:queue` (the card reads `queued`) and start as turns free up. A
-   tab waiting for the user (a `NEEDS_YOU` note: `signin`, `check`,
-   `looking`, `refused`, `other`) holds no turn. The watch call says
-   `background`, so the card can say where the page is.
+   **In the background.** With the chat's "Fetch blocked papers in the
+   background" setting (on by default) the card sends `open` with
+   `background` by itself. The tab then loads next to the Gamma tab that
+   asked, without the focus (`backgroundTab`) — an ordinary tab the user can
+   see working and switch to, not a window hidden behind everything —
+   `MAX_BACKGROUND` (3) requests at a time; more wait in `handoff:queue`
+   (the card reads `queued`) and start as turns free up. A tab waiting for
+   the user (a `NEEDS_YOU` note: `signin`, `check`, `looking`, `refused`,
+   `other`) holds no turn. The watch call says `background`, so the card can
+   say where the page is. Switching to such a tab (`tabs.onActivated`) makes
+   it the user's: it keeps its request but loses the `background` flag, so
+   it frees its turn, is not closed under them when the PDF arrives, and
+   nothing notifies them about the tab they are looking at.
 2. **Harvest.** Each page a bound tab finishes loading off the Gamma server
    is a chance: the worker checks the request still waits (`GET …/<id>`;
    settled or gone releases the tab), reads the page's detection afresh
@@ -330,7 +334,7 @@ Connector knows the tab by:
    connected cookies right away (`autoRefreshPublisher(…, {force: true})`: the
    session just worked, so the server's copy should match it; still only for
    a host connected by hand, with the cookies permission). Then it releases
-   every tab of the request. A tab out of sight closes, with nothing else to
+   every tab of the request. A background tab closes, with nothing else to
    see. After a tab the user saw, the worker shows a "Sent to your Gamma chat"
    notification and brings the Gamma tab forward (the tab that opened the
    request, else the most recently used Gamma page at the address it asked
@@ -343,15 +347,26 @@ a sign-in), `opening` (the tab opens a link), `refused` (no link gave a PDF —
 the user saves it from the tab and drops it on the card), `other` (the tab
 shows another paper), `closed` (the request's last tab was closed before the
 PDF came; the card offers Open again). The card's **Show the tab** sends
-`show`: a tab out of sight moves next to the Gamma tab that asked and comes
+`show`: a background tab in another window moves next to the Gamma tab that asked and comes
 forward (its window restored), and counts as seen from then on. Dismiss and a
 PDF dropped on the card send `close`, which releases the request's tabs and
-closes the ones out of sight. Every change to the bindings and the queue runs
+closes the background ones the user never switched to. Every change to the bindings and the queue runs
 through one serialized section (`changeHandoffs`), since several requests
 open, note and deliver at once.
 
-The chat's card follows the request on the server and continues the
-conversation once the PDF has arrived. Before the user opens the page it asks
+A **background** tab that stops on something only the user can do also
+says so in a notification, once per note (`handoff.needsYouMessage` names
+the host and what stopped it: a bot check, a sign-in, another paper, a
+site that refused, or no PDF link yet). A click brings that tab forward
+through the same `showHandoff` the card's button uses. A tab the user is on
+gets none: they can look at it. This matters because the chat's reply is
+waiting on that card
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)) and an unfocused
+tab among the others is easy to miss.
+
+The chat's card follows the request on the server; the reply it belongs to
+is held open until the PDF arrives, so the fetch that asked for it returns
+the document text. Before the user opens the page the card asks
 whether the Connector can do this (`bridge.js` → the worker's
 `connector-probe`, which asks its own server about the request): `ok` when it
 can, from any page, since only the request's account knows its id; to the
@@ -447,17 +462,18 @@ signed in to the same server works the same way.
   After the Connector opened tabs itself (2026-09-28, the same recipe): the
   card's Open made a tab straight at the publisher, with no `/go` on the way;
   four requests in the background with the user signed in were delivered
-  without a click, never more than three tabs at once, the tabs and their
-  window closed, and the chat continued once; a check that passes by itself
+  without a click, never more than three tabs at once, the tabs closed, and
+  the chat continued once; a check that passes by itself
   (a script sets the clearance cookie and reloads) was delivered without a
   click; one that does not got the `check` note, and Show the tab moved it
   into Gamma's window and forward; an IEEE-like page framing its PDF behind
   a sign-in got `signin`, and after signing in in the shown tab the framed
-  PDF arrived and saved to the library with its PDF. The window is created
-  minimized and unfocused, but headless Chromium reports it `normal` right
-  after (no window manager), so staying minimized on a desktop is unchecked.
-  Concurrent opens first lost bindings to each other's writes, which is why
-  the changes are serialized.
+  PDF arrived and saved to the library with its PDF. Those runs predate the
+  move from a minimized window of its own to an unfocused tab beside the
+  Gamma one (2026-09-30), which the suite's tab-strip assertions do not
+  cover — what a real desktop shows (the tab visible but unfocused, and
+  switching to it keeping it open) is unchecked. Concurrent opens first lost
+  bindings to each other's writes, which is why the changes are serialized.
 
 ## Not done yet
 

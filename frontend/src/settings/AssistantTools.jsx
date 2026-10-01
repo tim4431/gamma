@@ -1,8 +1,9 @@
 import React from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
-import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FileTextIcon, FolderIcon, GlobeIcon,
-  HelpCircleIcon, ListIcon, OutlineIcon, PenIcon, PencilIcon, SearchIcon, ShieldIcon } from "../shared/ui/Icons";
+import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
+  GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, OutlineIcon, PenIcon, PencilIcon, SearchIcon,
+  ShieldIcon } from "../shared/ui/Icons";
 import { permGroup, permState, permStates, permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
 
 // One catalog for the comparison table, the current chat's quick settings
@@ -13,17 +14,19 @@ const GROUPS = [
   ["edit", t("Make changes")],
 ];
 const PERMISSIONS = [
-  ["list", ListIcon, t("List pages"), t("Browse page titles, folders and metadata")],
-  ["read", BookIcon, t("Read pages"), t("Read PDF text, highlights and notes")],
+  ["list", ListIcon, t("List pages"), t("Browse page titles, folders, metadata and Recently deleted")],
+  ["read", BookIcon, t("Read pages"), t("Read PDF text, highlights, notes and citation records")],
   ["block_read", OutlineIcon, t("Read note blocks"), t("Read individual notes and their outline")],
-  ["view", EyeIcon, t("View PDF pages"), t("Look at figures, tables and scanned pages")],
+  ["view", EyeIcon, t("View pages and handwriting"), t("Look at figures, tables, scanned pages and your handwriting")],
   ["search", SearchIcon, t("Search library"), t("Find text in your notes and PDFs")],
   ["web_search", GlobeIcon, t("Search papers online"), t("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web")],
   ["web_read", CloudDownloadIcon, t("Fetch documents"), t("Read a DOI or URL without saving it to your library")],
   ["publisher_cookies", ShieldIcon, t("Use journal sign-ins"), t("Use connected publisher cookies when fetching documents")],
+  ["save", FilePlusIcon, t("Save papers"), t("Add papers found online to your library on request")],
   ["rename", PenIcon, t("Rename pages"), t("Change page titles on request")],
   ["move", FolderIcon, t("Move pages"), t("Organize pages into folders")],
-  ["block_edit", PencilIcon, t("Edit note blocks"), t("Create, edit and move notes on request")],
+  ["restore", HistoryIcon, t("Restore deleted pages"), t("Bring pages back from Recently deleted on request")],
+  ["block_edit", PencilIcon, t("Edit note blocks"), t("Create, edit and move notes, and transcribe handwriting, on request")],
 ];
 export const permissionLabel = (key) => PERMISSIONS.find((row) => row[0] === key)?.[2] || key;
 export const permissionIcon = (key) => PERMISSIONS.find((row) => row[0] === key)?.[1] || ShieldIcon;
@@ -107,7 +110,7 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
         </tr>)}
       </tbody>)}
     </table>
-    <p className="settingDesc agentToolNote">{t("Manage journal sign-ins in the Gamma Connector. Turning access off here keeps your connections saved. Fetched documents are temporary; save them with the Connector to keep a copy.")}</p>
+    <p className="settingDesc agentToolNote">{t("Manage journal sign-ins in the Gamma Connector. Turning access off here keeps your connections saved. Fetched documents are temporary; to keep one, save it (Save papers, or Save to library under the reply).")}</p>
   </fieldset>;
 }
 

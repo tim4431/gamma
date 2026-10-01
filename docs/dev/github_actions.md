@@ -8,16 +8,16 @@ account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
 skills), and a PR that touches only one of them skips `check`. The public
-demo (demo.gammapdf.com) runs a branch build of the server image:
-`docker.yml` dispatched on the branch pushes only `:sha-<short>`, which the
-`update-demo-server` skill pins on the VPS.
+demo (demo.gammapdf.com) runs `main`'s server image like the NAS, pinned by
+the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
+`update-demo-server` skill).
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `extension` | `extension.yml` | manual dispatch only (`release` skill) | `gamma-connector-<version>.zip` → GitHub Release `extension-v<version>` |
-| `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; dispatched from any branch for the demo (`update-demo-server` skill) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
+| `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink, notebook or replica modules, or the frontend's dependencies; manual dispatch | pass/fail on macOS: the shared JavaScript bundled and run bare, the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
@@ -36,8 +36,8 @@ PR touching sites/ ──▶ site.yml: check                            ← inst
 build-site ──▶ site.yml --ref <branch>: check → gammapdf.com        ← no merge needed
 update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cloud :latest :sha-<short>
                           then pull + restart on the VPS          ← no merge needed
-update-demo-server ──▶ docker.yml --ref <branch>: ghcr gamma :sha-<short> (never :latest)
-                       then pin that tag in the demo's project    ← no merge needed
+update-demo-server ──▶ main's newest docker.yml run: pin its :sha-<short>
+                       in the demo's project                      ← after a merge, like update-server
 update-needed ──▶ compares what each deployment runs with the code, then runs
                   update-account-server → update-demo-server → update-server for the ones behind
 release skill ─┬──▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
@@ -192,14 +192,17 @@ the full commit.
 Dispatched on a branch without a version
 (`gh workflow run docker.yml --ref <branch>`) it pushes only
 `sha-<short>`: `latest` is enabled on the default branch alone
-(`{{is_default_branch}}`) and the semver tags only with a version. That is
-how the public demo gets a build of `dev` without a merge; the
-`update-demo-server` skill dispatches it and pins the tag in the demo's
-own compose project on the VPS, as `GAMMA_TAG` in its `.env`
+(`{{is_default_branch}}`) and the semver tags only with a version: a way to
+try a branch's image without moving what the NAS pulls. Never pass
+`-f version` for such a build: that adds the release tags, and the semver
+rule adds `latest` with them.
+
+The public demo runs `main`: the `update-demo-server` skill takes the
+`sha-<short>` tag of `main`'s newest green run and pins it in the demo's own
+compose project on the VPS, as `GAMMA_TAG` in its `.env`
 ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
-[guests.md](guests.md)). Never pass `-f version` for a demo
-build: that adds the release tags, and the semver rule adds `latest` with
-them. Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
+[guests.md](guests.md)). Pinned rather than `:latest`, it changes only when
+deployed, and a rollback is one line. Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
 note on GHCR.
 
 ## `cloud.yml`
@@ -240,7 +243,7 @@ gh workflow run desktop.yml --ref main -f publish=false      # build check only
 gh workflow run desktop.yml --ref main -f prerelease=true -f version=1.2.0-rc1
 gh workflow run extension.yml --ref main                     # extension release — the `release` skill
 gh workflow run docker.yml --ref v0.2.3 -f version=0.2.3     # re-tag an image
-gh workflow run docker.yml --ref dev                         # branch image :sha-<short> only — the `update-demo-server` skill
+gh workflow run docker.yml --ref dev                         # branch image :sha-<short> only (never :latest)
 gh workflow run site.yml --ref dev                           # check + deploy gammapdf.com — the `build-site` skill
 gh workflow run cloud.yml --ref dev                          # test + publish the account server — the `build-cloud` skill
 

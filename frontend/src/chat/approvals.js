@@ -35,11 +35,19 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       if (preview.src_title) return t("Move a note from “{from}” to “{title}”", { from: preview.src_title, title });
       return preview.parent ? t("Move a note under “{parent}” in “{title}”", { parent: preview.parent, title })
         : t("Move a note in “{title}”", { title });
+    case "save_paper":
+      if (preview.existed) return t("File “{title}” in {folder}", { title, folder: preview.to });
+      return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
+        : t("Save “{title}” to the library root", { title });
+    case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
     case "list_pages": case "list_folders": return t("List your pages and folders");
+    case "list_deleted": return t("List Recently deleted");
     case "read_page": return t("Read “{title}”", { title });
     case "read_block": return t("Read notes of “{title}”", { title: args.block_id ? titleOf(args.block_id) || t("a page") : title });
     case "read_chats": return t("Read an earlier AI chat");
     case "view_pdf_page": return t("Look at PDF page {page}", { page: args.pdf_page || "?" });
+    case "view_ink": return t("Look at your handwriting");
+    case "cite": return t("Look up citation records");
     case "search_library": return t("Search your library for “{query}”", { query: args.query || "" });
     case "search_papers": return t("Search papers online for “{query}”", { query: args.query || "" });
     case "search_web": return t("Search the web for “{query}”", { query: args.query || "" });
@@ -59,10 +67,16 @@ export function declinedSummary(action, titleOf = () => "") {
   return `${why}: ${change}`;
 }
 
-// "Allow in this chat" lasts as long as the conversation: the permissions
-// it allowed are kept in this browser, per account and conversation (named
-// by its first message's id), and sent with each request as `granted`. A new
-// chat, or another conversation opened from history, asks again.
+// What a conversation decided for itself, kept in this browser per account
+// and conversation (named by its first message's id) and sent with each of
+// its requests. A new chat, or another conversation opened from history,
+// decides afresh. Two decisions live here:
+//
+// - "Allow in this chat" on an approval card: those permissions ride as
+//   `granted` and run without asking again.
+// - "Don't wait in this chat" when skipping a blocked paper: `paper_wait`
+//   goes false, so a later blocked fetch leaves its card under the reply
+//   instead of holding the reply open (chat/FetchHandoffCards.jsx).
 export const GRANTS_KEY = "gamma-ai-chat-grants";
 const MAX_CONVERSATIONS = 100;
 
@@ -74,15 +88,30 @@ export function grantsIn(store, user, conversation) {
   return Array.isArray(perms) ? perms.filter((p) => typeof p === "string") : [];
 }
 
-// The store with `perm` allowed in the conversation, keeping only the most
-// recently used conversations.
-export function withGrant(store, user, conversation, perm, now = Date.now()) {
-  if (!conversation || !perm) return store || {};
+// Whether this conversation asked not to wait for blocked papers.
+export function waitsForPapers(store, user, conversation) {
+  return !(conversation && store?.[slot(user, conversation)]?.noWait);
+}
+
+// The store with one more decision recorded for the conversation, keeping
+// only the most recently used ones.
+function decided(store, user, conversation, change, now) {
+  if (!conversation) return store || {};
   const key = slot(user, conversation);
-  const perms = [...new Set([...grantsIn(store, user, conversation), perm])];
-  const entries = Object.entries({ ...(store || {}), [key]: { perms, at: now } })
+  const entries = Object.entries({ ...(store || {}),
+    [key]: { ...(store?.[key] || {}), ...change, at: now } })
     .sort(([, a], [, b]) => (b?.at || 0) - (a?.at || 0)).slice(0, MAX_CONVERSATIONS);
   return Object.fromEntries(entries);
+}
+
+export function withGrant(store, user, conversation, perm, now = Date.now()) {
+  if (!perm) return store || {};
+  return decided(store, user, conversation,
+    { perms: [...new Set([...grantsIn(store, user, conversation), perm])] }, now);
+}
+
+export function withoutPaperWait(store, user, conversation, now = Date.now()) {
+  return decided(store, user, conversation, { noWait: true }, now);
 }
 
 export function withoutGrants(store, user, conversation) {

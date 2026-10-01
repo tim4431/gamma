@@ -636,3 +636,14 @@ def test_the_notes_only_pdf_keeps_the_boxes(guest):
         assert [str(a["/Contents"]) for a in _free_texts(r.content)] == ["typed"]
     bare = guest.get(f"/api/pages/{page['id']}/export-pdf?highlights=0&notes=0")
     assert bare.content == original
+
+
+def test_a_sheets_text_boxes_as_the_notebook_pdf_takes_them():
+    blocks = [
+        {"id": "a", "content": "typed", "properties": {"text_box": {"x": 1.234, "size": 200}}},
+        {"id": "b", "content": "  ", "properties": {"text_box": {}}},
+        {"id": "c", "content": "a note", "properties": {}},
+        {"id": "d", "content": "bad box", "properties": {"text_box": "nope"}},
+    ]
+    [(content, box)] = notebook.sheet_text_boxes(blocks)
+    assert content == "typed" and box == text_box.normalize_text_box({"x": 1.234, "size": 200})

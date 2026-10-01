@@ -5,7 +5,8 @@
 // one and by the button, the paper menu sets a page's paper and the page
 // added after it takes that paper; the notebook view's side bar switches
 // to the notes view, a sheet's own switch back, remembered over a reload;
-// the export is a PDF of the sheets. Then pages in a note: "/page",
+// the export is a PDF of the sheets, and on a touch screen two fingers
+// pinch-zoom and pan the pages. Then pages in a note: "/page",
 // written on in place, the replay of the page and of its group's card (on
 // the page too), and "Add page below". The
 // rules behind it are backend/tests/test_notebooks.py,
@@ -163,6 +164,132 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await until(async () => (await page.$$(".noteSheet .nbSheet")).length === 4, { what: "the notes view, remembered", timeout: 15000 });
     assertNoProblems(page);
     await ctx.close();
+  });
+
+  // A tablet's only zoom gesture: the viewport meta turns the browser's own
+  // off (docs/dev/ipad.md), so the notebook view has to run the pinch itself.
+  // CDP supplies native Chromium touch gestures.
+  if (browser.browserType().name() === "chromium") await step("notebook: two fingers pinch-zoom the pages and pan; Ctrl+wheel zooms; both hold the paper under them", async () => {
+    const touch = await account.context(browser, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } });
+    try {
+      const tab = await openPage(touch, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      await tab.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
+      await tab.waitForSelector(".nbViewer .nbSheet", { timeout: 15000 });
+      const cdp = await touch.newCDPSession(tab);
+      // Which paper a view point sits on, and where on it: what a zoom must hold.
+      const paperAt = (vx, vy) => tab.evaluate(([vx, vy]) => {
+        for (const node of document.querySelectorAll(".nbSheet")) {
+          const r = node.getBoundingClientRect();
+          if (vy >= r.top && vy <= r.bottom) return { id: node.dataset.sheetId, fy: (vy - r.top) / r.height };
+        }
+        return null;
+      }, [vx, vy]);
+      const scale = () => tab.evaluate(() => {
+        const sheet = document.querySelector(".nbSheet");
+        return sheet.getBoundingClientRect().width / sheet.querySelector(".nbPaper").viewBox.baseVal.width;
+      });
+      const box = await tab.locator(".nbViewer").boundingBox();
+      const cx = Math.round(box.x + box.width / 2), cy = Math.round(box.y + box.height / 2);
+      // Halfway down the middle sheet, so the hold has paper on both sides of it.
+      await tab.locator(".nbSheet").nth(1).evaluate((el) => {
+        const viewer = el.closest(".nbViewer");
+        viewer.scrollTop += el.getBoundingClientRect().top - viewer.getBoundingClientRect().top - 80;
+      });
+      await sleep(200);
+
+      // Two fingers from `from` apart to `to` apart, their midpoint moving by
+      // (dx, dy): a spread with no travel is a pinch, travel with no spread a pan.
+      const twoFingers = async (from, to, dx = 0, dy = 0) => {
+        const pts = (gap, f) => [
+          { x: cx + dx * f - gap / 2, y: cy + dy * f, id: 1 },
+          { x: cx + dx * f + gap / 2, y: cy + dy * f, id: 2 },
+        ];
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts(from, 0) });
+        for (let i = 1; i <= 12; i++) {
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pts(from + (to - from) * i / 12, i / 12) });
+          await sleep(16);
+        }
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await sleep(300);
+      };
+
+      // Out, then back in: each pinch scales the pages by what the fingers did
+      // (up to the zoom limit) and leaves the paper under them where it was.
+      for (const [from, to] of [[120, 300], [300, 140]]) {
+        const was = await scale(), held = await paperAt(cx, cy);
+        await twoFingers(from, to);
+        const now = await until(async () => {
+          const s = await scale();
+          return Math.abs(s - was) > 0.01 ? s : false;
+        }, { what: `pages resize for a ${(to / from).toFixed(2)}x pinch` });
+        const expected = Math.min(4, Math.max(0.2, was * to / from));
+        assert(Math.abs(now - expected) < 0.02, `pinch ${from}->${to}: scale ${now.toFixed(3)} is the fingers' ${expected.toFixed(3)}`);
+        const after = await paperAt(cx, cy);
+        assert(after && after.id === held.id && Math.abs(after.fy - held.fy) < 0.01,
+          `the paper under the fingers is held: ${held.fy.toFixed(3)} -> ${after?.fy.toFixed(3)}`);
+      }
+      assertEq(await tab.evaluate(() => visualViewport.scale), 1, "the browser's own zoom stays out of it");
+
+      // Two fingers held the same distance apart pan, like the PDF viewer's:
+      // the gesture takes the move event, so nothing else can scroll it.
+      const zoomed = await scale();
+      // Against the room the view actually has: at this zoom the column can be
+      // barely wider than the view, and a pan that asks for more is clamped.
+      const room = () => tab.locator(".nbViewer").evaluate((el) => ({
+        left: el.scrollLeft, top: el.scrollTop,
+        maxLeft: el.scrollWidth - el.clientWidth, maxTop: el.scrollHeight - el.clientHeight,
+      }));
+      const from = await room();
+      await twoFingers(200, 200, -120, -150);
+      const to = await room();
+      const want = [Math.min(from.left + 120, from.maxLeft), Math.min(from.top + 150, from.maxTop)];
+      assert(Math.abs(to.left - want[0]) < 3 && Math.abs(to.top - want[1]) < 3,
+        `a two-finger drag pans by what the fingers travelled: ${[from.left, from.top]} -> ${[to.left, to.top]}, wanted ${want}`);
+      assertEq(await scale(), zoomed, "and does not change the zoom");
+
+      // Ctrl+wheel: the same rate as the PDF viewer, holding the paper under
+      // the cursor rather than the middle of the view.
+      await tab.getByRole("button", { name: "Fit to width", exact: true }).click();
+      await sleep(300);
+      const off = [Math.round(box.x + box.width * 0.32), Math.round(box.y + box.height * 0.28)];
+      const under = await paperAt(...off);
+      const fitScale = await scale();
+      // Against the delta the browser actually delivered, not the one asked
+      // for: an emulated device may scale it.
+      await tab.locator(".nbViewer").evaluate((el) => {
+        window.wheelDy = 0;
+        el.addEventListener("wheel", (e) => { window.wheelDy += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; }, true);
+      });
+      await tab.mouse.move(...off);
+      await tab.keyboard.down("Control");
+      await tab.mouse.wheel(0, -120);
+      await tab.keyboard.up("Control");
+      const notched = await until(async () => {
+        const v = await scale();
+        return Math.abs(v - fitScale) > 1e-4 ? v : false;
+      }, { what: "Ctrl+wheel zooms the sheets" });
+      const dy = await tab.evaluate(() => window.wheelDy);
+      const rate = Math.exp(-dy * 0.0015); // WHEEL_RATE in shared/lib/viewerZoom.js
+      assert(Math.abs(notched / fitScale - rate) < 0.005,
+        `the wheel zooms at the shared rate: ${(notched / fitScale).toFixed(4)} vs ${rate.toFixed(4)} for ${dy}px`);
+      const stillUnder = await paperAt(...off);
+      assert(stillUnder && stillUnder.id === under.id && Math.abs(stillUnder.fy - under.fy) < 0.01,
+        `the paper under the cursor is held: ${under.fy.toFixed(3)} -> ${stillUnder?.fy.toFixed(3)}`);
+
+      // One finger still scrolls: only the two-finger move is taken.
+      const before = await tab.locator(".nbViewer").evaluate((el) => el.scrollTop);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy }] });
+      for (let i = 1; i <= 10; i++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - 20 * i }] });
+        await sleep(16);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await until(async () => (await tab.locator(".nbViewer").evaluate((el) => el.scrollTop)) > before + 100,
+        { what: "a one-finger swipe scrolls the notebook" });
+      assertNoProblems(tab);
+    } finally {
+      await touch.close();
+    }
   });
 
   // --- pages in a note ----------------------------------------------------------------

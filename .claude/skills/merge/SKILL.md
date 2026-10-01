@@ -52,6 +52,7 @@ committed beyond `origin/main`, stop and say so.
    merge — say so). Report it with its link. Do not
    wait for it unless asked (`gh run watch <id> --exit-status`).
 
-Follow-ups to offer, not to run: `update-server` once the Docker run has
-published (deploys `latest` to the NAS); `release` if the merged work
-should ship as a new desktop app or extension version.
+Follow-ups to offer, not to run: `update-server` and `update-demo-server`
+once the Docker run has published (they deploy that build to the NAS and
+the demo; `update-needed` checks all deployments); `release` if the merged
+work should ship as a new desktop app or extension version.

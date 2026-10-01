@@ -162,6 +162,15 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
     return out.getvalue()
 
 
+def sheet_text_boxes(blocks: list[dict]) -> list[tuple[str, dict]]:
+    """The text boxes among a sheet's blocks (``sheets_of``'s ``blocks``) as
+    ``notebook_pdf`` takes them: ``(content, normalized text_box)``, the
+    empty ones left out."""
+    from .text_box import normalize_text_box
+    return [(b["content"], box) for b in blocks if (b.get("content") or "").strip()
+            if (box := normalize_text_box((b.get("properties") or {}).get("text_box"))) is not None]
+
+
 def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
     """The page's sheets in document order, at any depth, from its flat
     block dicts (``block_to_dict``): ``[{id, paper, blocks: [the blocks

@@ -70,7 +70,7 @@ export function NoteSheet({ block, number }) {
   const scale = boxW ? Math.min(MAX_SCALE, boxW / paper.width) : 0;
   const editable = !tools.readOnly;
   return (
-    <div ref={boxRef} className={"noteSheet" + armedClasses(tools)} data-sheet-id={block.id}>
+    <div ref={boxRef} className={"noteSheet" + armedClasses(tools)} data-sheet-id={block.id} data-guide="notes.sheet">
       {scale ? (
         <div ref={wrapRef} className="nbSheet" style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }}
           aria-label={t("Page {n}", { n: number })}>
@@ -83,14 +83,14 @@ export function NoteSheet({ block, number }) {
       <div className="noteSheetBar">
         {editable ? (
           <button type="button" className={"ctlBtn" + (ctx.inkOpen ? " modeActive" : "")} aria-pressed={ctx.inkOpen}
-            onClick={ctx.onPen} aria-label={t("Write on this page")}
+            onClick={ctx.onPen} aria-label={t("Write on this page")} data-guide="sheet.pen"
             title={ctx.inkOpen ? t("Close the markup tools (Esc)") : t("Handwriting: write on this page with a pen, highlighter or eraser")}>
             <PenIcon size={16} />
           </button>
         ) : null}
         {editable ? (
           <button type="button" className={"ctlBtn" + (paperOpen ? " modeActive" : "")} aria-expanded={paperOpen}
-            onClick={() => setPaperOpen((v) => !v)} aria-label={t("Paper of this page")} title={t("Paper: size, pattern and colour of this page")}>
+            onClick={() => setPaperOpen((v) => !v)} aria-label={t("Paper of this page")} data-guide="sheet.paper" title={t("Paper: size, pattern and colour of this page")}>
             <SheetIcon size={16} />
           </button>
         ) : null}
@@ -102,7 +102,7 @@ export function NoteSheet({ block, number }) {
           </button>
         ) : null}
         {ctx.onNotebookView ? (
-          <button type="button" className="ctlBtn" onClick={ctx.onNotebookView}
+          <button type="button" className="ctlBtn" onClick={ctx.onNotebookView} data-guide="sheet.notebookView"
             aria-label={t("Notebook view")} title={t("Notebook view: the pages beside the notes")}>
             <NotebookIcon size={16} />
           </button>

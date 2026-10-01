@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  NEEDS_YOU, autoOpens, connectorNote, continuePrompt, handoffHint, handoffState, openRoute, pollDelay, replyHandoffs,
-  shouldContinue, wallHeadline, watchNote,
+  NEEDS_YOU, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState, openRoute,
+  pollDelay, replyHandoffs, wallHeadline, watchNote,
 } from "../src/chat/fetchHandoff.js";
 
 const card = (id, source = `doi:${id}`) => ({ id, host: "journals.example.org", wall: "captcha", source });
@@ -15,6 +15,16 @@ test("a reply's requests come once each, in call order", () => {
   ];
   assert.deepEqual(replyHandoffs(actions).map((h) => h.id), ["a", "b"]);
   assert.deepEqual(replyHandoffs(undefined), []);
+});
+
+test("a request the reply skipped starts settled, so its card asks nobody", () => {
+  const a = card("a");
+  const [settled] = replyHandoffs([{ kind: "fetch", handoff: a, skipped: true }]);
+  assert.equal(settled.settled, "dismissed");
+  assert.equal(handoffState({ status: settled.settled }), "dismissed");
+  // One the wait gave up on is still open: its card follows the server.
+  const [waiting] = replyHandoffs([{ kind: "fetch", handoff: a }]);
+  assert.equal(waiting.settled, undefined);
 });
 
 test("the card's state follows the server and what the user did here", () => {
@@ -67,16 +77,21 @@ test("the card asks the server often only while the user is at the page", () => 
   for (const settled of ["done", "dismissed", "gone"]) assert.equal(pollDelay(settled), null);
 });
 
-test("the chat continues by itself only when it is safe to speak for the user", () => {
-  const ok = { states: ["done"], sawWaiting: true, isLast: true, idle: true };
-  assert.equal(shouldContinue(ok), true);
-  assert.equal(shouldContinue({ ...ok, states: ["done", "dismissed"] }), true);
-  assert.equal(shouldContinue({ ...ok, states: ["done", "watching"] }), false, "another request still open");
-  assert.equal(shouldContinue({ ...ok, states: ["dismissed", "gone"] }), false, "nothing arrived");
-  assert.equal(shouldContinue({ ...ok, sawWaiting: false }), false, "a reload of a finished card never resends");
-  assert.equal(shouldContinue({ ...ok, isLast: false }), false, "the conversation moved on");
-  assert.equal(shouldContinue({ ...ok, idle: false }), false, "answering, or a draft in the composer");
-  assert.equal(shouldContinue({ ...ok, states: [] }), false);
+test("Continue is offered only once everything settled and something arrived", () => {
+  const ok = { states: ["done"], isLast: true, idle: true };
+  assert.equal(canContinue(ok), true);
+  assert.equal(canContinue({ ...ok, states: ["done", "dismissed"] }), true);
+  assert.equal(canContinue({ ...ok, states: ["done", "watching"] }), false, "another request still open");
+  assert.equal(canContinue({ ...ok, states: ["dismissed", "gone"] }), false, "nothing arrived");
+  assert.equal(canContinue({ ...ok, isLast: false }), false, "the conversation moved on");
+  assert.equal(canContinue({ ...ok, idle: false }), false, "answering, or a draft in the composer");
+  assert.equal(canContinue({ ...ok, states: [] }), false);
+});
+
+test("a live card says the reply is held on it, and what skipping did", () => {
+  assert.match(handoffHint("waiting", { live: true }), /reply is waiting for this/);
+  assert.match(handoffHint("dismissed", { live: true }), /carries on without it/);
+  assert.equal(handoffHint("dismissed"), "Dismissed.");
 });
 
 test("the card says whether the PDF can come back by itself, and what to fix when not", () => {
@@ -115,7 +130,7 @@ test("the texts name the host, the wall and what arrived", () => {
   assert.match(handoffHint("done", { pages: 19 }), /19 pages/);
   assert.match(handoffHint("done", { pages: 1 }), /\(1 page\)/);
   assert.match(handoffHint("watching"), /Gamma Connector is watching/);
-  assert.match(handoffHint("watching", { background: true }), /minimized window/);
+  assert.match(handoffHint("watching", { background: true }), /tab of its own/);
   assert.equal(handoffHint("waiting"), "Open the page and sign in or pass the check there.");
   assert.equal(handoffHint("opened"), "Finish in the tab that opened.");
   assert.match(handoffHint("opened", { queued: true }), /once the papers before it are done/);

@@ -57,10 +57,10 @@ cd backend
 GAMMA_DATA_DIR=<scratch>/data venv/Scripts/python.exe manage.py setup           # guest account + files
 GAMMA_DATA_DIR=<scratch>/data venv/Scripts/python.exe manage.py create-user tim pw
 GAMMA_DATA_DIR=<scratch>/data GAMMA_STATIC_DIR=/d/Codes/Github/gamma/frontend/dist \
-  venv/Scripts/python.exe -m uvicorn app:app --host 127.0.0.1 --port 9002        # background; 9001 is the real one
+  venv/Scripts/python.exe -m uvicorn app:app --host 127.0.0.1 --port 9101        # background; 9001/9002 are the developer's
 ```
 
-Seed through the API with a cookie jar (`curl -c jar -X POST :9002/api/login
+Seed through the API with a cookie jar (`curl -c jar -X POST :9101/api/login
 -d '{"username":"tim","password":"pw"}'`, then `-b jar` plus
 `-H "X-Gamma-Workspace: <id>"`): `POST /api/uploads` (a PDF) →
 `POST /api/blocks/by-doc/<doc_id>` (the page), `POST /api/pages` (a text

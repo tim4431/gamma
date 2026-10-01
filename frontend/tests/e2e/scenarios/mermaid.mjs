@@ -75,11 +75,17 @@ export async function mermaidScenarios(env) {
       await page.keyboard.insertText("Begin");
       await closeEditor(page);
       await page.locator(".mermaidPreview").filter({ hasText: "Begin" }).waitFor();
-      // The diagram is an object: a click selects it (no editor); the source
-      // is edited through its menu.
+      // The diagram is an object: a click selects it (no editor), a
+      // double-click opens its source, and the menu does the same.
       await page.locator(".mermaidPreview").click();
       await page.locator(".mdObject-mermaid.mdObjectSelected").waitFor();
       assertEq(await page.locator(".blockEditorCm").count(), 0, "a click on the diagram selects it instead of opening the editor");
+      await page.locator(".mermaidPreview").dblclick();
+      await page.locator(".blockEditorCm .cm-content").waitFor();
+      assert((await page.locator(".blockEditorCm .cm-content").innerText()).includes("flowchart"),
+        "a double-click opens the editor on the diagram's source");
+      await closeEditor(page);
+      await page.locator(".mermaidPreview").filter({ hasText: "Begin" }).waitFor();
       await page.locator(".mermaidPreview").click({ button: "right" });
       await page.getByRole("button", { name: "Edit markdown source" }).click();
       await page.locator(".blockEditorCm .cm-content").waitFor();

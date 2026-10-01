@@ -95,18 +95,18 @@ def upstream(monkeypatch):
 def registries(monkeypatch):
     calls = []
 
-    def crossref(query, rows=5, detail=False, from_year=0):
-        calls.append(("crossref", query))
+    def crossref(query, rows=5, detail=False, from_year=0, work_type=""):
+        calls.append(("crossref", query, work_type))
         return [{"title": "Bias-preserving gates with cat qubits", "authors": ["S. Puri", "L. Jiang"],
                  "year": "2020", "venue": "Science Advances", "doi": "10.1126/sciadv.aay5901",
                  "arxiv_id": "", "volume": "", "pages": "", "source": "crossref", "cited_by": 300}]
 
-    def openalex_search(query, rows=5, from_year=0, key=""):
-        calls.append(("openalex", query))
+    def openalex_search(query, rows=5, from_year=0, key="", work_type="", open_access=False):
+        calls.append(("openalex", query, work_type, open_access))
         return []
 
     def arxiv(query, rows=5, detail=False):
-        calls.append(("arxiv", query))
+        calls.append(("arxiv", query, ""))
         return [{"title": "Bias-Preserving Gates with Cat Qubits", "authors": ["Shruti Puri"],
                  "year": "2019", "venue": "arXiv:1905.00450", "doi": "10.1126/sciadv.aay5901",
                  "arxiv_id": "1905.00450", "volume": "", "pages": "", "source": "arxiv"},
@@ -130,7 +130,7 @@ def test_search_papers_merges_registries_and_dedups(org, registries):
     ws = org[1]["ws"]
     text, action = run_agent_tool(ws, folder(""), "search_papers", {"query": "bias preserving cat"})
     assert action["kind"] == "websearch" and "2 results" in action["summary"]
-    assert {k for k, _ in registries} == {"crossref", "arxiv", "openalex"}
+    assert {call[0] for call in registries} == {"crossref", "arxiv", "openalex"}
     # The Crossref record and the arXiv record share a DOI → one line, the
     # Crossref one first (relevance interleaving starts with Crossref).
     assert text.count("Bias") == 1 and "Another cat paper" in text
@@ -292,3 +292,84 @@ def test_html_text_and_identifiers():
     assert web.identifier("cat qubits") == ("", "")
     title, text = web.html_text(b"<html><head><title>T &amp; U</title></head><body><p>a<br>b</p></body></html>")
     assert (title, text) == ("T & U", "a\nb")
+
+
+# --- reading a document through a helper ---------------------------------------------
+
+class _FakeHelper:
+    """A helper that runs whatever the tool asked, through run_agent_tool,
+    and answers with a fixed sentence — the wire and the model are covered
+    by the chat's own tests, the point here is what crosses the boundary."""
+
+    def __init__(self, ws, scope, answer="Cat qubits, p. 1. Read from an arXiv preprint."):
+        self.ws, self.scope, self.answer, self.asked = ws, scope, answer, []
+
+    def run(self, *, question, system, tools):
+        self.asked.append({"question": question, "system": system,
+                           "tools": [t["name"] for t in tools]})
+        _, action = run_agent_tool(self.ws, {**self.scope, "helper": None},
+                                   "fetch_paper", {"source": "arXiv:1905.00450"},
+                                   allowed_tools={"fetch_paper"})
+        return {"text": self.answer, "actions": [action], "usage": {"input": 900, "output": 40}}
+
+
+def test_read_paper_hands_the_document_to_a_helper_and_keeps_only_its_answer(org, upstream):
+    ws = org[1]["ws"]
+    scope = {"type": "page", "page_id": "p1", "read_chars": 20000, "delegates": True}
+    scope["helper"] = helper = _FakeHelper(ws, scope)
+    text, action = run_agent_tool(ws, scope, "read_paper",
+                                  {"source": "arXiv:1905.00450", "question": "what do they measure?",
+                                   "title": "Bias-Preserving Gates with Cat Qubits"})
+    # The chat gets the answer, not the paper: no page text crosses over.
+    assert "Cat qubits, p. 1." in text and "[p. 3]" not in text
+    assert "A helper read arXiv:1905.00450" in text
+    asked, = helper.asked
+    assert "what do they measure?" in asked["question"] and "Bias-Preserving Gates" in asked["question"]
+    assert asked["tools"] == ["fetch_paper"], "the helper reaches nothing else"
+    assert "ONE document" in asked["system"]
+    # The chip names the document the helper read, its calls, and the cost.
+    assert action["kind"] == "fetch" and action["url"] == "https://arxiv.org/pdf/1905.00450"
+    assert [c["tool"] for c in action["children"]] == ["fetch_paper"]
+    assert "result" not in action["children"][0], "a child's output is the helper's, not the chat's"
+    assert action["spent"] == {"input": 900, "output": 40}
+
+
+def test_read_paper_needs_a_helper_and_a_question(org, upstream):
+    ws = org[1]["ws"]
+    scope = {"type": "page", "page_id": "p1", "read_chars": 20000, "delegates": True}
+    scope["helper"] = _FakeHelper(ws, scope)
+    text, _ = run_agent_tool(ws, scope, "read_paper", {"source": "arXiv:1905.00450"})
+    assert text.startswith("error") and "what the helper should find out" in text
+    # No helper in this chat: the model is told to read it itself.
+    text, _ = run_agent_tool(ws, {**scope, "helper": None}, "read_paper",
+                             {"source": "arXiv:1905.00450", "question": "what?"})
+    assert "read the document yourself with fetch_paper" in text
+    # And without the setting the tool is not offered at all.
+    text, _ = run_agent_tool(ws, {**scope, "delegates": False}, "read_paper",
+                             {"source": "arXiv:1905.00450", "question": "what?"})
+    assert "not enabled" in text
+
+
+def test_a_wall_inside_the_helper_becomes_the_chats_own_card(org, upstream, monkeypatch):
+    """The helper cannot show a card, so the request it opened rides up on
+    the parent call — the chat waits on it as for any blocked fetch."""
+    ws = org[1]["ws"]
+    scope = {"type": "page", "page_id": "p1", "read_chars": 20000, "delegates": True,
+             "handoff_user": "someone"}
+
+    class Blocked(_FakeHelper):
+        def run(self, *, question, system, tools):
+            from gamma import fetch_handoff
+            req = fetch_handoff.open_request("someone", "doi:10.5555/x", wall="captcha",
+                                             url="https://journals.example.org/doi/10.5555/x")
+            return {"text": "I could not read it.",
+                    "actions": [{"kind": "fetch", "error": True, "summary": "Needs your browser",
+                                 "handoff": {"id": req["id"], "host": req["host"],
+                                             "wall": "captcha", "source": "doi:10.5555/x"}}],
+                    "usage": {}}
+
+    scope["helper"] = Blocked(ws, scope)
+    _, action = run_agent_tool(ws, scope, "read_paper",
+                               {"source": "doi:10.5555/x", "question": "what?"})
+    assert action["handoff"]["host"] == "journals.example.org"
+    assert action["summary"].startswith("Needs your browser")
