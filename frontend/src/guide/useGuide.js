@@ -10,7 +10,7 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, triggerMatches } from "./triggers.js";
+import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, stepApplies, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -191,12 +191,16 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const factsRef = useRef(facts);
   factsRef.current = facts;
 
-  // Steps whose `requires` don't hold are dropped from this run, and so is a
+  // Steps whose `requires` don't hold are dropped from this run, and so are
+  // the steps a finished `sibling` tour already taught (stepApplies), and a
   // step that has the user make something (`creates: anchor`) when that
   // thing is already there — the tour points at the existing one instead.
   const steps = run?.steps || [];
-  const stepsFor = (tour) => tour.steps.filter((s) => factsMatch(s.requires, factsRef.current)
-    && !(s.creates && anchorElement(s.creates)));
+  const stepsFor = (tour) => {
+    const siblingDone = !!tour.sibling && progress.current.read(TOURS[tour.sibling], scope)?.state === "done";
+    return tour.steps.filter((s) => stepApplies(s, factsRef.current, siblingDone)
+      && !(s.creates && anchorElement(s.creates)));
+  };
 
   const start = useCallback((tourId, at = 0) => {
     const tour = TOURS[tourId];
@@ -215,11 +219,13 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
 
   // Can this tour start where the user is? What the Tours menu lists: its
   // prerequisites hold and its first step's anchor (or the control that
-  // reveals it) is on screen — or the tour brings up its own surface.
+  // reveals it) is on screen — or the tour brings up its own surface. An
+  // optional first step whose anchor is missing would be passed over, so the
+  // step after it counts (a PDF without a table of contents).
   const canStart = (tourId) => {
     const tour = TOURS[tourId];
     if (!tour || tour.hint || !enabled || !factsMatch(tour.requires, factsRef.current)) return false;
-    const first = stepsFor(tour)[0];
+    const first = stepsFor(tour).find((s) => !s.optional || anchorElement(s.anchor));
     if (!first) return false;
     if (tour.show || !first.anchor) return true;
     return !!anchorElement([...(ANCHORS[first.anchor]?.open || []), first.anchor][0]);
@@ -340,7 +346,13 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const offerAvailable = enabled && suggest && offer?.scope === scope && facts.guideAvailable !== false
     && factsMatch(offer?.tour.requires, facts);
   useEffect(() => {
-    if (run && !runAvailable) { setRun(null); activity.current = null; }
+    if (run && !runAvailable) {
+      // Leaving on a last card that only explains has shown the whole tour:
+      // the notebook view's last card points at the button that leaves it.
+      const last = !run.finishing && run.index === run.steps.length - 1 && !run.steps[run.index].advanceOn;
+      if (last) progress.current.write(run.tour, run.scope, { state: "done" });
+      setRun(null); activity.current = null;
+    }
     if (offer && !offerAvailable) { setOffer(null); activity.current = null; }
   }, [run, runAvailable, offer, offerAvailable]);
   useEffect(() => {

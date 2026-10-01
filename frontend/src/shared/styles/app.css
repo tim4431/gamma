@@ -1707,6 +1707,9 @@ body {
 [data-scheme="light"] .pdfCtlBox {
   box-shadow: var(--shadow-2);
 }
+/* A run of a box's buttons kept together (the tour points at it), laid out
+   as if it were not there. */
+.pdfCtlGroup { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .pdfZoomOverlay {
   left: 14px;
   top: 50%;

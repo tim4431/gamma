@@ -11,7 +11,10 @@ app and the iPad app ([ipad.md](ipad.md)) write them the same way.
 The **Pages to write on** tour walks through this in the app, offered
 once a sheet is made (`sheet.created`); its anchors are on the sheet and its
 tool row, so moving one of those controls moves its `data-guide` with it
-([onboarding.md](onboarding.md)).
+([onboarding.md](onboarding.md)). **The notebook view** tour, offered on
+entering that view, walks the viewer's left edge; it is the PDF viewer
+tour's sibling, so after one of them the other only recaps the buttons they
+share and shows the paper and Notes view buttons.
 
 Code: `gamma/notebook.py` (server: paper rules, the PDF), `frontend/src/notebook/notebook.js`
 (the same rules on the client, pure), `notebook/NotebookViewer.jsx`

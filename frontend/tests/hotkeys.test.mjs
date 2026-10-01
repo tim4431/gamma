@@ -42,6 +42,9 @@ test("labels follow the platform", () => {
   assert.deepEqual(chordParts("Ctrl-Alt-Shift-Mod-a", true), ["⌃", "⌥", "⇧", "⌘", "A"]);
   assert.deepEqual(chordParts("Mod--", false), ["Ctrl", "-"]);
   assert.deepEqual(chordParts("nope-x", false), []);
+  assert.deepEqual(chordParts("Mod", false), ["Ctrl"], "a lone modifier, as in a guide's {key:Mod}");
+  assert.deepEqual(chordParts("Mod", true), ["⌘"]);
+  assert.deepEqual(chordParts("Alt", true), ["⌥"]);
 });
 
 test("bindable refuses keys that would replace typing", () => {

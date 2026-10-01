@@ -7021,6 +7021,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // the notebook view: the sheets fill the viewer, so the notes view's
       // own sheet and its tool row (the notebook tour's anchors) are not up
       notebookView: !!notebook,
+      // the viewer's left edge (its tool column, outline and full screen)
+      // is on screen: a PDF or the notebook view, not closed, and on a
+      // phone not under the Notes or Chat panel
+      viewerTools: !!(pdfUrl || notebook) && !viewerHidden && !(isPhone && phonePanel),
       // this workspace has an offline copy or a publication, so it has a sync pill
       clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
       installable: HOME_SCREEN_INSTALLABLE,
@@ -9969,18 +9973,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ><XIcon size={16} /></button>
           ) : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
-            <div className="pdfCtlBox pdfZoomOverlay">
-              <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
-                <ZoomOutIcon size={16} />
-              </button>
-              <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
-                <ZoomInIcon size={16} />
-              </button>
-              <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-                <FitWidthIcon size={16} />
-              </button>
+            <div className="pdfCtlBox pdfZoomOverlay" data-guide="viewer.tools">
+              {/* The PDF and the notebook viewer share the buttons up to the
+                  pen, in the same places; what only one of them has comes
+                  after (the viewer tours' recap points at the shared run). */}
+              <div className="pdfCtlGroup" data-guide="viewer.common">
+                <div className="pdfCtlGroup" data-guide="viewer.zoom">
+                  <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
+                    <ZoomOutIcon size={16} />
+                  </button>
+                  <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
+                    <ZoomInIcon size={16} />
+                  </button>
+                  <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
+                    <FitWidthIcon size={16} />
+                  </button>
+                </div>
+                {!readOnly ? (
+                  <button
+                    className={inkUi.open ? "modeActive" : ""}
+                    data-guide="pdf.inkButton"
+                    onClick={openInkTools}
+                    title={inkUi.open ? t("Close the markup tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
+                    aria-label={t("Handwriting tools")}
+                  >
+                    <PenIcon size={16} />
+                  </button>
+                ) : null}
+              </div>
               {translateEnabled && !shareMode && pdfUrl ? (
                 <button
+                  data-guide="viewer.translate"
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
                   onClick={(e) => {
                     if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
@@ -10020,19 +10043,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {translateEnabled && !shareMode && pdfTransState.running ? (
                 <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
               ) : null}
-              {!readOnly ? (
-                <button
-                  className={inkUi.open ? "modeActive" : ""}
-                  data-guide="pdf.inkButton"
-                  onClick={openInkTools}
-                  title={inkUi.open ? t("Close the markup tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
-                  aria-label={t("Handwriting tools")}
-                >
-                  <PenIcon size={16} />
-                </button>
-              ) : null}
               {notebook && !readOnly ? (
                 <button
+                  data-guide="viewer.paper"
                   className={paperMenu ? "modeActive" : ""}
                   onClick={() => setPaperMenu((v) => !v)}
                   title={t("Paper: size, pattern and colour of this page")}
@@ -10044,6 +10057,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
               {notebook ? (
                 <button
+                  data-guide="viewer.notesView"
                   onClick={() => setNotebookView(focusedBlockId, false)}
                   title={t("Notes view: the pages among the notes")}
                   aria-label={t("Notes view")}
@@ -10053,6 +10067,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
               {isPhone && !shareMode && pdfUrl ? (
                 <button
+                  data-guide="viewer.selectMode"
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
                   title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
@@ -10075,7 +10090,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           })() : null}
           {viewerInk && inkUi.open && !readOnly ? markupToolbar : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
-            <div className="pdfCtlBox pdfFullscreenBox">
+            <div className="pdfCtlBox pdfFullscreenBox" data-guide="viewer.fullscreen">
               <button
                 onPointerDown={fullscreenPointerDown}
                 onPointerUp={fullscreenPointerUp}

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
+import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer, stepApplies } from "../src/guide/triggers.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
@@ -293,6 +293,35 @@ test("the sharing tour follows the popover and words access for an anyone-with-t
   const create = TOURS.sharing.steps[0];
   assert.equal(create.creates, "share.link", "the link exists only once the page is shared");
   assert.equal(create.advanceOn.event, "share.created");
+});
+
+test("the viewer tours share their zoom, pen and full screen, and a finished sibling turns them into one recap", () => {
+  const [pdf, nb] = [TOURS["pdf-viewer"], TOURS["notebook-view"]];
+  assert.equal(pdf.sibling, nb.id);
+  assert.equal(nb.sibling, pdf.id);
+  const shared = (tour) => tour.steps.filter((s) => s.shared);
+  assert.deepEqual(shared(pdf), shared(nb), "the shared steps are the same objects in both tours");
+  assert.ok(pdf.steps.every((s) => !s.shared || !s.recap), "a step is shared or a recap, never both");
+  const ids = (tour, facts, siblingDone) => tour.steps.filter((s) => stepApplies(s, facts, siblingDone)).map((s) => s.id);
+  const desk = { editable: true, phone: false };
+  assert.deepEqual(ids(pdf, desk, false), ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "viewer-fullscreen"]);
+  assert.deepEqual(ids(pdf, desk, true), ["pdf-outline", "pdf-recap", "pdf-translate"], "after the notebook view: what a PDF adds");
+  assert.deepEqual(ids(nb, desk, false), ["viewer-zoom", "viewer-pen", "nbv-paper", "nbv-notes", "viewer-fullscreen"]);
+  assert.deepEqual(ids(nb, desk, true), ["nbv-recap", "nbv-paper", "nbv-notes"], "after a PDF: what the notebook view adds");
+  assert.deepEqual(ids(nb, { editable: false }, true), ["nbv-recap-zoom", "nbv-notes"], "read only: no pen to recall, no paper");
+  assert.deepEqual(ids(pdf, { editable: true, phone: true }, false),
+    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select", "viewer-fullscreen"], "a phone picks what a drag does");
+  // Without a sibling, a recap never shows and a shared step always does.
+  assert.equal(stepApplies({ id: "r", recap: true }, {}), false);
+  assert.equal(stepApplies({ id: "s", shared: true }, {}), true);
+  assert.equal(stepApplies({ id: "s", shared: true, requires: { phone: true } }, { phone: false }), false, "requires still holds");
+  // Arrange windows takes the first paper's offer; the viewer comes later.
+  const order = Object.keys(TOURS);
+  assert.ok(order.indexOf("windows") < order.indexOf("pdf-viewer"), "the registry lists Arrange windows first");
+  assert.equal(canOffer(nb, { facts: { notebookView: true, viewerTools: true }, progress: null }), true, "offered in the notebook view");
+  assert.equal(canOffer(nb, { facts: { notebookView: false, viewerTools: true }, progress: null }), false);
+  assert.equal(canOffer(pdf, { facts: { hasPdf: true, viewerTools: false }, progress: null, event: { name: "page.opened" }, seen: 1 }), false,
+    "not while the viewer is closed or under a phone panel");
 });
 
 test("the Connector and Cloud hints wait for what they suggest to be missing", () => {

@@ -176,7 +176,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | Class / component | Use for |
 |---|---|
 | `uiBtn` (+ `primary`, `ghost`, `danger`, `sm`, `iconSq`, `on`) | every button with a label, in the topbar too (there is no generic topbar button style); the hierarchy and sizes are under Buttons below |
-| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 26 px icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
+| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 26 px icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on; `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer starts with the same buttons in the same places (zoom out, zoom in, fit to width, the pen); what only one viewer has goes after them. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, 24 px (Sm 20 for chips and rows, Lg 28 for dialogs and panes) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |

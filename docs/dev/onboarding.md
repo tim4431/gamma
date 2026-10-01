@@ -1,6 +1,6 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), eleven
+**Status: the engine, the two manual tours (first paper, AI chat), thirteen
 triggered tours, twelve hints and the welcome page with its sample PDF are
 built. The first paper tour is also offered to every new library.** A synced
 `onboarding` pref and a checklist are not built (see "Not built").
@@ -70,7 +70,8 @@ wherever you can write, the first from its own popover. **Sharing a page**
 is listed on
 any open page, **Editing tables** on any page you can edit,
 **Handwriting** on any PDF you can edit and **Pages to write on** on any
-page you can edit; each begins by having you make the
+page you can edit; **The PDF viewer** on a PDF whose viewer is open and
+**The notebook view** in the notebook view. Each of the first four begins by having you make the
 thing it explains when there is none yet (see "Steps that have the user
 make something"). **Background tasks** is listed on the desktop layout.
 **Shared workspaces** is listed once you belong to one.
@@ -139,6 +140,32 @@ View to explain reopening a window closed with ×. The user's arrangement
 is kept. Phone layouts have no dock controls and do not list or offer this
 tour.
 
+**The PDF viewer** and **The notebook view** (`tours/viewer.js`) walk the
+viewer's left edge top to bottom: the PDF's table of contents (`optional`:
+only a PDF with an outline has it), the tool column, full screen. The two
+viewers share the column up to the pen — zoom out, zoom in, fit to width,
+the pen, in the same places in both (what only one viewer has comes after
+them: Translate and the phone's selection mode on a PDF, Paper and Notes
+view in the notebook view) — and full screen. So the tours are
+**siblings**: the zoom, pen and full screen steps are `shared`, the same
+step objects in both files. A user who has finished one tour gets the other
+without them: its one `recap` card spotlights the shared run
+(`viewer.common`) — "Zoom, fit and the pen work as on a PDF" — and the tour
+moves on to what is new there. After the PDF tour the notebook view's is
+three cards (the recap, Paper, Notes view); the other way round, the PDF's
+is the outline, the recap and Translate. A read-only page has no pen, so
+the recap has a variant that names only zoom and fit. "Finished" is the
+sibling's stored `done`; a tour left halfway teaches nothing to skip.
+
+The PDF viewer is offered on `page.opened`, listed after Arrange windows,
+which therefore takes the first paper of a load; a paper opened on a later
+visit gets this one (the phone, without the windows tour, gets it first).
+The notebook view is offered once the user is in it (state). Both require
+`viewerTools` (the column is on screen: not closed, and on a phone not
+under the Notes or Chat panel). The notebook view's last card points at
+Notes view, the button that leaves it; clicking it ends the tour as done
+(the engine's rule for leaving on a last card, below).
+
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
 control (focusing the chat composer offers nothing). The offer is a card
@@ -161,6 +188,8 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
+| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the phone's selection mode, full screen; after The notebook view, one recap card on the shared buttons replaces zoom, the pen and full screen |
+| The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views), full screen; after The PDF viewer, the recap, the paper and Notes view |
 | Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a drawing of the next page arriving), its pen, the paper menu (a drawing of the paper changing), the notebook view |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button, with a drawing of the job outliving the window; a task's row; Clear finished. The last two are `optional`: a tour started from the menu may find no rows |
 | Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (its menu), the label chips with a drawing of one paper in several folders, the pinned strip, Recently viewed, Recently deleted; everything but the first step is `optional`, so a library with nothing pinned passes over it |
@@ -246,7 +275,16 @@ Engine abilities available to every step:
   from the step that scheduled them.
 - **`optional` steps.** Passed over silently when their anchor is not on
   screen: when the step starts, or when it leaves while showing (the block
-  someone else was on, once they go).
+  someone else was on, once they go). An optional first step with nothing
+  to point at does not keep a tour out of the Tours menu: the step after it
+  decides (a PDF without a table of contents).
+- **Sibling tours** (`sibling: "<tour id>"` on both). Two tours about
+  controls that are partly the same: a step marked `shared` is left out of
+  the run once the sibling is `done`, and a step marked `recap` is in the
+  run only then (`stepApplies` in `triggers.js`). The viewer tours above.
+- **Leaving on the last card.** When a run's prerequisites stop holding it
+  ends; if it was on its last step and that step waits for no action, the
+  tour is recorded as done, since every card was shown.
 - **`pick`** in the registry for an anchor that repeats: `"last"` where the
   newest one is meant (the latest chat reply's citation), `"recent"` where
   it is the one inside the element marked `data-guide-recent` (the table
@@ -462,7 +500,7 @@ call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
 `phone`, `dockedNotes`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
-`notebookView`, `clonedWorkspace`, `installable`, `connectorHere`,
+`notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
 `cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
 services demos and tour ends call (`show`, `restore`, `openSettings`,
 `findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`) and `tidy`.
@@ -512,6 +550,8 @@ Tour fields:
 - `finishCard`: the card the tour ends on (`guide/finish.js`).
 - `vars`: values for `{name}` in typed text, an object or a function of the
   facts.
+- `sibling`: the tour that teaches some of the same controls (Sibling
+  tours, above).
 
 Step fields:
 
@@ -534,6 +574,8 @@ Step fields:
 - `do: [...]`: a demo (Demo steps, above), with `delay` (the pause before
   the first action, 900 ms) and `skippable: false`.
 - `optional`, `creates`, `reveal`: see the engine abilities above.
+- `shared`, `recap`: a step the sibling tour also teaches, and the card
+  that stands in for those once the sibling is done (Sibling tours).
 - `intro`, with `outline`, `later` and `footnote`: the welcome card.
 
 `open` paths live in the registry, not on steps.
@@ -740,7 +782,8 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   trigger's `requires`, `anyOf`, version) behave; progress survives a
   reload, separates accounts, tolerates broken storage and stays in
   sessionStorage on a demo server; the AI chat and sharing tours pick their
-  steps per situation; every `{key:…}` names a command or a key; offer copy
+  steps per situation; the viewer tours share their steps and turn them into
+  a recap once the sibling is done; every `{key:…}` names a command or a key; offer copy
   is catalogued; the finish card lists only what the run made; a repeated
   anchor picks as its `pick` says; a card keeps clear of its `avoid` box.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
@@ -757,7 +800,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   the app; Show me runs the tour (inside the Share popover and the account
   menu without closing them); a hover-only control shows while pointed at;
   the tables tour points at the table just made and its cards keep clear of
-  it; a hint keeps the editor's caret; a `creates` step or an optional step
+  it; the PDF viewer tour is listed and walked on a PDF without a table of
+  contents, and after it the notebook view's offer is three cards that end
+  as done when the user clicks Notes view; a hint keeps the editor's caret; a `creates` step or an optional step
   whose anchor is there or gone passes without a warning; nothing is offered
   twice, or at all once Suggest tours is off in Settings.
 - Backend (`test_welcome.py`, `test_guests.py`): a new account's workspace

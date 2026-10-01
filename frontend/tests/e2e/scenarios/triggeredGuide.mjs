@@ -16,13 +16,16 @@ export async function triggeredGuideScenarios(env) {
   const user = await new Account(server, "tourist", "tourist-pw").login();
   const open = async (query, { setup, seenWindows = false, seen = [], ...opts } = {}) => {
     const ctx = await user.context(browser, { suggestTours: true, ...opts });
-    // A PDF's window-layout offer otherwise takes this load's only offer slot
-    // and can cover the menu used to start a different tour; `seen` settles
-    // any other guide this case would compete with for that slot.
-    const settled = [...(seenWindows ? ["windows"] : []), ...seen];
+    // A PDF's window-layout or viewer offer otherwise takes this load's only
+    // offer slot and can cover the menu used to start a different tour;
+    // `seen` settles any other guide this case would compete with for it.
+    const settled = [...(seenWindows ? ["windows", "pdf-viewer"] : []), ...seen];
+    // Only where nothing is recorded: the script runs on every navigation,
+    // and a tour finished in this context stays finished.
     if (settled.length) await ctx.addInitScript((rows) => {
       for (const [id, version] of rows) {
-        localStorage.setItem(`gamma-guide:tourist:${id}`, JSON.stringify({ version, state: "dismissed" }));
+        const key = `gamma-guide:tourist:${id}`;
+        if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version, state: "dismissed" }));
       }
     }, settled.map((id) => [id, TOURS[id].version]));
     await setup?.(ctx);
@@ -482,6 +485,49 @@ export async function triggeredGuideScenarios(env) {
       await walk(page, [["nb-grow", "notebook-pages"], ["nb-pen", null],
         ["nb-paper", "notebook-paper"], ["nb-view", "page-notebook"]]);
       assertEq(await progress(page, "notebook"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: the PDF viewer tour walks the left edge; the notebook view's then recaps what they share", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Viewer tools", "A page to zoom."]]), "viewer.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Viewer paper", source_url: upload.source_url } });
+    const nb = await user.api("/api/pages", { method: "POST", body: { title: "Viewer notebook" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: nb.id, content: "", properties: {
+      sheet: { width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank", spacing: 24, line: "#c8d1dc" }, collapsed: true } } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
+    try {
+      await waitForPdf(page);
+      // Both viewers' columns start with the same run, the pen at its end.
+      const column = await page.locator('[data-guide="viewer.tools"] button').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+      assertEq(column.slice(0, 4).join("|"), "Zoom out|Zoom in|Fit to width|Handwriting tools", "the shared run leads the PDF's column");
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      const tours = page.getByRole("menu", { name: "Tours" });
+      assertEq(await tours.locator('[data-tour="notebook-view"]').count(), 0, "the notebook view's tour is not listed on a PDF");
+      // Listed though its first step, the table of contents, has nothing to
+      // point at in this PDF: that step passes over.
+      await page.click('[data-tour="pdf-viewer"]');
+      await walk(page, [["viewer-zoom", null], ["viewer-pen", null], ["pdf-translate", null], ["viewer-fullscreen", null]]);
+      assertEq(await progress(page, "pdf-viewer"), "done");
+      await page.goto(`${server.base}/?ws=${user.ws}&page=${nb.id}`);
+      await page.locator('[data-guide="sheet.notebookView"]').first().click();
+      await page.waitForSelector('[data-guide-offer="notebook-view"] .guideCard', { timeout: 15000 });
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "zoom, pen and full screen fold into one recap");
+      const nbColumn = await page.locator('[data-guide="viewer.tools"] button').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+      assertEq(nbColumn.slice(0, 4).join("|"), column.slice(0, 4).join("|"), "the same buttons in the same places");
+      await page.getByRole("button", { name: "Show me" }).click();
+      await page.waitForSelector('[data-guide-overlay="nbv-recap"] .guideCard');
+      assert((await page.textContent(".guideCard")).includes("work as on a PDF"), "the recap names where the user saw them");
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="nbv-paper"] .guideCard');
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="nbv-notes"] .guideCard .guideMedia[data-media="page-notebook"] svg');
+      // Doing what the last card points at leaves the notebook view, and
+      // with it the tour, which has been shown whole.
+      await page.locator('[data-guide="viewer.notesView"]').click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      await until(async () => await progress(page, "notebook-view") === "done", { what: "leaving on the last card finishes the tour" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

@@ -1486,7 +1486,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   return (
     <div style={{ position: "relative", height: "100%" }}>
       {outline ? (
-        <div className="pdfCtlBox pdfOutlineBox">
+        <div className="pdfCtlBox pdfOutlineBox" data-guide="viewer.outline">
           <button
             className={outlineOpen ? "modeActive" : ""}
             onClick={() => setOutlineOpen((o) => !o)}
