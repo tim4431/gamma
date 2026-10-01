@@ -14,6 +14,7 @@ export function FormatIllustration({ format }) {
   if (format === "zotero") icon = <img className="formatAppImage" src={zotero} alt="" width="48" height="48" />;
   else if (appIcon) icon = <span className="formatAppIcon" style={{ "--app-icon": `url("${appIcon}")` }} />;
   else if (format === "pdf" || format === "annots") icon = <FileGlyph isPdf />;
+  else if (format === "bibtex") icon = <FileGlyph label="BIB" />;
   else if (format === "markdown") icon = <MarkdownIcon size={48} strokeWidth={1.5} />;
   else icon = <FileTextIcon size={48} strokeWidth={1.5} />;
   return <span className="setPicturePreview formatIllustration" aria-hidden="true">{icon}</span>;

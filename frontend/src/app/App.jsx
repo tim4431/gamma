@@ -20,6 +20,7 @@ import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, se
 import {
   BlockDropIndicator,
   ChatMarkdown,
+  CopyBox,
   DockWindow,
   GammaNavContext,
   OpenTabs,
@@ -128,7 +129,7 @@ import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
 import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
 import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
-import { CopyBox, SharePopover } from "../sharing/SharePopover";
+import { SharePopover } from "../sharing/SharePopover";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
 import {
@@ -146,6 +147,7 @@ import {
   pageKindLabel,
   defaultPageTitle,
   metadataToDraft,
+  citationKeyOf,
   normalizeLinkInput,
   parseFolderTags,
   scorePaperMatch,
@@ -2932,11 +2934,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // strings (authors comma-joined); rebuilt whenever the popover opens or a
   // fetch lands, so a refresh replaces any half-typed edits with the result.
   const [metaDraft, setMetaDraft] = useState(null);
+  // The citation key pinned on the page (properties.cite_key), edited beside
+  // the record but stored apart from it: a pin outranks the generated key and
+  // survives a refetch, because the user's .tex files cite it.
+  const pageCiteKey = focusedBlock?.properties?.cite_key || "";
+  const [citeKeyDraft, setCiteKeyDraft] = useState("");
   useEffect(() => {
-    if (openPopover === "meta") setMetaDraft(metadataToDraft(pageMeta));
-  }, [openPopover, pageMeta]);
+    if (openPopover !== "meta") return;
+    setMetaDraft(metadataToDraft(pageMeta));
+    setCiteKeyDraft(pageCiteKey);
+  }, [openPopover, pageMeta, pageCiteKey]);
   // Unsaved edits in the popover — gates the Save button and Enter-to-save.
-  const metaDirty = metaDraft && JSON.stringify(metaDraft) !== JSON.stringify(metadataToDraft(pageMeta));
+  const metaDirty = metaDraft && (JSON.stringify(metaDraft) !== JSON.stringify(metadataToDraft(pageMeta))
+    || citeKeyDraft.trim() !== pageCiteKey);
 
   // PDF-text health shown in the metadata popover: a scanned/image-only PDF is
   // why metadata lookups fail and AI chat answers blind — surface it. One
@@ -2980,7 +2990,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const data = await apiJson(`${API}/metadata/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ block_id: blockId, meta: metaDraft }),
+        body: JSON.stringify({ block_id: blockId, meta: metaDraft, cite_key: citeKeyDraft.trim() }),
       });
       if (focusedBlockIdRef.current !== blockId) return;
       setPageMeta(data.meta || null);
@@ -2990,7 +3000,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setPptCite("");
       attemptedCiteRef.current.delete(blockId);
       setFocusedBlock((prev) => prev && prev.id === blockId
-        ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, ppt_cite: "", meta_error: undefined } }
+        ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex,
+            cite_key: data.cite_key || undefined, ppt_cite: "", meta_error: undefined } }
         : prev);
       if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
@@ -8004,6 +8015,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               </span>
                             </div>
                           ))}
+                          {/* The citation key the bibliography export will
+                              use. Empty = generated from the record (shown as
+                              the placeholder); typed = pinned, and a refetch
+                              leaves it alone. */}
+                          <div className="metaRow">
+                            <span className="metaKey">{t("Cite key")}</span>
+                            <span className="metaVal metaValEdit">
+                              <input
+                                className="metaInput metaCiteKey"
+                                value={citeKeyDraft}
+                                onChange={(e) => setCiteKeyDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter") return;
+                                  e.preventDefault();
+                                  if (metaDirty) saveMetaEdits();
+                                }}
+                                placeholder={citationKeyOf(pageBibtex) || "—"}
+                                title={t("The key your LaTeX document cites this paper by. Leave it empty to generate it from the authors and year; type one to pin it, and a metadata refresh will keep it.")}
+                                aria-label={t("Citation key")}
+                              />
+                              {pageCiteKey ? (
+                                <button
+                                  className="chatMsgActionBtn metaRowBtn"
+                                  title={t("Unpin: go back to the generated key")}
+                                  aria-label={t("Unpin the citation key")}
+                                  onClick={() => setCiteKeyDraft("")}
+                                >
+                                  <PinIcon size={14} />
+                                </button>
+                              ) : null}
+                            </span>
+                          </div>
                           {metaSrc ? (
                             <div className="metaRow">
                               <span className="metaKey">{t("Source")}</span>
@@ -10070,6 +10113,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setOpts={setExportOpts}
           hasPdf={(!!pageAttach || hasSheets) && !exportFolder}
           pdfStored={!!docId || hasSheets}
+          hasMeta={!!pageMeta || !!pageBibtex}
+          pageId={focusedBlock?.id || ""}
           folder={exportFolder}
           onCancel={closeExport}
           onExport={runExport}

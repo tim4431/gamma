@@ -1,9 +1,10 @@
 """Exporting pages: one driver (``_run_export``) walks the selected page
 subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
-vault, a Logseq graph, a Zotero RDF library, a scoped Gamma backup, the notes
-typeset as a PDF document, or the annotated PDFs themselves. Most builders
-produce a zip; a bare .md (nothing to bundle), the notes PDF and one page's
-annotated PDF are single files. The same builders serve the downloads
+vault, a Logseq graph, a Zotero RDF library, a scoped Gamma backup, a BibTeX
+bibliography, the notes typeset as a PDF document, or the annotated PDFs
+themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
+.bib, the notes PDF and one page's annotated PDF are single files. The same
+builders serve the downloads
 (``/pages/{id}/export``, ``/folders/export``: the share view, scripts) and
 the background job the web app starts (``POST /api/jobs/export``)."""
 
@@ -22,6 +23,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
 from .. import jobs, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
@@ -228,6 +230,7 @@ class _Builder:
     "folder_scope": path | None (None: one page is exported), "author": the
     account exporting}."""
     suffix = ".zip"  # appended to the base slug for the download name
+    roots_only = False  # True: the driver hands over the page's own row, not its subtree
 
     def __init__(self, ws, base: str, opts: dict):
         self.ws = ws
@@ -755,8 +758,56 @@ class _AnnotatedPdfBuilder(_Builder):
         return super().save(dest, progress)
 
 
+class _BibtexBuilder(_Builder):
+    """One ``.bib`` bibliography: the citation entry of every page that has
+    paper metadata — ``properties.bibtex``, the entry the metadata lookup
+    cached, rebuilt from ``properties.meta`` for a page that has a record but
+    no rendering. Clashing citation keys are suffixed a, b, … and a key
+    pinned on a page (``properties.cite_key``) keeps its exact spelling, so
+    the .tex files already citing it go on working (``gamma/bibtex.py``).
+    Entries are sorted by key: an unchanged library re-exports
+    byte-identically, so a bibliography kept in a repository — or refreshed
+    from a share link — only shows a diff when the metadata changed. A page
+    without metadata is left out and the finished export lists it; a set
+    where no page has any fails with the reason."""
+    suffix = ".bib"
+    roots_only = True  # a bibliography reads page properties, never the notes
+
+    def __init__(self, ws, base, opts):
+        super().__init__(ws, base, opts)
+        self.records = []
+
+    def add_page(self, n, rows, page):
+        props = page.get("properties") or {}
+        meta = props.get("meta") if isinstance(props.get("meta"), dict) else None
+        pin = bibtex_mod.clean_key(props.get("cite_key") or "")
+        text = (props.get("bibtex") or "").strip() or (bibtex_mod.build_entry(meta, pin) if meta else "")
+        if not text:
+            self.skip(page, "page has no paper metadata")
+            return
+        # The cached entry may predate the pin, or carry a registrar's own key.
+        if pin:
+            text = bibtex_mod.with_key(text, pin)
+        self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(pin),
+                             "title": (page.get("content") or "").strip()})
+
+    def save(self, dest, progress=jobs.no_progress):
+        try:
+            if not self.records:
+                raise HTTPException(status_code=400, detail=(
+                    "none of these pages has paper metadata to cite" if self.opts.get("folder_scope")
+                    else "this page has no paper metadata to cite"))
+            records = bibtex_mod.unique_keys(sorted(self.records, key=lambda r: (r["key"], r["title"])))
+            Path(dest).write_text(bibtex_mod.bibliography(records, self.opts.get("folder_scope") or ""),
+                                  encoding="utf-8")
+        finally:
+            self.discard()
+        return f"{self.base}.bib", "application/x-bibtex; charset=utf-8"
+
+
 _BUILDERS = {
     "readable": _MarkdownBuilder,
+    "bibtex": _BibtexBuilder,
     "obsidian": _ObsidianBuilder,
     "logseq-graph": _LogseqBuilder,
     "zotero-rdf": _ZoteroBuilder,
@@ -776,8 +827,17 @@ def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict, progress=j
     try:
         builder.begin(conn, root_ids)
         for n, root_id in enumerate(root_ids, 1):
-            rows = fetch_subtree(conn, root_id)
-            page = build_tree(rows, root_id)
+            if cls.roots_only:
+                # The page's own row is all this format reads (a bibliography):
+                # one query instead of a subtree walk per page, which is what
+                # makes a whole library's .bib answer a plain GET.
+                row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
+                                   (root_id,)).fetchone()
+                rows = [row] if row is not None else []
+                page = block_to_dict(row) if row is not None else None
+            else:
+                rows = fetch_subtree(conn, root_id)
+                page = build_tree(rows, root_id)
             if page is None:
                 continue
             progress(done=n - 1, total=len(root_ids), unit="pages", item=(page.get("content") or "").strip())
@@ -920,8 +980,9 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     PDF can still export as one), ``annotated-pdf`` (the page's PDF with its
     annotations, what /export-pdf answers), ``logseq-graph`` (a complete
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
-    Zotero RDF library), or ``gamma`` (a scoped account backup any Gamma
-    imports via /api/import-data?mode=merge)."""
+    Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
+    file), or ``gamma`` (a scoped account backup any Gamma imports via
+    /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
     opts = _export_opts(pdf, highlights, notes, author=request.state.user or "")
     return page_builder(ws, block_id, mode, opts, share_scope(request)).response()
@@ -988,10 +1049,12 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
     document, each starting on a fresh sheet), ``annotated-pdf`` (each
     page's annotated PDF, the subfolders as directories), ``logseq-graph``
     (a complete Logseq file graph), ``zotero-rdf`` (a Zotero RDF library —
-    subfolders become collections), or ``gamma`` (a scoped account backup
-    any Gamma imports via /api/import-data?mode=merge). The web app exports
-    through a job instead (``POST /api/jobs/export``); this is the share
-    view's and the scripts' download."""
+    subfolders become collections), ``bibtex`` (one .bib with every paper's
+    citation entry) or ``gamma`` (a scoped account backup any Gamma imports
+    via /api/import-data?mode=merge). The web app exports through a job
+    instead (``POST /api/jobs/export``); this is the share view's and the
+    scripts' download — with a folder share token, a ``mode=bibtex`` URL is
+    the stable bibliography link a LaTeX editor refreshes from."""
     name = _folder_name(name)
     # A page share never reaches a whole folder; a folder share exports its
     # own folder or a subfolder of it.

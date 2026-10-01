@@ -53,6 +53,7 @@ from urllib.parse import urlsplit
 
 from fractional_indexing import generate_key_between
 
+from . import bibtex as bibtex_mod
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, pdf_path, render_area_crops,
@@ -854,8 +855,6 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
     BibTeX (the stored rendering, else built from the record as a hand edit
     builds it) and the slide citation when one was made. Nothing is looked
     up or stored — a page without metadata says so."""
-    from .routers.metadata import _build_bibtex
-
     ids = args.get("page_ids") or args.get("page_id") or []
     ids = [ids] if isinstance(ids, str) else ids if isinstance(ids, list) else []
     ids = list(dict.fromkeys(str(i).strip() for i in ids if str(i).strip()))
@@ -891,7 +890,7 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
         if meta.get("unverified"):
             lines.append("Unverified: nothing tied this record to the page's PDF (it may be a cited "
                          "work's, or an AI reading) — say so and suggest checking it before it is cited.")
-        lines.append("```bibtex\n" + (props.get("bibtex") or _build_bibtex(meta)).strip() + "\n```")
+        lines.append("```bibtex\n" + (props.get("bibtex") or bibtex_mod.build_entry(meta, props.get("cite_key") or "")).strip() + "\n```")
         if str(props.get("ppt_cite") or "").strip():
             lines.append("Slide citation: " + props["ppt_cite"].strip())
         entries.append("\n".join(lines))

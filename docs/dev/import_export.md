@@ -3,12 +3,14 @@
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
 vaults, Notion exports), Markdown and Obsidian vault export, the notes
-typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
+typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
+writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/routers/export.py`; frontend dialogs in
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
+`gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
 [App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
 background jobs, which the dialogs follow ([tasks.md](tasks.md)). The
@@ -435,7 +437,10 @@ Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`illustrations/TransferPreview.jsx`, an example of the options, not a render
 of the document). Gamma has fixed contents, and a PDF without a stored copy
 can only be the original file, so both export straight from step one. Logseq
-shows only the bundle switch. The breadcrumb returns to the cards without
+shows only the bundle switch. BibTeX has no switches but still gets a step,
+because the step is worth seeing: it previews the real bibliography
+([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
+the setup and the job step together, so their breadcrumbs agree. The breadcrumb returns to the cards without
 losing edits. Both dialogs are a `SubDialog` (focus trap, Escape, backdrop)
 with its close-button header; the footer holds only Next or the final action.
 Zotero's post-export steps expand under "Open this export in Zotero".
@@ -451,7 +456,8 @@ in `localStorage` (`gamma-export-opts`).
 Export starts the export as a background job ([tasks.md](tasks.md)).
 `exportJobBody` turns the payload into the job's body: the page or folder,
 the server's mode for the format (each format's `mode`: `annotated-pdf`,
-`notes-pdf`, `readable`, `obsidian`, `logseq-graph`, `zotero-rdf`, `gamma`)
+`notes-pdf`, `readable`, `obsidian`, `logseq-graph`, `zotero-rdf`, `bibtex`,
+`gamma`)
 and the three flags. The dialog then shows its last step, the job's
 (`ExportJobStep`). While the job runs it shows its progress (pages, then
 the packing of the zip) with Stop, and says the window may close. The job
@@ -460,7 +466,8 @@ the file downloads by itself when the window is open; a closed window's
 file is offered in the pill with a Download button, and waits in the tray.
 The finished step names the file and its size, counts the pages, lists the
 pages left out with the reason, and says what to do next: Zotero's steps,
-Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export. A failed or
+Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export, BibTeX's
+beside-your-.tex. A failed or
 stopped export offers Start again. A share view has no background tasks:
 its Export downloads through the endpoints below, with the same mode and
 flags as query parameters.
@@ -496,10 +503,72 @@ exists behind the proxy).
 The dialog can also target a whole folder: opened from home with a folder open
 (the ⋮ Export… entry) or from a folder card's context menu (`exportFolder`
 state in App.jsx), it exports every page filed there or below, in any
-format. There Annotated PDF sits in its own "Papers" row: each paper's
-annotated PDF, with the Highlights and Notes switches, in one zip whose
-directories are the subfolders; pages without a PDF are left out and
-listed once it is done.
+format. There Annotated PDF and BibTeX sit in their own "Papers" row: each
+paper's annotated PDF, with the Highlights and Notes switches, in one zip
+whose directories are the subfolders; pages without a PDF are left out and
+listed once it is done. BibTeX is one `.bib` for every paper in the folder.
+
+## BibTeX bibliography
+
+`?mode=bibtex` on both export endpoints (`_BibtexBuilder`, entries from
+`gamma/bibtex.py`): one `.bib` file, never a zip — a page's own citation
+entry, or one bibliography for every paper in a folder. This is what a LaTeX
+document cites, so the export is deliberately boring: no switches, no
+bundling, nothing generated at export time that is not already on the page.
+
+- **Where an entry comes from**: `properties.bibtex`, the rendering the
+  metadata lookup cached (a registrar's own BibTeX when doi.org served one,
+  else `bibtex.build_entry` over `properties.meta`). A page that has a record
+  but no rendering — an older page, a hand-made one — is rendered on the
+  spot. A page with no metadata at all is skipped with "page has no paper
+  metadata" and named in the finished export; a set where no page has any
+  fails with "none of these pages has paper metadata to cite".
+- **Citation keys**: generated as first author's surname + year
+  (`bibtex.default_key`, unchanged since the first release because cached
+  entries carry it). Two papers by one author in one year would collide in a
+  bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
+  `aa` — Better BibTeX's convention. Pinned keys are assigned first, so the
+  key a user chose is never the one that moves; two pins that collide are
+  still made distinct rather than writing a broken file.
+- **A pinned key** is `properties.cite_key`, set in the metadata popover's
+  Cite key row (empty shows the generated key as its placeholder). It lives
+  *beside* `meta`, not inside it, because a refetch replaces the record and
+  must not take the key with it: the user's `.tex` files cite that key. It
+  outranks both the generated key and a registrar's own, is cleaned of what
+  BibTeX breaks on (`bibtex.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
+  and clearing the record clears the pin too. The metadata lookup, a hand
+  edit, the AI `cite` tool and this export all read the same pin.
+  A Zotero import brings one along when Better BibTeX left a
+  `Citation Key:` line in the item's Extra field
+  (`zotero_import._citation_key`, carried as RDF `dc:description`), so a
+  migrated library keeps citing papers by the names its documents use.
+- **Order**: sorted by citation key, then title. An unchanged library
+  re-exports byte-identically — the header comment counts the entries and
+  names the folder but carries no timestamp — so a `.bib` kept in a
+  repository or refreshed from a link shows a diff only when the metadata
+  changed.
+- **Only page roots are read.** `_BibtexBuilder.roots_only` tells the driver
+  to hand over the page's own row instead of walking its subtree, so a whole
+  library's bibliography is one query per page rather than a tree fetch each.
+  That is what lets the dialog preview it synchronously.
+
+### Keeping a .bib up to date
+
+The export endpoint answers the *current* bibliography on every request and
+accepts a share token, so a folder share link doubles as a fixed URL:
+
+```
+<origin>/api/folders/export?name=<folder>&mode=bibtex&share=<token>
+```
+
+That is what Overleaf's Upload → From External URL (and its Refresh button),
+a Makefile or a cron'd `curl` can pull, which is the job Better BibTeX's
+auto-export does in Zotero — without a file watcher, because the server
+renders on demand. The token names the workspace, so the URL carries neither
+a session nor a `ws=`. The BibTeX step shows the link under "Keep this .bib
+up to date" when the page or folder is already shared, and otherwise points
+at Share: creating the link publishes the pages, and that choice (with its
+audience) belongs to the share popover, not to an export dialog.
 
 ## Obsidian vault export
 

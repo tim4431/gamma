@@ -23,6 +23,7 @@ import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
 
+from .bibtex import clean_key
 from .foldertags import clean_segment
 
 _RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
@@ -235,12 +236,23 @@ def parse_zotero_rdf(text: str) -> list[dict]:
             "key": about,
             "title": title or "Untitled",
             "meta": meta,
+            "cite_key": _citation_key(el),
             "tags": tags,
             "folders": item_folders.get(about, []),
             "pdf_paths": pdf_paths,
             "notes": notes,
         })
     return items
+
+
+def _citation_key(el) -> str:
+    """The citation key Better BibTeX pinned on the item, if any. The plugin
+    writes it into Zotero's Extra field as a ``Citation Key: <key>`` line, and
+    Zotero RDF carries Extra as ``dc:description`` — so a library whose .tex
+    files already cite those keys goes on citing them here."""
+    extra = el.findtext(f"{_DC}description") or ""
+    m = re.search(r"^\s*citation key\s*:\s*(\S+)", extra, re.I | re.M)
+    return clean_key(m.group(1)) if m else ""
 
 
 def zip_name_map(zf) -> dict:

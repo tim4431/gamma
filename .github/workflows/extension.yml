@@ -114,9 +114,11 @@ jobs:
             echo "3. Click *Load unpacked* and choose the unzipped folder."
             echo
             if [ -s changes.md ]; then
-              echo "## What's new${PREV:+ since $PREV}"
+              echo "<details><summary><b>What's new${PREV:+ since $PREV}</b></summary>"
               echo
               cat changes.md
+              echo
+              echo "</details>"
               echo
             fi
             echo "## Desktop app and server"

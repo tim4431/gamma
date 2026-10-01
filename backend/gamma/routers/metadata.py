@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import ai_usage
+from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
@@ -662,34 +663,6 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
     }
 
 
-def _build_bibtex(meta: dict) -> str:
-    authors = meta.get("authors") or []
-    key_author = re.sub(r"[^a-z]", "", (authors[0].split()[-1] if authors else "paper").lower()) or "paper"
-    key = f"{key_author}{meta.get('year', '')}"
-    fields: dict[str, str] = {
-        "title": meta.get("title", ""),
-        "author": " and ".join(authors),
-    }
-    venue = meta.get("venue", "")
-    entry = "article"
-    if meta.get("arxiv_id") and (not venue or venue.lower().startswith("arxiv")):
-        fields["journal"] = f"arXiv preprint arXiv:{meta['arxiv_id']}"
-        fields["eprint"] = meta["arxiv_id"]
-        fields["archivePrefix"] = "arXiv"
-    elif meta.get("kind") == "book" or (meta.get("publisher") and not venue):
-        entry = "book"
-        fields["publisher"] = meta.get("publisher", "")
-        fields["isbn"] = meta.get("isbn", "")
-    elif venue:
-        fields["journal"] = venue
-        fields["volume"] = meta.get("volume", "")
-        fields["pages"] = meta.get("pages", "")
-    fields["year"] = meta.get("year", "")
-    fields["doi"] = meta.get("doi", "")
-    body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields.items() if v)
-    return f"@{entry}{{{key},\n{body}\n}}"
-
-
 def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
     """The minimal slide-deck citation, one AI call over the BibTeX (else the
     meta JSON). Shared by the metadata fetch (generated alongside the record)
@@ -848,7 +821,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     content, props = _load_page(ws, block_id)
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": props.get("bibtex", ""),
-                "ppt_cite": props.get("ppt_cite", ""),
+                "ppt_cite": props.get("ppt_cite", ""), "cite_key": props.get("cite_key", ""),
                 "source": props["meta"].get("source", ""), "cached": True,
                 "title_updated": False, "page_title": content}
 
@@ -966,8 +939,14 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
             actor=actor)
         raise HTTPException(status_code=404, detail="no metadata found (no arXiv id, DOI, Crossref, or AI match)")
 
+    # A citation key pinned on the page outranks both the generated key and
+    # the registrar's own (doi.org renders BibTeX keyed its own way), and it
+    # survives this refetch: the user's .tex files cite it.
+    cite_key = bibtex_mod.clean_key(props.get("cite_key") or "")
     if not bibtex:
-        bibtex = _build_bibtex(meta)
+        bibtex = bibtex_mod.build_entry(meta, cite_key)
+    elif cite_key:
+        bibtex = bibtex_mod.with_key(bibtex, cite_key)
     # Stored with the record so every surface can warn before it is cited:
     # nothing tied the record to THIS document (an unconfirmed DOI/ISBN may
     # belong to a cited work; AI output may be a plausible hallucination).
@@ -996,19 +975,23 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # renamed it: a concurrent lookup may have done the rename first, and the
     # client shows whatever comes back here.
     return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
-            "cached": False, "title_updated": title_updated, "page_title": page_title}
+            "cite_key": cite_key, "cached": False, "title_updated": title_updated, "page_title": page_title}
 
 
 class MetaUpdateRequest(StorableBody):
     block_id: str
     meta: dict = {}
+    # The pinned citation key. None = not sent, leave the page's pin alone;
+    # "" = unpin, so the key goes back to being generated from the record.
+    cite_key: str | None = None
 
 
 @router.post("/metadata/update")
 def metadata_update(payload: MetaUpdateRequest, request: Request):
-    """Save hand-edited metadata. BibTeX is rebuilt from the edited fields and
-    the cached slide citation is invalidated. All-blank fields clear the
-    cached metadata entirely."""
+    """Save hand-edited metadata. BibTeX is rebuilt from the edited fields
+    (under the pinned citation key, if any) and the cached slide citation is
+    invalidated. All-blank fields clear the cached metadata entirely, the
+    pinned key with it."""
     ws = require_ws(request, write=True)
     _, props = _load_page(ws, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
@@ -1037,11 +1020,19 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
     if not any(v for k, v in meta.items() if k != "source"):
-        _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex"), actor=request.state.user)
-        return {"meta": None, "bibtex": "", "source": "", "cached": False}
-    bibtex = _build_bibtex(meta)
-    _save_props(ws, payload.block_id, {"meta": meta, "bibtex": bibtex}, remove=stale, actor=request.state.user)
-    return {"meta": meta, "bibtex": bibtex, "source": "manual", "cached": False}
+        _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
+                    actor=request.state.user)
+        return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
+    # An unsent cite_key leaves the page's pin as it is; "" unpins.
+    cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
+                else bibtex_mod.clean_key(props.get("cite_key") or ""))
+    bibtex = bibtex_mod.build_entry(meta, cite_key)
+    updates = {"meta": meta, "bibtex": bibtex}
+    if cite_key:
+        updates["cite_key"] = cite_key
+    _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
+                actor=request.state.user)
+    return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": "manual", "cached": False}
 
 
 class CiteRequest(BaseModel):

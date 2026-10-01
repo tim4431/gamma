@@ -57,6 +57,7 @@ RDF = """<rdf:RDF
         <link:link rdf:resource="#item_3"/>
         <dcterms:isReferencedBy rdf:resource="#item_9"/>
         <dc:title>Attention is all you need</dc:title>
+        <dc:description>Citation Key: vaswani2017attention</dc:description>
         <dc:date>2017-06-12</dc:date>
         <dc:subject>transformers</dc:subject>
         <dc:subject><z:AutomaticTag><rdf:value>attention</rdf:value></z:AutomaticTag></dc:subject>
@@ -362,3 +363,19 @@ def test_one_export_imported_twice_at_once_makes_each_page_once(guest, monkeypat
             "SELECT json_extract(properties, '$.zotero_key') FROM unified_blocks WHERE parent_id = 'root' "
             "AND json_extract(properties, '$.zotero_key') IN (?, ?)", (about, preprint))]
     assert sorted(keys) == sorted([about, preprint])
+
+
+def test_better_bibtex_citation_key_is_kept(guest):
+    """A Better BibTeX key travels in Zotero's Extra field (RDF
+    dc:description). Keeping it means the .tex files that already cite the
+    paper go on citing it after the import."""
+    r = _post(guest)
+    assert r.status_code == 200, r.text
+    paper = {p["title"]: p for p in r.json()["pages"]}["Attention is all you need"]
+    props = guest.get(f"/api/blocks/{paper['id']}").json()["properties"]
+    assert props["cite_key"] == "vaswani2017attention"
+    assert "@article{vaswani2017attention," in props["bibtex"]
+    # And the bibliography export cites it under that key.
+    r = guest.get(f"/api/pages/{paper['id']}/export", params={"mode": "bibtex"})
+    assert r.status_code == 200, r.text
+    assert "@article{vaswani2017attention," in r.text

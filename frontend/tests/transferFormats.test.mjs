@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { exportFormatOf, exportJobBody, exportSummary, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+import { bibliographyUrl, countEntries, exportFormatOf, exportJobBody, exportSummary, hasReviewStep, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 const paper = { hasPdf: true, pdfStored: true };
@@ -81,4 +81,52 @@ test("imports show options only for embedded annotations and omit inapplicable s
     assert.deepEqual(result.payload, { source, strip: true });
   }
   assert.equal(resolveImport("annots", { hasPdf: false }).definition.id, "zotero");
+});
+
+test("BibTeX is offered where there is something to cite, and reviews itself", () => {
+  // No switches, but the step is worth showing: it previews the real entries.
+  const page = resolveExport({ format: "bibtex", ...allOff }, { ...paper, hasMeta: true });
+  assert.equal(page.definition.id, "bibtex");
+  assert.equal(page.needsReview, true);
+  assert.deepEqual(page.controls, []);
+  assert.equal(hasReviewStep(page.definition), true);
+  assert.deepEqual(page.payload, { format: "bibtex", ...allOff });
+  // The step renders the summary, so it has to say something for one page too.
+  assert.match(exportSummary(page), /citation entry as a \.bib file/);
+
+  // A page with no paper record has no entry to write, so the card is absent.
+  const bare = resolveExport({ format: "bibtex", ...allOff }, paper);
+  assert(!bare.formats.some(({ id }) => id === "bibtex"));
+  assert.notEqual(bare.definition.id, "bibtex");
+
+  // A folder always offers it — its pages are what get cited.
+  const folder = resolveExport({ format: "bibtex", ...allOff }, { folder: "Reading" });
+  assert.equal(folder.definition.category, "Papers");
+  assert.match(folder.definition.hint, /One \.bib/);
+  assert.match(exportSummary(folder, "Reading"), /Pages without paper metadata are left out/);
+  assert.deepEqual(exportJobBody(folder.payload, { folder: "Reading" }),
+    { folder: "Reading", mode: "bibtex", pdf: false, highlights: false, notes: false });
+  assert.equal(exportFormatOf("bibtex").id, "bibtex");
+});
+
+test("counting entries reads the bibliography the export actually wrote", () => {
+  const bib = "% 2 entries from Reading, exported from Gamma\n\n"
+    + "@article{lovelace1843,\n  title = {A}\n}\n\n@book{babbage1864,\n  title = {B}\n}\n";
+  assert.equal(countEntries(bib), 2);
+  assert.equal(countEntries(""), 0);
+  assert.equal(countEntries(undefined), 0);
+  // A brace-wrapped field that merely mentions an @ is not an entry head.
+  assert.equal(countEntries("@article{k,\n  note = {write to a@b.com}\n}\n"), 1);
+});
+
+test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
+  // No token: the path the app fetches its own preview from.
+  assert.equal(bibliographyUrl("/api", { folder: "My Papers/Sub" }),
+    "/api/folders/export?name=My%20Papers%2FSub&mode=bibtex");
+  assert.equal(bibliographyUrl("/api", { pageId: "p 1" }), "/api/pages/p%201/export?mode=bibtex");
+  // With one: the fixed link Overleaf refreshes from. The token names the
+  // workspace, so no ?ws= rides along.
+  const shared = bibliographyUrl("https://host/api", { folder: "Reading", share: "tok en" });
+  assert.equal(shared, "https://host/api/folders/export?name=Reading&mode=bibtex&share=tok%20en");
+  assert(!shared.includes("ws="));
 });

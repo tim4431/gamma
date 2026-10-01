@@ -101,6 +101,17 @@ metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
 citation). In the popover, the DOI and arXiv rows carry an open-on-registry
 link and a copy button for that URL beside the field.
 
+**Citation key.** The BibTeX key is generated from the first author's surname
+and the year (`bibtex.default_key`). The popover's Cite key row pins one
+instead — stored as `properties.cite_key`, *beside* `meta` rather than in it,
+so a refetch replaces the record without taking the key with it: a user's
+`.tex` files cite that key. Empty means generated, and the row's placeholder
+shows the key the page is currently cited by. A pin outranks a registrar's
+own key, is cleaned of the characters BibTeX breaks on, and goes away when
+the record is cleared. The lookup, a hand edit, the AI `cite` tool, a Zotero
+import's Better BibTeX key and the `.bib` export all read the same pin — see
+[import_export.md](import_export.md#bibtex-bibliography).
+
 **Slide citation.** The PPT-style markdown citation is generated *in the
 same fetch* as the metadata (`_make_ppt_cite`, one AI call over the BibTeX;
 the client passes its `cite_prompt`/`cite_model` prefs, `/api/clip` uses the

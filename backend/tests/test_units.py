@@ -4,7 +4,8 @@ workspace directories."""
 
 import io
 
-from gamma.routers.metadata import _find_doi_candidates, _build_bibtex
+from gamma.bibtex import build_entry
+from gamma.routers.metadata import _find_doi_candidates
 from gamma.block_index import fts_query
 from gamma.routers.ai import _parse_images
 
@@ -24,7 +25,7 @@ def test_doi_candidates_keep_uppercase_suffixes():
 
 
 def test_build_bibtex_arxiv():
-    bib = _build_bibtex({
+    bib = build_entry({
         "title": "A Paper", "authors": ["Ada Lovelace", "Alan Turing"],
         "year": "2019", "venue": "", "arxiv_id": "1810.11086", "doi": "",
     })

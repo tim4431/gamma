@@ -11,8 +11,8 @@ from conftest import make_page
 from test_metadata_verify import CITED_META, _paper_page
 
 from gamma.routers import metadata
+from gamma.bibtex import build_entry
 from gamma.routers.metadata import (
-    _build_bibtex,
     _find_isbns,
     _isbn_valid,
     _pick_book_match,
@@ -104,7 +104,7 @@ def test_book_search_asks_open_library_then_google_books(monkeypatch):
 
 
 def test_book_bibtex():
-    bib = _build_bibtex(dict(OL_HIT, isbn="0935702113"))
+    bib = build_entry(dict(OL_HIT, isbn="0935702113"))
     assert bib.startswith("@book{siegman1986,")
     assert "publisher = {University Science Books}" in bib and "isbn = {0935702113}" in bib
     assert "journal" not in bib

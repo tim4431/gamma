@@ -5314,6 +5314,27 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   white-space: pre;
 }
+/* The whole bibliography in the export dialog's BibTeX step: more room than
+   the popover's single entry, and long titles wrap instead of scrolling
+   sideways. */
+.bibtexPreview {
+  max-height: 240px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* The URL that keeps serving the current .bib (what Overleaf refreshes from). */
+.bibLinkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0 0 12px;
+}
+.bibLinkRow input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
 
 /* --- paper metadata popover --- */
 .metaPopover { min-width: 340px; max-width: 420px; }
@@ -5345,6 +5366,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-input);
   color: var(--text-primary);
 }
+/* A citation key is a code token, not prose. */
+.metaCiteKey { font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .metaLink { display: inline-flex; align-items: center; color: var(--accent); flex-shrink: 0; }
 /* Icon buttons inside metadata rows: negative vertical margins keep the 20px
    hit target from inflating the text row's height, so keys and values stay

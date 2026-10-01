@@ -182,6 +182,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 - The **(i) button** in the Notes panel's title row opens the metadata popover: title, authors, venue, year, DOI, arXiv — all editable (Enter saves), with **↻ refetch**, an AI title-fill button, and a health check of the extracted PDF text (with a preview of what the AI actually reads).
 - The share popover holds the **BibTeX** entry and a slide-ready **citation** that pastes into PowerPoint with real italics, each with a copy button.
+- **Cite key** is the name your LaTeX document cites the paper by. Left empty it is made from the first author and the year (shown greyed out); type one to pin it, and refetching the metadata keeps it. Papers imported from Zotero keep the key Better BibTeX gave them, so existing `.tex` files go on working.
 - Settings → Maintenance shows a per-paper metadata and search-index health table with batch retry.
 
 ## Sharing a page
@@ -272,8 +273,11 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 - **Annotated PDF**: highlights, handwriting and text boxes become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
 - **Notes as PDF** or **Markdown** (highlights as quotes, images bundled or linked).
+- **BibTeX**: a `.bib` file — one paper's entry, or every paper in a folder in one bibliography. The step shows the real entries before you export, with a **Copy** button. Repeated citation keys get `a`, `b`, … so the file is valid LaTeX.
 - **Obsidian vault** (wikilinks, `^id` block anchors, highlights as quote callouts linking the PDF page), **Logseq graph**, **Zotero library** (RDF with PDFs and annotations, ready to import), or a **Gamma zip** another Gamma can merge.
 - Switches choose the layers (highlights, notes, bundle the files); the last choice is remembered.
+
+**Keeping a bibliography up to date.** Share a folder (right-click → *Share…*), then open **Export → BibTeX** and expand *Keep this .bib up to date*: the link there always serves the folder's current entries. Paste it into Overleaf (Upload → From External URL) and its Refresh button pulls your latest papers — anyone with that link can read the folder, since it is the share link itself.
 
 ## Backups
 

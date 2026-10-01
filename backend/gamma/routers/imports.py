@@ -22,6 +22,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
+from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
 from ..auth import actor_of, require_user, require_ws
 from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
@@ -999,9 +1000,12 @@ def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
 
     if item["meta"]["title"] and not props.get("meta"):
         props["meta"] = item["meta"]
+        # A Better BibTeX key travels with the record, so the .tex files that
+        # already cite this paper keep working (zotero_import._citation_key).
+        if item.get("cite_key") and not props.get("cite_key"):
+            props["cite_key"] = item["cite_key"]
         if not props.get("bibtex"):
-            from .metadata import _build_bibtex
-            props["bibtex"] = _build_bibtex(item["meta"])
+            props["bibtex"] = bibtex_mod.build_entry(item["meta"], props.get("cite_key") or "")
     props["zotero_key"] = item["key"]
 
     folders = _zotero_folders(item, prefix)

@@ -126,6 +126,13 @@ export function metadataToDraft(metadata) {
   };
 }
 
+// The citation key of a BibTeX entry (`@article{key,` …), or "". Shown as the
+// placeholder of the popover's Cite key row, so an unpinned page displays the
+// key it is actually cited by without the client re-deriving it.
+export function citationKeyOf(bibtex) {
+  return (/^\s*@\s*[A-Za-z]+\s*\{\s*([^,\s]+)/.exec(bibtex || "") || [])[1] || "";
+}
+
 export function friendlyApiError(error) {
   const message = error?.message || "failed";
   return /Unexpected token|Method Not Allowed|not valid JSON/i.test(message)

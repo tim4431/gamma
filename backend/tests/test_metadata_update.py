@@ -99,3 +99,54 @@ def test_failed_fetch_is_negative_cached_and_cleared_by_update(guest):
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert "meta_error" not in props
     assert props["meta"]["title"] == "Filled by hand"
+
+
+# --- the pinned citation key -------------------------------------------------
+
+def _meta(**over):
+    return {"title": "Pinned paper", "authors": "Ada Lovelace", "year": "1843", **over}
+
+
+def test_pinned_key_replaces_the_generated_one(guest):
+    page = make_page(guest, "Pin page")
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _meta(), "cite_key": " smith:2020-attention "})
+    assert r.status_code == 200, r.text
+    assert r.json()["cite_key"] == "smith:2020-attention"
+    assert "@article{smith:2020-attention," in r.json()["bibtex"]
+    props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert props["cite_key"] == "smith:2020-attention"
+
+
+def test_a_key_bibtex_cannot_carry_is_cleaned(guest):
+    page = make_page(guest, "Dirty key page")
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _meta(), "cite_key": "a b,c{d}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["cite_key"] == "abcd"
+
+
+def test_an_unsent_key_leaves_the_pin_alone_and_an_empty_one_unpins(guest):
+    page = make_page(guest, "Keep pin page")
+    guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _meta(), "cite_key": "mine2026"})
+    # A later edit that says nothing about the key keeps it.
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _meta(year="1844")})
+    assert r.json()["cite_key"] == "mine2026"
+    assert "@article{mine2026," in r.json()["bibtex"]
+    # "" unpins: the key goes back to being generated from the record.
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _meta(year="1844"), "cite_key": ""})
+    assert r.json()["cite_key"] == ""
+    assert "@article{lovelace1844," in r.json()["bibtex"]
+    assert "cite_key" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+
+
+def test_clearing_the_record_unpins_too(guest):
+    page = make_page(guest, "Clear pin page")
+    guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _meta(), "cite_key": "mine2026"})
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {}})
+    assert r.status_code == 200
+    assert r.json()["cite_key"] == ""
+    assert "cite_key" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]

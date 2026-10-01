@@ -481,9 +481,11 @@ jobs:
             echo "</details>"
             echo
             if [ -s changes.md ]; then
-              echo "## What's new${PREV:+ since $PREV}"
+              echo "<details><summary><b>What's new${PREV:+ since $PREV}</b></summary>"
               echo
               cat changes.md
+              echo
+              echo "</details>"
               echo
             fi
             echo "## Server (Docker)"

@@ -282,7 +282,9 @@ result gives:
   publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
   and the paper's own title when it differs from the page's;
 - the stored BibTeX, else one built from the record the way a hand edit
-  builds it (`routers/metadata._build_bibtex`);
+  builds it (`bibtex.build_entry`), under the citation key pinned on the page
+  when there is one — so what the model cites matches the `.bib` export
+  ([import_export.md](import_export.md#bibtex-bibliography));
 - the slide citation when one was made (`ppt_cite`). None is generated,
   since that is an AI call.
 

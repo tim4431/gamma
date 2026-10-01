@@ -42,7 +42,7 @@ import { useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
-  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
+  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
   LinkIcon, PenIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
   XIcon,
 } from "../shared/ui/Icons";
@@ -204,19 +204,6 @@ function PersonRow({ name, tag, sub, icon: Icon, active, children }) {
         <span className="aiProvDesc">{sub}</span>
       </span>
       <span className="aiProvActions">{children}</span>
-    </div>
-  );
-}
-
-// A copyable text box: the rendered text (or a scrolling <pre>) with the
-// copy button pinned top-right — the same for the slide citation and BibTeX.
-export function CopyBox({ children, copied, onCopy, title, label }) {
-  return (
-    <div className="copyBox">
-      <div className="copyBoxBody">{children}</div>
-      <button type="button" className={`uiBtn sm iconSq copyBoxBtn ${copied ? "on" : ""}`} onClick={onCopy} title={title} aria-label={label}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-      </button>
     </div>
   );
 }
