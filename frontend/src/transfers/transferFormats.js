@@ -80,10 +80,13 @@ export function bibliographyUrl(base, { pageId = "", folder = "", share = "" } =
     : `${base}/pages/${encodeURIComponent(pageId)}/export?mode=bibtex${token}`;
 }
 
-// How many entries a bibliography holds, read off the text the export wrote
-// (the `@type{key,` head of each entry) rather than counted again elsewhere.
-export function countEntries(text) {
-  return (String(text || "").match(/^@/gm) || []).length;
+// The review the dialog reads before it downloads anything
+// (routers/export.py GET /api/bibliography): the same entries, keys and
+// left-out pages the file will have.
+export function bibliographyPreviewUrl(base, { pageId = "", folder = "" } = {}) {
+  return folder
+    ? `${base}/bibliography?folder=${encodeURIComponent(folder)}`
+    : `${base}/bibliography?page_id=${encodeURIComponent(pageId)}`;
 }
 
 // The format a server export mode is (an export job's params name the mode).

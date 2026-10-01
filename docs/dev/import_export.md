@@ -441,7 +441,12 @@ shows only the bundle switch. BibTeX has no switches but still gets a step,
 because the step is worth seeing: it previews the real bibliography
 ([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
 the setup and the job step together, so their breadcrumbs agree. The breadcrumb returns to the cards without
-losing edits. Both dialogs are a `SubDialog` (focus trap, Escape, backdrop)
+losing edits, from the job's last step too: `onLeaveJob` (App's
+`leaveExportJob`) drops the dialog's hold on the job — which goes on in
+Background tasks with its file offered there, exactly as closing the window
+would leave it — and `ExportDialog` reopens the setup at the step the crumb
+named. Picking another format after seeing the file is a normal second
+thought, so nothing has to be reopened for it. Both dialogs are a `SubDialog` (focus trap, Escape, backdrop)
 with its close-button header; the footer holds only Next or the final action.
 Zotero's post-export steps expand under "Open this export in Zotero".
 `transfers/transferFormats.js` owns the format table (label, category, hint,
@@ -464,7 +469,10 @@ the packing of the zip) with Stop, and says the window may close. The job
 goes on in Background tasks, whose row opens this step again. Once ready,
 the file downloads by itself when the window is open; a closed window's
 file is offered in the pill with a Download button, and waits in the tray.
-The finished step names the file and its size, counts the pages, lists the
+The finished step names the file and its size, says "Saved to your
+downloads" once the file has actually arrived (`job.downloaded`, so the
+automatic download is stated rather than left for the Download button to
+contradict — which then reads "Download again"), counts the pages, lists the
 pages left out with the reason, and says what to do next: Zotero's steps,
 Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export, BibTeX's
 beside-your-.tex. A failed or
@@ -551,6 +559,28 @@ bundling, nothing generated at export time that is not already on the page.
   to hand over the page's own row instead of walking its subtree, so a whole
   library's bibliography is one query per page rather than a tree fetch each.
   That is what lets the dialog preview it synchronously.
+
+### The review step
+
+`GET /api/bibliography?page_id=|folder=` answers what the export *would*
+write, as data: `entries` (per citable page: `page_id`, the page `title`, the
+`key` the file will use, `pinned`, and the entry `text`), `skipped` (the
+pages left out, with the reason) and `text` (the file). It runs the same
+builder as the download — `keyed_records()` and `text()` serve both — so the
+review cannot disagree with the file, and `preview()` returns an empty
+bibliography as data where `save` would refuse, so the dialog can show the
+pages it could not cite instead of an error.
+
+The dialog's BibTeX step is the two panes the Zotero import review uses
+(`.bibColumns`, the same shape as `.importReviewColumns` with its own
+classes): the papers on the left, each with the citation key underneath and a
+pin mark when that key is pinned, the pages that cannot be cited listed under
+them with the reason — where the question "why is my paper missing?" is
+actually asked, rather than after the download. The right pane holds whichever
+paper is picked, with a copy button for that one entry; the footer's "Copy
+all" takes the whole bibliography and appears only when there is more than
+one. The modal widens for this step only (`transferModalWide`). Export is
+held while the review loads and when nothing is citable.
 
 ### Keeping a .bib up to date
 

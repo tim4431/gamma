@@ -273,7 +273,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 - **Annotated PDF**: highlights, handwriting and text boxes become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
 - **Notes as PDF** or **Markdown** (highlights as quotes, images bundled or linked).
-- **BibTeX**: a `.bib` file — one paper's entry, or every paper in a folder in one bibliography. The step shows the real entries before you export, with a **Copy** button. Repeated citation keys get `a`, `b`, … so the file is valid LaTeX.
+- **BibTeX**: a `.bib` file — one paper's entry, or every paper in a folder in one bibliography. Before anything downloads you see the papers on the left with the key each will be cited by, and the picked one's entry on the right; papers without metadata are listed there too, so you can tell why one is missing. Copy takes one entry or the whole bibliography. Repeated citation keys get `a`, `b`, … so the file is valid LaTeX.
 - **Obsidian vault** (wikilinks, `^id` block anchors, highlights as quote callouts linking the PDF page), **Logseq graph**, **Zotero library** (RDF with PDFs and annotations, ready to import), or a **Gamma zip** another Gamma can merge.
 - Switches choose the layers (highlights, notes, bundle the files); the last choice is remembered.
 

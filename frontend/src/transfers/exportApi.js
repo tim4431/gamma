@@ -1,21 +1,16 @@
-import { API, apiJson, withShare } from "../shared/lib/utils";
-import { bibliographyUrl } from "./transferFormats";
+import { API, apiJson } from "../shared/lib/utils";
+import { bibliographyPreviewUrl, bibliographyUrl } from "./transferFormats";
 
 // The two server calls the export dialog makes besides starting the job. The
-// URL building itself lives in transferFormats.js, which stays pure and
-// testable; this module is only the fetching.
+// URL building lives in transferFormats.js, which stays pure and testable;
+// this module is only the fetching.
 
-// The bibliography of a page or a folder, as text, from the same endpoint the
-// download uses — so the preview shows the exact entries and citation keys
-// the file will carry, rendered once on the server rather than twice.
-export async function bibliographyText({ pageId = "", folder = "" } = {}) {
-  const r = await fetch(withShare(bibliographyUrl(API, { pageId, folder })), { credentials: "include" });
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json()).detail || ""; } catch { /* not JSON */ }
-    throw new Error(detail || `HTTP ${r.status}`);
-  }
-  return r.text();
+// The bibliography a BibTeX export would write, as data: an entry per
+// citable page (title, citation key, whether it is pinned, the entry) plus
+// the pages left out with the reason, and the file's own text. From the same
+// builder as the download, so the review cannot disagree with the file.
+export function bibliographyPreview({ pageId = "", folder = "" } = {}) {
+  return apiJson(bibliographyPreviewUrl(API, { pageId, folder }));
 }
 
 // The share link of a page or a folder, or "" when it isn't shared. Only a

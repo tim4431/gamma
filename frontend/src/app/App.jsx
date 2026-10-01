@@ -2559,7 +2559,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, runExport, closeExport, openTask, retryTask, startResearch, onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, startResearch, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, openBlock, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, downloadExport,
@@ -10118,6 +10118,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           folder={exportFolder}
           onCancel={closeExport}
           onExport={runExport}
+          onLeaveJob={leaveExportJob}
           job={exportJobId ? tasks.byId(exportJobId) : null}
           fetchJob={tasks.fetchJob}
           onDownload={() => { const job = tasks.byId(exportJobId); if (job) tasks.download(job); }}

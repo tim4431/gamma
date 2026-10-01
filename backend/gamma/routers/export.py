@@ -291,8 +291,11 @@ class _Builder:
                             background=BackgroundTask(os.unlink, tmp.name))
 
     def skip(self, page, reason: str) -> None:
-        """Leave a page out of the export, saying why (the job's result lists it)."""
-        self.skipped.append({"title": (page.get("content") or "").strip() or "Untitled", "reason": reason})
+        """Leave a page out of the export, saying why (the job's result lists
+        it, and the bibliography review shows it beside the papers it could
+        cite)."""
+        self.skipped.append({"page_id": page.get("id") or "",
+                             "title": (page.get("content") or "").strip() or "Untitled", "reason": reason})
 
     def summary(self) -> dict:
         """The job's result: how many pages went in, which were left out and why."""
@@ -789,7 +792,26 @@ class _BibtexBuilder(_Builder):
         if pin:
             text = bibtex_mod.with_key(text, pin)
         self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(pin),
-                             "title": (page.get("content") or "").strip()})
+                             "page_id": page["id"], "title": (page.get("content") or "").strip()})
+
+    def keyed_records(self) -> list[dict]:
+        """The records as the file will hold them: sorted by key, then title,
+        with the keys made unique. One source for the download and for the
+        export dialog's review, so the review cannot disagree with the file.
+        (Not ``entries`` — that is the base class's list of zip parts.)"""
+        return bibtex_mod.unique_keys(sorted(self.records, key=lambda r: (r["key"], r["title"])))
+
+    def text(self) -> str:
+        """The .bib file itself."""
+        return bibtex_mod.bibliography(self.keyed_records(), self.opts.get("folder_scope") or "")
+
+    def preview(self) -> dict:
+        """What the export dialog reviews (GET /api/bibliography): a record per
+        citable page, the pages left out with the reason, and the file's own
+        text. An empty bibliography is data here rather than the refusal
+        ``save`` raises, so the dialog can show the pages it could not cite
+        instead of an error."""
+        return {"entries": self.keyed_records(), "skipped": self.skipped, "text": self.text()}
 
     def save(self, dest, progress=jobs.no_progress):
         try:
@@ -797,9 +819,10 @@ class _BibtexBuilder(_Builder):
                 raise HTTPException(status_code=400, detail=(
                     "none of these pages has paper metadata to cite" if self.opts.get("folder_scope")
                     else "this page has no paper metadata to cite"))
-            records = bibtex_mod.unique_keys(sorted(self.records, key=lambda r: (r["key"], r["title"])))
-            Path(dest).write_text(bibtex_mod.bibliography(records, self.opts.get("folder_scope") or ""),
-                                  encoding="utf-8")
+            # newline="": write the text as it is, so the file a Windows
+            # server serves is the same bytes as a Linux one and as the
+            # dialog's preview.
+            Path(dest).write_text(self.text(), encoding="utf-8", newline="")
         finally:
             self.discard()
         return f"{self.base}.bib", "application/x-bibtex; charset=utf-8"
@@ -1069,6 +1092,32 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
             raise HTTPException(status_code=404, detail="no pages in that folder")
         builder = _run_export(conn, ws, mode, ids, _folder_base(name), opts)
     return builder.response()
+
+
+@router.get("/bibliography")
+def bibliography_preview(request: Request, page_id: str = "", folder: str = ""):
+    """The bibliography a ``mode=bibtex`` export would write, as data for the
+    Export dialog to review before it downloads anything: ``entries`` (one
+    per citable page — its page id and title, the citation key the file will
+    use, whether that key is pinned on the page, and the entry itself),
+    ``skipped`` (the pages left out, with the reason) and ``text`` (the file).
+    Name a ``page_id`` or a ``folder``. Same builder as the download, so the
+    review is what the file will be; page properties are all it reads, so a
+    whole library answers in one query per page."""
+    scope = share_scope(request)
+    ws = resolve_ws(request)
+    if folder:
+        name = _folder_name(folder)
+        if scope is not None and not scope.allows_folder(name):
+            raise HTTPException(status_code=403, detail="not accessible via this share link")
+        opts = _export_opts(folder_scope=name)
+        with connect_pages_db(ws) as conn:
+            builder = _run_export(conn, ws, "bibtex", _folder_pages(conn, name), _folder_base(name), opts)
+    elif page_id:
+        builder = page_builder(ws, page_id, "bibtex", _export_opts(), scope)
+    else:
+        raise HTTPException(status_code=400, detail="name a page or a folder")
+    return builder.preview()
 
 
 class ExportJob(BaseModel):

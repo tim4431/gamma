@@ -165,7 +165,9 @@ def test_a_folder_lists_the_pages_it_left_out(user):
     assert job["state"] == "done", job["error"]
     assert job["artifact"]["name"] == "Bib mixed.bib"
     assert job["result"]["pages"] == 1
-    assert job["result"]["skipped"] == [{"title": "Uncited notes", "reason": "page has no paper metadata"}]
+    left_out = job["result"]["skipped"]
+    assert [(p["title"], p["reason"]) for p in left_out] == [("Uncited notes", "page has no paper metadata")]
+    assert left_out[0]["page_id"]
     r = user.get(f"/api/jobs/{job['id']}/download")
     assert r.status_code == 200
     assert r.text.count("@article{") == 1
@@ -196,3 +198,42 @@ def test_a_share_token_cannot_reach_another_folders_bib(user, anon):
     token = user.post("/api/share/folder", params={"name": "Bib shared"}).json()["token"]
     r = anon.get("/api/folders/export", params={"name": "Bib private", "mode": "bibtex", "share": token})
     assert r.status_code == 403
+
+
+# --- the review the dialog shows before exporting -----------------------------
+
+def test_preview_pairs_every_paper_with_its_entry(user):
+    _paper(user, "Preview one", "Bib preview")
+    _paper(user, "Preview two", "Bib preview", cite_key="pinned:two")
+    make_page(user, "Preview note", {"folder": "Bib preview"})
+    r = user.get("/api/bibliography", params={"folder": "Bib preview"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert [(e["title"], e["key"], e["pinned"]) for e in data["entries"]] == [
+        ("Preview one", "lovelace1843", False), ("Preview two", "pinned:two", True)]
+    assert all(e["page_id"] and e["text"].startswith("@article{") for e in data["entries"])
+    assert data["skipped"] == [{"page_id": data["skipped"][0]["page_id"], "title": "Preview note",
+                                "reason": "page has no paper metadata"}]
+    # The text is the file the download would write, entry for entry.
+    assert data["text"] == user.get("/api/folders/export",
+                                    params={"name": "Bib preview", "mode": "bibtex"}).text
+    for entry in data["entries"]:
+        assert entry["text"] in data["text"]
+
+
+def test_preview_of_a_page_without_metadata_is_empty_not_an_error(user):
+    """The dialog shows the page it cannot cite instead of a refusal."""
+    page = make_page(user, "Nothing to cite here")
+    r = user.get("/api/bibliography", params={"page_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["entries"] == []
+    assert r.json()["skipped"][0]["title"] == "Nothing to cite here"
+
+
+def test_preview_needs_a_target_and_honours_the_share_scope(user, anon):
+    assert user.get("/api/bibliography").status_code == 400
+    assert user.get("/api/bibliography", params={"page_id": "nope"}).status_code == 404
+    token = user.post("/api/share/folder", params={"name": "Bib shared"}).json()["token"]
+    assert anon.get("/api/bibliography", params={"folder": "Bib shared", "share": token}).status_code == 200
+    assert anon.get("/api/bibliography", params={"folder": "Bib private", "share": token}).status_code == 403
+    assert anon.get("/api/bibliography", params={"folder": "Bib shared"}).status_code == 401

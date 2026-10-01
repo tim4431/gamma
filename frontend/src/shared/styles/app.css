@@ -5317,10 +5317,67 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* The whole bibliography in the export dialog's BibTeX step: more room than
    the popover's single entry, and long titles wrap instead of scrolling
    sideways. */
+/* The BibTeX review needs room for two panes; every other step keeps the
+   dialog's usual width. */
+.reportModal.transferModalWide { width: min(1000px, calc(100vw - 32px)); max-width: 1000px; }
 .bibtexPreview {
   max-height: 240px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* The BibTeX step's two panes, the shape the Zotero import review uses: the
+   papers on the left, the picked one's entry on the right. The dialog widens
+   for this step only (.transferModalWide). */
+.bibColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: var(--space-5);
+  margin-bottom: 12px;
+}
+.bibColumns section {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.bibColumns h3 { font-size: var(--fs-md); margin: 12px 12px 6px; }
+.bibPaperList, .bibEntryPane { overflow: auto; height: min(34vh, 320px); padding: 0 10px 10px; }
+/* Each paper: its title, and underneath the key the file will cite it by. */
+.bibPaperRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.bibPaperRow:hover { background: var(--bg-hover); }
+.bibPaperRow[aria-pressed="true"] { background: var(--bg-selected); border-color: var(--accent); }
+.bibPaperTitle { font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.bibPaperKey {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+/* A page that cannot be cited: shown where the question is asked, not clickable. */
+.bibPaperSkipped { cursor: default; opacity: 0.6; }
+.bibPaperSkipped:hover { background: transparent; }
+.bibPaperSkipped .bibPaperKey { font-family: inherit; }
+.bibPaneEmpty { margin: 4px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
+@media (max-width: 720px) {
+  .bibColumns { grid-template-columns: minmax(0, 1fr); }
+  .bibPaperList, .bibEntryPane { height: 180px; }
 }
 /* The URL that keeps serving the current .bib (what Overleaf refreshes from). */
 .bibLinkRow {

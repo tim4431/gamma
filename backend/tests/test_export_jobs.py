@@ -70,7 +70,10 @@ def test_a_folder_as_annotated_pdfs_in_one_zip(user, lab):
     assert sorted(z.namelist()) == ["Sub/Deep paper.pdf", "Top paper.pdf"]
     annots = PdfReader(io.BytesIO(z.read("Top paper.pdf"))).pages[0]["/Annots"]
     assert any(a.get_object()["/Subtype"] == "/Highlight" for a in annots)
-    assert job["result"] == {"pages": 2, "skipped": [{"title": "Just notes", "reason": "page has no PDF"}]}
+    assert job["result"]["pages"] == 2
+    # skipped rows carry the page id too, so a review can key its rows by it
+    assert [(p["title"], p["reason"]) for p in job["result"]["skipped"]] == [("Just notes", "page has no PDF")]
+    assert job["result"]["skipped"][0]["page_id"] == lab["note"]["id"]
     assert job["progress"] == {"phase": "packing", "unit": "files", "done": 2, "total": 2}  # the walk counted 3 pages
     assert job["params"]["folder"] == "EJ lab" and job["params"]["mode"] == "annotated-pdf"
 

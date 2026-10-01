@@ -463,7 +463,20 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await until(async () => (await alice.api(`/api/blocks/${pages["Bib paper one"].id}`)).properties.cite_key === "lovelace:analytical",
         "the pinned key is saved on the page");
 
-      // 2. Export the folder as one bibliography.
+      // 2. One page's own bibliography: the same two panes, one paper, and
+      //    no Copy all to copy (its entry's own button is the way).
+      const one = await openDialog(page, "Export");
+      await choice(one, "BibTeX").click();
+      await choice(one, "Next").click();
+      await one.getByRole("region", { name: "Papers", exact: true }).waitFor();
+      assertEq(await one.locator(".bibPaperRow").count(), 1);
+      assert((await one.innerText()).includes("1 paper can be cited."));
+      assert((await one.locator(".bibtexPreview").innerText()).includes("@article{lovelace:analytical,"));
+      assertEq(await choice(one, "Copy all").count(), 0, "one entry needs no Copy all");
+      await choice(one, "Close Export").click();
+      await one.waitFor({ state: "detached" });
+
+      // 3. Export the folder as one bibliography.
       await page.goto(`${server.base}/?folder=${encodeURIComponent(folder)}&ws=${alice.ws}`);
       await page.waitForSelector(".folderNewBtn");
       // A folder's dialog is named after it, so openDialog's exact "Export" misses.
@@ -476,25 +489,44 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await choice(dialog, "BibTeX").click();
       await choice(dialog, "Next").click();
 
-      // 3. The step previews the entries the file will carry.
-      const preview = dialog.locator(".bibtexPreview");
-      await preview.waitFor();
-      const shown = await preview.innerText();
-      assert(shown.includes("@article{lovelace:analytical,"), `the pinned key is used verbatim: ${shown}`);
-      assert(shown.includes("@article{lovelace1843,"), `the first of the clashing keys keeps it: ${shown}`);
-      assert(shown.includes("@article{lovelace1843a,"), `the second is suffixed so the file is valid: ${shown}`);
-      assert(shown.includes("Bib paper two"), `every citable paper is in it: ${shown}`);
-      assert(!shown.includes("Bib note page"), "a page with no metadata is not an entry");
-      assert((await dialog.innerText()).includes("3 papers in this folder can be cited."));
+      // 4. The two panes: every citable paper on the left, the picked one's
+      //    entry on the right, and the page it could not cite listed too.
+      const papers = dialog.getByRole("region", { name: "Papers", exact: true });
+      await papers.waitFor();
+      const rows = papers.locator(".bibPaperRow");
+      await rows.first().waitFor();
+      assertEq((await rows.allInnerTexts()).map((row) => row.split(LF).join(" / ")).sort().join(" | "),
+        [
+          "Bib note page / page has no paper metadata",
+          "Bib paper one / lovelace:analytical",
+          "Bib paper three / lovelace1843",
+          "Bib paper two / lovelace1843a",
+        ].join(" | "),
+        "each paper shows the key the file will cite it by; the uncitable page says why");
+      assert((await dialog.innerText()).includes("3 papers can be cited."));
+      // The first entry is shown without picking anything.
+      const entry = dialog.getByRole("region", { name: "BibTeX entry", exact: true });
+      assert((await entry.innerText()).includes("@article{lovelace1843,"), "the first paper's entry is shown");
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex.png` });
 
-      // 4. Copy puts that same text on the clipboard.
-      await choice(dialog, "Copy").click();
-      const clip = await page.evaluate(() => navigator.clipboard.readText());
+      // 5. Picking another paper shows its entry; Copy takes just that one.
+      await papers.getByRole("button", { name: /Bib paper one/ }).click();
+      const picked = await entry.locator(".bibtexPreview").innerText();
+      assert(picked.includes("@article{lovelace:analytical,"), `the pinned key is used verbatim: ${picked}`);
+      assert(picked.includes("Bib paper one") && !picked.includes("Bib paper two"), "one entry at a time");
+      await entry.getByRole("button", { name: "Copy this entry", exact: true }).click();
       const plain = (text) => text.split(CRLF).join(LF).trim();
-      assertEq(plain(clip), plain(shown), "the clipboard holds the bibliography");
+      assertEq(plain(await page.evaluate(() => navigator.clipboard.readText())), plain(picked),
+        "the clipboard holds that entry");
+      // Copy all takes the whole bibliography, suffixed keys and all.
+      await choice(dialog, "Copy all").click();
+      const everything = plain(await page.evaluate(() => navigator.clipboard.readText()));
+      for (const key of ["lovelace1843,", "lovelace1843a,", "lovelace:analytical,"]) {
+        assert(everything.includes(`@article{${key}`), `${key} is in the bibliography: ${everything}`);
+      }
+      assert(!everything.includes("Bib note page"), "a page with no metadata is not an entry");
 
-      // 5. And the download is the file itself.
+      // 6. And the download is the file itself.
       const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
       const download = page.waitForEvent("download");
       await choice(dialog, "Export").click();
@@ -503,16 +535,26 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assertEq(file.suggestedFilename(), `${folder}.bib`);
       const written = fs.readFileSync(await file.path(), "utf-8");
       assert(written.startsWith("% 3 entries from E2E bibtex, exported from Gamma"), `the .bib names what it holds: ${written.slice(0, 80)}`);
-      assertEq(written.trim(), shown.trim(), "the preview was the file");
+
       await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
       const done = await dialog.innerText();
       assert(done.includes("3 pages exported.") && done.includes("1 page left out") && done.includes("Bib note page"),
         `the finished step lists the page it could not cite: ${done}`);
       assert(done.includes("Put it beside your .tex file"), "and says what to do with the file");
-      await choice(dialog, "Done").click();
+      assertEq(plain(written), everything, "the file is what Copy all copied");
+
+      // 7. The finished step's breadcrumb walks back to the review, and on
+      //    to the format cards — a second thought needs no reopening.
+      await choice(dialog, "2. Review").click();
+      await dialog.getByRole("heading", { name: "BibTeX", exact: true }).waitFor();
+      await choice(dialog, "1. Choose a format").click();
+      await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
+      // The close button is named after the dialog, and a folder's title is
+      // the folder — Escape is the same exit and shorter to say.
+      await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
 
-      // 6. A page with no paper record has no bibliography to offer.
+      // 8. A page with no paper record has no bibliography to offer.
       const bare = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Bib bare page" } });
       await page.goto(`${server.base}/?page=${bare.id}&ws=${alice.ws}`);
       // openDialog decides between the View menu and the phone sheet by

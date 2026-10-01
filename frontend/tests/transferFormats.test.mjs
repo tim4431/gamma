@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bibliographyUrl, countEntries, exportFormatOf, exportJobBody, exportSummary, hasReviewStep, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 const paper = { hasPdf: true, pdfStored: true };
@@ -109,14 +109,10 @@ test("BibTeX is offered where there is something to cite, and reviews itself", (
   assert.equal(exportFormatOf("bibtex").id, "bibtex");
 });
 
-test("counting entries reads the bibliography the export actually wrote", () => {
-  const bib = "% 2 entries from Reading, exported from Gamma\n\n"
-    + "@article{lovelace1843,\n  title = {A}\n}\n\n@book{babbage1864,\n  title = {B}\n}\n";
-  assert.equal(countEntries(bib), 2);
-  assert.equal(countEntries(""), 0);
-  assert.equal(countEntries(undefined), 0);
-  // A brace-wrapped field that merely mentions an @ is not an entry head.
-  assert.equal(countEntries("@article{k,\n  note = {write to a@b.com}\n}\n"), 1);
+test("the review is fetched for whichever target the dialog is on", () => {
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "My Papers/Sub" }),
+    "/api/bibliography?folder=My%20Papers%2FSub");
+  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1" }), "/api/bibliography?page_id=p%201");
 });
 
 test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
