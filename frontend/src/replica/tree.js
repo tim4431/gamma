@@ -289,6 +289,8 @@ export function moved(base, target) {
 // in content or props, and a page's doc_id (its PDF).
 const UPLOAD_REF = /\/api\/uploads\/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])/g;
 const DOC_STEM = /^[0-9A-Za-z_-]{1,128}$/;
+// The upload name an /api/uploads/<name> url names, or "".
+export const uploadName = (url) => /\/api\/uploads\/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})/.exec(url || "")?.[1] || "";
 export function uploadRefs(blocks) {
   const names = new Set();
   for (const b of blocks) {

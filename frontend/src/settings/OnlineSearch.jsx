@@ -1,4 +1,4 @@
-// Settings → Assistant → Online search: what the assistant's general web
+// Settings → AI → Chat › Online search: what the assistant's general web
 // search goes through, and the services' keys. The keys are the account's,
 // kept on the server and write-only like the AI keys: GET
 // /api/ai/search-services masks them (gamma/search_services.py). Scholarly

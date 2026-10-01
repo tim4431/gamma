@@ -55,7 +55,8 @@ from fractional_indexing import generate_key_between
 
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         handwriting_label, page_report_section, pdf_path, render_area_crops, under_sheet)
+                         handwriting_label, page_report_section, pdf_path, render_area_crops,
+                         text_box_label, under_sheet)
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages, write_lock
 from .db import connect_data_db, connect_pages_db
 from .ops import after_commit, apply_ops, move_across_pages
@@ -64,7 +65,7 @@ from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
-from .text_box import box_page, is_text_box
+from .text_box import is_text_box
 from .trash import KEEP_DAYS, list_trash
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
@@ -77,7 +78,7 @@ _LIST_CAP = 400         # pages listed per list_pages call
 _TITLE_MAX = 300
 # read_page's document-text window: what one call returns when the model
 # doesn't ask (default) and the most it may ask for (cap). The cap is the
-# Settings → Assistant "Read window" preference — requests carry it as
+# Settings → AI → Chat "Read window" preference — requests carry it as
 # read_char_limit and it rides in the scope dict; these are the fallbacks.
 READ_CHARS_DEFAULT = 6000
 READ_CHARS_CAP = 20000
@@ -667,12 +668,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
             else:
                 bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
                             "the limit on this page)")
-        if is_text_box(props):
-            # The nearest sheet above the box holds it, whatever its pdf_page says.
-            page = box_page(props, on_sheet)
-            bits.append(f"(text box on p. {page})" if page else "(text box on the page of paper above)"
-                        if on_sheet else "(text box, not placed on a page)")
-        elif label := handwriting_label(props):
+        if label := text_box_label(props, on_sheet, above=True) or handwriting_label(props):
             bits.append(label)
         bits.append(text or "(empty)")
         pad = "  " * depth
@@ -1201,7 +1197,7 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
     return (f"ok — created block [{block_id}]",
             {"kind": "create", "page_id": page_id, "block_id": block_id,
              "title": page_title, "summary": f"Added a note in “{page_title[:60]}”",
-             "revert": {"after": content}})
+             "revert": {"after": content, "parent": parent["id"], "position": position}})
 
 
 def _plan_move_block(conn, scope: dict, args: dict):
@@ -1309,13 +1305,13 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
                           actor=scope.get("actor", ""))
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
-    # Where it was, for the user's revert: its old parent and key, and the
-    # parent it went to (moved on from there since, the revert asks first).
+    # Where it was and where it went, parent and key, for the user's revert
+    # and redo (moved on from there since, either asks first).
     action = {"kind": "move", "page_id": page_id, "block_id": block["id"], "title": page_title,
               "summary": f"Moved a note within {where}" if page_id == src_page_id
                          else f"Moved a note “{src_title[:40]}” → {where}",
               "revert": {"parent": block["parent_id"], "position": block["position"],
-                         "to_parent": parent["id"]}}
+                         "to_parent": parent["id"], "to_position": position}}
     if page_id != src_page_id:
         action["src_page_id"] = src_page_id
     return f'ok — block [{block["id"]}] moved', action
@@ -1531,7 +1527,7 @@ def _run_search_web(conn, ws: str, scope: dict, args: dict):
         return "error: empty query", None
     engine = scope.get("web_engine") or ""
     if not engine:
-        return "error: general web search is not set up (Settings → Assistant → Online search)", None
+        return "error: general web search is not set up (Settings → AI → Chat → Online search)", None
     if not ensure_tally(scope).take("web_searches", MAX_WEB_SEARCHES):
         return (f"error: {MAX_WEB_SEARCHES} web searches is the limit for one message — work with "
                 "the results you have", None)
@@ -1617,7 +1613,7 @@ _WAIT_OR_SEARCH = ("Unless the user asked for this exact copy, you may first run
 def _fetch_failure(e, source: str, user, can_search: bool = False) -> tuple[str, dict | None]:
     from .ai_web import WALLS
 
-    if not e.access_blocked:
+    if not e.wall:
         return (f"error: {e}. If the user can open it in their browser, ask them to drop "
                 "the PDF onto Gamma and read it with read_page.", None)
     handoff = _open_handoff(user, source, e.wall, e.open_url, e.pdf_url, str(e))
@@ -1676,14 +1672,14 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     # front matter, whatever the window preference allows.
     budget = PROBE_CHARS if probe else max(1, budget)
     # Identities come from the authenticated chat scope, never model arguments.
-    helper = scope.get("handoff_user")
-    doc = fetch_handoff.delivered(helper, source)
+    account = scope.get("handoff_user")
+    doc = fetch_handoff.delivered(account, source)
     if doc is None:
         token = publisher_sessions.current_user.set(scope.get("publisher_user"))
         try:
             doc = fetch_document(source, published_only)
         except FetchError as e:
-            return _fetch_failure(e, source, helper, can_search=bool(scope.get("web_engine")))
+            return _fetch_failure(e, source, account, can_search=bool(scope.get("web_engine")))
         finally:
             publisher_sessions.current_user.reset(token)
     text, next_offset, total = window(doc, budget, offset, page)
@@ -1721,7 +1717,7 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
                                  for link in ranked))
             if len(links) > _LINKS_SHOWN and not title:
                 head += "\n(Pass title= to rank the page's links against the paper you want.)"
-        handoff = doc.get("wall") and _open_handoff(helper, source, doc["wall"], doc["open_url"],
+        handoff = doc.get("wall") and _open_handoff(account, source, doc["wall"], doc["open_url"],
                                                     doc.get("pdf_url", ""), doc.get("note", ""))
         if handoff:
             head += ("\n[Only the article page was readable"
@@ -1921,9 +1917,9 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
     ensure_tally(scope).take("saves", MAX_SAVES)
     payload = plan["payload"]
     folder, title, source = payload.folder, payload.title, plan["source"]
-    helper = scope.get("handoff_user")
-    doc = fetch_handoff.delivered(helper, source)
-    held = fetch_handoff.held_pdf(helper, doc["request"]) if doc and doc.get("request") else None
+    account = scope.get("handoff_user")
+    doc = fetch_handoff.delivered(account, source)
+    held = fetch_handoff.held_pdf(account, doc["request"]) if doc and doc.get("request") else None
     if held:
         payload.doc_id = store_pdf(ws, held[0])[0]
     # Identities come from the authenticated chat scope, never model arguments.
@@ -2905,7 +2901,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             if "search_web" not in names:
                 text += (" General web search (lab pages, repositories) is not set up for this "
                          "chat; if it would have helped, say that it can be turned on in "
-                         "Settings → Assistant → Online search.")
+                         "Settings → AI → Chat → Online search.")
         if "fetch_paper" in names:
             text += (
                 " Pass fetch_paper the paper's title whenever you know it; if it reports that "

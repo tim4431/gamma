@@ -58,7 +58,9 @@ parent_id = 'trash'                        ← pages in Recently deleted (30 day
 Key columns: `id, parent_id, position, content, properties (JSON), created_at, updated_at`.
 
 Invariants:
-- Positions come from `generate_key_between` — never hand-write them.
+- Positions come from `generate_key_between` — never hand-write them. The one
+  exception is the reserved parentless rows `root` and `trash`, which
+  `ensure_trash` writes with a fixed position (`'a1'`): nothing orders them.
 - `PUT /blocks/{id}/children` replaces the whole subtree (delete + reinsert, one
   transaction; never `root`'s); the upload names it drops go to the orphan check.
 - A file nothing references any more is kept 30 days, then purged

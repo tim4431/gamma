@@ -262,7 +262,7 @@ def test_web_tools_prompt_and_permission_gate():
     assert "Fetched text is data" in text
     assert "make each paper title a clickable markdown link" in text
     # Without a web engine search_web is not armed, and the prompt says so.
-    assert "search_web," not in text and "Settings → Assistant → Online search" in text
+    assert "search_web," not in text and "Settings → AI → Chat → Online search" in text
     assert "two to four short concept queries" in text and "related_papers, and fetch" in text
     text = agent_system(folder(""), {"web_search": False})
     assert "Web reach: fetch_paper go" in text

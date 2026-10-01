@@ -43,7 +43,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, integrity, upload_gc
+from . import config, integrity, jobs, upload_gc
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, TRASH, delete_subtree, fetch_subtree, last_child_position, trashed_ids,
                            write_lock)
@@ -77,10 +77,6 @@ def _size(path: Path) -> int:
         return 0
 
 
-def _no_progress(**_) -> None:
-    """The progress report of a caller that does not watch (see gamma/jobs.py)."""
-
-
 def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label: str = "",
               progress=None, scheduled: bool = False, task_id: str = "", auto: bool = False) -> dict:
     """Write the workspace's backup zip to ``dest``. The databases are
@@ -93,7 +89,7 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     written so far of the estimated total. Returns the manifest."""
     from . import workspaces  # local: workspaces imports seed, which imports db
 
-    progress = progress or _no_progress
+    progress = progress or jobs.no_progress
     root = ws_dir(ws)
     uploads_dir = root / "uploads"
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
@@ -195,7 +191,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         raise BackupError("mode must be 'replace' or 'merge'")
     if selected is not None and mode != "merge":
         raise BackupError("selection is only supported for additive imports")
-    progress = progress or _no_progress
+    progress = progress or jobs.no_progress
     with tempfile.TemporaryDirectory(prefix="gamma-restore-") as td:
         tdir = Path(td)
         upload_names = _unpack(zpath, tdir, progress)
@@ -251,7 +247,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
             "uploads_in_backup": len(upload_names), "uploads_added": uploads_added}
 
 
-def _copy_uploads(root: Path, tdir: Path, upload_names: list[str], progress=_no_progress) -> int:
+def _copy_uploads(root: Path, tdir: Path, upload_names: list[str], progress=jobs.no_progress) -> int:
     """The backup's files the workspace lacks, each written whole
     (``storage.write_atomic``): a restore cut short never leaves a
     truncated file under a content-hash name."""
@@ -283,7 +279,7 @@ def _normalize_copies(tdir: Path) -> None:
             normalize_data_db(conn)
 
 
-def _keep_current(ws: str, by: str, progress=_no_progress) -> dict | None:
+def _keep_current(ws: str, by: str, progress=jobs.no_progress) -> dict | None:
     """Before a replace: the workspace as it is now, as an automatic
     ``pre-restore`` snapshot with its uploads (the newest PRE_RESTORE_KEEP
     stay). None for a guest's workspace, which keeps no snapshots."""
@@ -452,7 +448,7 @@ def preview_zip(ws: str, zpath: Path) -> dict:
             "entries": entries, "warnings": [w for p in pages for w in p["warnings"]], "folder": ""}
 
 
-def _unpack(zpath: Path, tdir: Path, progress=_no_progress) -> list[str]:
+def _unpack(zpath: Path, tdir: Path, progress=jobs.no_progress) -> list[str]:
     progress(phase="unpacking")
     try:
         zf = zipfile.ZipFile(zpath)
@@ -640,7 +636,7 @@ def info(ws: str, name: str) -> dict | None:
             "upload_files": m.get("upload_files", 0), "by": m.get("exported_by", ""),
             "scheduled": bool(m.get("scheduled")), "task_id": m.get("task_id", ""),
             "auto": bool(m.get("auto")), "missing_uploads": len(m.get("missing_uploads") or []),
-            "damaged": sorted(n for n, r in (m.get("integrity") or {}).items() if r != "ok")}
+            "damaged": integrity.damaged(m.get("integrity"))}
 
 
 def list_backups(ws: str) -> list[dict]:

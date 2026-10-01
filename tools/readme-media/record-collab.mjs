@@ -12,7 +12,7 @@
 // `--inspect` saves a screenshot of the prepared page instead.
 import fs from 'node:fs';
 import path from 'node:path';
-import { chromium, ROOT, RETINA, launchRetina, startCapture, addCursor, pointer } from './runtime.mjs';
+import { chromium, ROOT, RETINA, launchRetina, startCapture, addCursor, pointer, clipboardImage } from './runtime.mjs';
 import { Server, Account } from '../../frontend/tests/e2e/harness.mjs';
 
 const SCRATCH = path.resolve(process.env.MEDIA_SCRATCH || path.join(ROOT, 'artifacts/readme-media/collab'));
@@ -138,10 +138,7 @@ try {
     // 3. Meanwhile Sam captions the last block and pastes the figure under it.
     const samWork = (async () => {
       await S.waitForTimeout(900);
-      await S.evaluate(async (b64) => {
-        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
-      }, FIGURE);
+      await clipboardImage(S, FIGURE);
       await S.locator(`[data-block-id="${figureId}"] .blockBody`).first().click();
       await S.waitForSelector('.blockEditorCm .cm-content');
       mark('samIn');

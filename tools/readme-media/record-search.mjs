@@ -4,13 +4,13 @@
 //
 // Prepared by `run-case.mjs search` (topic labels on the curated papers).
 // Writes retina frames to frames/ and marks to search_marks.json (capture seconds).
-import { RETINA, launchRetina, startCapture, configureContext, addCursor, pointer, readSession, BASE, CURATED } from './runtime.mjs';
+import { VIEW, RETINA, launchRetina, startCapture, configureContext, addCursor, pointer, readSession, BASE, CURATED } from './runtime.mjs';
 import fs from 'fs';
 
 const SCRATCH = process.cwd();
 const SESSION = readSession(SCRATCH);
 const QEC = process.env.QEC_ID || CURATED.qec;
-const VW = 1440, VH = 900;
+const { width: VW, height: VH } = VIEW;
 const WORD = 'rydberg', LABEL = 'quantum computing';
 const beat = (ms) => page.waitForTimeout(ms);
 

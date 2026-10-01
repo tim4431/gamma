@@ -35,6 +35,7 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 
 - **Highlight** — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block in your notes. Highlights already saved in the file by Acrobat, Preview or SumatraPDF come in as blocks too.
 - **Draw** — with a stylus or the mouse: circle a claim, sketch an arrow, highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or part of one. Ink is a note block linked to its place on the page.
+- **Type on the page** — the Text tool puts a text box on a PDF page or a notebook sheet, like Acrobat's, with Markdown and math inside. Boxes are notes too, and export as real text boxes in the annotated PDF.
 - **Follow citations** — references in the PDF are clickable; a global **← Back** unwinds jumps across documents, and a cited arXiv/DOI paper is one click from your library.
 - **Translate** — redraw a page in your language in place, figures untouched, or translate just a selected sentence. Microsoft's free service works with no setup; a chat model, Google or Youdao are one setting away.
 
@@ -47,8 +48,8 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
 - **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
-- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts and tables render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
-- **Pictures and tables** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown.
+- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables and Mermaid diagrams render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
+- **Pictures, tables and diagrams** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown; double-click a diagram to edit its source.
 - **Pages to write on** — type `/page` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
 - **Link and embed** — `[[page]]` mentions, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
@@ -60,7 +61,7 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 - **Chat with the open paper** — ask about it, Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
 - **Mention a paper** — type `@` to attach a library page; its text stays in context for follow-ups.
-- **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages or file them into folders. It asks before each change (once, or for the whole chat), each tool step expands to show what it did, and it can never delete anything.
+- **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages or file them into folders. It asks before each change (once, or for the whole chat), each tool step expands to show what it did, and it can never delete anything. What it changed is listed under its answer, and any note change can be reverted, one at a time or all at once.
 
 <a href="./docs/user_guide.md#the-library-agent"><img alt="Paste a slide's equation into the chat and ask for it in the note: after an approval card, it lands as a KaTeX block under the cursor" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
 
@@ -212,7 +213,7 @@ cd ../backend
 GAMMA_STATIC_DIR=../frontend/dist uvicorn app:app --host 127.0.0.1 --port 9001
 ```
 
-Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy you must set it — to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file) — or every visitor shares the proxy's rate-limit bucket.
+Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy, set it to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file). Otherwise every visitor shares the proxy's rate-limit bucket.
 
 </details>
 

@@ -38,7 +38,7 @@
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { known, ownEdits, reconcileRemoteOps, split, strays, unlanded } from "./reconcile.js";
 import { merge as textMerge } from "./textmerge.js";
-import { apply, applyLocal, diff, same, snapshotFromTree, subtreeIds, uploadRefs } from "./tree.js";
+import { apply, applyLocal, diff, same, snapshotFromTree, subtreeIds, uploadName, uploadRefs } from "./tree.js";
 
 export const CLIENT = "sync";
 export const MAX_OPS = 500;
@@ -54,8 +54,6 @@ export class RemoteError extends Error {
 }
 // The page waits for the next round, quietly (not an error).
 export class PageDeferred extends Error {}
-
-const uploadName = (url) => /\/api\/uploads\/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})/.exec(url || "")?.[1] || "";
 
 function remoteApi(host) {
   const call = async (method, path, body, ok = [200]) => {
@@ -83,7 +81,9 @@ async function remoteTree(remote, pageId) {
   }
 }
 
-function inkFiles(host) {
+// The host's ink files as tree.applyLocal reads and stores them (the
+// device's editors, replica/edits.js, use the same).
+export function inkFiles(host) {
   return {
     read: async (url) => { const name = uploadName(url); return name ? host.readInk(name) : null; },
     store: async (ink) => `/api/uploads/${await host.storeInk(ink)}`,

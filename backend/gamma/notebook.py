@@ -101,9 +101,9 @@ def is_sheet(props: dict | None) -> bool:
 # --- the sheets as a PDF --------------------------------------------------------------
 
 def _rgb(hex_color: str) -> bytes:
+    from .pdf_export import parse_css_color
     from .pdf_typeset import num
-    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
-    return b"%s %s %s" % (num(r), num(g), num(b))
+    return b"%s %s %s" % tuple(num(c) for c in parse_css_color(hex_color)[:3])
 
 
 def paper_ops(paper: dict) -> bytes:

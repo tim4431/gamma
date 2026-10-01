@@ -284,10 +284,10 @@ Connector knows the tab by:
    **In the background.** With the chat's "Fetch blocked papers in the
    background" setting (on by default) the card sends `open` with
    `background` by itself. The tab then loads next to the Gamma tab that
-   asked, without the focus (`backgroundTab`) — an ordinary tab the user can
-   see working and switch to, not a window hidden behind everything —
-   `MAX_BACKGROUND` (3) requests at a time; more wait in `handoff:queue`
-   (the card reads `queued`) and start as turns free up. A tab waiting for
+   asked, without the focus (`backgroundTab`): an ordinary tab the user can
+   see working and switch to. `MAX_BACKGROUND` (3) requests run at a time;
+   more wait in `handoff:queue` (the card reads `queued`) and start as turns
+   free up. A tab waiting for
    the user (a `NEEDS_YOU` note: `signin`, `check`, `looking`, `refused`,
    `other`) holds no turn. The watch call says `background`, so the card can
    say where the page is. Switching to such a tab (`tabs.onActivated`) makes
@@ -432,6 +432,17 @@ signed in to the same server works the same way.
   account/offline states, denied permission, footer keyboard navigation,
   removing/reconnecting servers, library results and saves that
   are interrupted by a server switch. Uses `frontend/`'s Playwright install.
+- `node extension/tests/handoff.e2e.mjs` — the same Chromium against a fake
+  Gamma server (the handoff endpoints and an app page the bridge content
+  script runs on) and a fake publisher whose PDF answers when the test says:
+  two requests fetched "in the background" open as unfocused tabs beside the
+  Gamma tab, in its window and with it as opener, while the Gamma tab stays
+  the active one; `watch` reports them as background; switching to one makes
+  it the user's (`background: false`), and when both PDFs arrive the tab
+  never switched to closes, the switched-to one stays open and the Gamma
+  tab comes forward. Tab activity is what is checked — headless Chromium
+  does not hide an inactive tab's document, so `visibilityState` says
+  nothing there.
 - `frontend/tests/themes.test.mjs` — `tokens.css` and `fonts/` equal their
   sources, and both pages load `theme.js`, then `tokens.css`, then
   `popup.css`.
@@ -445,35 +456,20 @@ signed in to the same server works the same way.
   the real arXiv abs page → save → ✓ badge → clip selection → PDF tab upload
   → background metadata. Loading an extension needs Playwright's full
   Chromium (`npx playwright install chromium`, `channel: "chromium"`); the
-  headless shell the browser suite uses cannot. The chat handoff was checked
-  the same way (2026-09-28) against a local fake publisher whose PDF needs a
-  sign-in cookie: the card's Open → `/go` → the Connector took the tab → no
-  delivery before sign-in → sign in → the PDF arrived (2 pages), the chat
-  continued by itself, the Gamma tab came forward and the tab was released.
-  Again with the Connector set to `127.0.0.1` and the app open on `localhost`:
-  the probe answered `ok`, the loop completed and the `localhost` tab came
-  forward; a probe from another site with a made-up id got no answer. And
-  against a ScienceDirect-like fake (no citation metadata but a reference's
-  DOI in the text, "View PDF" rendered 1.5 s after load, the PDF route
-  refusing everything but a navigation and answering it with a script
-  redirect to a signed PDF on another host): the tab opened the link and the
-  PDF from the other host arrived. The plain publisher's PDF link, which
-  leads to its sign-in, was not opened; the card asked the user to sign in.
-  After the Connector opened tabs itself (2026-09-28, the same recipe): the
-  card's Open made a tab straight at the publisher, with no `/go` on the way;
-  four requests in the background with the user signed in were delivered
-  without a click, never more than three tabs at once, the tabs closed, and
-  the chat continued once; a check that passes by itself
-  (a script sets the clearance cookie and reloads) was delivered without a
-  click; one that does not got the `check` note, and Show the tab moved it
-  into Gamma's window and forward; an IEEE-like page framing its PDF behind
-  a sign-in got `signin`, and after signing in in the shown tab the framed
-  PDF arrived and saved to the library with its PDF. Those runs predate the
-  move from a minimized window of its own to an unfocused tab beside the
-  Gamma one (2026-09-30), which the suite's tab-strip assertions do not
-  cover — what a real desktop shows (the tab visible but unfocused, and
-  switching to it keeping it open) is unchecked. Concurrent opens first lost
-  bindings to each other's writes, which is why the changes are serialized.
+  headless shell the browser suite uses cannot. The chat handoff is checked
+  the same way against local fake publishers: one whose PDF needs a sign-in
+  cookie (no delivery before the sign-in, the PDF after it, the chat
+  continuing and the Gamma tab coming forward), the Connector on `127.0.0.1`
+  with the app on `localhost`, a ScienceDirect-like page (a reference's DOI
+  in the text, "View PDF" rendered after load, a PDF route that answers only
+  a navigation with a script redirect to another host), a bot check that
+  passes by itself and one that does not (`check`, then Show the tab), an
+  IEEE-like page framing its PDF behind a sign-in (`signin`, then the framed
+  PDF), and four background requests delivered without a click, never more
+  than three tabs at once. What a background tab does on the desktop
+  (opened without the focus, closed or kept with the delivery) is the
+  checked-in `handoff.e2e.mjs` above; only how a headed Chrome paints it is
+  left to the eye.
 
 ## Not done yet
 

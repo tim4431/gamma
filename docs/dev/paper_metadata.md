@@ -165,8 +165,8 @@ open-access fallback for DOIs (`_open_access_pdfs`: every location with a PDF,
 published before accepted before submitted, the publisher's copy before a
 repository's, each URL once). Up to four copies (`OA_TRIES`) are tried in that
 order and the first that answers with a PDF wins, so one broken repository
-link no longer ends the fallback; when none confirms, the best one is still
-handed on for the proxy to try, as before. The fallback is disabled when the
+link does not end the fallback. When none confirms, the best one is still
+handed on for the proxy to try. The fallback is disabled when the
 request sends `allow_oa: false` and identifies itself with a fixed project
 email in `pdf.py` (no config). Non-published substitutions return a `note` the
 frontend surfaces.
@@ -237,7 +237,7 @@ other AI tools and background jobs do not use these credentials. Fetched text
 and URL aliases are cached by account and a fingerprint of its usable cookies,
 so one account cannot reuse another's authenticated document. Connecting,
 refreshing, disconnecting or expiring cookies changes that cache partition,
-allowing a previously cached abstract to be retried with new access. Proxy responses are
+so an abstract cached under the old access is fetched again under the new. Proxy responses are
 private and not cached by shared HTTP caches. Saved PDFs retain the workspace's
 normal access rules; connecting a session does not alter workspace permissions.
 

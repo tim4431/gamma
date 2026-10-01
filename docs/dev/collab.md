@@ -441,7 +441,10 @@ focus, and `peers` / `me` as React state. The session owns:
   caret keep both people's keystrokes (text typed in front of a word the
   other replaced stays in front of the replacement). Only a span of ours that replaces
   characters the stored change also replaced is dropped; the stored text
-  stands for it. The echoed op carries the merged text and the
+  stands for it. Typing merges by characters. A revert of the agent's edit
+  merges by words and phrases (`semantic=True`, [ai_tools.md](ai_tools.md)
+  "Reverting a note change"), so two rewrites of one sentence clash as
+  wholes instead of interleaving. The echoed op carries the merged text and the
   batch's `cursor` is remapped into it. On the ack, a set whose stored
   text differs from what we sent lands on screen like a remote op — but
   only when no newer set of ours for that block is queued or in flight:
@@ -476,9 +479,9 @@ focus, and `peers` / `me` as React state. The session owns:
   deletes, and inserts of blocks this tab no longer has (a rescue re-created
   a note someone deleted: it comes back with the text typed here) — and its
   property patches, skipping any block a newer queued edit of ours touches.
-  Before, a block both people moved stayed where the other put it on this
-  screen, and a rescued note never reappeared here. These ops land without
-  an undo-history rebase (`onRemoteOps`' `own`). A remote move this tab
+  So a block both people moved ends where this tab put it, and a rescued
+  note reappears here. These ops land without an undo-history rebase
+  (`onRemoteOps`' `own`). A remote move this tab
   can't place — its block or its target is gone here — means an unsent
   delete of ours took them along here but not (yet) on the server, where
   that move came first: a note moved out of the block we deleted survives
@@ -491,10 +494,11 @@ focus, and `peers` / `me` as React state. The session owns:
   same pass goes out), and to every
   undo snapshot (`blockHistory.rebase`), so undoing your own edit never
   reverts someone else's. App commits a remote transition at once
-  (`flushSync`), so its diff runs before the next batch advances the base:
-  rendered later, the tree of a first batch was diffed against a base that
-  already held the second, and an idle tab sent the second batch's notes
-  back as deletes and re-inserts (a paste arriving as two batches).
+  (`flushSync`), so its diff runs before the next batch advances the base.
+  Rendered later, the tree of a first batch would be diffed against a base
+  that already held the second, and an idle tab would send the second
+  batch's notes back as deletes and re-inserts (a paste arriving as two
+  batches).
   Ops landing on a fetched tree not committed yet keep it a load. A remote
   move that shifts the row of the open editor (it, an ancestor, or a
   reorder among their siblings — `displacedRow`) remounts or detaches that
@@ -624,7 +628,8 @@ state in App instead of the tree.
 - `backend/tests/test_text_box_merge.py`: the same-box merge through the
   op endpoint and `PUT /blocks/{id}`; its rule's cases are
   `tests/shared/textboxmerge.json`.
-- `backend/tests/test_textmerge.py`: the same-block merge — different spans,
+- `backend/tests/test_textmerge.py`: the same-block merge — word-level
+  hunks keeping two rewrites of one phrase apart, different spans,
   insertions at one caret keeping both (through the op endpoint too), an
   insertion in front of a replaced word, an insertion inside the other
   side's deleted span, a span both replaced.

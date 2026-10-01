@@ -3,7 +3,7 @@ waits for when a tool needs the user's answer first.
 
 Every tool belongs to one permission (the ``perm`` of its entry in
 ``ai_tools.TOOLS``), and a chat request carries a state per permission
-(``AIChatRequest.permissions``, Settings → Chat → Tools):
+(``AIChatRequest.permissions``, Settings → AI → Chat → Tools):
 
 - ``"allow"``: the tool runs whenever the model calls it.
 - ``"ask"``: the tool is offered, but each call waits for the user's decision

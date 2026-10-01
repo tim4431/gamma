@@ -49,7 +49,9 @@
 // of view once the queue has landed: every commit diffs against it and
 // advances it; remote ops advance it too. Positions live in one Map shared
 // with blockOps.
-import { applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions } from "../shared/model/blockOps.js";
+import {
+  applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withTexts,
+} from "../shared/model/blockOps.js";
 import { mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -79,15 +81,6 @@ function pageSession(pageId = "") {
   };
 }
 
-// `tree` with the text of the blocks in `texts` (id → text) replaced.
-function withTexts(tree, texts) {
-  return (tree || []).map((n) => {
-    const kids = n.children?.length ? withTexts(n.children, texts) : n.children;
-    if (texts.has(n.id)) return { ...n, content: texts.get(n.id), children: kids };
-    return kids === n.children ? n : { ...n, children: kids };
-  });
-}
-
 // The base of a tree on screen: text held back as too long is replaced by
 // the last text that can be saved.
 const heldBack = (s, tree) => (s.tooLong.size
@@ -112,8 +105,6 @@ function saveProblem(err) {
   if (status === 409) return t("Not saved yet — this browser is signed in to another account now. Sign in again and your edits are saved.");
   return t("Not saved yet — the server answered {status}. Retrying…", { status });
 }
-
-const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
 
 // Our changes of text boxes the server has not applied yet: the queue, and
 // the batch out unless its own fan-out came by (`landed`).

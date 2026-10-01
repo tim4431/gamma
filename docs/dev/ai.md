@@ -492,7 +492,7 @@ refusing files when the failure was the size.
 ### Reasoning effort
 
 The chat keeps ONE preferred effort (the account pref `chatEffort`, set from
-the composer's model chip or Settings → Assistant → Chat) and sends each
+the composer's model chip or Settings → AI → Chat) and sends each
 model the level it takes. `GET /api/ai/model-info` names a model's levels,
 lowest first, looked up live like its context window
 (`ai_catalog.reasoning_efforts`): the entry's own listing first
@@ -704,13 +704,13 @@ integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-### Permissions and knobs (Settings → Chat)
+### Permissions and knobs (Settings → AI → Chat)
 
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat. The chat header's Tools button and settings
 popover edit the same account preference; New chat does not reset it.
 Under the permission table, **Fetch blocked papers in the background**
-(`gamma-ai-fetch-background`, default off) lets a blocked fetch's card hand
+(`gamma-ai-fetch-background`, default on) lets a blocked fetch's card hand
 the page to Gamma Connector without a click, and **Read long papers with a
 helper** (`gamma-ai-delegate-reads`, default on) offers `read_paper`, which
 gives one document to a second agent and keeps only its cited answer
@@ -739,7 +739,7 @@ leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
 
-Settings → Chat → Tools compares permissions in a table: named, explained
+Settings → AI → Chat → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
 with a column for each chat kind. Each cell is a state menu whose icon shows
 the state: a green check, the accent's question mark, a muted ban.
@@ -802,7 +802,7 @@ Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 ### Asking before a call (approvals)
 
 A call of a tool whose permission is Ask waits for the user
-(`gated_call` in `routers/ai.py`):
+(`ai_agent.ApprovalGate`, the loop's `gate`):
 
 1. `ai_tools.approval_preview` works out what the call would do, without
    doing it. Each changing tool's TOOLS entry has a `preview` built on the
@@ -838,9 +838,9 @@ A call of a tool whose permission is Ask waits for the user
 
 When the client leaves while a card waits (Stop, a dropped connection), the
 loop hears it at once. The agent stream is a `WatchedStream`: Starlette's
-disconnect listener sets the `stopped` event, which the loop shares with
-`keepalive_lines` (there as `abandoned`). The relay alone would learn of it
-only once it is collected. `wait_for` then returns `"stopped"` and the loop
+disconnect listener sets the `stopped` event, which the gate, the paper
+wait and `keepalive_lines` (there as `abandoned`) share. The relay alone
+would learn of it only once it is collected. `wait_for` then returns `"stopped"` and the loop
 ends. Nothing runs for that call, not even one allowed a moment before, and
 no further provider round is opened.
 

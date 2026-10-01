@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 import re
 import subprocess
-import sys
 
 from imageio_ffmpeg import get_ffmpeg_exe
 import PIL.Image
@@ -19,6 +18,7 @@ import PIL.ImageDraw
 import PIL.ImageFilter
 from compose import Capture, Camera, FULL, focus, publish_demo, quiet
 from media_output import ROOT, FRAME, concat_segments, encode_webp, publish
+from render_feature_demos import CASES as FEATURES
 
 FF = get_ffmpeg_exe()
 SUITE = ROOT / 'artifacts/readme-media/suite'
@@ -221,7 +221,7 @@ def render(name):
               'segments': segments, 'source': str(source), 'crop': crop}
     (directory / 'render.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     # The agent and download-and-chat captures feed no README slot; they stay
-    # scratch previews (the README's AI story is render-feature-demos.py).
+    # scratch previews (the README's AI story is render_feature_demos.py).
     target = directory / 'preview.webp' if name in ('agent', 'download-and-chat') else OUT / f'demo-{name}.webp'
     publish(output, target)
     print(json.dumps(report), flush=True)
@@ -232,12 +232,11 @@ RETINA = {'notes': notes, 'library': library, 'search': search, 'connector': con
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    features = ['annotate-and-ink', 'native-agentic', 'agentic-notes', 'collab']   # render-feature-demos.py
-    parser.add_argument('cases', nargs='+', choices=NAMES+features+['all'])
+    parser.add_argument('cases', nargs='+', choices=NAMES + [*FEATURES, 'all'])
     args = parser.parse_args()
-    published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + features
+    published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + [*FEATURES]
     for name in published if 'all' in args.cases else args.cases:
-        if name in features:
-            subprocess.run([sys.executable, str(Path(__file__).with_name('render-feature-demos.py')), name], check=True)
+        if name in FEATURES:
+            FEATURES[name]()
         else:
             render(name)

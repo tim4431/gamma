@@ -392,7 +392,7 @@ are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
 paused searches without an API key (heavy load) — a free OpenAlex API key in
-Settings → Assistant → Online search avoids this.)".
+Settings → AI → Chat → Online search avoids this.)".
 
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
@@ -463,7 +463,7 @@ search off.
 
 #### Online search services
 
-Settings → Assistant → **Online search** (`settings/OnlineSearch.jsx`) holds
+Settings → AI → Chat → **Online search** (`settings/OnlineSearch.jsx`) holds
 **Search the web with** (the engine) and one row per service: Brave Search (API
 key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
 or Test, Edit and Remove. Test runs one small search with the stored settings.
@@ -665,8 +665,8 @@ finished reply's actions for the requests it left behind:
   for the request's owner that Gamma page goes straight on to the publisher,
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
-- **Fetch blocked papers in the background** (Settings → AI → Tools,
-  `fetchInBackground`, account-wide, **on** by default): a card in the
+- **Fetch blocked papers in the background** (Settings → AI → Chat → Tools,
+  `fetchInBackground`, account-wide, on by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
   Connector tries in an ordinary tab next to the Gamma one — unfocused, so
@@ -981,16 +981,17 @@ change tool that changed nothing is marked `noop` and not listed.
 
 Each row under "Changed in your notes" has a revert button, and the list a
 "Revert all" when it holds more than one change. The user takes back one
-change at a time, in any order, and whatever anyone wrote since stays.
+change at a time, in any order, and whatever anyone wrote since stays. A
+reverted row has a redo button that puts the change back.
 
-The note tools record what undoing their change needs, as `revert` on the
-action:
+The note tools record what undoing and redoing their change needs, as
+`revert` on the action:
 
 | Tool | `revert` |
 | --- | --- |
 | `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
-| `create_block` | `after`: the text the block was made with |
-| `move_block` | `parent` and `position`: where the block was; `to_parent`: where it went |
+| `create_block` | `after`: the text the block was made with; `parent` and `position`: where it went |
+| `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
 
 The chat saves the action with the reply. A revert sends it to
 `POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
@@ -998,14 +999,25 @@ one write lock:
 
 | Change | Reverted by | Stops (409) when |
 | --- | --- | --- |
-| edit | merging the change `after → before` into the text stored now (`textmerge.merge`, the merge the agent's own writes use) | `changed`: someone changed the agent's own text |
+| edit | merging the change `after → before` into the text stored now (`textmerge.merge` with word-level hunks, `semantic`) | `changed`: someone changed the agent's own text |
 | new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
 
 Typing elsewhere in an edited block survives the merge. So two edits to
-different parts of one block revert independently. A change taken back
-already is a no-op (`noop`): an edit the text still holds reverted
-(`textmerge.contains`), or a new block that is gone.
+different parts of one block revert independently. The merge works on
+words and phrases, not characters: a later rewrite of the agent's sentence
+then clashes with the revert as a whole, where characters would interleave
+the two. A change taken back already is a no-op (`noop`): an edit the text
+still holds reverted (`textmerge.contains`), or a new block that is gone.
+
+A redo (`redo: true`) runs the same plan the other way. An edit merges
+`before → after`. A new block is inserted again under its old id, parent
+and key; with its parent gone it is `gone`. A move goes to `to_parent` at
+`to_position`, and stops with `moved` when the block left the place the
+revert put it. An older move without `to_position` goes last under its
+parent, and an older new block without `parent` cannot be redone. A redo of
+a new block brings back the agent's text only: notes deleted with it by a
+forced revert stay gone.
 
 A stop carries `preview.diff`, what `force` would write. A forced edit
 writes `before` with the later changes that don't overlap the agent's
@@ -1016,13 +1028,15 @@ refuses the move back across pages. A deleted note answers 404.
 
 A revert is the user's own write: `actor` is the account and the op log's
 `client` is `"revert"`. It fans out like any edit, so the open page and
-collaborators see it live. The chat then marks the action `reverted`, saves
-the conversation (`chatSession.edit`), and reloads the touched pages when no
-socket brought the ops.
+collaborators see it live. A redo is the same. The chat then marks the
+action `reverted` (a redo drops the mark), saves the conversation
+(`chatSession.edit`), and reloads the touched pages when no socket brought
+the ops.
 
-In the list, a reverted row shows "Reverted". A stopped row says why, shows
-the diff, and offers "Revert anyway", "Delete anyway" or "Move back anyway"
-beside "Keep it". "Revert all" goes newest first and stops at the first row
+In the list, a reverted row shows "Reverted" and its redo button. A stopped
+row says why, shows the diff, and offers "Revert anyway", "Delete anyway"
+or "Move back anyway" (for a redo, "Redo anyway" or "Move anyway") beside
+"Keep it". "Revert all" goes newest first and stops at the first row
 that asks. The buttons wait while a reply streams. A viewer and the share
 view get none.
 

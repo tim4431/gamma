@@ -12,7 +12,7 @@
 // last measured it. `auto` makes the width follow the text; otherwise the
 // text wraps inside `w`. Stored values are read through normalizeTextBox,
 // never trusted; tests/shared/textbox.json pins both halves.
-import { isSheet } from "../notebook/notebook.js";
+import { isSheet, round2 } from "../notebook/notebook.js";
 
 export const PAD = 4; // inner padding on every side, in points
 export const LINE = 1.25; // line height, as a multiple of the font size
@@ -26,7 +26,6 @@ export const MIN_WIDTH = 24, DEFAULT_WIDTH = 200;
 export const MIN_SIZE = 6, MAX_SIZE = 96, DEFAULT_SIZE = 12;
 const HEX = /^#[0-9a-f]{6}$/i;
 
-const round2 = (v) => Math.round(v * 100) / 100;
 const num = (v, lo, hi, fallback) => (typeof v === "number" && Number.isFinite(v)
   ? round2(Math.min(hi, Math.max(lo, v))) : fallback);
 const color = (v, fallback) => (typeof v === "string" && HEX.test(v) ? v.toLowerCase() : fallback);

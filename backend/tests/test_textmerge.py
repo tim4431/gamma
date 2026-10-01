@@ -7,6 +7,17 @@ from conftest import make_page
 from gamma import textmerge
 
 
+def test_semantic_hunks_keep_two_rewrites_of_one_sentence_apart():
+    # Two rewrites of one phrase, merged by characters, interleave the few
+    # letters they share; as words they clash, and the stored text stands.
+    base, ours, theirs = "one two three. tail", "my own sentence. tail", "the AI's sentence. tail"
+    assert textmerge.merge(base, ours, theirs, semantic=True) == ("the AI's sentence. tail", False)
+    assert textmerge.merge(base, ours, theirs)[0] != theirs
+    # Words elsewhere still merge.
+    assert textmerge.merge("one two three. tail", "one two three. tail, and more", "the AI's sentence. tail",
+                           semantic=True) == ("the AI's sentence. tail, and more", True)
+
+
 def test_edits_to_different_spans_both_survive():
     assert textmerge.merge("hello world", "hello brave world", "hello world!") == ("hello brave world!", True)
     assert textmerge.merge("alpha beta gamma delta", "ALPHA beta gamma delta",

@@ -256,12 +256,12 @@ struct StrokeSamples {
     let t0 = Date().timeIntervalSince1970 * 1000
     private var start: TimeInterval?
 
-    mutating func add(_ touch: UITouch, at point: CGPoint, lifting: Bool = false) {
+    mutating func add(_ touch: UITouch, at point: CGPoint) {
         let begin = start ?? touch.timestamp
         start = begin
         let force = Double(touch.maximumPossibleForce > 0 ? touch.force / touch.maximumPossibleForce : 0.5)
         // no force (the lift, a touch that reports none): the last contact's pressure
-        let p = lifting || force <= 0 ? (samples.last?["p"] ?? 0.5) : min(1, max(0, force))
+        let p = force <= 0 ? (samples.last?["p"] ?? 0.5) : min(1, max(0, force))
         let t = max(samples.last?["t"] ?? 0, (touch.timestamp - begin) * 1000)
         if let last = points.last, last == point, samples.last?["p"] == p { return } // a repeat draws nothing new
         samples.append(["x": Double(point.x), "y": Double(point.y), "p": p, "t": t])

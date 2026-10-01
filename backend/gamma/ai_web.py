@@ -83,10 +83,6 @@ class FetchError(Exception):
         super().__init__(message)
         self.wall, self.open_url, self.pdf_url = wall, open_url, pdf_url
 
-    @property
-    def access_blocked(self) -> bool:
-        return bool(self.wall)
-
 
 # ---------------------------------------------------------------- search
 
@@ -259,7 +255,7 @@ def related_papers(source: str, relation: str, limit: int = SEARCH_LIMIT_DEFAULT
 
 
 def _title_key(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (title or "").lower())[:80]
+    return paper_links.title_key(title, 80)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -552,12 +548,12 @@ def identity(doc: dict, title: str) -> bool | None:
     """Whether the fetched document is the paper titled ``title``: its
     normalized title appears on the first pages (a PDF) or in the page
     text. None when there is no title to check."""
-    want = re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+    want = paper_links.title_key(title)
     if len(want) < 12:
         return None
     head = " ".join(doc.get("pages") or [])[:30_000] if doc.get("kind") == "html" else \
         " ".join((doc.get("pages") or [])[:3])
-    return want in re.sub(r"[^a-z0-9]+", "", head.lower())
+    return want in paper_links.title_key(head)
 
 
 def _fetch(source: str, published_only: bool = False) -> dict:

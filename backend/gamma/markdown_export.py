@@ -29,6 +29,10 @@ _RGBA_TO_NAME = {
 }
 
 # /api/uploads/<hexsha>.<ext> — content-addressed, so the filename is a stable key.
+# Narrower than storage.UPLOAD_REF_RE on purpose: only hex stems (what the
+# server writes) are rewritten into an export or opened as an ink/image file,
+# and its extension is unbounded; the two match different strings, so neither
+# can stand in for the other.
 UPLOAD_RE = re.compile(r"/api/uploads/([0-9a-fA-F]+\.[A-Za-z0-9]+)")
 
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

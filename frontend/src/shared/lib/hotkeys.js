@@ -96,7 +96,8 @@ export function chordParts(chord, mac = IS_MAC) {
   const order = mac ? ["Ctrl", "Alt", "Shift", "Mod"] : MOD_ORDER;
   const table = mac ? MAC_MODS : PC_MODS;
   const labels = mac ? MAC_KEY_LABELS : KEY_LABELS;
-  const label = labels[key] || (key.length === 1 ? key.toUpperCase() : key);
+  // A lone modifier ("{key:Mod} and the scroll wheel") is spelled as one.
+  const label = table[key] || labels[key] || (key.length === 1 ? key.toUpperCase() : key);
   return [...order.filter((m) => mods.includes(m)).map((m) => table[m]), label];
 }
 

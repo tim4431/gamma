@@ -35,7 +35,7 @@ import zipfile
 from contextlib import closing
 from pathlib import Path
 
-from . import config, integrity
+from . import config, integrity, jobs
 from .db import page_now
 
 KEEP_BACKUPS = 3        # automatic (pre-upgrade) snapshots kept; hand-made ones are never pruned
@@ -84,7 +84,7 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, progress=No
     gamma/jobs.py) hears each database and each file copied. Returns the
     backup's info dict; raises ValueError on a bad label and OSError when
     the copy cannot be written (nothing is left behind then)."""
-    progress = progress or (lambda **_: None)
+    progress = progress or jobs.no_progress
     from .migrations import data_version  # local: migrations imports this module
 
     if not LABEL_RE.match(label or ""):
@@ -154,9 +154,8 @@ def info(name: str) -> dict | None:
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    damaged = sorted(rel for rel, result in (manifest.get("integrity") or {}).items() if result != "ok")
     return {"name": name, "path": str(path), "size_bytes": _dir_size(path), **manifest,
-            "auto": is_auto(manifest), "damaged": damaged}
+            "auto": is_auto(manifest), "damaged": integrity.damaged(manifest.get("integrity"))}
 
 
 def list_backups() -> list[dict]:

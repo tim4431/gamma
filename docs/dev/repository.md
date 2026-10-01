@@ -93,8 +93,9 @@ The pdf.js worker is one of those hashed assets: `frontend/src/pdf/PdfViewer.jsx
 imports `pdfjs-dist/legacy/build/pdf.worker.min.mjs?url`, so it is always the
 installed package's legacy build and is cached like the bundle. Nothing to
 copy or check when `pdfjs-dist` is upgraded.
-The worker URL also has a stable `?mime=js` query to bypass old immutable
-responses cached with an incorrect MIME type before this fix.
+The worker URL carries a stable `?mime=js` query, so a browser holding an
+immutable copy of the worker under a wrong MIME type (from an older server)
+fetches it again.
 
 ## Desktop inputs and outputs
 

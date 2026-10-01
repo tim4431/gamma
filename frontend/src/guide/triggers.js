@@ -22,6 +22,16 @@ export function factsMatch(requires, facts) {
   return Object.entries(requires || {}).every(([key, value]) => (Array.isArray(value) ? value.includes(facts[key]) : facts[key] === value));
 }
 
+// Does `step` belong in a run started with these facts? Its `requires` must
+// hold. A tour with a `sibling` teaches some of the same controls (the PDF
+// and the notebook viewer share their zoom, pen and full screen): its
+// `shared` steps are for a user who has not finished the sibling, and its
+// one `recap` step, which stands in for them, for a user who has.
+export function stepApplies(step, facts, siblingDone = false) {
+  if (!factsMatch(step.requires, facts)) return false;
+  return step.shared ? !siblingDone : !step.recap || siblingDone;
+}
+
 // Whether `event` is the tour's trigger event (its `count` is checked by
 // canOffer).
 export function triggerMatches(tour, event) {

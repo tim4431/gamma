@@ -176,7 +176,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | Class / component | Use for |
 |---|---|
 | `uiBtn` (+ `primary`, `ghost`, `danger`, `sm`, `iconSq`, `on`) | every button with a label, in the topbar too (there is no generic topbar button style); the hierarchy and sizes are under Buttons below |
-| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 26 px icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
+| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 26 px icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on; `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer starts with the same buttons in the same places (zoom out, zoom in, fit to width, the pen); what only one viewer has goes after them. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, 24 px (Sm 20 for chips and rows, Lg 28 for dialogs and panes) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
@@ -310,39 +310,37 @@ gesture is left to the browser.
 ### Zoom gestures in a viewer
 
 The viewport meta turns the browser's own zoom off, so a viewer that zooms
-reads the gestures itself. Both of them come from one place,
+reads the gestures itself. Both gestures come from one place,
 `shared/lib/viewerZoom.js`, so the PDF's pages and the notebook's sheets
-cannot drift apart in how zooming feels. A native non-passive `wheel`
-listener, because React's root listener is passive and `preventDefault` —
-which is what stops the browser zooming the page — would not work from an
-`onWheel` prop.
+zoom the same way. The `wheel` listener is native and non-passive:
+React's root listener is passive, so the `preventDefault` that stops the
+browser zooming the page would not work from an `onWheel` prop.
 
-**Ctrl/⌘ + wheel** (which is also what a trackpad pinch reports) zooms by
+**Ctrl/⌘ + wheel** (also what a trackpad pinch reports) zooms by
 `e^(-deltaY · 0.0015)` per event, so a notch is a fixed ratio whatever the
-device reports in pixels; Firefox's line-mode deltas are converted first.
-Two details keep a fast train honest: the scale compounds on the module's
-own `live` value rather than on the committed scale, which is a frame or
-two behind, and the dispatch is coalesced to one per frame, because every
-commit re-renders every page. A viewer pushes its committed scale back in
-with `sync()` — ignored while a dispatch is in flight, or the events that
-arrived since would be dropped (measurably: a 6-notch train zoomed about 3
-notches' worth).
+device reports in pixels. Firefox's line-mode deltas are converted first.
+The scale compounds on the module's own `live` value, not on the committed
+scale, which is a frame or two behind. The dispatch is coalesced to one per
+frame, because every commit re-renders every page. A viewer pushes its
+committed scale back in with `sync()`. That is ignored while a dispatch is
+in flight: the events that arrived since are already in `live`, and
+overwriting it dropped them (a 6-notch train zoomed about 3 notches' worth).
 
 **Two fingers** pinch to zoom and drag to pan. The pinch does not commit
 while they are down: it previews as a CSS transform on the content layer,
-compositing only, since a commit per move event is more re-layout than any
-tablet can keep up with — so it is blurry until they lift, like every
-native PDF app. The layer must be the scroller's first in-flow child with
+compositing only, so it is blurry until they lift, like every native PDF
+app. A commit per move event is more re-layout than a tablet keeps up with.
+The layer must be the scroller's first in-flow child with
 `transform-origin: 0 0`, which is what the math assumes. `preventDefault`
 on the two-finger move blocks native scrolling along with the browser's
-zoom, which is why panning is the caller's job too: fingers held the same
-distance apart are a drag, and the commit gets the midpoint's travel to
-move the view by.
+zoom, so panning is the caller's job too: fingers held the same distance
+apart are a drag, and the commit gets the midpoint's travel to move the
+view by.
 
-Each viewer supplies only the two commits, since anchoring is the part that
-knows its own layout — the PDF's re-bases scroll and lets its zoom-anchor
-effect re-place the point (`pdf/PdfViewer.jsx`), the notebook's names the
-sheet and the fraction of it to hold ([notebooks.md](notebooks.md)).
+Each viewer supplies only the two commits, since anchoring depends on its
+layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
+the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
+fraction of it to hold ([notebooks.md](notebooks.md)).
 
 ### Fullscreen on touch devices
 
@@ -530,7 +528,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, folders and labels in sections, then the search-everywhere and create-page actions; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
 | `chat/PaperMentionInput.jsx`, `chat/paperMentions.js` | chat mention picker, mention text edits and `MAX_CHAT_REFERENCES` (six attached pages plus the current page) |
 | `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
-| `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row ending in a frameless `ctlBtn` undo icon, "Revert all" a `uiBtn sm ghost` in the head, a reverted row muted with its "Reverted" tag; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) |
+| `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row ending in a frameless `ctlBtn` undo icon, "Revert all" a `uiBtn sm ghost` in the head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |
 | `editor/BlockTree.jsx`, `shared/model/blockModel.js` | outliner rendering / pure tree ops (`shared/model/highlightColors.js` is the highlight palette both share with the viewer). Line breaks in a rendered note: one Enter is a hard line break (`remark-breaks`), one blank line the paragraph break, and every further blank line a visible empty line (`expandBlankLines` in `editor/mdMarks.js`, applied by `mdPreprocess` outside math and code) — what the editor shows is what the note renders |
 | `transfers/FileChip.jsx` | the file chip an upload link renders as — a small card (kind icon in a tinted square, name, download arrow), inline so it sits in a sentence, identical for every type; a PDF or markdown chip whose page exists gets an accent "open page" button before the arrow; a `ContextMenu` on right-click with "Open page" / "Add to library" (fed by `FileChipContext` from App and one batched `POST /pages/by-docs` per render) and download; also the shared `postFile` / `uploadFilesAsLines` upload helpers |

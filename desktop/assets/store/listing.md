@@ -25,6 +25,8 @@ READ AND ANNOTATE
   the PDF back to it.
 • Highlights already saved in the file by other PDF readers are imported as
   blocks too.
+• Draw on the page with a stylus or the mouse, and type text boxes onto it.
+  Strokes and boxes are notes as well, and export into an annotated PDF.
 • Citations in the PDF are clickable: jump to the reference, and fetch a
   cited arXiv or DOI paper into your library with one click.
 • On open, the title, authors, and venue are resolved automatically. One
@@ -35,8 +37,8 @@ TAKE NOTES
   and a plain page are edited the same way: Enter for a new block, Tab to
   nest, drag to reorder, one undo history for the whole page.
 • Live preview while you type: Markdown, LaTeX math ($…$ and $$…$$), code
-  blocks, callouts, and tables render in place while the block you are on
-  stays raw. Math gets bracket coloring and \command autocomplete.
+  blocks, callouts, tables, and Mermaid diagrams render in place while the
+  block you are on stays raw. Math gets bracket coloring and \command autocomplete.
 • Link pages with [[page]] mentions and embed blocks with ![[block]] embeds
   that edit the source in place.
 • Paste images and tables straight into a note. Tables are edited cell by
@@ -61,6 +63,8 @@ ASK AN AI ABOUT YOUR PAPERS (optional)
 
 SHARE AND MOVE YOUR DATA
 • Share an annotated paper by link, with view or edit rights per person.
+• On a Gamma server, people edit the same page together, live: changes and
+  named cursors appear as they type, even in the same block.
 • Import Logseq PDF exports and Zotero libraries with their annotations, and
   Markdown or Notion exports as notes.
 • Export a zip of all your data at any time and restore it on another
@@ -73,6 +77,7 @@ Gamma is open source: https://github.com/tim4431/Gamma
 ## Product features (Partner Center bullets, one per line)
 
 - Highlight PDFs: text or box highlights, colors, and comments, each stored as a note block
+- Draw with a stylus or the mouse, and type text boxes on the page
 - Outliner notes with live Markdown and LaTeX preview, code blocks, callouts, and tables
 - Open papers by arXiv, DOI, or publisher link; metadata, BibTeX, and citations resolved automatically
 - Clickable citations: jump to the reference and fetch the cited paper in one click
@@ -80,6 +85,7 @@ Gamma is open source: https://github.com/tim4431/Gamma
 - Search notes, highlights, and the full text of every PDF at once
 - Optional AI chat about your papers using your own Anthropic, OpenAI, or ChatGPT account
 - Share an annotated paper by link with view or edit rights
+- Edit a page together, live, on a Gamma server
 - Import from Logseq and Zotero; export everything as a zip
 - Local workspaces on your disk, plus any Gamma server you host as another workspace
 

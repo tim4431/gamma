@@ -1,4 +1,4 @@
-"""The services behind the agent's online search (Settings → Assistant →
+"""The services behind the agent's online search (Settings → AI → Chat →
 Online search).
 
 General web search (the ``search_web`` tool) goes through one engine:
@@ -36,13 +36,13 @@ from urllib.request import Request, urlopen
 
 from fastapi import HTTPException
 
-from .db import get_pref, page_now, update_pref
-from .net_guard import guarded_urlopen
+from .db import get_pref, update_pref
 from .logbuf import log
+from .net_guard import guarded_urlopen
+from .translate_engines import form_fields
 
 PREF_KEY = "search-services"
 ENGINES = ("auto", "ai", "brave", "searxng", "off")
-MAX_FIELD_LEN = 512
 TIMEOUT = 20
 AI_TIMEOUT = 120
 RESULTS_MAX = 20
@@ -138,19 +138,9 @@ def save(user: str, service: str, fields: dict) -> None:
         raise HTTPException(status_code=404, detail="unknown search service")
 
     def change(saved):
-        old = saved.get(service) or {}
-        conf = {}
-        for f in SERVICES[service]["fields"]:
-            value = fields.get(f["id"])
-            value = value.strip() if isinstance(value, str) else ""
-            if len(value) > MAX_FIELD_LEN:
-                raise HTTPException(status_code=400, detail=f"{f['id']} is too long")
-            if not value and f["secret"]:
-                value = old.get(f["id"]) or ""
-            if not value:
-                raise HTTPException(status_code=400, detail=f"{f['id']} is required")
-            conf[f["id"]] = _validated_url(value) if f["id"] == "url" else value
-        conf["updated_at"] = page_now()
+        conf = form_fields(SERVICES[service]["fields"], saved.get(service) or {}, fields)
+        if "url" in conf:
+            conf["url"] = _validated_url(conf["url"])
         saved[service] = conf
     _update(user, change)
 

@@ -35,6 +35,11 @@ def quick_check(path: Path) -> str:
     return "ok" if rows == ["ok"] else "; ".join(rows)[:500]
 
 
+def damaged(checks) -> list[str]:
+    """The files of a manifest's ``integrity`` map whose check failed."""
+    return sorted(name for name, result in (checks or {}).items() if result != "ok")
+
+
 def _store() -> Path:
     return config.BACKUPS_DIR / "integrity.json"
 

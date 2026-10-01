@@ -127,18 +127,6 @@ def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | N
                            account=account, is_guest=is_guest, token=token)
 
 
-def _log_position(ws: str, page_id: str) -> int:
-    with connect_pages_db(ws) as conn:
-        return latest_seq(conn, page_id)
-
-
-def _still_admitted(ws: str, page_id: str, peer: collab.Peer) -> bool | None:
-    """``collab.peer_access`` once more, for a peer in the room: a revoke
-    that landed between the handshake's check and the join found no peer
-    to close (``revalidate`` walks the rooms); this finds it."""
-    return collab.peer_access(ws, page_id, peer.account, peer.is_guest, peer.token)
-
-
 @router.websocket("/ws/page/{page_id}")
 async def page_socket(sock: WebSocket, page_id: str):
     """The page's live channel. Server → client: ``hello {client, color,
@@ -171,14 +159,18 @@ async def page_socket(sock: WebSocket, page_id: str):
         # catches up on it), one after it reaches the peer as it is fanned out —
         # possibly just before the hello, which the client's ordered inbox takes
         # as it takes any batch.
-        seq = await run_in_threadpool(_log_position, ws, page_id)
+        def log_position() -> int:
+            with connect_pages_db(ws) as conn:
+                return latest_seq(conn, page_id)
+        seq = await run_in_threadpool(log_position)
         await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
                                          "peers": room.presence()}))
         await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
         # Access once more now that the peer is in the room (after the hello,
         # which stays the first message a socket gets): a revoke that landed
-        # while it joined closes it here, as revalidate would have.
-        can_edit = await run_in_threadpool(_still_admitted, ws, page_id, peer)
+        # between the handshake's check and the join found no peer to close
+        # (revalidate walks the rooms); this finds it.
+        can_edit = await run_in_threadpool(collab.peer_access, ws, page_id, peer.account, peer.is_guest, peer.token)
         if can_edit is None:
             if collab.leave(room, peer):
                 collab.publish(ws, page_id, {"t": "leave", "client": client})
