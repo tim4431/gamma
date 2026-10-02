@@ -95,6 +95,40 @@ proxy's rate limits. A host whose default network predates the pin needs
    under Settings, then register a second account in a private window with
    an invite code to see the verify mail arrive.
 
+## Opening registration
+
+`GAMMA_CLOUD_REGISTRATION=open` in `.env` and `docker compose up -d`: the
+invite field leaves both signup forms and a new account gets the `free`
+plan. Invite codes keep working and keep granting their plan, so handing
+someone `plus` needs no change here.
+
+Turn these on **before** the switch, not after:
+
+1. **Turnstile** (the section below): the server's own check is a no-op
+   while `GAMMA_CLOUD_TURNSTILE_SECRET` is empty, and it is the only thing
+   that costs a script anything.
+2. **The Cloudflare rate rule** on `/api/register` (below). The in-process
+   limiter is per container and resets on restart; Cloudflare's rule is the
+   one that holds.
+
+What then bounds the damage, none of it needing attention:
+
+- **The verify mail is the gate.** An unverified account cannot sign in to
+  any Gamma server and cannot connect one, so a registration without a
+  readable inbox produces an inert row.
+- **One inbox, one account.** `f.o.o+1@gmail.com` and `foo@gmail.com` are
+  the same mailbox and the second is a 409.
+- **Throwaway-mail domains are refused**, subdomains included;
+  `GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` extends the built-in list without a
+  release.
+- **Five registrations an hour per address**, counted per IPv6 /64 rather
+  than per address, so a prefix rotation shares one allowance.
+
+Someone with a catch-all domain of their own still has unlimited verifiable
+addresses — that case is bounded by Turnstile and the rate rules, not by
+any domain list. Watch the Admin page's account list and the audit log for
+a while after the switch; `manage.py` can delete in bulk if needed.
+
 ## Mail from noreply@gammapdf.com
 
 Cloudflare does not send outbound mail; any SMTP submission service does
@@ -128,7 +162,8 @@ above.
 - **Rate rules** (Security → WAF → Rate limiting): `/api/login`,
   `/api/register`, `/api/reset/request`, `/authorize/login` and `/token` —
   e.g. 30 requests per minute per IP. The server has its own in-process
-  limits as the second line.
+  limits as the second line. With `open` registration `/api/register`
+  is the one that matters: make its rule stricter than the rest.
 - **Turnstile** (dashboard → Turnstile → add widget for the hostname,
   managed mode): the site key and secret go into `.env`; register and
   reset then show the widget.

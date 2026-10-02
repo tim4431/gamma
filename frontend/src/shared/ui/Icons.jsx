@@ -157,6 +157,9 @@ export const AlertCircleIcon = (p) => (
 export const ActivityIcon = (p) => (
   <Icon {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>
 );
+export const ZapIcon = (p) => (
+  <Icon {...p}><path d="M13 2 4.1 12.7a.7.7 0 0 0 .54 1.15H10l-1 8.15L18.9 11.3a.7.7 0 0 0-.54-1.15H12.5z" /></Icon>
+);
 export const UploadIcon = (p) => (
   <Icon {...p}><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M21 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2" /></Icon>
 );

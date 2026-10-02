@@ -8,6 +8,10 @@ from urllib.request import Request as URLRequest
 from .base import Protocol, as_int, attach_index, parse_tool_args
 
 API_VERSION = "2023-06-01"
+# Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
+# models take it (the Opus line); the listing says nothing about speed, so an
+# unsupported one is refused upstream with the provider's own message.
+FAST_MODE_BETA = "fast-mode-2026-02-01"
 _CACHE = {"type": "ephemeral"}
 
 
@@ -90,9 +94,15 @@ class Anthropic(Protocol):
     label = "Anthropic Messages API"
     key_placeholder = "sk-ant-…"
     key_url = "https://console.anthropic.com/settings/keys"
+    speeds = {"fast": "fast"}  # no cheaper tier here; standard is the default
+
+    def speed_tiers(self, conf):
+        # Fast mode is Anthropic's own preview — a service speaking its API
+        # behind another host has nothing to do with it.
+        return super().speed_tiers(conf) if is_anthropic_platform(conf.get("base_url", "")) else []
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
         messages = [dict(m) for m in messages]  # attachment injection must not mutate the caller's turn list
         if pdf_b64s or images:
             last = messages[attach_index(messages)]
@@ -116,15 +126,22 @@ class Anthropic(Protocol):
             body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
         if stream:
             body["stream"] = True
-        if is_anthropic_platform(conf.get("base_url", "")):
+        platform = is_anthropic_platform(conf.get("base_url", ""))
+        speed_value = self.speed_value(speed) if platform else ""
+        if speed_value:
+            body["speed"] = speed_value
+        if platform:
             # Only Anthropic itself is known to take the markers; a service
             # speaking its API behind another host may reject the field.
             _with_breakpoints(body)
-        return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers={
+        headers = {
             "x-api-key": conf["api_key"],
             "anthropic-version": API_VERSION,
             "Content-Type": "application/json",
-        })
+        }
+        if speed_value:
+            headers["anthropic-beta"] = FAST_MODE_BETA
+        return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers=headers)
 
     def hosted_web_search(self, conf):
         # Anthropic's server tool; a service speaking this API elsewhere

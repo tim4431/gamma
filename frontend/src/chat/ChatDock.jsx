@@ -31,7 +31,7 @@ import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from
 import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
-import { effortFor } from "./effort";
+import { effortFor, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
@@ -187,11 +187,12 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
 }
 
 // What the server knows about a chat model, asked once per model per page
-// load (GET /api/ai/model-info): its context window in tokens and the
-// reasoning-effort levels it takes, read from the provider's own model
-// listing, else the public models.dev catalog. Null while unknown, and so
-// is either field when no source knows it — nothing is guessed from the name.
-const modelInfos = new Map(); // model id -> Promise<{context_window, efforts} | null>
+// load (GET /api/ai/model-info): its context window in tokens, the
+// reasoning-effort levels it takes and the service tiers it can run at,
+// read from the provider's own model listing, else the public models.dev
+// catalog. Null while unknown, and so is any field no source knows —
+// nothing is guessed from the name.
+const modelInfos = new Map(); // model id -> Promise<{context_window, efforts, speeds} | null>
 function useModelInfo(modelId) {
   const [known, setKnown] = useState({ id: "", info: null });
   useEffect(() => {
@@ -326,7 +327,7 @@ export default function ChatDock({
   // selection" mean something. onSelectionSent drops the sent selection.
   chatNotes, setChatNotes, focusedNote, onSelectionSent,
   chatImages, setChatImages,
-  chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
+  chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
   // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
@@ -528,10 +529,14 @@ export default function ChatDock({
   const ctxWindow = ctxUsed ? modelInfo?.context_window || null : null;
   // The reasoning efforts the picked model takes ([] = none); a model no
   // source knows gets the generic ones. The preference stays as chosen and
-  // is sent as the nearest level this model takes (chat/effort.js), so a
+  // is sent as the nearest level this model takes (chat/modelPrefs.js), so a
   // switch to a model without "xhigh" and back keeps it.
   const effortLevels = Array.isArray(modelInfo?.efforts) ? modelInfo.efforts : (aiInfo?.efforts || ["low", "medium", "high"]);
   const effort = effortFor(chatEffort, effortLevels);
+  // The service tiers this model can run at ([] = none, and none at all
+  // until model-info answers — a speed is never guessed, it costs money).
+  const speedTiers = Array.isArray(modelInfo?.speeds) ? modelInfo.speeds : [];
+  const speed = speedFor(chatSpeed, speedTiers);
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   // The mic shows only when a connection can transcribe (an OpenAI-protocol
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
@@ -992,6 +997,7 @@ export default function ChatDock({
         .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text })),
       attach_pdf: attach,
       effort,
+      speed,
       system: chatSystem || "",
       pages: selectedDocs.length ? contextIds : [],
       include_notes: includeNotes,
@@ -1107,7 +1113,7 @@ export default function ChatDock({
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
-    let answered = null; // {"model": {id, name, effort}} — which model answers, at what effort
+    let answered = null; // {"model": {id, name, effort, speed}} — which model answers, how
     let usage = null; // the provider's token report, summed over the reply's rounds
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
@@ -1123,6 +1129,7 @@ export default function ChatDock({
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
+        ...(answered.speed ? { speed: answered.speed } : {}),
         ...(answered.tools ? { tools: true } : {}) } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
@@ -1864,8 +1871,8 @@ export default function ChatDock({
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser && m.model ? (
-                      <span className="chatMsgModel" title={t("Model and reasoning effort")}>
-                        {m.effort ? `${m.model} · ${m.effort}` : m.model}
+                      <span className="chatMsgModel" title={t("Model, reasoning effort and speed")}>
+                        {[m.model, m.effort, m.speed].filter(Boolean).join(" · ")}
                       </span>
                     ) : null}
                     {!isUser ? <UsageLine usage={m.usage} /> : null}
@@ -2101,18 +2108,28 @@ export default function ChatDock({
             <span className="chatModelChip">
               <MenuSelect
                 up
-                label={t("Model and reasoning effort")}
+                label={t("Model, reasoning effort and speed")}
                 heading={t("Model")}
                 value={headerModel.id}
                 onChange={setChatModel}
-                display={effort ? `${headerModel.model} · ${effort}` : headerModel.model}
+                display={[headerModel.model, effort, speed].filter(Boolean).join(" · ")}
                 options={headerModels.map((m) => [m.id, modelLabel(m)])}
-                sections={effortLevels.length ? [{
-                  label: t("Reasoning effort"),
-                  value: effort,
-                  onChange: setChatEffort,
-                  options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
-                }] : []}
+                sections={[
+                  ...(effortLevels.length ? [{
+                    label: t("Reasoning effort"),
+                    value: effort,
+                    onChange: setChatEffort,
+                    options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
+                  }] : []),
+                  // Only what this model's provider actually offers: a tier
+                  // it doesn't have would be refused upstream.
+                  ...(speedTiers.length ? [{
+                    label: t("Speed"),
+                    value: speed,
+                    onChange: setChatSpeed,
+                    options: [["", t("Default")], ...speedTiers.map((tier) => [tier, tier])],
+                  }] : []),
+                ]}
               />
             </span>
           ) : null}

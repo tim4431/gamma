@@ -47,6 +47,31 @@ def test_anthropic_wire_maps_minimal_effort_to_low():
     assert body["output_config"] == {"effort": "high"}
 
 
+def test_fast_mode_goes_out_as_each_wire_names_it():
+    msgs = [{"role": "user", "content": "hi"}]
+    # Anthropic: a top-level speed plus the beta flag the preview needs.
+    req = anthropic_request({**CONF, "base_url": "https://api.anthropic.com"}, msgs, "", "m", speed="fast")
+    assert json.loads(req.data)["speed"] == "fast"
+    assert req.headers["Anthropic-beta"] == "fast-mode-2026-02-01"
+    # OpenAI and the Codex backend: the service tier, "priority" for fast.
+    for request in (openai_request, openai_responses_request, chatgpt_request):
+        conf = {**CONF, "base_url": "https://api.openai.com"}
+        assert json.loads(request(conf, msgs, "", "m", speed="fast").data)["service_tier"] == "priority"
+        assert json.loads(request(conf, msgs, "", "m", speed="flex").data)["service_tier"] == "flex"
+        assert "service_tier" not in json.loads(request(conf, msgs, "", "m").data)
+
+
+def test_a_wire_without_a_tier_leaves_the_field_out():
+    # Only the providers' own endpoints route by tier; a service merely
+    # speaking their API gets the plain request (and Anthropic no flag).
+    msgs = [{"role": "user", "content": "hi"}]
+    req = anthropic_request({**CONF, "base_url": "https://api.moonshot.ai/anthropic"}, msgs, "", "m", speed="fast")
+    assert "speed" not in json.loads(req.data) and "Anthropic-beta" not in req.headers
+    body = json.loads(openai_request({**CONF, "base_url": "https://api.deepseek.com"},
+                                     msgs, "", "m", speed="fast").data)
+    assert "service_tier" not in body
+
+
 def test_openai_output_cap_field_follows_the_endpoint():
     # OpenAI itself wants max_completion_tokens; compatible servers such as
     # DeepSeek only read max_tokens.

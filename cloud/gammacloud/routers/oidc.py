@@ -54,7 +54,7 @@ def jwks():
 
 @router.get("/authorize")
 def authorize(request: Request):
-    ratelimit.check(f"authorize:ip:{ratelimit.client_ip(request)}", 60, 600)
+    ratelimit.check(f"authorize:ip:{ratelimit.limit_ip(request)}", 60, 600)
     if len(str(request.url)) > 8192:
         raise HTTPException(414)
     params = dict(request.query_params)
@@ -107,7 +107,7 @@ def authorize_login(body: AuthorizeLogin, request: Request):
     click."""
     ip = ratelimit.client_ip(request)
     who = body.login.strip().lower()[:254]
-    ratelimit.check(f"login:ip:{ip}", 10, 300)
+    ratelimit.check(f"login:ip:{ratelimit.ip_bucket(ip)}", 10, 300)
     ratelimit.check(f"login:who:{who}", 10, 300)
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
@@ -124,7 +124,7 @@ def authorize_login(body: AuthorizeLogin, request: Request):
             return resp
         redirect = oidc.finish(conn, req, account)
         conn.commit()
-    ratelimit.reset(f"login:ip:{ip}")
+    ratelimit.reset(f"login:ip:{ratelimit.ip_bucket(ip)}")
     ratelimit.reset(f"login:who:{who}")
     resp = JSONResponse({"redirect": redirect})
     sessions.set_cookie(resp, token)
@@ -223,7 +223,7 @@ def _token(request: Request, form):
 
 @router.post("/token")
 async def token(request: Request):
-    ratelimit.check(f"token:ip:{ratelimit.client_ip(request)}", 120, 600)
+    ratelimit.check(f"token:ip:{ratelimit.limit_ip(request)}", 120, 600)
     if int(request.headers.get("content-length", "0") or 0) > 16384:
         raise HTTPException(413)
     form = await request.form()

@@ -183,7 +183,7 @@ def lookup_username(request: Request, u: str = ""):
     """``{sub, username}`` of a verified, live account with exactly this
     username; 404 otherwise. For inviting a person by cloud username before
     they ever signed in on that server."""
-    ratelimit.check(f"lookup:ip:{ratelimit.client_ip(request)}", 30, 600)
+    ratelimit.check(f"lookup:ip:{ratelimit.limit_ip(request)}", 30, 600)
     with closing(db.connect()) as conn:
         account, row = bearer(conn, request)
         conn.commit()

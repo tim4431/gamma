@@ -22,6 +22,32 @@ def _offline_model_facts(monkeypatch):
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
 
 
+def test_chat_forwards_the_speed_tier_and_names_it_on_the_reply(org, monkeypatch):
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.update(kw)
+        return FakeResp([{"type": "content_block_delta",
+                          "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+
+    def ask(speed):
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "speed": speed, "stream": True})
+        assert r.status_code == 200, r.text
+        lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+        return next((l["model"] for l in lines if "model" in l), None)
+
+    assert ask("fast")["speed"] == "fast"
+    assert seen["speed"] == "fast"
+    # Anything the wires don't know degrades to "" (field omitted), not an error.
+    assert ask("turbo")["speed"] == ""
+    assert seen["speed"] == ""
+
+
 def test_chat_agent_loop_streams_actions(org, monkeypatch):
     c, ids = org
     import gamma.routers.ai as ai_mod

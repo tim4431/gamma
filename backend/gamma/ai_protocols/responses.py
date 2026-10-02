@@ -71,11 +71,13 @@ def _web_sources(item) -> list:
     return []
 
 
-def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="") -> dict:
+def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="",
+                   service_tier="") -> dict:
     """The request body both Responses backends share. ``store`` stays off
     — the conversation is Gamma's to keep, not the provider's — and
     ``prompt_cache_key`` (one id per chat) is what makes the re-sent prefix
-    a cache hit instead."""
+    a cache hit instead. ``service_tier`` is the wire value of the speed the
+    call asked for (``Protocol.speed_value``), left out when there is none."""
     body = {
         "model": model,
         "input": responses_input(messages, pdf_b64s, images),
@@ -91,6 +93,8 @@ def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="
         body["reasoning"] = {"effort": effort}
     if cache_key:
         body["prompt_cache_key"] = cache_key
+    if service_tier:
+        body["service_tier"] = service_tier
     return body
 
 
@@ -98,6 +102,10 @@ class ResponsesWire(Protocol):
     """The Responses stream and token report; a backend adds its request."""
 
     streams_only = True  # always SSE — read_reply joins the deltas
+    # Both Responses backends route by service tier: "priority" is the fast
+    # one (OpenAI's fast mode, Codex's own Fast), "flex" the cheaper, slower
+    # one. The Codex backend's listing says which tiers each model has.
+    speeds = {"flex": "flex", "fast": "priority"}
 
     def hosted_web_search(self, conf):
         return {"type": "web_search"}
@@ -159,8 +167,11 @@ class OpenAIResponses(ResponsesWire):
     entry = False
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
-        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key),
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
+        # No endpoint check here: OpenAIChat.wire only switches to this wire
+        # against OpenAI itself.
+        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key,
+                                 self.speed_value(speed)),
                 "max_output_tokens": max_tokens}
         if any((t.get("hosted") or {}).get("type") == "web_search" for t in tools or []):
             # The pages a search consulted, beside the ones the reply cites.

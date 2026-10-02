@@ -2466,7 +2466,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
-    chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -9064,6 +9064,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatImages={chatImages} setChatImages={setChatImages}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
+          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
@@ -10425,6 +10426,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setChatModel,
           chatEffort,
           setChatEffort,
+          chatSpeed,
+          setChatSpeed,
           aiProvider,
           setAiProvider,
           deleteAiProvider,

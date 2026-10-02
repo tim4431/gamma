@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -121,10 +121,16 @@ SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
     )"""
 
 SCHEMA = [
+    # ``email`` is the address as it was typed; ``email_canon`` is the inbox
+    # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
+    # Its index is deliberately not UNIQUE: two accounts predating the rule
+    # may share a canonical form, and the constraint on ``email`` is enough
+    # of a backstop.
     """CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
         email TEXT NOT NULL UNIQUE,
+        email_canon TEXT NOT NULL DEFAULT '',
         email_verified_at TEXT,
         password_hash TEXT,
         display_name TEXT NOT NULL DEFAULT '',
@@ -134,6 +140,7 @@ SCHEMA = [
         deleted_at TEXT,
         app_signed_in_at TEXT
     )""",
+    """CREATE INDEX IF NOT EXISTS accounts_email_canon ON accounts(email_canon)""",
     # An account's sign-in through an outside provider (google, github):
     # ``identities.py``. ``email`` is the provider's address at the last
     # sign-in, shown on the Settings page.
@@ -344,12 +351,25 @@ def _step_connect(conn) -> None:
     conn.execute(SERVER_CONNECTS)
 
 
+def _step_email_canon(conn) -> None:
+    """The inbox an address reaches, so aliases of one mailbox cannot become
+    separate accounts. Backfilled here; a row whose canonical form already
+    belongs to an older account keeps it, which only means that address
+    cannot be re-registered."""
+    from .accounts import email_canon  # local: accounts.py imports this module
+    _add_column(conn, "accounts", "email_canon", "TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS accounts_email_canon ON accounts(email_canon)")
+    for row in conn.execute("SELECT id, email FROM accounts WHERE email_canon = ''").fetchall():
+        conn.execute("UPDATE accounts SET email_canon = ? WHERE id = ?", (email_canon(row["email"]), row["id"]))
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
     (3, "devices", _step_devices),
     (4, "profile", _step_profile),
     (5, "connect", _step_connect),
+    (6, "email_canon", _step_email_canon),
 ]
 
 

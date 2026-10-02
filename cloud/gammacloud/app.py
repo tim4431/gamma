@@ -50,6 +50,12 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(_purge_loop())
     log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, config.REGISTRATION,
              config.MAIL_BACKEND)
+    if config.REGISTRATION == "open" and not config.TURNSTILE_SECRET:
+        # captcha.verify passes everything without it, so anyone can register
+        # at the rate limits alone. Said loudly rather than refused, so a
+        # local run and the tests need no widget (cloud/deploy/README.md).
+        log.warning("registration is open with no Turnstile secret: set GAMMA_CLOUD_TURNSTILE_SITEKEY and "
+                    "_SECRET, or scripted sign-ups are held back only by the rate limits")
     try:
         yield
     finally:

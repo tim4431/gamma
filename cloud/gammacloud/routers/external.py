@@ -124,7 +124,7 @@ class StartBody(BaseModel):
 @router.post("/api/oauth/{provider}/start")
 def start(provider: str, body: StartBody, request: Request):
     _provider(provider)
-    ratelimit.check(f"oauth-start:ip:{ratelimit.client_ip(request)}", 30, 600)
+    ratelimit.check(f"oauth-start:ip:{ratelimit.limit_ip(request)}", 30, 600)
     with closing(db.connect()) as conn:
         link_account = portal_account(conn, request)["id"] if body.link else ""
         token = identities.start(conn, provider, next_url=body.next, request_id=body.request_id,
@@ -140,7 +140,7 @@ def start(provider: str, body: StartBody, request: Request):
 @router.get("/oauth/{provider}/callback")
 def callback(provider: str, request: Request, code: str = "", state: str = "", error: str = ""):
     _provider(provider)
-    ratelimit.check(f"oauth-callback:ip:{ratelimit.client_ip(request)}", 30, 600)
+    ratelimit.check(f"oauth-callback:ip:{ratelimit.limit_ip(request)}", 30, 600)
     token = request.cookies.get(identities.COOKIE, "")
     with closing(db.connect()) as conn:
         flow = identities.load(conn, token, "redirect")
@@ -170,7 +170,7 @@ class OneTapBody(BaseModel):
 def one_tap(body: OneTapBody, request: Request):
     if not providers.one_tap():
         raise HTTPException(404, "Google sign-in is not available here.")
-    ratelimit.check(f"oauth-callback:ip:{ratelimit.client_ip(request)}", 30, 600)
+    ratelimit.check(f"oauth-callback:ip:{ratelimit.limit_ip(request)}", 30, 600)
     seed = request.cookies.get(identities.TAP_COOKIE, "")
     if not seed:
         raise HTTPException(400, "Reload the page and try again.")
@@ -199,7 +199,7 @@ class SignupBody(BaseModel):
 
 @router.post("/api/oauth/signup")
 def signup(body: SignupBody, request: Request):
-    ratelimit.check(f"register:ip:{ratelimit.client_ip(request)}", 20, 3600)
+    ratelimit.check(f"register:ip:{ratelimit.limit_ip(request)}", 20, 3600)
     ext = request.cookies.get(identities.COOKIE, "")
     with closing(db.connect()) as conn:
         flow = identities.load(conn, ext, "signup")

@@ -259,6 +259,11 @@ export const PREFS = {
 
   // --- Chat behaviour (Settings → AI → Chat / Advanced) ---
   chatEffort: pref("gamma-chat-effort", ACCOUNT, ""),
+  // Which service tier the chat asks the provider for ("" = its usual
+  // routing, "flex" cheaper and slower, "fast" the premium low-latency one
+  // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
+  // that tier; a model without one is called as usual.
+  chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
   // Connection check of the active provider at login (POST /api/ai/health):
   // "ping" (default) is the free credential check — OAuth entries hit the
   // usage endpoint, API keys list /v1/models, both 401 on a dead credential

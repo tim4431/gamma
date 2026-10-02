@@ -91,10 +91,11 @@ def register(body: RegisterBody, request: Request):
     if config.REGISTRATION == "closed":
         raise HTTPException(403, "Registration is closed.")
     ip = ratelimit.client_ip(request)
-    ratelimit.check(f"register:ip:{ip}", 5, 3600)
+    ratelimit.check(f"register:ip:{ratelimit.ip_bucket(ip)}", 5, 3600)
     if not captcha.verify(body.turnstile, ip):
         raise HTTPException(400, "The anti-bot check failed. Reload and try again.")
     email = accounts.norm_email(body.email)
+    accounts.check_email_domain(email)
     username = accounts.norm_username(body.username)
     password = accounts.check_password(body.password)
     with closing(db.connect()) as conn:
@@ -125,7 +126,7 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, request: Request):
     ip = ratelimit.client_ip(request)
     who = body.login.strip().lower()[:254]
-    ratelimit.check(f"login:ip:{ip}", 10, 300)
+    ratelimit.check(f"login:ip:{ratelimit.ip_bucket(ip)}", 10, 300)
     ratelimit.check(f"login:who:{who}", 10, 300)
     with closing(db.connect()) as conn:
         account = accounts.by_login(conn, who)
@@ -134,7 +135,7 @@ def login(body: LoginBody, request: Request):
         token = sessions.create(conn, account["id"], request)
         db.audit(conn, "account.login", account["id"], account["id"], ip)
         conn.commit()
-    ratelimit.reset(f"login:ip:{ip}")
+    ratelimit.reset(f"login:ip:{ratelimit.ip_bucket(ip)}")
     ratelimit.reset(f"login:who:{who}")
     resp = JSONResponse({"account": accounts.public(account)})
     sessions.set_cookie(resp, token)
@@ -246,7 +247,7 @@ class TokenBody(BaseModel):
 
 @router.post("/verify")
 def verify(body: TokenBody, request: Request):
-    ratelimit.check(f"verify:ip:{ratelimit.client_ip(request)}", 20, 600)
+    ratelimit.check(f"verify:ip:{ratelimit.limit_ip(request)}", 20, 600)
     with closing(db.connect()) as conn:
         found = accounts.consume_email_token(conn, body.token, "verify")
         if not found:
@@ -280,7 +281,7 @@ class ResetRequestBody(BaseModel):
 @router.post("/reset/request")
 def reset_request(body: ResetRequestBody, request: Request):
     ip = ratelimit.client_ip(request)
-    ratelimit.check(f"reset:ip:{ip}", 5, 3600)
+    ratelimit.check(f"reset:ip:{ratelimit.ip_bucket(ip)}", 5, 3600)
     if not captcha.verify(body.turnstile, ip):
         raise HTTPException(400, "The anti-bot check failed. Reload and try again.")
     email = accounts.norm_email(body.email)
@@ -292,7 +293,9 @@ def reset_request(body: ResetRequestBody, request: Request):
             db.audit(conn, "account.reset_request", account["id"], account["id"], ip)
             conn.commit()
     if account:
-        send_mail(email, *accounts.reset_mail(account, token))
+        # To the address the account holds, never the one the form named:
+        # by_email also answers to an alias of the same inbox.
+        send_mail(account["email"], *accounts.reset_mail(account, token))
     return {"ok": True}
 
 
@@ -303,7 +306,7 @@ class ResetConfirmBody(BaseModel):
 
 @router.post("/reset/confirm")
 def reset_confirm(body: ResetConfirmBody, request: Request):
-    ratelimit.check(f"reset-confirm:ip:{ratelimit.client_ip(request)}", 20, 600)
+    ratelimit.check(f"reset-confirm:ip:{ratelimit.limit_ip(request)}", 20, 600)
     accounts.check_password(body.password)
     with closing(db.connect()) as conn:
         found = accounts.consume_email_token(conn, body.token, "reset")
@@ -335,7 +338,7 @@ def email_change(body: EmailChangeBody, request: Request):
         if not accounts.confirm_ok(account, body.password):
             raise HTTPException(403, "The password is wrong.")
         ratelimit.check(f"email-change:{account['id']}", 3, 3600)
-        if conn.execute("SELECT 1 FROM accounts WHERE email = ?", (new_email,)).fetchone():
+        if accounts.email_taken(conn, new_email, account["id"]):
             raise HTTPException(409, "There is already an account with that e-mail address.")
         token = accounts.issue_email_token(conn, account["id"], "change-email", config.VERIFY_TOKEN_TTL, new_email)
         conn.commit()
@@ -345,7 +348,7 @@ def email_change(body: EmailChangeBody, request: Request):
 
 @router.post("/email/confirm")
 def email_confirm(body: TokenBody, request: Request):
-    ratelimit.check(f"email-confirm:ip:{ratelimit.client_ip(request)}", 20, 600)
+    ratelimit.check(f"email-confirm:ip:{ratelimit.limit_ip(request)}", 20, 600)
     with closing(db.connect()) as conn:
         found = accounts.consume_email_token(conn, body.token, "change-email")
         if not found:

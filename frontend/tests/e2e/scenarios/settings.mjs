@@ -980,8 +980,8 @@ export async function settingsScenarios(env) {
       await row(page, "Default chat model").getByRole("button").first().click();
       await page.getByText("test-model-b", { exact: true }).last().click();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The model (and reasoning effort) is the composer's chip.
-      const modelChip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+      // The model (with its reasoning effort and speed) is the composer's chip.
+      const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "test-model-a", exact: true }).click();
@@ -996,6 +996,10 @@ export async function settingsScenarios(env) {
       assert((await row(page, "Default chat model").innerText()).includes("test-model-a"));
       await nav(page, "Chat").click();
       assertEq(await page.getByRole("checkbox", { name: "Assistant tools" }).isChecked(), false);
+      // The chat's two model knobs have their defaults here (the chip edits
+      // the same preferences — docs/dev/settings.md "Chat settings are global").
+      await row(page, "Default reasoning effort").waitFor();
+      assertEq(await row(page, "Default speed").getByRole("button").first().innerText(), "Default");
       await nav(page, "Advanced").click();
       assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
       await nav(page, "Chat").click();
@@ -1109,7 +1113,7 @@ export async function settingsScenarios(env) {
     for (const transcribe of [false, true]) {
       const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));
       try {
-        const chip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+        const chip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
         await chip.waitFor();
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 0, "no PDF in the library's context");

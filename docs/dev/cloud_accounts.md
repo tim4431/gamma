@@ -50,7 +50,10 @@ lists every variable):
 - the public URL — the OIDC issuer; the request's Host is never trusted;
 - the registration mode: `open` / `invite` / `closed`, default `invite`;
 - the mail backend: `console` logs the links, `smtp` sends them;
-- the Turnstile secret, off until set;
+- the Turnstile secret, off until set — with `open` registration it is the
+  main thing standing in a script's way, so set it;
+- extra blocked mail domains (`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`), added to
+  the throwaway-mail list in `accounts.DISPOSABLE_DOMAINS`;
 - the desktop client id;
 - the Google and GitHub OAuth clients — a provider is off until both its
   id and secret are set; setup in the deploy README;
@@ -63,7 +66,10 @@ Cloudflare's `CF-Connecting-IP`, else the connection's peer
 (`ratelimit.client_ip`); `X-Forwarded-For` is never read, since its first
 hop is whatever the client wrote and behind Caddy it only names
 Cloudflare. The header is only as good as the rule that the origin answers
-Cloudflare alone (the deploy README's origin lock-down).
+Cloudflare alone (the deploy README's origin lock-down). A rate-limit key
+is built from `ratelimit.ip_bucket` of that address, which cuts an IPv6
+address to its /64: the smallest block a provider hands a customer, so a
+prefix rotation cannot walk out of its own allowance. IPv4 is used whole.
 
 ## Data
 
@@ -78,7 +84,7 @@ the signing keys and every token hash.
 
 | table | what |
 |---|---|
-| `accounts` | `id` (random, the OIDC `sub`; never changes), `username` (unique; the username on every Gamma server, a paid container's hostname label — `accounts.RESERVED_USERNAMES` keeps the names Gamma and the web use), `email` (unique), `email_verified_at`, `password_hash`, `display_name`, `plan`, `is_admin`, `deleted_at`, `app_signed_in_at` (the first sign-in to a Gamma app or server; step 3) |
+| `accounts` | `id` (random, the OIDC `sub`; never changes), `username` (unique; the username on every Gamma server, a paid container's hostname label — `accounts.RESERVED_USERNAMES` keeps the names Gamma and the web use), `email` (unique, as it was typed), `email_canon` (the inbox it reaches — `accounts.email_canon` drops a `+tag` at the providers that ignore one and Gmail's dots, so aliases of one mailbox are one account; indexed, not unique, since rows predating the rule may share a form), `email_verified_at`, `password_hash`, `display_name`, `plan`, `is_admin`, `deleted_at`, `app_signed_in_at` (the first sign-in to a Gamma app or server; step 3) |
 | `identities` | an account's Google/GitHub link: (`provider`, `subject`) → account, the provider's address at the last sign-in |
 | `external_logins` | one Google/GitHub sign-in in flight (15 min): `redirect` while at the provider, `signup` while the username form waits; keyed by the hash of the `gc_ext` cookie (step 2) |
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
@@ -203,7 +209,10 @@ page) and the **app** shell (a sidebar and a content column):
 
 - **Register** (`POST /api/register`): e-mail, username, password, an invite
   code in `invite` mode, a Turnstile token when configured. Rejected
-  attempts count toward the per-IP limit. The account starts unverified,
+  attempts count toward the per-IP limit. Five an hour per address bucket.
+  A throwaway-mail domain is refused (`accounts.check_email_domain`, which
+  also covers subdomains) — only here, so an address already in use keeps
+  working if its domain lands on the list later. The account starts unverified,
   the verify mail goes out, and the browser is signed in so the account page
   can resend the mail. Taken e-mail or username answers 409 with a message —
   a deleted account keeps both through the grace period. Every mail goes
@@ -214,9 +223,15 @@ page) and the **app** shell (a sidebar and a content column):
 - **Verified e-mail is the gate.** An unverified account can use the
   portal but the authorize page refuses to sign it in to any Gamma server
   and shows the verify notice instead. That is the one abuse control a
-  hosted Gamma relies on.
+  hosted Gamma relies on: an account a script registered is an inert row
+  until someone reads the mail. The rest of what bounds `open`
+  registration: Turnstile, the per-bucket limits, one account per inbox
+  (`email_canon`), the throwaway-domain list, and Cloudflare's own rate
+  rules in front (deploy README).
 - **Sign in** (`POST /api/login`): e-mail or username plus password; limits
-  per IP and per name, reset on success. An account without a password is
+  per IP and per name, reset on success. Any alias of the account's inbox
+  names it (`accounts.by_email`), since uniqueness already treats them as
+  one address; a reset mail still goes only to the address stored. An account without a password is
   refused like a wrong password.
 - **Reset** (`/api/reset/request` → mail → `/api/reset/confirm`): the
   request answers the same whether the address exists. Confirming sets the
@@ -524,6 +539,11 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
 
 - `test_accounts.py`: the registration, verify, reset, e-mail change,
   deletion and rate-limit flows, the pages.
+- `test_signup_abuse.py`: what bounds open registration — the canonical
+  form of an address and the aliases it folds, one Gmail inbox refused a
+  second account, an unlisted domain keeping its tagged addresses apart,
+  the throwaway-domain list and its env extension, the IPv6 /64 bucket,
+  and the upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
   decoded ID token, refresh rotation, code replay, redirect and PKCE
   checks, the unverified gate, sign-in on the authorize page, cancel, a

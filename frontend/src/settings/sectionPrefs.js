@@ -49,7 +49,7 @@ export const SECTION_PREFS = Object.freeze({
     "Connection check": ["aiLoginCheck"],
   }),
   assistant: sections({
-    Chat: ["chatEffort", "chatImgAutoClear"],
+    Chat: ["chatEffort", "chatSpeed", "chatImgAutoClear"],
     Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
   }),
   advanced: sections({

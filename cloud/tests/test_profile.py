@@ -322,10 +322,10 @@ def test_upgrade_to_profile(client):
         conn.execute("DROP TABLE servers_linked")
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
-    assert db.ensure_current() == ["profile", "connect"]
+    assert db.ensure_current() == ["profile", "connect", "email_canon"]
     assert db.ensure_current() == []
     with closing(sqlite3.connect(str(config.DB_PATH))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     h = bearer(desktop_tokens(client))
     assert client.put("/api/me/prefs/k", headers=h, json={"value": 1}).status_code == 200
 

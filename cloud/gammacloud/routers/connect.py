@@ -28,7 +28,7 @@ router = APIRouter()
 
 @router.get("/connect-server", response_class=HTMLResponse)
 def connect_page(request: Request, server: str = "", state: str = "", code_challenge: str = ""):
-    ratelimit.check(f"connect:ip:{ratelimit.client_ip(request)}", 60, 600)
+    ratelimit.check(f"connect:ip:{ratelimit.limit_ip(request)}", 60, 600)
     try:
         origin = connect.check(server, state, code_challenge)
     except Problem as e:
@@ -78,7 +78,7 @@ def _token(form):
 
 @router.post("/api/servers/connect/token")
 async def connect_token(request: Request):
-    ratelimit.check(f"connect-token:ip:{ratelimit.client_ip(request)}", 30, 600)
+    ratelimit.check(f"connect-token:ip:{ratelimit.limit_ip(request)}", 30, 600)
     if int(request.headers.get("content-length", "0") or 0) > 4096:
         raise HTTPException(413)
     form = await request.form()

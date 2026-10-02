@@ -17,6 +17,9 @@ variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
 - ``GAMMA_CLOUD_TURNSTILE_SECRET`` — when set, register and reset require a
   Cloudflare Turnstile token (``GAMMA_CLOUD_TURNSTILE_SITEKEY`` is handed to
   the pages).
+- ``GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`` — extra mail domains register
+  refuses, comma separated, on top of the throwaway-mail list in
+  ``accounts.py``. A name also covers its subdomains.
 - ``GAMMA_CLOUD_DESKTOP_CLIENT_ID`` — the one public OIDC client every local
   Gamma sidecar is (default ``gamma-desktop``).
 - ``GAMMA_CLOUD_GOOGLE_CLIENT_ID`` + ``_SECRET``, ``GAMMA_CLOUD_GITHUB_CLIENT_ID``
@@ -58,6 +61,10 @@ SMTP_STARTTLS = os.environ.get("GAMMA_CLOUD_SMTP_STARTTLS", "1") not in ("0", "f
 
 TURNSTILE_SECRET = os.environ.get("GAMMA_CLOUD_TURNSTILE_SECRET", "")
 TURNSTILE_SITEKEY = os.environ.get("GAMMA_CLOUD_TURNSTILE_SITEKEY", "")
+
+BLOCKED_EMAIL_DOMAINS = frozenset(
+    d.strip().lower().lstrip("@") for d in os.environ.get("GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS", "").split(",")
+    if d.strip())
 
 DESKTOP_CLIENT_ID = os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "") or "gamma-desktop"
 

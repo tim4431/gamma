@@ -474,7 +474,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     calls = []
     listing = {"models": [{"slug": model["model"], "context_window": 272_000,
                            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"},
-                                                          {"effort": "high"}, {"effort": "xhigh"}]}]}
+                                                          {"effort": "high"}, {"effort": "xhigh"}],
+                           "service_tiers": [{"id": "priority", "name": "Fast"}]}]}
     catalog = {
         "openai": {"models": {model["model"]: {
             "id": model["model"], "limit": {"context": 400_000}, "reasoning": True,
@@ -493,7 +494,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
 
     # The provider's own listing says it; asked once, then cached.
     assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider",
-                     "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider"}
+                     "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider",
+                     "speeds": ["fast"], "speeds_source": "provider"}
     assert ask()["context_window"] == 272_000
     assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
 
@@ -502,14 +504,16 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     listing = {"models": [{"slug": model["model"]}]}
     ai_catalog._listings.clear()
     assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev",
-                     "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev"}
+                     "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev",
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
 
     # Nobody knows it: null, never a guess.
     catalog = {"openai": {"models": {}}}
     ai_catalog._listings.clear()
     ai_catalog._models_dev.update(index=None, until=0.0)
     assert ask() == {"model": model["model"], "context_window": None, "source": "",
-                     "efforts": None, "efforts_source": ""}
+                     "efforts": None, "efforts_source": "",
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
 
 
 def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
@@ -569,6 +573,35 @@ def test_reasoning_efforts_from_an_anthropic_listing_then_models_dev(monkeypatch
     assert ai_catalog.reasoning_efforts("p", conf, "no-reasoning") == ([], "models.dev")
     assert ai_catalog.reasoning_efforts("p", conf, "older-entry") == (None, "")
     assert ai_catalog.context_window("p", conf, "older-entry") == (8000, "models.dev")
+
+
+def test_speed_tiers_from_the_listing_then_the_wire(monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
+    codex = {"protocol": "chatgpt", "api_key": "k", "account_id": "a",
+             "base_url": "https://chatgpt.com/backend-api/codex", "name": "ChatGPT"}
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
+        {"models": [{"slug": "fast-and-flex",
+                     "service_tiers": [{"id": "flex", "name": "Flex"}, {"id": "priority", "name": "Fast"}]},
+                    {"slug": "standard-only", "service_tiers": []},
+                    {"slug": "older-row"}]}))
+    # The backend's listing names each model's tiers, by its own ids.
+    assert ai_catalog.speed_tiers("p", codex, "fast-and-flex") == (["flex", "fast"], "provider")
+    # A model it lists with none has no speed control at all.
+    assert ai_catalog.speed_tiers("p", codex, "standard-only") == ([], "provider")
+    # A row that doesn't say falls back to what the wire itself can ask for.
+    assert ai_catalog.speed_tiers("p", codex, "older-row") == (["flex", "fast"], "protocol")
+
+    # Anthropic's listing carries no speed facts, so fast mode is the wire's
+    # answer for every model its own endpoint serves...
+    anthropic = {"protocol": "anthropic", "api_key": "k",
+                 "base_url": "https://api.anthropic.com", "name": "Anthropic"}
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp({"data": [{"id": "claude-a"}]}))
+    assert ai_catalog.speed_tiers("p", anthropic, "claude-a") == (["fast"], "protocol")
+    # ...and none for a service that merely speaks its API elsewhere.
+    kimi = {**anthropic, "base_url": "https://api.moonshot.ai/anthropic", "name": "Kimi"}
+    assert ai_catalog.speed_tiers("p", kimi, "kimi-k2") == ([], "")
 
 
 # --- The sign-in finishing without a paste ------------------------------------

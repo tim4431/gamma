@@ -57,6 +57,7 @@ const entries = [
   e("ai", t("Token usage"), null, t("Tokens in and out, per model"), "tokens statistics consumption cost input output cached reset"),
   e("ai", t("Shared allowance"), t("Token usage"), t("What the server's shared keys still allow you today"), "shared AI tokens daily limit quota used up"),
   e("assistant", t("Default reasoning effort"), t("Chat"), t("Each model gets the nearest level it takes"), "chat thinking effort reasoning level"),
+  e("assistant", t("Default speed"), t("Chat"), t("Only models whose provider offers that tier"), "chat fast mode speed service tier priority flex latency"),
   e("assistant", t("Clear snapshots on click"), t("Chat"), t("A plain click in the PDF also drops pending snapshots"), "chat images selections"),
   e("assistant", t("Assistant tools"), t("Tools"), t("Let chats read, search and edit your library"), "allow master switch permissions agent"),
   e("assistant", t("Search papers online"), t("Tools"), t("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web"), "web internet research references citations", t("Tools")),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { effortFor } from "../src/chat/effort.js";
+import { effortFor, speedFor } from "../src/chat/modelPrefs.js";
 
 test("a level the model takes is sent as it is", () => {
   assert.equal(effortFor("xhigh", ["low", "medium", "high", "xhigh", "max"]), "xhigh");
@@ -20,4 +20,16 @@ test("no preference, a model without levels or an unknown word sends nothing", (
   assert.equal(effortFor("high", []), "");
   assert.equal(effortFor("high", null), "");
   assert.equal(effortFor("turbo", ["low", "high"]), "");
+});
+
+test("a speed tier is sent only when the model has it — never a nearest one", () => {
+  assert.equal(speedFor("fast", ["flex", "fast"]), "fast");
+  assert.equal(speedFor("flex", ["flex", "fast"]), "flex");
+  // No cheaper or dearer substitute: a tier the model lacks sends nothing.
+  assert.equal(speedFor("flex", ["fast"]), "");
+  assert.equal(speedFor("fast", ["flex"]), "");
+  assert.equal(speedFor("fast", []), "");
+  assert.equal(speedFor("fast", null), "");
+  assert.equal(speedFor("", ["flex", "fast"]), "");
+  assert.equal(speedFor("turbo", ["flex", "fast"]), "");
 });

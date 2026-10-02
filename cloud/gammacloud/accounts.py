@@ -1,6 +1,11 @@
 """Accounts: the rules for usernames, emails and passwords, creation with an
 invite, the e-mail links (verify, reset, change-email), plans, deletion.
 
+An address is stored as it was typed but is unique by the inbox it reaches
+(``email_canon``), and register refuses throwaway-mail domains: with open
+registration one inbox must not become an unlimited supply of verifiable
+accounts.
+
 Everything takes an open connection and commits nothing: the router owns
 the transaction so one request is one commit. The ``Problem`` exception
 carries the status and the message the API returns; the app's handler
@@ -29,6 +34,40 @@ RESERVED_USERNAMES = {
     "link", "share", "shares", "sync", "mcp", "oauth", "login", "logout", "register", "signup",
 }
 
+# Aliases of one inbox. Every provider below ignores a ``+tag`` suffix, and
+# Gmail also ignores dots in the local part, so ``f.o.o+1@gmail.com`` and
+# ``foo@gmail.com`` are the same mailbox and must be one account. A domain
+# that is not listed is taken literally: a mail server is free to treat
+# ``a+b`` as its own mailbox, and refusing a stranger's address because it
+# resembles someone else's is worse than the duplicate.
+ALIAS_OF_DOMAIN = {"googlemail.com": "gmail.com"}
+PLUS_TAG_DOMAINS = {
+    "gmail.com", "outlook.com", "hotmail.com", "hotmail.co.uk", "live.com", "msn.com",
+    "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com", "pm.me",
+    "fastmail.com", "fastmail.fm", "zoho.com", "gmx.com", "gmx.de", "gmx.net", "mail.com",
+    "yandex.com", "yandex.ru", "aol.com", "qq.com", "163.com", "126.com",
+}
+DOTLESS_DOMAINS = {"gmail.com"}
+
+# Throwaway-mail services: an address there passes the verify mail but the
+# inbox is open to anyone, so the round trip proves nothing. The list is
+# deliberately short — the services actually used at scale — and a name also
+# covers its subdomains. ``GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`` extends it
+# without a release. Someone with their own catch-all domain defeats any such
+# list; Turnstile and the rate limits are what bound that case.
+DISPOSABLE_DOMAINS = {
+    "0wnd.net", "10minutemail.com", "1secmail.com", "20minutemail.it", "anonbox.net",
+    "burnermail.io", "discard.email", "dispostable.com", "email-temp.com", "emailondeck.com",
+    "fakeinbox.com", "getairmail.com", "getnada.com", "grr.la", "guerrillamail.biz",
+    "guerrillamail.com", "guerrillamail.de", "guerrillamail.info", "guerrillamail.net",
+    "guerrillamail.org", "harakirimail.com", "inboxkitten.com", "luxusmail.org",
+    "mailcatch.com", "maildrop.cc", "mailinator.com", "mailnesia.com", "mailsac.com",
+    "mailtemp.net", "mintemail.com", "moakt.com", "mohmal.com", "mytemp.email",
+    "sharklasers.com", "spam4.me", "spambog.com", "temp-mail.io", "temp-mail.org",
+    "tempmail.com", "tempmailo.com", "tempr.email", "throwawaymail.com", "tmpmail.org",
+    "trashmail.com", "yopmail.com", "yopmail.fr",
+}
+
 
 class Problem(Exception):
     def __init__(self, status: int, detail: str):
@@ -44,6 +83,33 @@ def norm_email(raw: str) -> str:
     if len(email) > 254 or not EMAIL_RE.match(email):
         raise Problem(400, "That does not look like an e-mail address.")
     return email
+
+
+def email_canon(email: str) -> str:
+    """The inbox an address reaches, used for the uniqueness check only.
+    The address itself is stored as typed, so a ``+tag`` its owner filters
+    on keeps receiving the mail."""
+    local, _, domain = email.rpartition("@")
+    if not local:
+        return email
+    domain = ALIAS_OF_DOMAIN.get(domain, domain)
+    if domain in PLUS_TAG_DOMAINS:
+        local = local.partition("+")[0]
+    if domain in DOTLESS_DOMAINS:
+        local = local.replace(".", "")
+    return f"{local}@{domain}" if local else email
+
+
+def check_email_domain(email: str) -> None:
+    """Refuse a throwaway-mail domain at registration. Not applied to a
+    reset or to an account an operator creates: an address already in use
+    must keep working even once its domain lands on the list."""
+    parts = email.rpartition("@")[2].split(".")
+    # A listed name covers its subdomains, so try the domain and each parent.
+    for i in range(len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        if candidate in DISPOSABLE_DOMAINS or candidate in config.BLOCKED_EMAIL_DOMAINS:
+            raise Problem(400, "That mail provider is not accepted. Use a personal or work address.")
 
 
 def norm_username(raw: str) -> str:
@@ -87,7 +153,15 @@ def by_id(conn, account_id: str):
 
 
 def by_email(conn, email: str):
-    return conn.execute("SELECT * FROM accounts WHERE email = ? AND deleted_at IS NULL", (email,)).fetchone()
+    """The address as typed, else any alias of the same inbox — one account
+    holds the whole inbox (``email_canon``), so every alias names it. Mail
+    still goes to the address the account stores. Two accounts predating the
+    rule may share a canonical form; the older one answers."""
+    row = conn.execute("SELECT * FROM accounts WHERE email = ? AND deleted_at IS NULL", (email,)).fetchone()
+    if row:
+        return row
+    return conn.execute("SELECT * FROM accounts WHERE email_canon = ? AND email_canon != '' AND deleted_at IS NULL "
+                        "ORDER BY created_at LIMIT 1", (email_canon(email),)).fetchone()
 
 
 def by_username(conn, username: str):
@@ -100,6 +174,15 @@ def by_login(conn, login: str):
     if "@" in login:
         return by_email(conn, login)
     return by_username(conn, login)
+
+
+def email_taken(conn, email: str, exclude_id: str = "") -> bool:
+    """Whether an account already has this address or another alias of the
+    same inbox. A deleted account keeps its address for the grace period,
+    so it counts too (``create``'s message says so)."""
+    return conn.execute(
+        "SELECT 1 FROM accounts WHERE (email = ? OR (email_canon != '' AND email_canon = ?)) AND id != ?",
+        (email, email_canon(email), exclude_id)).fetchone() is not None
 
 
 def public(account) -> dict:
@@ -150,7 +233,7 @@ def create(conn, *, email: str, username: str, password: str | None, plan: str =
     with a message; the UNIQUE constraints are the backstop. A deleted
     account keeps its e-mail and username for the grace period, so those are
     unavailable too (the message says so)."""
-    if conn.execute("SELECT 1 FROM accounts WHERE email = ?", (email,)).fetchone():
+    if email_taken(conn, email):
         raise Problem(409, "There is already an account with that e-mail address.")
     if conn.execute("SELECT 1 FROM accounts WHERE username = ?", (username,)).fetchone():
         raise Problem(409, "That username is taken.")
@@ -159,10 +242,10 @@ def create(conn, *, email: str, username: str, password: str | None, plan: str =
     account_id = new_id()
     ts = now()
     conn.execute(
-        "INSERT INTO accounts (id, username, email, email_verified_at, password_hash, display_name, plan, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (account_id, username, email, ts if verified else None, hash_password(password) if password else None,
-         display_name[:100], plan, ts))
+        "INSERT INTO accounts (id, username, email, email_canon, email_verified_at, password_hash, display_name, "
+        "plan, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (account_id, username, email, email_canon(email), ts if verified else None,
+         hash_password(password) if password else None, display_name[:100], plan, ts))
     audit(conn, "account.create", account_id, actor or account_id, f"username={username} plan={plan}")
     return by_id(conn, account_id)
 
@@ -252,9 +335,10 @@ def set_password(conn, account_id: str, password: str, actor: str = "") -> None:
 
 
 def set_email(conn, account_id: str, email: str, actor: str = "") -> None:
-    if conn.execute("SELECT 1 FROM accounts WHERE email = ? AND id != ?", (email, account_id)).fetchone():
+    if email_taken(conn, email, account_id):
         raise Problem(409, "There is already an account with that e-mail address.")
-    conn.execute("UPDATE accounts SET email = ?, email_verified_at = ? WHERE id = ?", (email, now(), account_id))
+    conn.execute("UPDATE accounts SET email = ?, email_canon = ?, email_verified_at = ? WHERE id = ?",
+                 (email, email_canon(email), now(), account_id))
     audit(conn, "account.email", account_id, actor or account_id, email)
 
 

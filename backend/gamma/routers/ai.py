@@ -100,6 +100,11 @@ EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 EFFORT_LEVELS = set(EFFORT_ORDER)
 # Offered for a model whose levels no source knows.
 FALLBACK_EFFORTS = ["low", "medium", "high"]
+# The service tier a call may ask for (Anthropic's fast mode, OpenAI's and
+# Codex's service tiers), as the canonical names the wires map to their own
+# values. The chat offers each model just the tiers it has (GET
+# /ai/model-info) and sends nothing unless the user picked one.
+SPEED_LEVELS = set(ai_protocols.SPEED_ORDER)
 
 
 class AIChatRequest(BaseModel):
@@ -136,6 +141,7 @@ class AIChatRequest(BaseModel):
     note_selections: list = Field(default_factory=list, max_length=12)
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
+    speed: str = ""       # service tier (ai_protocols.SPEED_ORDER); empty = the provider's usual
     system: str = ""      # custom system prompt; empty = built-in default
     pages: list[str] = Field(default_factory=list, max_length=7)  # open page + up to six references
 
@@ -192,6 +198,11 @@ class AIChatRequest(BaseModel):
 def _resolve_effort(requested: str) -> str:
     requested = (requested or "").strip().lower()
     return requested if requested in EFFORT_LEVELS else ""
+
+
+def _resolve_speed(requested: str) -> str:
+    requested = (requested or "").strip().lower()
+    return requested if requested in SPEED_LEVELS else ""
 
 
 def _failure(error: Exception, what: str = "AI call failed") -> str:
@@ -675,21 +686,26 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
 def ai_model_info(request: Request, model: str = ""):
     """What the chat needs to know about a chat model ("<provider id>:<model>";
     "" = the default one), asked live (ai_catalog): {model, context_window,
-    source, efforts, efforts_source}. context_window (the context ring) is
-    null when neither the provider's listing nor models.dev knows it;
-    efforts are the reasoning-effort levels it takes, lowest first ([] = no
-    effort control, null = unknown — the chat offers /ai/models' efforts)."""
+    source, efforts, efforts_source, speeds, speeds_source}. context_window
+    (the context ring) is null when neither the provider's listing nor
+    models.dev knows it; efforts are the reasoning-effort levels it takes,
+    lowest first ([] = no effort control, null = unknown — the chat offers
+    /ai/models' efforts); speeds are the service tiers it may run at,
+    cheapest first ([] = no speed control)."""
     rt = ai_runtime(require_user(request))
     m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
     conf = rt["providers"].get(m["provider"]) if m else None
     if not conf:
-        return {"model": "", "context_window": None, "source": "", "efforts": None, "efforts_source": ""}
+        return {"model": "", "context_window": None, "source": "", "efforts": None, "efforts_source": "",
+                "speeds": [], "speeds_source": ""}
     window, source = ai_catalog.context_window(m["provider"], conf, m["model"])
     efforts, efforts_source = ai_catalog.reasoning_efforts(m["provider"], conf, m["model"])
     if efforts is not None:
         efforts = [e for e in EFFORT_ORDER if e in efforts]
+    speeds, speeds_source = ai_catalog.speed_tiers(m["provider"], conf, m["model"])
     return {"model": m["model"], "context_window": window or None, "source": source,
-            "efforts": efforts, "efforts_source": efforts_source}
+            "efforts": efforts, "efforts_source": efforts_source,
+            "speeds": speeds, "speeds_source": speeds_source}
 
 
 class AIHealthRequest(BaseModel):
@@ -1644,6 +1660,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
+    speed = _resolve_speed(payload.speed)
     images = _parse_images(payload.images)
     # Only a streamed reply can show an approval card and wait for it.
     scope = _chat_scope(request, user, payload, rt, entry, effort, can_ask=payload.stream)
@@ -1662,7 +1679,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         """One provider turn. ``call_tools`` / ``images`` differ for a
         helper's turn, which carries its own narrow tool set and none of
         the user's pictures."""
-        return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, timeout=180,
+        return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, speed=speed, timeout=180,
                         images=state["images"] if images is None else images, stream=stream,
                         tools=tools if call_tools is None else call_tools,
                         cache_key=cache_key + ("" if call_tools is None else ":helper"))
@@ -1680,9 +1697,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),
     ) if tools and scope["delegates"] else None
-    # Which model answers, at what effort, with tools or not — the reply's
-    # footer names them, and the coverage chip's advice depends on the tools.
-    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
+    # Which model answers, at what effort and speed, with tools or not — the
+    # reply's footer names them, and the coverage chip's advice depends on
+    # the tools.
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "speed": speed,
+                "tools": bool(tools)}
 
     def prepared(allow_native, drop=0):
         """_chat_prompt, keeping the coverage report and the pictures."""

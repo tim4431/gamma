@@ -119,9 +119,10 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 |---|---|
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
+| speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts}]` (`listed_window` / `listed_efforts` read whatever the listing carries), `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds}]` (`listed_window` / `listed_efforts` / `listed_speeds` read whatever the listing carries), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
@@ -288,7 +289,8 @@ maintenance.
 `/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
 Completions API. Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
-set — some models reject it; see "Reasoning effort" below), optional `system` override, pasted `images`
+set — some models reject it; see "Reasoning effort" below), optional `speed`
+(the provider's service tier; see "Speed" below), optional `system` override, pasted `images`
 (data URLs → native image content parts), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
 (the open page). A page's PDF attachment is derived server-side
@@ -503,18 +505,57 @@ token budget has none). `[]` means the model has no effort control: the
 chip's menu drops its effort section and nothing is sent. A model no source
 knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
 preference itself never changes with the model: `effortFor` in
-`chat/effort.js` sends it as it is when the model takes it, else the
+`chat/modelPrefs.js` sends it as it is when the model takes it, else the
 nearest level the model does (a tie goes to the lower), so `xhigh` becomes
 `high` on a model that stops there and comes back on the next model that
 has it. The chip shows that effective level beside the model's name. The
 server accepts `EFFORT_ORDER` (none … max) and drops anything else.
 
 Every reply names what answered it: the stream's `{"model": {id, name,
-effort}}` line (after `{context}`) is saved on the reply as `model` and
-`effort`, and the reply's foot shows "gpt-5.5 · high" before the token line.
+effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
+`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high · fast"
+before the token line.
 `GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
 offline server; the browser suite sets it); model facts then come from the
 providers' listings alone.
+
+### Speed (service tier)
+
+Providers sell a faster route to the same model: Anthropic's fast mode,
+OpenAI's and Codex's `service_tier`. One chat preference covers them all —
+the account pref `chatSpeed`, set from the composer's model chip or
+Settings → AI → Chat, as one of `ai_protocols.SPEED_ORDER`: `flex` (slower
+and cheaper), `fast` (the premium low-latency route, around twice the price
+per token), or "" for the provider's usual routing, which leaves the field
+out.
+
+Each wire maps those canonical names to its own (`Protocol.speeds`,
+`speed_value`), so nothing outside `ai_protocols/` knows a provider's
+spelling:
+
+| Wire | What goes out for `fast` |
+|---|---|
+| `anthropic` | `"speed": "fast"` in the body plus the `anthropic-beta: fast-mode-2026-02-01` header, and only against Anthropic's own endpoint — the preview is theirs, a service merely speaking the API elsewhere gets neither. No `flex`: standard is its default |
+| `openai`, `openai-responses` | `"service_tier": "priority"` (fast mode's older, still-accepted name), only against OpenAI itself — a compatible server may reject the field. `flex` → `"flex"` |
+| `chatgpt` | the same over the Codex backend; `priority` is the tier id its own catalog names |
+
+`GET /api/ai/model-info` names a model's tiers, cheapest first
+(`ai_catalog.speed_tiers`): the entry's own listing first (the Codex
+backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
+the wire itself can ask for (`"protocol"`). `[]` means no speed control and
+the chip's menu drops its Speed section. Anthropic's listing carries no
+speed facts, so its answer is wire-wide: fast mode is offered for every
+model that endpoint serves, and one that doesn't take it (fast mode is the
+Opus line only) is refused upstream with the provider's own message — the
+alternative would be a table of model names going stale in the repository.
+
+`speedFor` in `chat/modelPrefs.js` sends the preference only when the model
+has that tier. Unlike effort there is no nearest tier: paying for a speed
+the model doesn't offer, and silently dropping to the cheap one, are both
+decisions that are the user's to make. What a reply reports is what was
+*asked for* — a provider may serve the request at standard speed anyway
+(OpenAI says so in the response's own `service_tier`), which Gamma does not
+read today.
 
 ### Selected PDF passages
 

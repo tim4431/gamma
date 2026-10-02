@@ -8,7 +8,7 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { EFFORT_ORDER } from "../chat/effort.js";
+import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
@@ -56,6 +56,7 @@ import {
   KeyboardIcon,
   LanguagesIcon,
   XIcon,
+  ZapIcon,
 } from "../shared/ui/Icons";
 
 // One rail: the account card on top (the Account & sync pane), then
@@ -652,6 +653,11 @@ function AssistantSettings({ value, ai }) {
         <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
           <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
             options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
+        </Row>
+        <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
+          title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
+          <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
+            options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, v])]} />
         </Row>
         <Toggle
           icon={RectSelectIcon}
