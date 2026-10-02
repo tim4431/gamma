@@ -1,14 +1,14 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
-the audit log. Only an account with ``is_admin`` (set with ``manage.py
-set-admin``) and only through a portal session — never a bearer token from
-a Gamma server."""
+the server settings, the audit log. Only an account with ``is_admin`` (set
+with ``manage.py set-admin``) and only through a portal session — never a
+bearer token from a Gamma server."""
 
 from contextlib import closing
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import accounts, db, oidc
+from .. import accounts, db, oidc, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -175,6 +175,40 @@ def delete_invite(code: str, request: Request):
         db.audit(conn, "invite.delete", actor=admin["id"], detail=code)
         conn.commit()
     return {"ok": True}
+
+
+# --- server settings ----------------------------------------------------------
+
+@router.get("/settings")
+def get_settings(request: Request):
+    """Every setting with its value, except a secret's — only whether one is
+    stored (``settings.listing``)."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+    return {"settings": settings.listing(), "unguarded": settings.unguarded_registration()}
+
+
+@router.patch("/settings")
+def patch_settings(body: dict, request: Request):
+    """Write the keys given, leaving the rest alone. A secret sent empty is
+    left as it is — the form cannot show it, so a blank field means "keep";
+    ``null`` clears it. The cache is dropped after the commit, so no reader
+    can take a value that then rolls back."""
+    unknown = [k for k in body if k not in settings.BY_KEY]
+    if unknown:
+        raise HTTPException(400, f"unknown setting: {', '.join(sorted(unknown))}")
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        try:
+            for key, value in body.items():
+                if settings.BY_KEY[key].kind == "secret" and value == "":
+                    continue
+                settings.set(conn, key, value, actor=admin["id"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        conn.commit()
+    settings.invalidate()
+    return {"settings": settings.listing(), "unguarded": settings.unguarded_registration()}
 
 
 # --- OIDC clients -------------------------------------------------------------

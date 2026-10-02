@@ -12,6 +12,7 @@ pending step.
 """
 
 import hashlib
+import os
 import secrets
 import sqlite3
 import time
@@ -20,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -112,6 +113,15 @@ SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
 
 # A server connection a person approved (``connect.py``), waiting for the
 # server to fetch its client with the code (expires quickly).
+# Server settings an admin edits at runtime (``settings.py``). Only the keys
+# in ``settings.SPECS`` mean anything; a row for anything else is ignored, so
+# a rolled-back build leaves nothing behind.
+SETTINGS = """CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+    )"""
+
 SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
         code_hash TEXT PRIMARY KEY,
         account_id TEXT NOT NULL,
@@ -272,6 +282,7 @@ SCHEMA = [
     PREFS,
     SERVERS_LINKED,
     SERVER_CONNECTS,
+    SETTINGS,
 ]
 
 
@@ -363,6 +374,27 @@ def _step_email_canon(conn) -> None:
         conn.execute("UPDATE accounts SET email_canon = ? WHERE id = ?", (email_canon(row["email"]), row["id"]))
 
 
+def _step_settings(conn) -> None:
+    """The settings table, seeded once from the environment variables it
+    replaces (``settings.py``). After this those variables are not read; a
+    deployment that still sets one is warned about at startup. A fresh
+    cloud.db never runs this and takes the defaults, so a first install is
+    configured on the Admin page and nowhere else."""
+    conn.execute(SETTINGS)
+    imported = {
+        "registration": os.environ.get("GAMMA_CLOUD_REGISTRATION", "").strip().lower(),
+        "turnstile_sitekey": os.environ.get("GAMMA_CLOUD_TURNSTILE_SITEKEY", "").strip(),
+        "turnstile_secret": os.environ.get("GAMMA_CLOUD_TURNSTILE_SECRET", "").strip(),
+        "blocked_email_domains": "\n".join(
+            d.strip().lower().lstrip("@") for d in os.environ.get("GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS", "").split(",")
+            if d.strip()),
+    }
+    for key, value in imported.items():
+        if value:
+            conn.execute("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                         "ON CONFLICT (key) DO NOTHING", (key, value, now()))
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -370,6 +402,7 @@ STEPS: list = [
     (4, "profile", _step_profile),
     (5, "connect", _step_connect),
     (6, "email_canon", _step_email_canon),
+    (7, "settings", _step_settings),
 ]
 
 

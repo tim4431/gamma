@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from .. import accounts, config, db, identities, oidc, pages, providers, ratelimit, sessions
+from .. import accounts, config, db, identities, oidc, pages, providers, ratelimit, sessions, settings
 from ..accounts import Problem
 from ..db import new_token
 from ..pages import NO_STORE
@@ -92,7 +92,7 @@ def _complete(request: Request, flow: dict, ident: providers.Identity) -> tuple[
             return f"/settings?connected={ident.provider}", "", ""
         account = identities.resolve(conn, ident)
         if account is None:
-            if config.REGISTRATION == "closed":
+            if settings.registration() == "closed":
                 raise Problem(403, f"No Gamma Cloud account uses this {providers.NAMES[ident.provider]} account, "
                                    "and registration is closed.")
             ext = identities.to_signup(conn, flow, ident)

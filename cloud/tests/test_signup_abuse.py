@@ -5,9 +5,9 @@ rate-limit bucket an IPv6 prefix cannot walk out of."""
 from contextlib import closing
 
 import pytest
-from conftest import invite, last_link
+from conftest import invite, last_link, set_setting
 
-from gammacloud import accounts, config, db, mail, ratelimit
+from gammacloud import accounts, db, mail, ratelimit, settings
 
 
 def signup(client, email, username, code=None):
@@ -102,17 +102,17 @@ def test_disposable_domains_are_refused_at_registration(client):
     assert signup(client, "x@example.org", "xyz", code).status_code == 201
 
 
-def test_the_blocklist_can_be_extended_without_a_release(client, monkeypatch):
-    monkeypatch.setattr(config, "BLOCKED_EMAIL_DOMAINS", frozenset({"spam.example"}))
+def test_the_blocklist_can_be_extended_without_a_release(client):
+    set_setting("blocked_email_domains", "spam.example")
     code = invite(uses=10)
     assert signup(client, "x@spam.example", "xyz", code).status_code == 400
     assert signup(client, "x@deep.sub.spam.example", "xyz", code).status_code == 400
     assert signup(client, "x@notspam.example", "xyz", code).status_code == 201
 
 
-def test_a_reset_still_works_for_an_address_whose_domain_is_now_blocked(client, monkeypatch):
+def test_a_reset_still_works_for_an_address_whose_domain_is_now_blocked(client):
     signup(client, "x@example.org", "xyz")
-    monkeypatch.setattr(config, "BLOCKED_EMAIL_DOMAINS", frozenset({"example.org"}))
+    set_setting("blocked_email_domains", "example.org")
     assert client.post("/api/reset/request", json={"email": "x@example.org"}).status_code == 200
 
 
@@ -132,7 +132,7 @@ def test_ip_bucket(ip, expected):
 
 
 def test_a_prefix_rotation_shares_the_register_allowance(client):
-    config.REGISTRATION = "open"
+    set_setting("registration", "open")
     body = {"password": "correct horse battery"}
     codes = []
     for i in range(7):

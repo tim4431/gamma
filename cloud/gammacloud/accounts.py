@@ -16,7 +16,7 @@ import re
 
 import bcrypt
 
-from . import config, mail
+from . import config, mail, settings
 from .db import after, audit, new_id, new_token, now, token_hash
 
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
@@ -52,7 +52,7 @@ DOTLESS_DOMAINS = {"gmail.com"}
 # Throwaway-mail services: an address there passes the verify mail but the
 # inbox is open to anyone, so the round trip proves nothing. The list is
 # deliberately short — the services actually used at scale — and a name also
-# covers its subdomains. ``GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`` extends it
+# covers its subdomains. The Admin page's blocked-domain list extends it
 # without a release. Someone with their own catch-all domain defeats any such
 # list; Turnstile and the rate limits are what bound that case.
 DISPOSABLE_DOMAINS = {
@@ -108,7 +108,7 @@ def check_email_domain(email: str) -> None:
     # A listed name covers its subdomains, so try the domain and each parent.
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
-        if candidate in DISPOSABLE_DOMAINS or candidate in config.BLOCKED_EMAIL_DOMAINS:
+        if candidate in DISPOSABLE_DOMAINS or candidate in settings.blocked_email_domains():
             raise Problem(400, "That mail provider is not accepted. Use a personal or work address.")
 
 
@@ -204,7 +204,7 @@ def take_invite(conn, code: str) -> str:
     in ``closed`` mode registration is refused before this is reached."""
     code = (code or "").strip()
     if not code:
-        if config.REGISTRATION == "open":
+        if settings.registration() == "open":
             return "free"
         raise Problem(403, "Registration needs an invite code right now.")
     row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()

@@ -2,6 +2,7 @@
 startup upgrade, the hourly purge of expired rows."""
 
 import asyncio
+import os
 import sqlite3
 from contextlib import asynccontextmanager, closing
 from urllib.parse import urlsplit
@@ -9,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import config, db, identities, oidc, sessions
+from . import config, db, identities, oidc, sessions, settings
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -48,14 +49,21 @@ async def lifespan(app: FastAPI):
         conn.commit()
     purge()
     task = asyncio.create_task(_purge_loop())
-    log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, config.REGISTRATION,
+    settings.invalidate()  # the upgrade above may have seeded the table
+    log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, settings.registration(),
              config.MAIL_BACKEND)
-    if config.REGISTRATION == "open" and not config.TURNSTILE_SECRET:
-        # captcha.verify passes everything without it, so anyone can register
-        # at the rate limits alone. Said loudly rather than refused, so a
+    if settings.unguarded_registration():
+        # captcha.verify passes everything without a secret, so the rate
+        # limits are all that is left. Said loudly rather than refused, so a
         # local run and the tests need no widget (cloud/deploy/README.md).
-        log.warning("registration is open with no Turnstile secret: set GAMMA_CLOUD_TURNSTILE_SITEKEY and "
-                    "_SECRET, or scripted sign-ups are held back only by the rate limits")
+        log.warning("registration is open with no Turnstile secret: set one under Admin → Settings, or "
+                    "scripted sign-ups are held back only by the rate limits")
+    stale = [name for name in config.RETIRED_ENV if os.environ.get(name)]
+    if stale:
+        # Not read any more: an existing cloud.db imported them once in the
+        # upgrade (db._step_settings), and a fresh one took the defaults.
+        log.warning("%s set but no longer read - these live in cloud.db now, under Admin > Settings; "
+                    "remove them from the environment", ", ".join(stale))
     try:
         yield
     finally:

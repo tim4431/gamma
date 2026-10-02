@@ -5,14 +5,17 @@ from pathlib import Path
 _DATA = Path(tempfile.mkdtemp(prefix="gammacloud-test-"))
 os.environ["GAMMA_CLOUD_DATA_DIR"] = str(_DATA)
 os.environ["GAMMA_CLOUD_MAIL"] = "memory"
-os.environ["GAMMA_CLOUD_REGISTRATION"] = "invite"
 os.environ["GAMMA_CLOUD_PUBLIC_URL"] = "http://testserver"
-os.environ.pop("GAMMA_CLOUD_TURNSTILE_SECRET", None)
+# The sign-up gate lives in cloud.db, not the environment (gammacloud/settings.py):
+# a fresh database takes the defaults, and set_setting() below changes one.
+for _name in ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
+              "GAMMA_CLOUD_TURNSTILE_SECRET", "GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS"):
+    os.environ.pop(_name, None)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from gammacloud import config, db, mail, ratelimit  # noqa: E402
+from gammacloud import config, db, mail, ratelimit, settings  # noqa: E402
 from gammacloud.app import create_app  # noqa: E402
 from gammacloud.accounts import make_invite  # noqa: E402
 
@@ -23,7 +26,7 @@ def fresh_db():
         f.unlink()
     mail.outbox.clear()
     ratelimit.clear()
-    config.REGISTRATION = "invite"
+    settings.invalidate()  # the cache belongs to the database that was just dropped
     yield
 
 
@@ -31,6 +34,22 @@ def fresh_db():
 def client():
     with TestClient(create_app(), base_url="http://testserver") as c:
         yield c
+
+
+def steps_after(version):
+    """The upgrade steps a cloud.db at ``version`` still needs, in order. The
+    upgrade tests assert against this rather than a written-out list, so
+    adding a step does not mean editing every one of them."""
+    return [name for v, name, _ in db.STEPS if v > version]
+
+
+def set_setting(key, value):
+    """Change a server setting the way the Admin page does."""
+    from contextlib import closing
+    with closing(db.connect()) as conn:
+        settings.set(conn, key, value, actor="test")
+        conn.commit()
+    settings.invalidate()
 
 
 def invite(uses=1, plan="free"):

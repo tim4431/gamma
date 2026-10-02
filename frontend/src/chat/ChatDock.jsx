@@ -32,7 +32,7 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -185,6 +185,19 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
     </span>
   );
 }
+
+// The speed tier a call asked for rides on the model chip as a glyph rather
+// than a word — a bolt for the provider's fast route, a clock for its slow,
+// cheap one — so the chip stays short. Nothing for its usual routing, and
+// the tooltip (`knobsLabel`) names the tier the glyph stands for.
+const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
+function SpeedGlyph({ speed, size = 13 }) {
+  const Icon = SPEED_ICONS[speed];
+  return Icon ? <Icon size={size} className="chatSpeedGlyph" aria-hidden="true" /> : null;
+}
+const knobsLabel = (speed) => (speed
+  ? t("Model, reasoning effort and speed ({speed})", { speed })
+  : t("Model, reasoning effort and speed"));
 
 // What the server knows about a chat model, asked once per model per page
 // load (GET /api/ai/model-info): its context window in tokens, the
@@ -1871,8 +1884,9 @@ export default function ChatDock({
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser && m.model ? (
-                      <span className="chatMsgModel" title={t("Model, reasoning effort and speed")}>
-                        {[m.model, m.effort, m.speed].filter(Boolean).join(" · ")}
+                      <span className="chatMsgModel" title={knobsLabel(m.speed)}>
+                        {[m.model, m.effort].filter(Boolean).join(" · ")}
+                        <SpeedGlyph speed={m.speed} size={12} />
                       </span>
                     ) : null}
                     {!isUser ? <UsageLine usage={m.usage} /> : null}
@@ -2108,11 +2122,14 @@ export default function ChatDock({
             <span className="chatModelChip">
               <MenuSelect
                 up
-                label={t("Model, reasoning effort and speed")}
+                label={knobsLabel(speed)}
                 heading={t("Model")}
                 value={headerModel.id}
                 onChange={setChatModel}
-                display={[headerModel.model, effort, speed].filter(Boolean).join(" · ")}
+                display={<>
+                  <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
+                  <SpeedGlyph speed={speed} />
+                </>}
                 options={headerModels.map((m) => [m.id, modelLabel(m)])}
                 sections={[
                   ...(effortLevels.length ? [{

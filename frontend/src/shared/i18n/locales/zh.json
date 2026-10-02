@@ -1557,6 +1557,7 @@
   "Model saw {span}": "模型看到了 {span}",
   "Model · last 30 days": "模型 · 最近 30 天",
   "Model, reasoning effort and speed": "模型、推理强度与速度",
+  "Model, reasoning effort and speed ({speed})": "模型、推理强度与速度（{speed}）",
   "Models": "模型",
   "Modified": "修改时间",
   "Mon": "周一",

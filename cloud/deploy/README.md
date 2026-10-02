@@ -13,7 +13,7 @@ deploy/
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
   compose.build.yml    layered on compose.yml: build from ./src instead of pulling
   Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
-  .env.example         → .env: public URL, registration mode, SMTP, Turnstile, Google/GitHub, hostname
+  .env.example         → .env: public URL, SMTP, Google/GitHub, hostname (not the sign-up gate)
   share.env.example    → share.env: the share host's cloud client and page hosts
   demo/                the public demo, its own compose project (demo/README.md)
 ```
@@ -90,23 +90,38 @@ proxy's rate limits. A host whose default network predates the pin needs
 
    From then on the **Admin** page in the portal does this: accounts
    (search, plan, verify, admin, rename, delete), invites, the OIDC clients
-   of hosted servers, the audit log.
+   of hosted servers, the sign-up settings, the audit log.
 5. **Sign in** at https://account.gammapdf.com/login, change the password
    under Settings, then register a second account in a private window with
    an invite code to see the verify mail arrive.
 
-## Opening registration
+## The sign-up settings
 
-`GAMMA_CLOUD_REGISTRATION=open` in `.env` and `docker compose up -d`: the
-invite field leaves both signup forms and a new account gets the `free`
-plan. Invite codes keep working and keep granting their plan, so handing
-someone `plus` needs no change here.
+Who may register and what a registration has to get past is edited on the
+**Admin page → Settings**, not in `.env`, and takes effect immediately with
+no restart: the registration mode (`open` / `invite` / `closed`), the
+Cloudflare Turnstile pair, and extra blocked mail domains. They live in
+`cloud.db`; the variables that used to set them
+(`GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*`,
+`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`) are no longer read, and the startup log
+names any that are still set so they can be deleted. An upgrade imports
+them once, so a running deployment keeps the mode it had.
 
-Turn these on **before** the switch, not after:
+Everything else — the data directory, the public URL, SMTP, the
+Google/GitHub clients, the share host — stays in `.env`: it is set once,
+together with the DNS and provider configuration it belongs to.
 
-1. **Turnstile** (the section below): the server's own check is a no-op
-   while `GAMMA_CLOUD_TURNSTILE_SECRET` is empty, and it is the only thing
-   that costs a script anything.
+### Opening registration
+
+Set **Registration** to `open`. The invite field leaves both sign-up forms
+and a new account gets the `free` plan; invite codes keep working and keep
+granting their plan, so handing someone `plus` needs no change.
+
+Do these two **before** the switch, not after:
+
+1. **Turnstile**, in the same place (how to get the pair is below). Without
+   a secret the server's check passes everything, and the Settings tab says
+   so in a banner while registration is open.
 2. **The Cloudflare rate rule** on `/api/register` (below). The in-process
    limiter is per container and resets on restart; Cloudflare's rule is the
    one that holds.
@@ -118,9 +133,8 @@ What then bounds the damage, none of it needing attention:
   readable inbox produces an inert row.
 - **One inbox, one account.** `f.o.o+1@gmail.com` and `foo@gmail.com` are
   the same mailbox and the second is a 409.
-- **Throwaway-mail domains are refused**, subdomains included;
-  `GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` extends the built-in list without a
-  release.
+- **Throwaway-mail domains are refused**, subdomains included; the
+  Settings tab's list extends the built-in one.
 - **Five registrations an hour per address**, counted per IPv6 /64 rather
   than per address, so a prefix rotation shares one allowance.
 
@@ -165,8 +179,8 @@ above.
   limits as the second line. With `open` registration `/api/register`
   is the one that matters: make its rule stricter than the rest.
 - **Turnstile** (dashboard → Turnstile → add widget for the hostname,
-  managed mode): the site key and secret go into `.env`; register and
-  reset then show the widget.
+  managed mode): put the site key and secret into Admin → Settings;
+  register and reset then show the widget.
 - **Cache**: nothing to do — the server sets `Cache-Control: no-store` on
   the API and the pages; only `/jwks` is cacheable (5 min).
 - **Access** is NOT used: the portal must be reachable by everyone.

@@ -561,7 +561,11 @@ export async function chatNavigationScenarios(env) {
       await page.getByRole("combobox", { name: "Message AI" }).waitFor();
       return { ctx, page };
     };
-    const chip = (page) => page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
+    const chip = (page) => page.locator(".chatModelChip .uiSelectBtn");
+    // The speed shows as a glyph, not a word: the chip's text names the model
+    // and effort, the glyph and the tooltip the tier.
+    const chipSpeed = async (page) => [await chip(page).locator(".chatSpeedGlyph").count(),
+      await chip(page).getAttribute("title")];
     const menuItems = (page) => page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
     // The pick is an account preference: wait for it to reach the profile
     // before the next page load reads it.
@@ -619,15 +623,16 @@ export async function chatNavigationScenarios(env) {
       await chip(page).click();
       assertEq((await menuItems(page)).join(), "model,Default,low,high,Default,flex,fast", "effort then speed");
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "fast" }).click();
-      await until(async () => (await chip(page).innerText()) === "model · fast",
-        { what: "the chip names the speed" });
-      // Both knobs at once: the chip reads model · effort · speed.
+      await until(async () => (await chipSpeed(page)).join() === "1,Model, reasoning effort and speed (fast)",
+        { what: "the chip carries the speed glyph" });
+      // Both knobs at once: the words are the model and effort, then the glyph.
       await chip(page).click();
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "high" }).click();
-      await until(async () => (await chip(page).innerText()) === "model · high · fast",
-        { what: "the chip names both" });
+      await until(async () => (await chip(page).innerText()) === "model · high", { what: "the chip names both" });
       assertEq((await send(page)).join(), "high,fast");
-      await page.locator(".chatMsgModel", { hasText: "model · high · fast" }).waitFor();
+      const foot = page.locator(".chatMsgModel", { hasText: "model · high" });
+      await foot.waitFor();
+      assertEq(await foot.locator(".chatSpeedGlyph").count(), 1, "the reply's foot carries the glyph too");
       await until(async () => ((await alice.api("/api/prefs/profile")).value?.chatSpeed || "") === "fast",
         { what: 'the profile holds speed "fast"' });
       assertNoProblems(page);
@@ -637,18 +642,19 @@ export async function chatNavigationScenarios(env) {
     // asked for, and the kept pick comes back on the next model that has it.
     ({ ctx, page } = await load(["low", "high"], []));
     try {
-      await until(async () => (await chip(page).innerText()) === "model · high", { what: "no speed to ask for" });
+      await until(async () => (await chipSpeed(page)).join() === "0,Model, reasoning effort and speed",
+        { what: "no speed to ask for" });
       assertEq(await page.locator(".uiSelectMenu", { hasText: "Speed" }).count(), 0);
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
     ({ ctx, page } = await load(["low", "high"], ["fast"]));
     try {
-      await until(async () => (await chip(page).innerText()) === "model · high · fast", { what: "the kept speed" });
+      await until(async () => (await chipSpeed(page))[0] === 1, { what: "the kept speed" });
       await chip(page).click();
       // The second "Default" is the Speed section's (effort's comes first).
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Default" }).last().click();
-      await until(async () => (await chip(page).innerText()) === "model · high", { what: "Default drops the speed" });
+      await until(async () => (await chipSpeed(page))[0] === 0, { what: "Default drops the speed" });
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -1161,8 +1167,11 @@ export async function chatNavigationScenarios(env) {
       await confirm.getByRole("button", { name: "Delete", exact: true }).click();
       await until(async () => (await rows.count()) === 1, { what: "the ticked rows go" });
       assertEq(await bulk.count(), 0, "the bar goes with the selection");
-      const left = (await alice.api(`/api/chat-history?bucket=${bucket}`)).sessions;
-      assertEq(left.map((e) => e.id).join(), archived["Alpha talk"], "only the unticked conversation is left");
+      // The rows go as soon as Delete is confirmed (deletePicked drops them
+      // before awaiting the call), so the server is checked on its own time.
+      await until(async () => (await alice.api(`/api/chat-history?bucket=${bucket}`))
+        .sessions.map((e) => e.id).join() === archived["Alpha talk"],
+      { what: "only the unticked conversation is left on the server" });
       assertNoProblems(page);
     } finally {
       await ctx.close();

@@ -1,6 +1,15 @@
 """Environment configuration of the account server. Everything is an env
 variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
 
+What is here is fixed for the life of the container: where the data lives,
+the issuer every Gamma server verifies, and credentials whose other half is
+configured somewhere else (the mail provider, Google, GitHub). The sign-up
+gate — registration mode, Turnstile, blocked mail domains — is **not** here;
+an admin edits it on the Admin page and it lives in cloud.db
+(``settings.py``). The two sets do not overlap, so each value has one home;
+``app.py`` warns at startup if a variable retired to ``settings.py`` is
+still set.
+
 - ``GAMMA_CLOUD_DATA_DIR`` — where ``cloud.db`` lives (default ``cloud/data``).
   The directory is the secret: it holds the signing keys and every hashed
   token, so it is never world-readable and always backed up encrypted.
@@ -8,18 +17,10 @@ variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
   Every absolute URL (mail links, OIDC metadata) is built from it; the
   request's Host header is never trusted. Default ``http://127.0.0.1:9002``
   for a local run.
-- ``GAMMA_CLOUD_REGISTRATION`` — ``open`` / ``invite`` (default; a code from
-  ``manage.py invite`` is required) / ``closed``.
 - ``GAMMA_CLOUD_MAIL`` — ``console`` (default; links are logged) / ``smtp``
   (``GAMMA_CLOUD_SMTP_HOST``, ``_PORT``, ``_USER``, ``_PASSWORD``,
   ``_STARTTLS``) / ``memory`` (tests). ``GAMMA_CLOUD_MAIL_FROM`` is the
   sender.
-- ``GAMMA_CLOUD_TURNSTILE_SECRET`` — when set, register and reset require a
-  Cloudflare Turnstile token (``GAMMA_CLOUD_TURNSTILE_SITEKEY`` is handed to
-  the pages).
-- ``GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`` — extra mail domains register
-  refuses, comma separated, on top of the throwaway-mail list in
-  ``accounts.py``. A name also covers its subdomains.
 - ``GAMMA_CLOUD_DESKTOP_CLIENT_ID`` — the one public OIDC client every local
   Gamma sidecar is (default ``gamma-desktop``).
 - ``GAMMA_CLOUD_GOOGLE_CLIENT_ID`` + ``_SECRET``, ``GAMMA_CLOUD_GITHUB_CLIENT_ID``
@@ -44,10 +45,6 @@ DB_PATH = DATA_DIR / "cloud.db"
 
 PUBLIC_URL = (os.environ.get("GAMMA_CLOUD_PUBLIC_URL", "") or "http://127.0.0.1:9002").rstrip("/")
 
-REGISTRATION = os.environ.get("GAMMA_CLOUD_REGISTRATION", "invite").strip().lower() or "invite"
-if REGISTRATION not in ("open", "invite", "closed"):
-    raise RuntimeError("GAMMA_CLOUD_REGISTRATION must be open, invite or closed")
-
 MAIL_BACKEND = os.environ.get("GAMMA_CLOUD_MAIL", "console").strip().lower() or "console"
 # The sender defaults to no-reply at the public URL's host, so no domain is
 # named anywhere unless it is set.
@@ -59,12 +56,10 @@ SMTP_USER = os.environ.get("GAMMA_CLOUD_SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("GAMMA_CLOUD_SMTP_PASSWORD", "")
 SMTP_STARTTLS = os.environ.get("GAMMA_CLOUD_SMTP_STARTTLS", "1") not in ("0", "false", "no")
 
-TURNSTILE_SECRET = os.environ.get("GAMMA_CLOUD_TURNSTILE_SECRET", "")
-TURNSTILE_SITEKEY = os.environ.get("GAMMA_CLOUD_TURNSTILE_SITEKEY", "")
-
-BLOCKED_EMAIL_DOMAINS = frozenset(
-    d.strip().lower().lstrip("@") for d in os.environ.get("GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS", "").split(",")
-    if d.strip())
+# Retired to settings.py (cloud.db, the Admin page). Named here only so the
+# startup check can tell a deployment that still sets one that it does nothing.
+RETIRED_ENV = ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
+               "GAMMA_CLOUD_TURNSTILE_SECRET", "GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS")
 
 DESKTOP_CLIENT_ID = os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "") or "gamma-desktop"
 

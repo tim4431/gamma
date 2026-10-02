@@ -513,8 +513,10 @@ server accepts `EFFORT_ORDER` (none … max) and drops anything else.
 
 Every reply names what answered it: the stream's `{"model": {id, name,
 effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
-`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high · fast"
-before the token line.
+`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
+token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
+— a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
+tooltip names the tier, since the glyph carries no text).
 `GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
 offline server; the browser suite sets it); model facts then come from the
 providers' listings alone.

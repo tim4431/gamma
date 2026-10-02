@@ -240,7 +240,8 @@ function useDropdown(up = false) {
 // `icon` collapses the trigger to that fixed glyph + chevron (no value label) —
 // the current choice rides in the tooltip instead. `iconOnly` also removes the
 // chevron for especially tight toolbars. `display` replaces the trigger's
-// text (the current label by default). A menu holding more than one choice
+// text (the current label by default) and may be a node, for a label that
+// carries a glyph of its own. A menu holding more than one choice
 // gives the main options a `heading` and lists the others as `sections`,
 // [{label, value, onChange, options}], each under its own heading — the chat
 // composer's model chip with its reasoning effort. `up` opens above the

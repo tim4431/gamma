@@ -4147,7 +4147,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatModelChip .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.chatModelChip .uiSelectLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The chip's label is a row: the model (with its effort), ellipsized, then
+   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
+.chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
+.chatModelChip .chatModelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatSpeedGlyph { flex-shrink: 0; vertical-align: -2px; }
+.chatMsgModel .chatSpeedGlyph { margin-left: 4px; }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
 .chatMentionInput textarea { width: 100%; min-width: 0; }
 .chatMentionPicker {

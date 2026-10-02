@@ -1,4 +1,4 @@
-from conftest import invite, last_link, make_admin, register, verify
+from conftest import invite, last_link, make_admin, register, set_setting, verify
 
 from fastapi.testclient import TestClient
 
@@ -36,10 +36,10 @@ def test_invite_required_and_consumed(client):
 
 
 def test_open_and_closed_registration(client):
-    config.REGISTRATION = "open"
+    set_setting("registration", "open")
     r = client.post("/api/register", json={"email": "a@example.org", "username": "aaa", "password": "correct horse battery"})
     assert r.status_code == 201
-    config.REGISTRATION = "closed"
+    set_setting("registration", "closed")
     r = client.post("/api/register", json={"email": "b@example.org", "username": "bbb", "password": "correct horse battery"})
     assert r.status_code == 403
 

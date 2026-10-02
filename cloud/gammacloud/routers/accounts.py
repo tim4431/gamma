@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import accounts, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions
+from .. import accounts, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions, settings
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -71,7 +71,7 @@ def verify_message(conn, account) -> tuple[str, str, str, str]:
 
 @router.get("/config")
 def public_config():
-    return {"registration": config.REGISTRATION, "turnstile_sitekey": config.TURNSTILE_SITEKEY,
+    return {"registration": settings.registration(), "turnstile_sitekey": settings.turnstile_sitekey(),
             "issuer": config.PUBLIC_URL, "plans": list(config.PLANS)}
 
 
@@ -88,7 +88,7 @@ class RegisterBody(BaseModel):
 
 @router.post("/register")
 def register(body: RegisterBody, request: Request):
-    if config.REGISTRATION == "closed":
+    if settings.registration() == "closed":
         raise HTTPException(403, "Registration is closed.")
     ip = ratelimit.client_ip(request)
     ratelimit.check(f"register:ip:{ratelimit.ip_bucket(ip)}", 5, 3600)

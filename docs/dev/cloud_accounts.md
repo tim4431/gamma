@@ -43,22 +43,46 @@ uvicorn app:app --port 9002 --reload                       # http://127.0.0.1:90
 python -m pytest tests -q
 ```
 
-Configuration is env only, `GAMMA_CLOUD_*` (`cloud/gammacloud/config.py`
-lists every variable):
+Configuration comes from two places that do not overlap, so every value
+has one home.
+
+**The environment**, `GAMMA_CLOUD_*` (`cloud/gammacloud/config.py` lists
+every variable) — fixed for the life of the container:
 
 - the data directory;
 - the public URL — the OIDC issuer; the request's Host is never trusted;
-- the registration mode: `open` / `invite` / `closed`, default `invite`;
 - the mail backend: `console` logs the links, `smtp` sends them;
-- the Turnstile secret, off until set — with `open` registration it is the
-  main thing standing in a script's way, so set it;
-- extra blocked mail domains (`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`), added to
-  the throwaway-mail list in `accounts.DISPOSABLE_DOMAINS`;
 - the desktop client id;
 - the Google and GitHub OAuth clients — a provider is off until both its
   id and secret are set; setup in the deploy README;
 - the free share host's address (`GAMMA_CLOUD_SHARE_HOST_URL`, empty = none),
   which Gamma servers read to know where pages are published (below).
+
+**`cloud.db`**, edited by an admin on the Admin page's Settings tab and in
+effect immediately (`cloud/gammacloud/settings.py`) — the sign-up gate, the
+part an operator changes while the service runs:
+
+- the registration mode: `open` / `invite` / `closed`, default `invite`;
+- the Turnstile site key and secret, the check off until the secret is set —
+  with `open` registration it is the main thing standing in a script's way,
+  so the tab warns while it is missing (`settings.unguarded_registration`);
+- extra blocked mail domains, added to the throwaway-mail list in
+  `accounts.DISPOSABLE_DOMAINS`.
+
+Each is read through an accessor (`settings.registration()` and friends)
+over a process-wide cache, so a page render needs no connection; a write
+goes through `settings.set` and the admin router drops the cache *after*
+the commit, so no reader can take a value that then rolls back. The image
+runs one uvicorn worker, which is what makes the cache safe. A corrupt
+`registration` row reads as `invite`: a bad value must never be the thing
+that opens registration.
+
+These three used to be environment variables. They are no longer read:
+`db._step_settings` imports them once during the upgrade, so a running
+deployment keeps the mode it had, and `app.py` warns at startup about any
+still set (`config.RETIRED_ENV`). A **fresh** database takes the defaults
+and imports nothing, so a stray variable on a first install cannot quietly
+open registration.
 
 The Docker image (`cloud/Dockerfile`) runs uvicorn on 9002. The client
 address (rate limits, the address on a device or browser row) is
@@ -90,6 +114,7 @@ the signing keys and every token hash.
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
 | `invites` | codes with uses left and the plan they grant |
+| `settings` | the sign-up gate an admin edits (`settings.SPECS`): registration mode, the Turnstile pair, blocked mail domains. A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
@@ -202,6 +227,13 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
+  - **Settings**: the sign-up gate above — registration mode, the
+    Turnstile pair, the blocked mail domains. Each row saves its own keys
+    and reloads the page, so what is shown is what the table holds. A
+    secret's value never leaves the server: the listing says only whether
+    one is stored, a blank field on save means "keep it", and `null` clears
+    it. `settings.set` audits the change and writes `set`/`cleared` for a
+    secret rather than its value.
   - The audit log.
 
   All of it is the `/api/admin/*` API below; `manage.py` does the same
@@ -539,6 +571,12 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
 
 - `test_accounts.py`: the registration, verify, reset, e-mail change,
   deletion and rate-limit flows, the pages.
+- `test_settings.py`: the defaults and the validation of each setting, a
+  corrupt row reading as `invite`, admin-only access, that a secret never
+  reaches the browser or the audit log, a blank save keeping it and `null`
+  clearing it, a rejected write changing nothing, the sign-up forms
+  following a mode change, and the upgrade importing the retired variables
+  once while a fresh database takes the defaults.
 - `test_signup_abuse.py`: what bounds open registration — the canonical
   form of an address and the aliases it folds, one Gmail inbox refused a
   second account, an unlisted domain keeping its tagged addresses apart,
