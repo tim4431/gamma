@@ -18,7 +18,7 @@ from contextlib import closing
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import accounts, db, oidc, prefs, ratelimit, servers, sessions
@@ -136,6 +136,8 @@ def delete_pref(key: str, request: Request):
 class ServerBody(BaseModel):
     url: str
     name: str = ""
+    version: str | None = None
+    server_schema: int | None = Field(None, alias="schema", ge=0, le=1_000_000)
 
 
 class ServerRef(BaseModel):
@@ -154,12 +156,14 @@ def _server_url(conn, row, raw: str) -> str:
 @router.post("/me/servers")
 def link_server(body: ServerBody, request: Request):
     """A Gamma server registering itself under the person who linked their
-    identity there (or refreshing its name and ``last_seen_at``)."""
+    identity there (or refreshing its name, ``last_seen_at``, and the
+    ``version`` and ``schema`` it reports when it sends them)."""
     with closing(db.connect()) as conn:
         account, row = bearer(conn, request)
         ratelimit.check(f"servers-write:{account['id']}", 60, 3600)
         url = _server_url(conn, row, body.url)
-        server = servers.link(conn, account["id"], url, servers.norm_name(body.name, url), row["grant_id"])
+        server = servers.link(conn, account["id"], url, servers.norm_name(body.name, url), row["grant_id"],
+                              servers.norm_version(body.version), body.server_schema)
         conn.commit()
     return {"server": server}
 

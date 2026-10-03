@@ -11,8 +11,10 @@ The rules that keep this safe and small:
 
 - **Runs before anything else.** ``ensure_current()`` is the first thing
   the server does at startup (and ``python manage.py migrate`` by hand). A
-  data directory AHEAD of the binary is refused with a clear message — an
-  older Gamma never opens files it does not understand.
+  data directory AHEAD of the binary, or below ``MIN_UPGRADABLE``, is
+  refused: the server then serves one page saying what to run instead
+  (``guidance()``, gamma/app.py), and an older Gamma never opens files it
+  does not understand.
 - **Backup first.** Before the first pending step every database file is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
@@ -47,16 +49,30 @@ from .blocks_store import FOLDERS, folder_by_path
 from .db import (SCHEMA_VERSION, USERS_SCHEMA, new_account_id, page_now, register_functions, safe_ws_id,
                  users_db_version)
 from .logbuf import log
-from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db, normalize_pages_db,
-                        page_changes, pages_db_chats)
+from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db, page_changes,
+                        pages_db_chats)
 
-# Lowest version this release can still upgrade from (0 = the unversioned
-# layout every Gamma before schema versions wrote).
-MIN_UPGRADABLE = 0
+# The lowest version this release upgrades from: a data directory at it
+# has had the steps up to it, and this release carries the steps after it
+# (docs/dev/migrations.md "Nothing piles up"). One below it must first run
+# UPGRADE_VIA, the newest release that still carries the deleted steps.
+MIN_UPGRADABLE = 19
+UPGRADE_VIA = {
+    "image": "ghcr.io/tim4431/gamma:sha-8708ebb",  # the server image built from that release
+    "release": "the Gamma release of 2026-10-01",
+    "schema": 24,                                   # what it brings a data directory to
+}
 
 
 class MigrationError(RuntimeError):
-    pass
+    """The data directory cannot be brought to SCHEMA_VERSION by this
+    process: a step failed (``step``, ``snapshot``), or one of the two
+    refusals below. ``guidance()`` turns any of them into what the person
+    should do."""
+
+    step = ""
+    snapshot = ""
+    version: int | None = None
 
 
 class NewerDataError(MigrationError):
@@ -113,14 +129,16 @@ def ensure_current(dry_run: bool = False) -> dict:
     if version is None:
         return {"from": SCHEMA_VERSION, "to": SCHEMA_VERSION, "applied": [], "backup": None}
     if version > SCHEMA_VERSION:
-        raise NewerDataError(
-            f"the data directory ({config.DATA_DIR}) is at schema version {version}, newer than "
-            f"this Gamma (version {SCHEMA_VERSION}). Run the Gamma release that wrote it, or "
-            f"restore the matching snapshot from {config.BACKUPS_DIR}.")
+        raise _refusal(NewerDataError, version,
+                       f"the data directory ({config.DATA_DIR}) is at schema version {version}, newer than "
+                       f"this Gamma (version {SCHEMA_VERSION}). Run the Gamma release that wrote it, or "
+                       f"restore the matching snapshot from {config.BACKUPS_DIR}.")
     if version < MIN_UPGRADABLE:
-        raise TooOldDataError(
-            f"the data directory is at schema version {version}; this release upgrades from "
-            f"{MIN_UPGRADABLE} at the earliest. Run an intermediate Gamma release first.")
+        raise _refusal(TooOldDataError, version,
+                       f"the data directory is at schema version {version}; this release upgrades from "
+                       f"{MIN_UPGRADABLE} at the earliest. Run {UPGRADE_VIA['release']} "
+                       f"({UPGRADE_VIA['image']}) once on the same data directory first: it brings it "
+                       f"to schema version {UPGRADE_VIA['schema']}.")
     pending = pending_steps(version)
     result = {"from": version, "to": SCHEMA_VERSION, "applied": [], "backup": None}
     if dry_run:
@@ -139,14 +157,81 @@ def ensure_current(dry_run: bool = False) -> dict:
                 conn.execute(f"PRAGMA user_version = {v}")
                 conn.commit()
         except Exception as e:
-            raise MigrationError(
+            failed = MigrationError(
                 f"migration step {v} ({name}) failed: {e}. The data directory is at the last "
                 f"completed step; fix the cause and rerun `manage.py migrate`, or restore "
-                f"{result['backup']}.") from e
+                f"{result['backup']}.")
+            failed.step, failed.snapshot, failed.version = f"{v} ({name})", result["backup"], data_version()
+            raise failed from e
         result["applied"].append(name)
         log.info(f"[migrate] step {v} ({name}) done")
     _finish_upgrade()
     return result
+
+
+def _refusal(kind, version: int, message: str) -> MigrationError:
+    error = kind(message)
+    error.version = version
+    return error
+
+
+def guidance(error: MigrationError) -> dict:
+    """What the person running this server should do about ``error``, as
+    ``{"title", "summary", "steps": [str], "data_dir", "backups_dir",
+    "snapshot"}`` — the one text the startup page, the API's 503, the
+    CLI and the log share (gamma/app.py ``_blocked_app``, ``manage.py
+    migrate``). Nothing below changes the data directory; every path tells
+    the person their data is intact before it tells them what to run."""
+    data_dir, backups_dir = str(config.DATA_DIR), str(config.BACKUPS_DIR)
+    if isinstance(error, TooOldDataError):
+        via = UPGRADE_VIA
+        return {
+            "title": "This Gamma needs an earlier release to upgrade your data first",
+            "summary": (f"Your data directory is at schema version {error.version}; this Gamma (schema "
+                        f"{SCHEMA_VERSION}) upgrades from version {MIN_UPGRADABLE} on. Nothing has been "
+                        f"changed. Run {via['release']} once on the same data directory: it upgrades it to "
+                        f"schema version {via['schema']}, taking a snapshot of the databases first; then "
+                        f"start this version again and it finishes the upgrade."),
+            "steps": [
+                f"Back up the data directory ({data_dir}): a plain copy of the folder or volume is enough.",
+                f"Docker Compose: in docker-compose.yml set `image: {via['image']}`, run `docker compose up -d`, "
+                f"wait for the log line \"data directory upgraded\" (`docker logs gamma`), then put the image "
+                f"back and run `docker compose up -d` again.",
+                f"Docker without Compose: `docker run --rm -v <your data volume>:/data {via['image']}`, wait for "
+                f"the same log line, stop it with Ctrl+C, then start your usual container.",
+                "Desktop app: install that release from the GitHub releases page, open it once with this data "
+                "directory, then install the current version again.",
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
+        }
+    if isinstance(error, NewerDataError):
+        return {
+            "title": "This data directory was written by a newer Gamma",
+            "summary": (f"Your data directory is at schema version {error.version}; this Gamma expects "
+                        f"{SCHEMA_VERSION} and will not touch it. Nothing has been changed."),
+            "steps": [
+                "Run the Gamma release that wrote it (the newer one), or",
+                f"restore the snapshot that release took before upgrading, from {backups_dir}: with the server "
+                f"stopped, `manage.py backups` lists them and `manage.py backups --restore <name>` puts one back.",
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
+        }
+    back = (f"Or go back: with the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` "
+            f"restores the snapshot, then run the previous release." if error.snapshot else
+            "Or go back to the previous release with the snapshot `manage.py backups` lists.")
+    return {
+        "title": "The upgrade of your data directory stopped",
+        "summary": (f"Migration step {error.step} failed; the data directory is at schema version "
+                    f"{error.version}, the last step that completed. A snapshot of every database from before "
+                    f"the upgrade is kept, and the upgrade resumes from this step at the next start."),
+        "steps": [
+            f"Read the cause in the server log: {error}",
+            "Fix it (disk space, file permissions, a damaged database) and start the server again: the "
+            "upgrade continues where it stopped, with the same snapshot.",
+            back,
+        ],
+        "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
+    }
 
 
 def _snapshot_before(version: int) -> str:
@@ -191,7 +276,7 @@ def _columns(conn, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
 
 
-# users.db as schema version 24 shaped it, frozen: steps 1-24 create their
+# users.db as schema version 24 shaped it, frozen: steps 20-24 create their
 # tables from this, never from db.USERS_SCHEMA, which step 25 moved on (an
 # account is named by its id there).
 _V24_USERS_SCHEMA = [
@@ -360,7 +445,7 @@ _V24_USERS_SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
 ]
 
-# pages.db as schema version 25 shaped it, frozen: the statements steps 1-25
+# pages.db as schema version 25 shaped it, frozen: the statements steps 20-25
 # found a workspace's file with (``_each_pages_db`` applies them), never
 # db.PAGES_SCHEMA, whose block table step 26 moved on (its typed hot fields)
 # and whose tombstones step 27 folded into the change log. A step after 27
@@ -425,232 +510,6 @@ _V25_PAGES_SCHEMA = [
 ]
 
 
-def _v1_baseline(conn: sqlite3.Connection) -> None:
-    """Everything before workspaces, in its final shape: the columns that
-    used to be added lazily on connect, share rows keyed by page, the
-    per-user files normalized (gamma/normalize.py)."""
-    cols = _columns(conn, "users")
-    if "is_admin" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-    if "max_upload_mb" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN max_upload_mb INTEGER")
-        conn.execute("ALTER TABLE users ADD COLUMN quota_mb INTEGER")
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'shares'").fetchone():
-        conn.execute("""CREATE TABLE shares (
-            token TEXT PRIMARY KEY, username TEXT NOT NULL, doc_id TEXT NOT NULL DEFAULT '',
-            page_id TEXT, audience TEXT NOT NULL DEFAULT 'anyone', role TEXT NOT NULL DEFAULT 'view',
-            allowed_users TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
-    share_cols = _columns(conn, "shares")
-    if "page_id" not in share_cols:
-        conn.execute("ALTER TABLE shares ADD COLUMN page_id TEXT")
-    if "audience" not in share_cols:
-        conn.execute("ALTER TABLE shares ADD COLUMN audience TEXT NOT NULL DEFAULT 'anyone'")
-        conn.execute("ALTER TABLE shares ADD COLUMN role TEXT NOT NULL DEFAULT 'view'")
-        conn.execute("ALTER TABLE shares ADD COLUMN allowed_users TEXT NOT NULL DEFAULT ''")
-    conn.commit()
-
-    # Per-user files: content normalization + legacy tables.
-    users_dir = config.LEGACY_USERS_DIR
-    if users_dir.is_dir():
-        for user_dir in sorted(users_dir.iterdir()):
-            if not user_dir.is_dir():
-                continue
-            if (user_dir / "pages.db").is_file():
-                with closing(sqlite3.connect(str(user_dir / "pages.db"))) as pdb:
-                    for stmt in _V25_PAGES_SCHEMA:
-                        pdb.execute(stmt)
-                    normalize_pages_db(pdb)
-            if (user_dir / "data.db").is_file():
-                with closing(sqlite3.connect(str(user_dir / "data.db"))) as ddb:
-                    normalize_data_db(ddb, keep_prefs=True)
-
-    # Shares minted when they were keyed by PDF: resolve to the page, or drop.
-    doc_col = "doc_id" if "doc_id" in _columns(conn, "shares") else "''"
-    rows = conn.execute(
-        f"SELECT token, username, {doc_col} FROM shares WHERE page_id IS NULL OR page_id = ''").fetchall()
-    for token, username, doc_id in rows:
-        page_id = None
-        pages_db = users_dir / str(username) / "pages.db"
-        if doc_id and pages_db.is_file():
-            with closing(sqlite3.connect(str(pages_db))) as pdb:
-                row = pdb.execute(
-                    "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                    "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
-                page_id = row[0] if row else None
-        if page_id:
-            conn.execute("UPDATE shares SET page_id = ? WHERE token = ?", (page_id, token))
-        else:
-            conn.execute("DELETE FROM shares WHERE token = ?", (token,))
-    conn.commit()
-
-
-def _v2_workspaces(conn: sqlite3.Connection) -> None:
-    """users/<username>/ becomes workspaces/<id>/ — one personal workspace
-    per account (the account is its owner and it becomes the default);
-    personal prefs move from data.db to users.db; shares are keyed by
-    workspace."""
-    for stmt in _V24_USERS_SCHEMA:
-        if "CREATE TABLE IF NOT EXISTS shares" in stmt or "ON shares(" in stmt:
-            continue  # rebuilt below from the old rows (the indexes: step 21's shape)
-        conn.execute(stmt)
-    if "default_workspace" not in _columns(conn, "users"):
-        conn.execute("ALTER TABLE users ADD COLUMN default_workspace TEXT NOT NULL DEFAULT ''")
-    conn.commit()
-
-    now = page_now()
-    config.WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
-    for username, ws_id in conn.execute(
-            "SELECT username, default_workspace FROM users ORDER BY created_at").fetchall():
-        if not ws_id:
-            # The rows naming the new directory are committed BEFORE anything
-            # moves: a crash after this point resumes by moving the files into
-            # the id recorded here, never into a second, empty workspace.
-            from .workspaces import new_workspace_id  # local: workspaces imports seed
-            ws_id = new_workspace_id()
-            conn.execute("INSERT OR IGNORE INTO workspaces (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
-                         (ws_id, username, username, now))
-            conn.execute("INSERT OR IGNORE INTO workspace_members (workspace_id, username, role, added_by, added_at) "
-                         "VALUES (?, ?, 'owner', ?, ?)", (ws_id, username, username, now))
-            conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws_id, username))
-            conn.commit()
-        src = config.LEGACY_USERS_DIR / username
-        dst = config.WORKSPACES_DIR / ws_id
-        if src.is_dir() and not dst.exists():
-            src.rename(dst)
-        elif not dst.exists():
-            _fresh_workspace_files(dst)
-        _move_prefs(conn, username, ws_id, dst / "data.db")  # a no-op once done: resumable
-        conn.commit()
-
-    # Shares: (username, page) → (workspace, page). Rows of unknown accounts
-    # have nothing to resolve through and go.
-    if "workspace_id" not in _columns(conn, "shares"):
-        conn.execute("DROP TABLE IF EXISTS shares_new")
-        conn.execute(next(s for s in _V24_USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS shares" in s)
-                     .replace("CREATE TABLE IF NOT EXISTS shares", "CREATE TABLE shares_new"))
-        conn.execute(
-            "INSERT OR IGNORE INTO shares_new (token, workspace_id, page_id, created_by, audience, role, "
-            "allowed_users, created_at) "
-            "SELECT s.token, u.default_workspace, s.page_id, s.username, s.audience, s.role, "
-            "s.allowed_users, s.created_at FROM shares s JOIN users u ON u.username = s.username "
-            "WHERE s.page_id IS NOT NULL AND s.page_id != '' AND u.default_workspace != ''")
-        conn.execute("DROP TABLE shares")
-        conn.execute("ALTER TABLE shares_new RENAME TO shares")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id)")
-        conn.commit()
-
-    # Directories without an account row stay where they are, but say so.
-    legacy = config.LEGACY_USERS_DIR
-    if legacy.is_dir():
-        leftovers = [d.name for d in legacy.iterdir() if d.is_dir()]
-        if leftovers:
-            log.warning(f"[migrate] {legacy} still holds directories with no account: "
-                        f"{', '.join(leftovers)} — inspect and delete them by hand")
-        else:
-            shutil.rmtree(str(legacy), ignore_errors=True)
-
-
-def _fresh_workspace_files(target: Path) -> None:
-    """Empty pages.db (with its root row) + data.db + uploads/ — for an
-    account whose directory had gone missing."""
-    from .seed import create_workspace_files  # local: seed imports db
-
-    target.mkdir(parents=True, exist_ok=True)
-    create_workspace_files(target.name)
-
-
-# The account-wide pref keys when step 2 ran (frozen: db.USER_PREF_KEYS has
-# moved on since — step 17 folded `appearance` into `profile`).
-_V2_ACCOUNT_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "appearance"})
-
-
-def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Path) -> None:
-    """data.db `prefs` rows → users.db user_prefs (personal keys with
-    workspace '' , the rest under the new workspace), then drop the table —
-    after the copies are committed, so a crash in between loses nothing."""
-    if not data_db.is_file():
-        return
-    with closing(sqlite3.connect(str(data_db))) as ddb:
-        if ddb.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'prefs'").fetchone():
-            for key, value, updated_at in ddb.execute("SELECT key, value, updated_at FROM prefs"):
-                scope = "" if key in _V2_ACCOUNT_PREF_KEYS else ws_id
-                conn.execute(
-                    "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)", (username, scope, key, value, updated_at))
-            conn.commit()
-        normalize_data_db(ddb)
-
-
-def _v3_workspace_access(conn: sqlite3.Connection) -> None:
-    """Workspaces gain an access setting (private / public + the role every
-    signed-in account gets in a public one) and their own optional storage
-    quota; nothing is moved. Existing rows keep today's behaviour: private,
-    no workspace quota."""
-    cols = _columns(conn, "workspaces")
-    if "access" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN access TEXT NOT NULL DEFAULT 'private'")
-    if "public_role" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN public_role TEXT NOT NULL DEFAULT 'viewer'")
-    if "quota_mb" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN quota_mb INTEGER")
-    conn.commit()
-
-
-def _v4_workspace_kinds(conn: sqlite3.Connection) -> None:
-    """Workspaces gain a ``kind``. An account's default workspace and any
-    workspace with a single member are personal (the account's own library,
-    metered against it); everything with more members is shared (from now
-    on admin-managed). A default workspace that had other members stays
-    personal — personal workspaces have no other members — and those
-    memberships are dropped, named in the log so an admin can put the
-    people into a shared workspace instead."""
-    if "kind" not in _columns(conn, "workspaces"):
-        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'personal'")
-    conn.commit()
-    defaults = {r[0]: r[1] for r in conn.execute(
-        "SELECT default_workspace, username FROM users WHERE default_workspace != ''")}
-    for ws, in conn.execute("SELECT id FROM workspaces").fetchall():
-        people = [r[0] for r in conn.execute(
-            "SELECT username FROM workspace_members WHERE workspace_id = ? ORDER BY added_at", (ws,))]
-        if ws in defaults:
-            extra = [u for u in people if u != defaults[ws]]
-            if extra:
-                log.warning(f"[migrate] personal workspace {ws} of {defaults[ws]} had other members "
-                            f"({', '.join(extra)}); they were removed — give them a shared workspace")
-                conn.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND username != ?",
-                             (ws, defaults[ws]))
-            kind = "personal"
-        else:
-            kind = "personal" if len(people) == 1 else "shared"
-        conn.execute("UPDATE workspaces SET kind = ?, access = CASE WHEN ? = 'personal' THEN 'private' ELSE access END, "
-                     "quota_mb = CASE WHEN ? = 'personal' THEN NULL ELSE quota_mb END WHERE id = ?",
-                     (kind, kind, kind, ws))
-    conn.commit()
-
-
-def _v5_publisher_sessions(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in _V24_USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS publisher_sessions" in s))
-    conn.commit()
-
-
-def _v6_integration_tokens(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in _V24_USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS integration_tokens" in s))
-    conn.commit()
-
-
-def _v7_mcp_oauth(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in _V24_USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS mcp_oauth" in s))
-    conn.commit()
-
-
-def _v8_ai_usage(conn: sqlite3.Connection) -> None:
-    """Adds the ``ai_usage`` table (+ index) in users.db: per-account token counts of AI calls."""
-    for stmt in _V24_USERS_SCHEMA:
-        if "ai_usage" in stmt:
-            conn.execute(stmt)
-    conn.commit()
-
-
 def _each_pages_db(step: str, fn, schema=_V25_PAGES_SCHEMA) -> None:
     """``fn(conn)`` on every workspace's pages.db, the ``schema`` statements
     applied first (``_V25_PAGES_SCHEMA`` unless the step says otherwise) and
@@ -674,171 +533,6 @@ def _each_pages_db(step: str, fn, schema=_V25_PAGES_SCHEMA) -> None:
                 fn(pdb)
         except sqlite3.Error as e:
             log.error(f"[migrate] step {step}: workspace {ws_root.name} skipped, its pages.db failed: {e}")
-
-
-def _v9_upload_path_titles(conn: sqlite3.Connection) -> None:
-    """Runs the content normalizers over every workspace's pages.db once
-    more: the ``upload_path_titles`` step (a directory path that leaked into
-    ``original_filename`` and the generated title) used to be repaired on
-    every library listing, with raw SQL outside the op log; now it is a
-    one-time rewrite like the other content shapes."""
-    _each_pages_db("9 (upload_path_titles)", normalize_pages_db)
-
-
-def _v10_mirrors(conn: sqlite3.Connection) -> None:
-    """``integration_tokens`` gains ``scope`` (read, the old meaning, or
-    write — a token a mirror pushes with) and users.db gains ``mirrors``
-    (local workspaces that are offline copies of a remote one)."""
-    if "scope" not in _columns(conn, "integration_tokens"):
-        conn.execute("ALTER TABLE integration_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'read'")
-    conn.execute(next(s for s in _V24_USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS mirrors" in s))
-    conn.commit()
-
-
-def _v11_mirror_cadence(conn: sqlite3.Connection) -> None:
-    """``mirrors`` gains its cadence: ``poll_s`` (how often a round checks
-    the original, 0 = only by hand) and ``on_change`` (a round a few seconds
-    after a local edit). A mirror's ``mode`` may now also be ``off`` — detached,
-    the link kept for a later re-link."""
-    cols = _columns(conn, "mirrors")
-    if "poll_s" not in cols:
-        conn.execute("ALTER TABLE mirrors ADD COLUMN poll_s INTEGER NOT NULL DEFAULT 30")
-    if "on_change" not in cols:
-        conn.execute("ALTER TABLE mirrors ADD COLUMN on_change INTEGER NOT NULL DEFAULT 1")
-    conn.commit()
-
-
-def _v12_sync_log_stats(conn: sqlite3.Connection) -> None:
-    """Every workspace's ``sync_log`` gains ``stats``: the git-style block
-    counts of what a round did to the page (JSON ``{add, del, mod}``; rows
-    from before carry none and show without counts)."""
-    def add_stats(pdb):
-        if "stats" not in _columns(pdb, "sync_log"):
-            pdb.execute("ALTER TABLE sync_log ADD COLUMN stats TEXT NOT NULL DEFAULT ''")
-        pdb.commit()
-
-    _each_pages_db("12 (sync_log_stats)", add_stats)
-
-
-def _v13_sync_conflict_base(conn: sqlite3.Connection) -> None:
-    """Every workspace's ``sync_conflicts`` gains ``base``: the text a merged
-    block had before either side edited it, so the resolver can show what
-    each side changed (rows from before carry none and show as before)."""
-    def add_base(pdb):
-        if "base" not in _columns(pdb, "sync_conflicts"):
-            pdb.execute("ALTER TABLE sync_conflicts ADD COLUMN base TEXT NOT NULL DEFAULT ''")
-        pdb.commit()
-
-    _each_pages_db("13 (sync_conflict_base)", add_base)
-
-
-def _v14_identities(conn: sqlite3.Connection) -> None:
-    """Adds ``identities`` (+ its unique index) in users.db: the cloud
-    identity linked to an account (gamma/cloud_auth.py)."""
-    for stmt in _V24_USERS_SCHEMA:
-        if "identities" in stmt:
-            conn.execute(stmt)
-    conn.commit()
-
-
-# The per-protocol default models Gamma used to serve for an entry with no
-# models picked. Frozen here: the running code no longer has a default.
-_V15_OLD_DEFAULT_MODELS = {
-    "anthropic": "claude-haiku-4-5-20251001",
-    "openai": "gpt-4o-mini",
-    "chatgpt": "gpt-5.1",
-}
-
-
-def _v15_ai_explicit_models(conn: sqlite3.Connection) -> None:
-    """AI provider entries (users.db ``user_prefs`` key ``ai-settings``) with
-    no models picked get the default they were implicitly using written in:
-    entries no longer fall back to a built-in model, so nothing an account
-    relies on disappears."""
-    rows = conn.execute(
-        "SELECT username, workspace_id, value FROM user_prefs WHERE key = 'ai-settings'").fetchall()
-    for username, ws, value in rows:
-        try:
-            data = json.loads(value)
-        except ValueError:
-            continue
-        entries = data.get("providers") if isinstance(data, dict) else None
-        if not isinstance(entries, list):
-            continue
-        changed = False
-        for e in entries:
-            default = _V15_OLD_DEFAULT_MODELS.get(e.get("protocol")) if isinstance(e, dict) else None
-            if default and not str(e.get("models") or "").strip():
-                e["models"] = default
-                changed = True
-        if changed:
-            conn.execute(
-                "UPDATE user_prefs SET value = ? WHERE username = ? AND workspace_id = ? AND key = 'ai-settings'",
-                (json.dumps(data), username, ws))
-    conn.commit()
-
-
-def _v16_pending_memberships(conn: sqlite3.Connection) -> None:
-    """Adds ``pending_memberships`` (+ its subject index) in users.db: shared
-    workspace invitations waiting for a Gamma Cloud account's first sign-in
-    (gamma/workspaces.py)."""
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pending_memberships (workspace_id TEXT NOT NULL REFERENCES workspaces(id), "
-        "subject TEXT NOT NULL, username TEXT NOT NULL, role TEXT NOT NULL, invited_by TEXT NOT NULL DEFAULT '', "
-        "created_at TEXT NOT NULL, PRIMARY KEY (workspace_id, subject))")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)")
-    conn.commit()
-
-
-def _v17_profile(conn: sqlite3.Connection) -> None:
-    """The account-wide ``appearance`` pref ({theme, pdfDark}) becomes the
-    first two entries of the new ``profile`` pref ({theme, pdfDarkPage}, keyed
-    by the web app's preference names), keeping its updated_at; an account
-    that somehow has a profile already keeps it. ``appearance`` rows are
-    dropped."""
-    rows = conn.execute(
-        "SELECT username, value, updated_at FROM user_prefs WHERE key = 'appearance' AND workspace_id = ''").fetchall()
-    for username, value, updated_at in rows:
-        try:
-            old = json.loads(value)
-        except ValueError:
-            continue
-        if not isinstance(old, dict):
-            continue
-        profile = {}
-        if isinstance(old.get("theme"), str):
-            profile["theme"] = old["theme"]
-        if isinstance(old.get("pdfDark"), bool):
-            profile["pdfDarkPage"] = old["pdfDark"]
-        if profile:
-            conn.execute(
-                "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
-                "VALUES (?, '', 'profile', ?, ?)", (username, json.dumps(profile), updated_at))
-    conn.execute("DELETE FROM user_prefs WHERE key = 'appearance'")
-    conn.commit()
-
-
-def _v18_cloud_grant(conn: sqlite3.Connection) -> None:
-    """``sessions`` gains ``via`` ('' a password or the guest, 'cloud' a
-    Gamma Cloud sign-in) and ``identities`` gains ``revoked_at``: the grant
-    check (gamma/cloud_sync.py) ends only the sessions a cloud sign-in
-    minted when the account server refuses that account's grant. Sessions
-    that exist already count as password sessions."""
-    if "via" not in _columns(conn, "sessions"):
-        conn.execute("ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT ''")
-    if "revoked_at" not in _columns(conn, "identities"):
-        conn.execute("ALTER TABLE identities ADD COLUMN revoked_at TEXT NOT NULL DEFAULT ''")
-    conn.commit()
-
-
-def _v19_mirror_page_filter(conn: sqlite3.Connection) -> None:
-    """``mirrors`` gains ``page_filter``: NULL (every page travels, what
-    every existing mirror keeps) or a JSON list of page ids, the only pages a
-    round looks at — a page published to the share host
-    (gamma/sync_engine.py, gamma/publish.py)."""
-    if "page_filter" not in _columns(conn, "mirrors"):
-        conn.execute("ALTER TABLE mirrors ADD COLUMN page_filter TEXT")
-    conn.commit()
 
 
 def _v20_guest_accounts(conn: sqlite3.Connection) -> None:
@@ -1177,11 +871,15 @@ def _v29_workspace(conn: sqlite3.Connection, pdb: sqlite3.Connection) -> None:
     for token, value in conn.execute("SELECT token, folder FROM shares WHERE workspace_id = ? AND folder != ''",
                                      (ws,)).fetchall():
         folder_id = folder_of(value)
+        # One share per folder (idx_shares_folder): a second path that
+        # resolves to the same folder (a case variant) would keep its path
+        # and never open, so it goes like a share whose folder is gone.
+        if folder_id and folder_id != value:
+            folder_id = "" if conn.execute("UPDATE OR IGNORE shares SET folder = ? WHERE token = ?",
+                                           (folder_id, token)).rowcount == 0 else folder_id
         if not folder_id:
             conn.execute("DELETE FROM share_users WHERE token = ?", (token,))
             conn.execute("DELETE FROM shares WHERE token = ?", (token,))
-        elif folder_id != value:
-            conn.execute("UPDATE OR IGNORE shares SET folder = ? WHERE token = ?", (folder_id, token))
     conn.commit()
 
 
@@ -1217,25 +915,6 @@ def _v31_session_columns(conn: sqlite3.Connection) -> None:
 
 
 STEPS = [
-    (1, "baseline", _v1_baseline),
-    (2, "workspaces", _v2_workspaces),
-    (3, "workspace_access", _v3_workspace_access),
-    (4, "workspace_kinds", _v4_workspace_kinds),
-    (5, "publisher_sessions", _v5_publisher_sessions),
-    (6, "integration_tokens", _v6_integration_tokens),
-    (7, "mcp_oauth", _v7_mcp_oauth),
-    (8, "ai_usage", _v8_ai_usage),
-    (9, "upload_path_titles", _v9_upload_path_titles),
-    (10, "mirrors", _v10_mirrors),
-    (11, "mirror_cadence", _v11_mirror_cadence),
-    (12, "sync_log_stats", _v12_sync_log_stats),
-    (13, "sync_conflict_base", _v13_sync_conflict_base),
-    (14, "identities", _v14_identities),
-    (15, "ai_explicit_models", _v15_ai_explicit_models),
-    (16, "pending_memberships", _v16_pending_memberships),
-    (17, "profile", _v17_profile),
-    (18, "cloud_grant", _v18_cloud_grant),
-    (19, "mirror_page_filter", _v19_mirror_page_filter),
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
     (22, "upload_orphans", _v22_upload_orphans),

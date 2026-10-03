@@ -35,131 +35,6 @@ def ids_by_name() -> dict:
         return dict(conn.execute("SELECT username, id FROM users").fetchall())
 
 
-def test_v7_adds_mcp_oauth_and_preserves_tokens(data_dir):
-    v24_users_db()
-    with sqlite3.connect(str(config.USERS_DB)) as conn:
-        conn.execute("DROP TABLE mcp_oauth")
-        conn.execute("PRAGMA user_version = 6")
-        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES ('user', 'x', ?)", (OLD,))
-        conn.execute("INSERT INTO integration_tokens VALUES ('id', 'hash', 'user', 'ws', 'Codex', 'now', 9999999999, 'read')")
-    assert migrations.ensure_current()["applied"] == ["mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT id FROM integration_tokens").fetchone()[0] == 'id'
-        assert conn.execute("SELECT * FROM mcp_oauth").fetchall() == []
-    assert migrations.ensure_current()["applied"] == []
-
-
-def test_v6_adds_integration_tokens_and_is_repeatable(data_dir):
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("DROP TABLE integration_tokens")
-        conn.execute("PRAGMA user_version = 5")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT * FROM integration_tokens").fetchall() == []
-    assert migrations.ensure_current()["applied"] == []
-
-
-def test_v5_adds_publisher_sessions_and_is_repeatable(data_dir):
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("DROP TABLE publisher_sessions")
-        conn.execute("PRAGMA user_version = 4")
-        conn.commit()
-    result = migrations.ensure_current()
-    assert result["applied"] == ["publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT * FROM publisher_sessions").fetchall() == []
-    assert migrations.ensure_current()["applied"] == []
-
-
-def test_v16_adds_pending_memberships_and_is_repeatable(data_dir):
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("DROP TABLE pending_memberships")
-        conn.execute("PRAGMA user_version = 15")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT * FROM pending_memberships").fetchall() == []
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_pending_subject'").fetchone()
-    assert migrations.ensure_current()["applied"] == []
-
-
-def test_v17_folds_appearance_into_the_profile(data_dir):
-    # {theme, pdfDark} becomes the profile's {theme, pdfDarkPage} with the
-    # same updated_at; an existing profile wins; every appearance row goes.
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        rows = [
-            ("ann", "", "appearance", {"theme": "sepia", "pdfDark": True}),
-            ("bob", "", "appearance", {"theme": "dark", "pdfDark": False}),
-            ("bob", "", "profile", {"theme": "gray", "enterNewNote": True}),
-            ("cat", "", "appearance", "garbage"),
-        ]
-        for name in ("ann", "bob", "cat"):
-            conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, 'x', ?)", (name, OLD))
-        for user, ws, key, value in rows:
-            conn.execute("INSERT INTO user_prefs VALUES (?, ?, ?, ?, ?)", (user, ws, key, json.dumps(value), OLD))
-        conn.execute("PRAGMA user_version = 16")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        stored = {(r[0], r[1]): (json.loads(r[2]), r[3]) for r in conn.execute(
-            "SELECT u.username, p.key, p.value, p.updated_at FROM user_prefs p JOIN users u ON u.id = p.user_id")}
-    assert stored == {
-        ("ann", "profile"): ({"theme": "sepia", "pdfDarkPage": True}, OLD),
-        ("bob", "profile"): ({"theme": "gray", "enterNewNote": True}, OLD),
-    }
-    assert migrations.ensure_current()["applied"] == []
-
-
-
-def test_v18_marks_session_origin_and_grant_refusal(data_dir):
-    # sessions gain via (existing ones count as password sessions),
-    # identities gain revoked_at; the rows themselves are kept
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES ('mig18', 'x', ?)", (OLD,))
-        conn.execute("DROP TABLE sessions")
-        conn.execute("CREATE TABLE sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL REFERENCES users(username), "
-                     "guest_date TEXT, created_at TEXT NOT NULL)")
-        conn.execute("INSERT INTO sessions VALUES ('tok-18', 'mig18', NULL, ?)", (OLD,))
-        conn.execute("DROP TABLE identities")
-        conn.execute("CREATE TABLE identities (provider TEXT NOT NULL, subject TEXT NOT NULL, username TEXT NOT NULL, "
-                     "email TEXT NOT NULL DEFAULT '', claims TEXT NOT NULL DEFAULT '{}', refresh_token TEXT NOT NULL DEFAULT '', "
-                     "created_at TEXT NOT NULL, last_login_at TEXT NOT NULL, PRIMARY KEY (provider, subject))")
-        conn.execute("INSERT INTO identities (provider, subject, username, created_at, last_login_at) "
-                     "VALUES ('gamma-cloud', 'sub-18', 'mig18', ?, ?)", (OLD, OLD))
-        conn.execute("PRAGMA user_version = 17")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT via FROM sessions WHERE token = 'tok-18'").fetchone() == ("",)
-        assert conn.execute("SELECT revoked_at FROM identities WHERE subject = 'sub-18'").fetchone() == ("",)
-    assert migrations.ensure_current()["applied"] == []
-
-def test_v19_gives_mirrors_a_page_filter(data_dir):
-    # mirrors gain page_filter; an existing mirror keeps NULL (every page travels)
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("DROP TABLE mirrors")
-        conn.execute("CREATE TABLE mirrors (workspace_id TEXT PRIMARY KEY, remote_url TEXT NOT NULL, "
-                     "remote_ws TEXT NOT NULL, remote_name TEXT NOT NULL DEFAULT '', token TEXT NOT NULL, "
-                     "owner TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'two-way', remote_cursor TEXT NOT NULL DEFAULT '', "
-                     "local_cursor TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, "
-                     "poll_s INTEGER NOT NULL DEFAULT 30, on_change INTEGER NOT NULL DEFAULT 1)")
-        conn.execute("INSERT INTO mirrors (workspace_id, remote_url, remote_ws, token, owner, created_at) "
-                     "VALUES ('ws19', 'https://nas', 'r', 't', 'u', ?)", (OLD,))
-        conn.execute("PRAGMA user_version = 18")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT page_filter FROM mirrors WHERE workspace_id = 'ws19'").fetchone() == (None,)
-    assert migrations.ensure_current()["applied"] == []
-
-
 def test_v20_removes_the_legacy_guest_account(data_dir):
     # the shared guest account goes with its rows and its workspace directory;
     # a password-less is_guest row made by create-user becomes a normal account
@@ -491,7 +366,6 @@ def test_v26_gives_blocks_their_hot_fields(data_dir):
                     "page_id", "kind", "doc_id"]  # the shape a fresh workspace gets (db.PAGES_SCHEMA)
 
 
-
 WS27 = "wsChanges27"
 NEW = "2025-06-01T00:00:00.000000Z"
 
@@ -733,8 +607,9 @@ def test_v29_makes_folders_and_labels_blocks(data_dir):
         conn.executemany("INSERT INTO shares (token, workspace_id, page_id, folder, created_by, created_at) "
                          "VALUES (?, ?, ?, ?, '', ?)", [("shQ", WS29, "", "Physics/QEC", OLD),
                                                         ("shGone", WS29, "", "Gone/Path", OLD),
+                                                        ("shTwin", WS29, "", "physics/qec", OLD),  # resolves to shQ's folder
                                                         ("shPage", WS29, "p2", "", OLD)])
-        conn.execute("INSERT INTO share_users VALUES ('shGone', 'id-bob29', 'view')")
+        conn.executemany("INSERT INTO share_users VALUES (?, 'id-bob29', 'view')", [("shGone",), ("shTwin",)])
         conn.executemany("INSERT INTO user_prefs VALUES (?, ?, 'pinned-folders', ?, ?)", [
             ("id-alice29", WS29, json.dumps([{"path": "Physics", "at": "2025-01-01T00:00:00.000Z"},
                                               {"path": "Nowhere", "at": "2025-01-02T00:00:00.000Z"}]), OLD),
@@ -791,7 +666,7 @@ def test_v29_makes_folders_and_labels_blocks(data_dir):
     assert json.loads(blocks[folder("Old", "Archive")][3]) == {"pinned": "2025-02-01T00:00:00.000Z"}
     assert chats == sorted([(folder("Physics", "QEC"), "QEC chat"), (folder("Empty", "Chat"), ""), ("home", "")])
     assert history == sorted([(folder("Physics"), "Old one"), ("home", "Stray")])  # "home" was taken: filed
-    assert shares == sorted([("shQ", folder("Physics", "QEC")), ("shPage", "")])
+    assert shares == sorted([("shQ", folder("Physics", "QEC")), ("shPage", "")])  # one share per folder: the twin went
     assert invited == []
     assert prefs == [("id-bob29", "open-tabs")]
 
@@ -951,29 +826,6 @@ def test_v30_gives_highlights_their_shape(data_dir):
     assert state() == before
 
 
-def test_v15_writes_the_old_default_into_modelless_ai_entries(data_dir):
-    # Entries no longer fall back to a built-in model: an entry that had none
-    # picked gets the default it was using; picked lists are left alone.
-    v24_users_db()
-    providers = [
-        {"id": "a", "protocol": "anthropic", "api_key": "k", "models": ""},
-        {"id": "o", "protocol": "openai", "api_key": "k", "models": "gpt-x, gpt-y"},
-        {"id": "c", "protocol": "chatgpt", "oauth": {}},
-    ]
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES ('u', 'x', ?)", (OLD,))
-        conn.execute("INSERT INTO user_prefs VALUES ('u', '', 'ai-settings', ?, ?)",
-                     (json.dumps({"providers": providers}), OLD))
-        conn.execute("PRAGMA user_version = 14")
-        conn.commit()
-    assert migrations.ensure_current()["applied"] == ["ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with connect_users_db() as conn:
-        stored = json.loads(conn.execute(
-            "SELECT value FROM user_prefs WHERE key = 'ai-settings'").fetchone()[0])["providers"]
-    assert [p["models"] for p in stored] == ["claude-haiku-4-5-20251001", "gpt-x, gpt-y", "gpt-5.1"]
-    assert migrations.ensure_current()["applied"] == []
-
-
 def _legacy_pages_db(path: Path, blocks):
     with closing(sqlite3.connect(str(path))) as conn:
         conn.execute("""CREATE TABLE unified_blocks (id TEXT PRIMARY KEY, parent_id TEXT, position TEXT NOT NULL,
@@ -986,191 +838,6 @@ def _legacy_pages_db(path: Path, blocks):
         conn.commit()
 
 
-def _legacy_data_db(path: Path, prefs: dict, chats=()):
-    with closing(sqlite3.connect(str(path))) as conn:
-        # the oldest chats shape (no title column) + legacy tables + prefs
-        conn.execute("CREATE TABLE chats (block_id TEXT PRIMARY KEY, messages TEXT NOT NULL, updated_at TEXT NOT NULL)")
-        conn.executemany("INSERT INTO chats VALUES (?, '[]', ?)", ((bucket, OLD) for bucket in chats))
-        conn.execute("CREATE TABLE annotations (id TEXT)")
-        conn.execute("CREATE TABLE prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
-        for k, v in prefs.items():
-            conn.execute("INSERT INTO prefs VALUES (?, ?, ?)", (k, json.dumps(v), OLD))
-        conn.commit()
-
-
-def build_v0(root: Path):
-    """The layout every pre-workspace Gamma wrote: users.db without the
-    later columns, users/<name>/ with pages.db + data.db + uploads/."""
-    with closing(sqlite3.connect(str(root / "users.db"))) as conn:
-        conn.execute("CREATE TABLE users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
-                     "is_guest INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)")
-        conn.execute("CREATE TABLE sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, "
-                     "guest_date TEXT, created_at TEXT NOT NULL)")
-        conn.execute("CREATE TABLE shares (token TEXT PRIMARY KEY, username TEXT NOT NULL, "
-                     "doc_id TEXT NOT NULL, created_at TEXT NOT NULL)")
-        conn.executemany("INSERT INTO users VALUES (?, ?, ?, ?)", [
-            ("alice", "hash", 0, OLD), ("bob", "hash", 0, OLD), ("guest", "", 1, OLD)])
-        conn.execute("INSERT INTO sessions VALUES ('tok-alice', 'alice', NULL, ?)", (OLD,))
-        conn.executemany("INSERT INTO shares VALUES (?, ?, ?, ?)", [
-            ("share-doc", "alice", "docA", OLD),       # doc-keyed: resolves to alice's page
-            ("share-gone", "alice", "vanished", OLD),  # unresolvable: dropped
-            ("share-ghost", "nobody", "docA", OLD),    # unknown account: dropped
-        ])
-        conn.commit()
-    for name in ("alice", "bob", "guest"):
-        d = root / "users" / name
-        (d / "uploads").mkdir(parents=True)
-        (d / "uploads" / "docA.pdf").write_bytes(b"%PDF-1.4 " + name.encode())
-    _legacy_pages_db(root / "users/alice/pages.db", [
-        ("pageA", "root", "PDF Notes - a.pdf", {"doc_id": "docA", "sourceUrl": "https://x/a.pdf"}),
-        ("noteA", "pageA", "see ![c](/api/uploads/i.png){:width 120}", {}),
-    ])
-    _legacy_pages_db(root / "users/bob/pages.db", [("pageB", "root", "Bob page", {})])
-    _legacy_pages_db(root / "users/guest/pages.db", [])
-    _legacy_data_db(root / "users/alice/data.db", {
-        "open-tabs": [{"id": "pageA"}], "ai-settings": {"providers": [{"id": "p1", "protocol": "openai"}]},
-        "appearance": {"theme": "dark"}}, chats=["pageA"])
-    _legacy_data_db(root / "users/bob/data.db", {"recent-views": ["pageB"]})
-    _legacy_data_db(root / "users/guest/data.db", {})
-
-
-def test_status_and_refusal_on_a_v0_directory(data_dir):
-    build_v0(data_dir)
-    st = migrations.status()
-    assert st["version"] == 0 and st["target"] == SCHEMA_VERSION and not st["fresh"]
-    assert [p["name"] for p in st["pending"]] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    # Nothing but the runner may open an old users.db.
-    with pytest.raises(SchemaOutdated):
-        connect_users_db()
-    assert migrations.ensure_current(dry_run=True)["applied"] == []
-    assert migrations.data_version() == 0  # a dry run changes nothing
-
-
-def test_upgrade_v0_to_current(data_dir):
-    build_v0(data_dir)
-    result = migrations.ensure_current()
-    assert result["from"] == 0 and result["to"] == SCHEMA_VERSION
-    assert result["applied"] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    assert migrations.data_version() == SCHEMA_VERSION
-
-    # A snapshot of every database was taken first, with a manifest.
-    backup = Path(result["backup"])
-    manifest = json.loads((backup / "manifest.json").read_text())
-    assert manifest["schema_version"] == 0
-    assert "users.db" in manifest["files"] and "users/alice/pages.db" in manifest["files"]
-    assert (backup / "users/alice/pages.db").is_file() and not (backup / "users/alice/uploads").exists()
-    assert migrations.status()["backups"] == [backup.name]
-    assert backups.info(backup.name)["uploads"] is False
-
-    with connect_users_db() as conn:
-        users = {r[0]: r[1] for r in conn.execute("SELECT username, default_workspace FROM users")}
-        # step 20 removed the legacy shared guest account and its workspace
-        assert set(users) == {"alice", "bob"} and all(users.values())
-        ws_alice, ws_bob = users["alice"], users["bob"]
-        # one personal workspace per account, the account its owner
-        rows = conn.execute("SELECT id, name, created_by FROM workspaces ORDER BY created_at").fetchall()
-        assert {r[0] for r in rows} == {ws_alice, ws_bob}
-        assert {d.name for d in (data_dir / "workspaces").iterdir()} == {ws_alice, ws_bob}
-        assert dict((r[0], r[1]) for r in rows)[ws_alice] == "alice"
-        members = conn.execute("SELECT m.workspace_id, u.username, m.role FROM workspace_members m "
-                               "JOIN users u ON u.id = m.user_id").fetchall()
-        assert (ws_alice, "alice", "owner") in members and len(members) == 2
-        # the columns that used to be added lazily exist
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
-        assert {"is_admin", "max_upload_mb", "quota_mb", "default_workspace"} <= cols
-        # shares: doc-keyed row resolved and re-keyed by workspace; the rest dropped
-        shares = conn.execute("SELECT s.token, s.workspace_id, s.page_id, u.username FROM shares s "
-                              "JOIN users u ON u.id = s.created_by").fetchall()
-        assert shares == [("share-doc", ws_alice, "pageA", "alice")]
-        assert "doc_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shares)")}
-        # personal prefs moved: account-wide keys under '', page-naming keys under the workspace
-        prefs = {(r[0], r[1], r[2]): json.loads(r[3]) for r in conn.execute(
-            "SELECT u.username, p.workspace_id, p.key, p.value FROM user_prefs p JOIN users u ON u.id = p.user_id")}
-        assert prefs[("alice", "", "ai-settings")]["providers"][0]["id"] == "p1"
-        # ...and step 17 folded appearance into the preference profile
-        assert prefs[("alice", "", "profile")] == {"theme": "dark"}
-        assert ("alice", "", "appearance") not in prefs
-        assert prefs[("alice", ws_alice, "open-tabs")] == [{"id": "pageA"}]
-        assert prefs[("bob", ws_bob, "recent-views")] == ["pageB"]
-        # the session row survived, naming the account by its id now
-        assert conn.execute("SELECT u.username FROM sessions s JOIN users u ON u.id = s.user_id "
-                            "WHERE s.token = 'tok-alice'").fetchone() == ("alice",)
-
-    # Files moved, not copied; the legacy directory is gone.
-    ws_dir = data_dir / "workspaces" / ws_alice
-    assert (ws_dir / "pages.db").is_file() and (ws_dir / "uploads" / "docA.pdf").read_bytes().endswith(b"alice")
-    assert not (data_dir / "users").exists()
-
-    # Per-workspace files normalized: content shapes, legacy tables; the
-    # chats (the oldest shape, no title) moved into pages.db by step 28,
-    # beside the notes index built from the normalized content.
-    with closing(sqlite3.connect(str(ws_dir / "pages.db"))) as conn:
-        register_functions(conn)
-        content, props = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = 'pageA'").fetchone()
-        assert content == "a.pdf" and json.loads(props) == {"doc_id": "docA", "source_url": "https://x/a.pdf", "auto_title": "a.pdf"}
-        assert conn.execute("SELECT content FROM unified_blocks WHERE id = 'noteA'").fetchone()[0] == "see ![c|120](/api/uploads/i.png)"
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'page_ops'").fetchone()
-        assert conn.execute("SELECT bucket, messages, title FROM chats").fetchall() == [("pageA", "[]", "")]
-        assert conn.execute("SELECT block_id FROM block_fts WHERE block_fts MATCH 'see'").fetchall() == [("noteA",)]
-    with closing(sqlite3.connect(str(ws_dir / "data.db"))) as conn:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        assert not tables & {"prefs", "annotations", "chats", "chat_history"}
-
-    # Idempotent: a second run applies nothing and takes no new snapshot.
-    again = migrations.ensure_current()
-    assert again["applied"] == [] and again["backup"] is None
-    assert len(backups.list_backups()) == 1
-
-
-def test_interrupted_upgrade_resumes(data_dir):
-    """A crash mid-step leaves the version at the last completed step; the
-    next start finishes the rest without redoing accounts already moved."""
-    build_v0(data_dir)
-    # Run the baseline step only, then half of the workspaces step by hand.
-    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
-        migrations._v1_baseline(conn)
-        conn.execute("PRAGMA user_version = 1")
-        conn.commit()
-    assert migrations.data_version() == 1
-    calls = {"n": 0}
-    real = migrations._move_prefs
-
-    def crash_after_first(conn, username, ws_id, data_db):
-        real(conn, username, ws_id, data_db)
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("disk full")
-
-    import gamma.migrations as m
-    original = m._move_prefs
-    m._move_prefs = crash_after_first
-    try:
-        with pytest.raises(migrations.MigrationError, match="workspaces"):
-            migrations.ensure_current()
-    finally:
-        m._move_prefs = original
-    assert migrations.data_version() == 1  # the failed step did not stamp
-    result = migrations.ensure_current()   # resumes: the moved account is skipped, the rest done
-    assert result["applied"] == ["workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"] and migrations.data_version() == SCHEMA_VERSION
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM users WHERE default_workspace = ''").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 2  # the guest's went in step 20
-    assert not (data_dir / "users").exists()
-
-
-def test_newer_data_directory_is_refused(data_dir):
-    build_v0(data_dir)
-    migrations.ensure_current()
-    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
-        conn.commit()
-    with pytest.raises(migrations.NewerDataError):
-        migrations.ensure_current()
-    # …and so is running the app's startup on it.
-    with pytest.raises(SystemExit):
-        app_mod._startup_maintenance()
-
-
 def test_fresh_directory_needs_no_migration(data_dir):
     assert migrations.status()["fresh"] is True
     assert migrations.ensure_current()["applied"] == []
@@ -1179,8 +846,79 @@ def test_fresh_directory_needs_no_migration(data_dir):
     assert migrations.ensure_current()["applied"] == []
 
 
+def test_a_directory_below_the_floor_is_refused_with_guidance(data_dir):
+    """A data directory older than MIN_UPGRADABLE is refused untouched, and
+    the refusal says what to run: the release UPGRADE_VIA names, which
+    carries the steps this build no longer has."""
+    v24_users_db(version=migrations.MIN_UPGRADABLE - 1)
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+        before = list(conn.iterdump())
+    with pytest.raises(migrations.TooOldDataError) as caught:
+        migrations.ensure_current()
+    assert caught.value.version == migrations.MIN_UPGRADABLE - 1
+    guide = migrations.guidance(caught.value)
+    assert guide["title"].startswith("This Gamma needs an earlier release")
+    assert "Nothing has been changed" in guide["summary"]
+    assert any(migrations.UPGRADE_VIA["image"] in step and "docker compose" in step for step in guide["steps"])
+    assert any("Desktop app" in step for step in guide["steps"])
+    assert guide["data_dir"] == str(config.DATA_DIR)
+    with pytest.raises(SchemaOutdated):  # nothing but the runner may open it, and the runner refused
+        connect_users_db()
+    assert migrations.status()["version"] == migrations.MIN_UPGRADABLE - 1
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+        assert list(conn.iterdump()) == before
+    # The server comes up as one page saying the same, at every address and
+    # as JSON under /api, instead of exiting into a restart loop.
+    from fastapi.testclient import TestClient
+    with TestClient(app_mod.create_app()) as client:
+        page = client.get("/some/page?x=1")
+        assert page.status_code == 503 and "text/html" in page.headers["content-type"]
+        assert guide["title"] in page.text and migrations.UPGRADE_VIA["image"] in page.text
+        api = client.get("/api/session")
+        assert api.status_code == 503 and api.json()["error"] == "data_directory_not_upgradable"
+        assert api.json()["steps"] == guide["steps"]
+        assert client.post("/api/blocks", json={}).status_code == 503
+        assert client.get("/api/health").status_code == 503
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+        assert list(conn.iterdump()) == before
+
+
+def test_newer_data_directory_is_refused(data_dir):
+    build_v24_accounts()
+    migrations.ensure_current()
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        conn.commit()
+    with pytest.raises(migrations.NewerDataError) as caught:
+        migrations.ensure_current()
+    guide = migrations.guidance(caught.value)
+    assert guide["title"].startswith("This data directory was written by a newer Gamma")
+    assert any("--restore" in step for step in guide["steps"])
+    # ...and the app serves that instead of its routes
+    from fastapi.testclient import TestClient
+    with TestClient(app_mod.create_app()) as client:
+        assert client.get("/").status_code == 503 and guide["title"] in client.get("/").text
+
+
+def test_a_failed_step_is_explained_with_its_snapshot(data_dir, monkeypatch):
+    build_v24_accounts()
+
+    def broken(conn):
+        raise RuntimeError("disk full (simulated)")
+
+    monkeypatch.setattr(migrations, "STEPS", [(v, n, broken if v == 26 else fn) for v, n, fn in migrations.STEPS])
+    with pytest.raises(migrations.MigrationError, match="disk full") as caught:
+        migrations.ensure_current()
+    assert caught.value.step == "26 (block_columns)" and caught.value.version == 25
+    guide = migrations.guidance(caught.value)
+    assert guide["title"].startswith("The upgrade of your data directory stopped")
+    assert "schema version 25" in guide["summary"] and "resumes" in guide["summary"]
+    assert guide["snapshot"] == caught.value.snapshot and Path(guide["snapshot"]).is_dir()
+    assert any(Path(guide["snapshot"]).name in step for step in guide["steps"])
+
+
 def test_backups_are_pruned_only_on_request(data_dir, monkeypatch):
-    build_v0(data_dir)
+    v24_users_db()
     monkeypatch.setattr(backups, "KEEP_BACKUPS", 2)
     backups.create("a")
     backups.create("b")   # a second one within the same second gets the next stamp
@@ -1194,60 +932,33 @@ def test_backups_are_pruned_only_on_request(data_dir, monkeypatch):
 
 
 def test_backup_with_uploads_zip_and_restore(data_dir):
-    build_v0(data_dir)
+    build_v24_accounts()
+    uploads = data_dir / "workspaces" / WS25 / "uploads"
+    uploads.mkdir()
+    for name in ("docA.pdf", "docB.pdf"):
+        (uploads / name).write_bytes(b"%PDF-1.4 " + name.encode())
     migrations.ensure_current()
-    with closing(connect_users_db()) as conn:  # closed: a restore runs with no handle open (WAL sidecars)
-        ws = conn.execute("SELECT default_workspace FROM users WHERE username = 'alice'").fetchone()[0]
-    pdf = data_dir / "workspaces" / ws / "uploads" / "docA.pdf"
+    pdf = uploads / "docA.pdf"
     b = backups.create("full", uploads=True)
-    assert b["uploads"] is True and b["upload_files"] == 2 and b["size_bytes"] > 0  # alice's, bob's (the guest's went in step 20)
-    assert (Path(b["path"]) / "workspaces" / ws / "uploads" / "docA.pdf").read_bytes() == pdf.read_bytes()
+    assert b["uploads"] is True and b["upload_files"] == 2 and b["size_bytes"] > 0
+    assert (Path(b["path"]) / "workspaces" / WS25 / "uploads" / "docA.pdf").read_bytes() == pdf.read_bytes()
     assert backups.backup_path("../../etc") is None and backups.info("nope") is None
     # the zip holds every file at its relative path
     import zipfile
     z = zipfile.ZipFile(backups.zip_backup(b["name"]))
-    assert "manifest.json" in z.namelist() and f"workspaces/{ws}/uploads/docA.pdf" in z.namelist()
+    assert "manifest.json" in z.namelist() and f"workspaces/{WS25}/uploads/docA.pdf" in z.namelist()
     # damage the live data, restore, and it is back
     pdf.unlink()
-    with closing(sqlite3.connect(str(data_dir / "workspaces" / ws / "pages.db"))) as conn:
+    pages_db = data_dir / "workspaces" / WS25 / "pages.db"
+    with closing(sqlite3.connect(str(pages_db))) as conn:
         register_functions(conn)  # the notes index's triggers call textnorm
-        conn.execute("DELETE FROM unified_blocks WHERE id = 'noteA'")
+        conn.execute("DELETE FROM unified_blocks WHERE id = 'p1'")
         conn.commit()
     r = backups.restore(b["name"])
-    assert r["files"] >= 7 and pdf.is_file()
-    with closing(sqlite3.connect(str(data_dir / "workspaces" / ws / "pages.db"))) as conn:
-        assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = 'noteA'").fetchone()
+    assert r["files"] >= 3 and pdf.is_file()
+    with closing(sqlite3.connect(str(pages_db))) as conn:
+        assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = 'p1'").fetchone()
     assert backups.delete(b["name"]) is True and backups.delete(b["name"]) is False
-
-
-def test_v9_repairs_leaked_upload_paths_once(data_dir):
-    """The upload_path_titles content step: a directory path that leaked into
-    original_filename (and the generated title) becomes the leaf, a
-    user-renamed page keeps its title, and a second run touches nothing."""
-    v24_users_db()
-    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-        conn.execute("PRAGMA user_version = 8")
-        conn.commit()
-    ws_root = data_dir / "workspaces" / "wsx"
-    ws_root.mkdir(parents=True)
-    _legacy_pages_db(ws_root / "pages.db", [
-        ("auto", "root", "papers/readout/a.pdf",
-         {"original_filename": "papers\\readout\\a.pdf", "auto_title": "papers/readout/a.pdf"}),
-        ("renamed", "root", "My title",
-         {"original_filename": "dir/b.pdf", "auto_title": "dir/b.pdf"}),
-        ("md", "root", "notes/c", {"original_filename": "notes/c.md", "markdown_import": True}),
-        ("clean", "root", "d.pdf", {"original_filename": "d.pdf", "auto_title": "d.pdf"}),
-    ])
-    assert migrations.ensure_current()["applied"] == ["upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns"]
-    with closing(sqlite3.connect(str(ws_root / "pages.db"))) as conn:
-        rows = {r[0]: (r[1], json.loads(r[2]), r[3]) for r in conn.execute(
-            "SELECT id, content, properties, updated_at FROM unified_blocks WHERE parent_id = 'root'")}
-    assert rows["auto"][0] == "a.pdf"
-    assert rows["auto"][1] == {"original_filename": "a.pdf", "auto_title": "a.pdf"}
-    assert rows["renamed"][0] == "My title" and rows["renamed"][1]["original_filename"] == "b.pdf"
-    assert rows["md"][0] == "c" and rows["md"][1]["original_filename"] == "c.md"
-    assert rows["clean"] == ("d.pdf", {"original_filename": "d.pdf", "auto_title": "d.pdf"}, OLD)
-    assert migrations.ensure_current()["applied"] == []
 
 
 def test_v31_drops_the_dead_session_column(data_dir):

@@ -287,6 +287,23 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 Account credentials and private AI keys are never part of an export.
 
+## Upgrading
+
+A new Gamma upgrades your data by itself. On its first start it takes a snapshot of every database into the data directory's `backups/` folder, then brings the data to its own shape, step by step; the log says what it did. The desktop app updates itself; a Docker server updates when its image is pulled (the compose template runs Watchtower, which does that for you), and the next start upgrades the data.
+
+Very old data may need one stop on the way. Each release can upgrade data from a certain version on and drops the older steps; if your data is older than that, Gamma **changes nothing** and shows one page at its usual address instead of the app:
+
+> **This Gamma needs an earlier release to upgrade your data first**
+>
+> Your data directory is at schema version 12; this Gamma (schema 31) upgrades from version 19 on. Nothing has been changed. Run the Gamma release of 2026-10-01 once on the same data directory: it upgrades it to schema version 24, taking a snapshot of the databases first; then start this version again and it finishes the upgrade.
+>
+> 1. Back up the data directory: a plain copy of the folder or volume is enough.
+> 2. Docker Compose: in `docker-compose.yml` set `image: ghcr.io/tim4431/gamma:sha-8708ebb`, run `docker compose up -d`, wait for the log line "data directory upgraded" (`docker logs gamma`), then put the image back and run `docker compose up -d` again.
+> 3. Docker without Compose: `docker run --rm -v <your data volume>:/data ghcr.io/tim4431/gamma:sha-8708ebb`, wait for the same log line, stop it with Ctrl+C, then start your usual container.
+> 4. Desktop app: install that release from the GitHub releases page, open it once with this data directory, then install the current version again.
+
+The page names the exact image or release to run, so follow what it says rather than this example. The same text is in the server log and in `python manage.py migrate`. Your data stays as it was until you run that release; the upgrade snapshot lets you go back if anything looks wrong (`manage.py backups --restore <name>`, with the server stopped). The same page appears, with different steps, if the data was written by a newer Gamma than the one running, or if an upgrade step failed: then it names the cause and the snapshot, and the upgrade resumes at the next start once the cause is fixed.
+
 ## Install as an app
 
 Gamma is a web app; install it from the browser so it opens from an icon, full screen, pointed at your server.

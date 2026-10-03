@@ -23,6 +23,20 @@ services:
       # FORWARDED_ALLOW_IPS: 10.203.0.0/24
     restart: unless-stopped
 
+  # Keeps the gamma container on the newest image: Watchtower polls the
+  # registry every six hours, pulls a new image and restarts gamma, which
+  # upgrades its data directory at startup (a snapshot of the databases is
+  # taken first; see docs/dev/migrations.md). Scoped to this container, so
+  # it never touches others on the host. Remove the service to update by
+  # hand with `docker compose pull && docker compose up -d`.
+  watchtower:
+    container_name: gamma-watchtower
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --interval 21600 gamma
+    restart: unless-stopped
+
 volumes:
   gamma-data:
 

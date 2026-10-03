@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
 
-from gamma import cloud_auth, cloud_sync
+from gamma import cloud_auth, cloud_sync, migrations, version
 from gamma.db import connect_users_db, get_profile, set_profile
 from gamma.server_settings import _set_raw
 
@@ -58,6 +58,7 @@ class FakeAccountServer:
         self.minted = 0
         self.prefs = {}       # subject -> {key: {value, updated_at}}
         self.servers = {}     # subject -> {url: name}
+        self.reports = {}     # subject -> {url: the last body posted for it}
         self.directory = {}   # cloud username -> subject
         self.connects = []    # the forms of the connect token calls
 
@@ -158,6 +159,7 @@ class FakeAccountServer:
             mine = self.servers.setdefault(subject, {})
             if method == "POST":
                 mine[body["url"]] = body["name"]
+                self.reports.setdefault(subject, {})[body["url"]] = body
                 return {"server": {"url": body["url"], "name": body["name"]}}
             if method == "DELETE":
                 return {"ok": True, "removed": mine.pop(body["url"], None) is not None}
@@ -817,6 +819,10 @@ def test_server_registration(cloud, monkeypatch):
     posts = lambda: [x for x in cloud.calls if x == ("POST", "/api/me/servers")]  # noqa: E731
     before = len(posts())
     assert cloud_sync.check_all() == {account_of("ca_ola"): "ok"} and len(posts()) == before + 1
+    # it reports the build and the data directory's schema version, nothing else, on sign-in and on each check
+    assert migrations.data_version() and version.label()
+    assert cloud.reports["sub-ca_ola"][local] == {"url": local, "name": socket.gethostname()[:80],
+                                                  "version": version.label(), "schema": migrations.data_version()}
     # unlinking takes it off the list, then revokes the grant (refreshed first when no access token is cached)
     cloud_auth._access.clear()
     assert c.post("/api/auth/cloud/unlink").json()["ok"] is True
@@ -838,6 +844,23 @@ def test_server_registration(cloud, monkeypatch):
     # a failure is a warning, never an error to the person
     cloud.offline = True
     assert cloud_sync.register_server(account_of("ca_pat"), url="https://gamma.example.org") is False
+
+
+def test_server_registration_reports_the_build(cloud, monkeypatch):
+    local = "http://127.0.0.1:9124"
+    link_account(cloud, "ca_ula", base_url=local)
+    posted = lambda: cloud.reports["sub-ca_ula"][local]  # noqa: E731
+    assert posted()["version"] == version.label() and posted()["schema"] == migrations.data_version()
+    # every check reports the numbers as they are now
+    monkeypatch.setattr(version, "VERSION", "9.9.9")
+    monkeypatch.setattr(version, "COMMIT", "abc123def456")
+    monkeypatch.setattr(migrations, "data_version", lambda: 77)
+    assert cloud_sync.check_all() == {account_of("ca_ula"): "ok"}
+    assert posted()["version"] == "v9.9.9 (abc123def456)" and posted()["schema"] == 77
+    # a fresh install has no users database yet: the schema is left out, the build still reported
+    monkeypatch.setattr(migrations, "data_version", lambda: None)
+    assert cloud_sync.check_all() == {account_of("ca_ula"): "ok"}
+    assert "schema" not in posted() and posted()["version"] == "v9.9.9 (abc123def456)"
 
 
 def test_sync_status(cloud, monkeypatch):

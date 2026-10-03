@@ -119,7 +119,7 @@ the signing keys and every token hash.
 | `signing_keys` | Ed25519 private keys; the newest unretired one signs, a retired one stays published a week |
 | `audit` | every account-changing event |
 | `prefs` | the preference profile: (`account_id`, `key`) → `value` (JSON text) and `updated_at`, the version (step 4) |
-| `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5) |
+| `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5), `version` (the build label it last reported, `''` until it does) and `schema` (its data directory's schema version, NULL until it reports; step 8) |
 
 Every secret at rest is a SHA-256 of a long random token
 (`db.token_hash`); nothing in the file can be replayed. Timestamps are
@@ -180,7 +180,9 @@ page) and the **app** shell (a sidebar and a content column):
     loopback address is not a link, and its row is named after the machine
     ("Gamma desktop app" under it). Then come the system and version from
     the agent (a Gamma server sends `Gamma/<version> (<system>; <its
-    address>)`), the linked or sign-in date and the last address. The row
+    address>)`), the build and data schema version the server last reported
+    (`version`, `schema N`), the linked or sign-in date and the last
+    address. The row
     ends with the last activity and *Sign out*, which revokes the grant and
     takes the server off the list. The last activity is the later of the
     server's last check-in and the grant's last refresh or access-token
@@ -285,7 +287,7 @@ page) and the **app** shell (a sidebar and a content column):
   `share_host` (the share host's address, "" when none is configured) and
   `servers`: the provisioned ones (none until v1), then the linked ones,
   latest seen first, each `{url, name, kind: "linked", local, linked_at,
-  last_seen_at}`. It also accepts any bearer access token, which is how a
+  last_seen_at, version, schema}`. It also accepts any bearer access token, which is how a
   Gamma sidecar discovers the person's servers.
 - The account itself (profile, password, e-mail, username, deletion,
   devices) and all of `/api/admin` are portal session only: a token minted
@@ -304,7 +306,7 @@ own call carries neither `Sec-Fetch-Site` nor `Origin` and passes.
 | GET | `/api/me/prefs/{key}` | same | `{value, updated_at}`; 404 when unset |
 | PUT | `/api/me/prefs/{key}` | same | body `{value, updated_at?}` → `{updated_at}`; 409 `{detail, value, updated_at}` when the stored one is newer |
 | DELETE | `/api/me/prefs/{key}` | same | `{ok, removed}` |
-| POST | `/api/me/servers` | any access token | body `{url, name}` → `{server}` |
+| POST | `/api/me/servers` | any access token | body `{url, name, version?, schema?}` → `{server}` |
 | DELETE | `/api/me/servers` | any access token | body `{url}` (or `?url=`) → `{ok, removed}` |
 | GET | `/api/lookup/username?u=` | any access token | `{sub, username}`; 404 otherwise |
 
@@ -346,6 +348,15 @@ name any address, since every sidecar is that client. A loopback address
 is one row per account whatever the machine: two laptops on the same port
 share it. At most 50 servers per account, 60 writes an hour. Deleting an
 account drops its list at once.
+
+A registration may also carry `version` (the server's build label, such as
+`v1.4.0 (abc123def456)`, cut to 80 printable characters) and `schema` (the
+schema version of its data directory, a non-negative integer, a 422
+otherwise). They are stored on the row and returned by `servers.link`, so
+the Devices page shows which servers are behind before the migration floor
+is raised. A call that sends neither, as an older server does, leaves the
+numbers the row had. The account server only displays them: it does not ask
+GitHub for the newest release.
 
 **The username lookup** answers the account id for an exact username,
 which is how a container admin invites `alice` before she ever signed in
@@ -603,8 +614,8 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
   the caps, the write limit), a confidential client's refresh token with
   `prefs` (rotation, one grant per device, revocation, the Devices row),
   the server list (normalization, loopback, the client's own origin, the
-  Overview), the username lookup and its limits, deletion, the step-4
-  upgrade, and the share host's address in `/api/me` and discovery.
+  Overview), the build and schema a server reports, the username lookup
+  and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
 
 `conftest.py` points the data directory at a temp folder and the mail
 backend at the in-memory outbox before the package is imported. CI runs
@@ -812,7 +823,12 @@ dialog's account tags show ([settings.md](settings.md)).
 
 **The server list.** After a sign-in, and at every grant check, the server
 posts itself to `POST /api/me/servers` (an upsert, which refreshes
-`last_seen_at`). The address is the confirmed public URL, named by its
+`last_seen_at`) with two more fields: `version`, its build label
+(`version.label()`: a release reads `v1.4.0 (abc123def456)`, a checkout
+`development build`), and `schema`, the data directory's `PRAGMA
+user_version` (`migrations.data_version()`; left out on a fresh install).
+Only a server linked to Gamma Cloud reports, and only these two numbers.
+The address is the confirmed public URL, named by its
 host. A local sidecar has no public URL: it sends the loopback origin the
 sign-in came in on (remembered in the `settings` KV as `cloud_server_url`
 for the hourly check) and names itself after the machine. A plain LAN

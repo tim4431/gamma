@@ -304,7 +304,10 @@ def migrate(status_only: bool = False, dry_run: bool = False):
     try:
         result = migrations.ensure_current(dry_run=dry_run)
     except migrations.MigrationError as e:
-        print(f"Refused: {e}")
+        guide = migrations.guidance(e)
+        print(f"{guide['title']}.\n{guide['summary']}")
+        for n, step in enumerate(guide["steps"], 1):
+            print(f"  {n}. {step}")
         sys.exit(2)
     if dry_run:
         print("Dry run: nothing changed.")

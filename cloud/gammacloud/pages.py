@@ -457,6 +457,8 @@ def _server_row(e: dict, manage: bool) -> str:
     if grant:
         meta.append(esc(_platform(grant.get("user_agent"))))
     meta.append(f"linked {_date(srv['linked_at'])}" if srv else f"signed in {_date(grant['created_at'])}")
+    if manage and srv:
+        meta += [esc(srv["version"]), f"schema {srv['schema']}" if srv["schema"] is not None else ""]
     if manage and grant and grant.get("ip"):
         meta.append(f"last seen at {esc(grant['ip'])}")
     active = max((srv or {}).get("last_seen_at", ""), (grant or {}).get("last_used_at", ""))

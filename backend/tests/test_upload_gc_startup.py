@@ -46,11 +46,9 @@ def test_step_22_adds_upload_orphans_and_skips_a_damaged_workspace(data_dir):
         with closing(sqlite3.connect(str(data_dir / "workspaces" / ws / "pages.db"))) as conn:
             assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'upload_orphans'").fetchone()
     assert any("wsbroken" in m and "step 22" in m for m in _errors_since(seq))
-    # the steps that already walked every workspace do the same
-    for step in (migrations._v9_upload_path_titles, migrations._v12_sync_log_stats,
-                 migrations._v13_sync_conflict_base):
-        with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
-            step(conn)
+    # the other step that walks every workspace does the same
+    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
+        migrations._v23_page_trash(conn)
 
 
 def test_startup_serves_the_others_when_one_workspace_is_damaged(data_dir, monkeypatch):

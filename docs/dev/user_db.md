@@ -371,12 +371,18 @@ nothing uses.
 ## Schema versions
 
 `db.py` always creates the current shape and alters nothing on connect. An
-existing data directory is brought up to it by the numbered steps in `gamma/migrations.py` — at every server start, with a
-snapshot first, refusing a newer directory. `db.connect_users_db()` raises
+existing data directory is brought up to it by the numbered steps in
+`gamma/migrations.py` at every server start, with a snapshot first. A
+directory this build cannot upgrade (newer, or below `MIN_UPGRADABLE`) is
+not served: the server shows one page saying what to run instead. A server
+linked to Gamma Cloud reports its build and schema version there
+([cloud_accounts.md](cloud_accounts.md)). `db.connect_users_db()` raises
 `SchemaOutdated` on an old file so nothing reads it with new assumptions.
-Content normalization of a workspace's files (`gamma/normalize.py`) runs in
-the baseline step and on every backup restore. Rules, versions and how to
-write a step: [migrations.md](migrations.md).
+Content normalization of a workspace's files (`gamma/normalize.py`) runs on
+every backup restore. Rules, versions, the floor and how to write a step:
+[migrations.md](migrations.md). A server linked to Gamma Cloud
+reports its schema version, with its build, to the account server
+([cloud_accounts.md](cloud_accounts.md), "The server list").
 
 ## Auth model
 

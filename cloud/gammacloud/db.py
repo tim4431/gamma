@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -100,7 +100,9 @@ PREFS = """CREATE TABLE IF NOT EXISTS prefs (
 # The Gamma servers a person linked their identity on (``servers.py``):
 # each registers its confirmed public URL (normalized, one row per URL).
 # ``grant_id`` is the grant of the token it last registered with, which is
-# how the portal shows a server and its sign-in as one row.
+# how the portal shows a server and its sign-in as one row. ``version`` (its
+# build label) and ``schema`` (its data directory's schema version) are what
+# it last reported: '' and NULL until it does.
 SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         account_id TEXT NOT NULL REFERENCES accounts(id),
         url TEXT NOT NULL,
@@ -108,6 +110,8 @@ SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         linked_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
         grant_id TEXT NOT NULL DEFAULT '',
+        version TEXT NOT NULL DEFAULT '',
+        schema INTEGER,
         PRIMARY KEY (account_id, url)
     )"""
 
@@ -395,6 +399,12 @@ def _step_settings(conn) -> None:
                          "ON CONFLICT (key) DO NOTHING", (key, value, now()))
 
 
+def _step_server_build(conn) -> None:
+    """The build and data schema version a linked server reports."""
+    _add_column(conn, "servers_linked", "version", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "servers_linked", "schema", "INTEGER")
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -403,6 +413,7 @@ STEPS: list = [
     (5, "connect", _step_connect),
     (6, "email_canon", _step_email_canon),
     (7, "settings", _step_settings),
+    (8, "server_build", _step_server_build),
 ]
 
 

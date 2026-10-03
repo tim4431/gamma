@@ -30,17 +30,19 @@ server without cloud sign-in makes no call from here.
 - **The server list** (``register_server``): this server's address under
   the person's account, posted on sign-in and on every check (an upsert
   that also refreshes ``last_seen_at``), removed on unlink or deletion
-  (``release``).
+  (``release``). The post also reports the build (``version.label()``) and
+  the data directory's schema version, nothing else about the install.
 
 Failures here are warnings in the server log, never errors to the person.
 """
 
 import json
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import cloud_auth
+from . import cloud_auth, migrations, version
 from .cloud_auth import PROVIDER, CloudAuthError
 from .db import (PROFILE_BASE_PREF_KEY, PROFILE_PREF_KEY, connect_users_db, format_stamp, get_pref, page_now,
                  parse_stamp, replace_profile_if, restamp_pref, set_pref)
@@ -362,9 +364,21 @@ def _push_settled(user_id: str) -> None:
 
 # --- the server list ----------------------------------------------------------------
 
+def _build_report() -> dict:
+    """``{version, schema}`` for the server list: the build label and the
+    data directory's schema version (left out on a fresh install, or when
+    the database cannot be read)."""
+    try:
+        schema = migrations.data_version()
+    except (OSError, sqlite3.Error):
+        schema = None
+    return {"version": version.label(), **({} if schema is None else {"schema": schema})}
+
+
 def register_server(user_id: str, token: str | None = None, url: str | None = None) -> bool:
     """Put this server on the person's server list (an upsert, which also
-    refreshes its ``last_seen_at``). Nothing without an address to give."""
+    refreshes its ``last_seen_at``, its build and its schema version).
+    Nothing without an address to give."""
     url = cloud_auth.server_url() if url is None else url
     if not url:
         return False
@@ -372,7 +386,7 @@ def register_server(user_id: str, token: str | None = None, url: str | None = No
     if not token:
         return False
     try:
-        _call("POST", "/api/me/servers", token, {"url": url, "name": cloud_auth.server_name(url)})
+        _call("POST", "/api/me/servers", token, {"url": url, "name": cloud_auth.server_name(url), **_build_report()})
     except CloudAuthError as e:
         _failed(user_id, "register this server on the Gamma Cloud account", e)
         return False

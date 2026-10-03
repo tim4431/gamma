@@ -22,8 +22,8 @@ import pytest
 from conftest import account_of, login, make_user
 from gamma import backup_schedule as tasks
 from gamma import backups, config, integrity, migrations, notices, workspaces, ws_backup
-from gamma.db import SCHEMA_VERSION, connect_users_db, ws_dir, ws_uploads_dir
-from test_migrations import build_v0
+from gamma.db import SCHEMA_VERSION, connect_data_db, connect_users_db, ws_dir, ws_uploads_dir
+from test_migrations import WS25, build_v24_accounts
 
 PW = "bs-pass-12345"
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -170,35 +170,6 @@ def test_an_interrupted_snapshot_directory_is_never_listed_or_pruned(noop_steps)
     assert backups.list_backups() == [] and backups.info(stray.name) is None
     backups.create("v6", auto=True)
     assert backups.prune_backups(keep=0) and stray.is_dir()
-
-
-# --- migration step 2 resumes into the workspace it recorded -------------------------
-
-def test_step_2_resumes_into_the_recorded_workspace(data_dir, monkeypatch):
-    build_v0(data_dir)
-    real = migrations._move_prefs
-    calls = {"n": 0}
-
-    def crash_after_first_move(conn, username, ws_id, data_db):
-        real(conn, username, ws_id, data_db)
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("disk full (simulated)")
-
-    monkeypatch.setattr(migrations, "_move_prefs", crash_after_first_move)
-    with pytest.raises(migrations.MigrationError, match="workspaces"):
-        migrations.ensure_current()
-    monkeypatch.setattr(migrations, "_move_prefs", real)
-    migrations.ensure_current()
-    with connect_users_db() as conn:
-        homes = dict(conn.execute("SELECT username, default_workspace FROM users").fetchall())
-        rows = {r[0] for r in conn.execute("SELECT id FROM workspaces")}
-        prefs = {(r[0], r[1]) for r in conn.execute("SELECT u.username, p.key FROM user_prefs p JOIN users u ON u.id = p.user_id")}
-    for user, page in (("alice", "pageA"), ("bob", "pageB")):
-        with closing(sqlite3.connect(str(data_dir / "workspaces" / homes[user] / "pages.db"))) as conn:
-            assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page,)).fetchone(), user
-    assert {d.name for d in (data_dir / "workspaces").iterdir()} == rows  # no orphaned directory
-    assert ("alice", "open-tabs") in prefs and ("bob", "recent-views") in prefs
 
 
 # --- snapshots survive a concurrent sweep, never share a temp file -------------------
@@ -353,10 +324,10 @@ def test_every_snapshot_records_the_check_of_its_database_copies():
 
 
 def test_a_server_backup_of_a_damaged_workspace_records_it_and_tells_admins(data_dir):
-    build_v0(data_dir)
+    build_v24_accounts()
     migrations.ensure_current()
-    with connect_users_db() as conn:
-        bob = conn.execute("SELECT default_workspace FROM users WHERE username = 'bob'").fetchone()[0]
+    bob = WS25
+    connect_data_db(bob).close()  # the workspace's derived file, created on first use
     good = (data_dir / "workspaces" / bob / "data.db").read_bytes()
     _damage(data_dir / "workspaces" / bob / "data.db")
     b = backups.create("with-damage")  # one damaged workspace does not sink the whole snapshot
