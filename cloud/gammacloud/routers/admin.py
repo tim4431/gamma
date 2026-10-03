@@ -1,14 +1,14 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
-the audit log. Only an account with ``is_admin`` (set with ``manage.py
-set-admin``) and only through a portal session — never a bearer token from
-a Gamma server."""
+the server settings, the audit log. Only an account with ``is_admin`` (set
+with ``manage.py set-admin``) and only through a portal session — never a
+bearer token from a Gamma server."""
 
 from contextlib import closing
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import accounts, db, oidc
+from .. import accounts, db, oidc, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -175,6 +175,29 @@ def delete_invite(code: str, request: Request):
         db.audit(conn, "invite.delete", actor=admin["id"], detail=code)
         conn.commit()
     return {"ok": True}
+
+
+# --- server settings ----------------------------------------------------------
+
+@router.get("/settings")
+def get_settings(request: Request):
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+    return settings.admin_view()
+
+
+@router.patch("/settings")
+def patch_settings(body: dict, request: Request):
+    """Write the keys given and leave the rest (``settings.update``)."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        try:
+            settings.update(conn, body, actor=admin["id"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        conn.commit()
+    settings.invalidate()
+    return settings.admin_view()
 
 
 # --- OIDC clients -------------------------------------------------------------

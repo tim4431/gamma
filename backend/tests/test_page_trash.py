@@ -2,7 +2,7 @@
 a page moves it under the reserved ``trash`` block for 30 days. It keeps
 its blocks, folder labels and chats; nothing that lists, searches, shares,
 reads or writes pages reaches it; a copy of the workspace sees it deleted
-(the tombstone) and, once restored, created again; the sweeper and "Delete
+(its row of the change log) and, once restored, created again; the sweeper and "Delete
 permanently" remove it for good through ops.delete_page."""
 
 import json
@@ -11,11 +11,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import account_of, login, make_folder, make_label, make_page, make_user, workspace_of
 from gamma import trash
 from gamma.ai_tools import run_agent_tool
 from gamma.blocks_store import TRASH
-from gamma.db import connect_data_db, connect_pages_db
+from gamma.db import connect_pages_db
 
 
 @pytest.fixture(scope="module")
@@ -60,21 +60,23 @@ def _row(ws, block_id):
         return conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
 
 
-def _tombstone(ws, page_id):
+def _change(ws, page_id):
+    """The page's row of the change log: ``(seq, kind, at, actor)``."""
     with connect_pages_db(ws) as conn:
-        return conn.execute("SELECT deleted_at, actor FROM deleted_pages WHERE page_id = ?", (page_id,)).fetchone()
+        return conn.execute("SELECT seq, kind, at, actor FROM page_changes WHERE page_id = ?", (page_id,)).fetchone()
 
 
 def test_trash_and_restore_round_trip(owner):
     ws = workspace_of("tr_owner")
-    page = make_page(owner, "Round trip", properties={"folder": "trips/2026", "category": "keep"})
+    filed = {"folders": [make_folder(owner, "trips/2026")], "labels": [make_label(owner, "keep")]}
+    page = make_page(owner, "Round trip", properties=filed)
     note = _child(owner, page["id"], "the note survives")
     assert owner.put(f"/api/chats/{page['id']}", json={"messages": [{"role": "user", "text": "hi"}]}).status_code == 200
 
     r = owner.delete(f"/api/blocks/{page['id']}")
     assert r.status_code == 200, r.text
     entry = r.json()["trashed"]
-    assert entry["id"] == page["id"] and entry["deleted_by"] == "tr_owner" and entry["folder"] == "trips/2026"
+    assert entry["id"] == page["id"] and entry["deleted_by"] == "tr_owner" and entry["folders"] == filed["folders"]
 
     # gone from the library, listed in Recently deleted with its stamps
     assert page["id"] not in _library(owner)
@@ -83,13 +85,13 @@ def test_trash_and_restore_round_trip(owner):
     assert listed["purge_at"] > listed["deleted_at"]
     # the page's content is all still there: blocks, chat
     assert _row(ws, note["id"])[0] == page["id"]
-    with connect_data_db(ws) as ddb:
-        assert ddb.execute("SELECT 1 FROM chats WHERE block_id = ?", (page["id"],)).fetchone()
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT 1 FROM chats WHERE bucket = ?", (page["id"],)).fetchone()
 
     restored = owner.post(f"/api/trash/{page['id']}/restore")
     assert restored.status_code == 200, restored.text
     back = restored.json()
-    assert back["parent_id"] == "root" and back["properties"] == {"folder": "trips/2026", "category": "keep"}
+    assert back["parent_id"] == "root" and back["properties"] == filed
     assert page["id"] in _library(owner) and page["id"] not in _trashed(owner)
     tree = owner.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
     assert [c["content"] for c in tree["children"]] == ["the note survives"]
@@ -164,28 +166,29 @@ def test_ops_to_a_trashed_page_are_refused(owner):
     assert owner.get(f"/api/blocks/{note['id']}").json()["content"] == "frozen"
 
 
-def test_tombstone_on_trash_cleared_on_restore(owner):
+def test_trash_deletes_the_page_for_a_copy_and_restore_makes_it_again(owner):
     ws = workspace_of("tr_owner")
     page = make_page(owner, "Mirror me")
-    since = "2000-01-01T00:00:00.000000Z"
+    made = _change(ws, page["id"])
     owner.delete(f"/api/blocks/{page['id']}").raise_for_status()
-    feed = owner.get("/api/sync/changes", params={"since": since, "limit": 2000}).json()
+    trashed = _change(ws, page["id"])
+    assert trashed[0] > made[0] and trashed[1] == "deleted" and trashed[3] == account_of("tr_owner")
+    feed = owner.get("/api/sync/changes", params={"since": made[0], "limit": 2000}).json()
     assert page["id"] not in {p["id"] for p in feed["pages"]}
-    assert [(d["id"], d["actor"]) for d in feed["deleted"] if d["id"] == page["id"]] == [(page["id"], "tr_owner")]
-    trashed_at = _tombstone(ws, page["id"])[0]
+    assert [(d["id"], d["actor"]) for d in feed["deleted"]] == [(page["id"], account_of("tr_owner"))]
 
     owner.post(f"/api/trash/{page['id']}/restore").raise_for_status()
-    assert _tombstone(ws, page["id"]) is None
-    feed = owner.get("/api/sync/changes", params={"since": trashed_at, "limit": 2000}).json()
+    assert _change(ws, page["id"])[:2] == (trashed[0] + 1, "live")
+    feed = owner.get("/api/sync/changes", params={"since": trashed[0], "limit": 2000}).json()
     entry = next(p for p in feed["pages"] if p["id"] == page["id"])
-    assert entry["updated_at"] > trashed_at  # stamped: to a copy it is a page (re)created
-    assert page["id"] not in {d["id"] for d in feed["deleted"]}
+    assert entry["updated_at"] > trashed[2]  # touched: to a copy it is a page (re)created
+    assert feed["deleted"] == []
 
-    # Deleted for good from the trash, the tombstone keeps its trashing's time.
+    # Deleted for good from the trash, the row keeps its trashing: to a copy it went then.
     owner.delete(f"/api/blocks/{page['id']}").raise_for_status()
-    first = _tombstone(ws, page["id"])
+    first = _change(ws, page["id"])
     assert owner.delete(f"/api/trash/{page['id']}").json() == {"ok": True, "id": page["id"]}
-    assert _tombstone(ws, page["id"]) == first
+    assert _change(ws, page["id"]) == first
     assert _row(ws, page["id"]) is None
 
 
@@ -209,6 +212,8 @@ def test_delete_permanently_and_empty_drop_everything(owner):
 def test_the_sweeper_purges_after_thirty_days(owner):
     ws = workspace_of("tr_owner")
     old, recent = make_page(owner, "Old news"), make_page(owner, "Fresh news")
+    owner.post("/api/chat-history/archive", json={"bucket": old["id"], "messages": [{"role": "user", "text": "older"}]}
+               ).raise_for_status()
     owner.put(f"/api/chats/{old['id']}", json={"messages": [{"role": "user", "text": "old"}]}).raise_for_status()
     for p in (old, recent):
         owner.delete(f"/api/blocks/{p['id']}").raise_for_status()
@@ -223,8 +228,9 @@ def test_the_sweeper_purges_after_thirty_days(owner):
     swept = trash.sweep(now=deleted_at + timedelta(days=30, minutes=1))
     assert swept.get(ws) == [old["id"]]
     assert _row(ws, old["id"]) is None and _row(ws, recent["id"])[0] == TRASH
-    with connect_data_db(ws) as ddb:
-        assert ddb.execute("SELECT 1 FROM chats WHERE block_id = ?", (old["id"],)).fetchone() is None
+    with connect_pages_db(ws) as conn:  # its chats went with it: the active one and the history
+        assert conn.execute("SELECT 1 FROM chats WHERE bucket = ? UNION ALL "
+                            "SELECT 1 FROM chat_history WHERE bucket = ?", (old["id"], old["id"])).fetchone() is None
     assert trash.purge_expired(ws, now=datetime.now(timezone.utc) + timedelta(days=36)) == [recent["id"]]
 
 
@@ -255,12 +261,54 @@ def test_permissions(owner, lab):
     assert outsider.post(f"/api/trash/{page['id']}/restore", params={"ws": lab}).status_code == 403
 
 
+def test_deleted_by_is_stored_as_the_id_and_shown_by_name(owner, lab):
+    """A trashed page's ``deleted_by`` is an actor, like the op log's: the
+    account's id in the page's properties, its username wherever it is
+    shown — the delete's answer, Recently deleted, a 404's trash entry, the
+    agent's list_deleted. An account deleted since shows as nobody; the
+    labels of writers that are no account show as they are."""
+    ws, owner_id = workspace_of("tr_owner"), account_of("tr_owner")
+    page = make_page(owner, "Whodunit")
+    entry = owner.delete(f"/api/blocks/{page['id']}").json()["trashed"]
+    assert json.loads(_row(ws, page["id"])[1])["deleted_by"] == owner_id
+    assert entry["deleted_by"] == "tr_owner"
+    assert _trashed(owner)[page["id"]]["deleted_by"] == "tr_owner"
+    assert owner.get(f"/api/blocks/{page['id']}/subtree").json()["trashed"]["deleted_by"] == "tr_owner"
+    text, _ = run_agent_tool(ws, {"type": "folder", "folder": ""}, "list_deleted", {"title_contains": "whodunit"})
+    assert " by tr_owner " in text and owner_id not in text
+
+    # an editor of the lab deletes a page there, then the account goes
+    from gamma import workspaces
+    make_user("tr_gone", "pw")
+    assert owner.put(f"/api/workspaces/{lab}/members/tr_gone", json={"role": "editor"}).status_code == 200
+    h = {"X-Gamma-Workspace": lab}
+    gone = login("tr_gone", "pw")
+    doomed = gone.post("/api/blocks", json={"parent_id": "root", "content": "Orphaned"}, headers=h).json()
+    assert gone.delete(f"/api/blocks/{doomed['id']}", headers=h).status_code == 200
+    gone_id = account_of("tr_gone")
+    workspaces.delete_account(gone_id)
+    assert json.loads(_row(lab, doomed["id"])[1])["deleted_by"] == gone_id  # nothing rewritten
+    assert _trashed(owner, headers=h)[doomed["id"]]["deleted_by"] == ""
+
+    # a share-link visitor's and a mirror round's labels (what ops.trash_page
+    # stamps for them), set on a trashed page's properties as they would be
+    for actor in ("link:Visitor", "mirror"):
+        other = make_page(owner, f"Deleted by {actor}")
+        owner.delete(f"/api/blocks/{other['id']}").raise_for_status()
+        props = json.loads(_row(ws, other["id"])[1])
+        with connect_pages_db(ws) as conn:
+            conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
+                         (json.dumps({**props, "deleted_by": actor}), other["id"]))
+        assert _trashed(owner)[other["id"]]["deleted_by"] == actor
+
+
 def test_shares_never_reach_a_trashed_page(owner, anon):
-    page = make_page(owner, "Shared then trashed", properties={"folder": "sharedf"})
-    sibling = make_page(owner, "Stays shared", properties={"folder": "sharedf"})
+    sharedf = make_folder(owner, "sharedf")
+    page = make_page(owner, "Shared then trashed", properties={"folders": [sharedf]})
+    sibling = make_page(owner, "Stays shared", properties={"folders": [sharedf]})
     token = owner.post(f"/api/share/{page['id']}").json()["token"]
     owner.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone", "role": "edit"}).raise_for_status()
-    folder = owner.post("/api/share/folder", params={"name": "sharedf"}).json()["token"]
+    folder = owner.post(f"/api/share/folder/{sharedf}").json()["token"]
     assert anon.get(f"/api/share/{token}").status_code == 200
     owner.put(f"/api/chats/{page['id']}", json={"messages": [{"role": "user", "text": "x"}]}).raise_for_status()
 
@@ -314,7 +362,7 @@ def test_a_page_brought_back_under_its_id_replaces_the_trashed_copy(owner):
     r = owner.post("/api/pages", json={"id": page["id"], "title": "Comes back (theirs)"})
     assert r.status_code == 200, r.text
     assert _row(ws, page["id"])[0] == "root" and _row(ws, stale["id"]) is None
-    assert page["id"] not in _trashed(owner) and _tombstone(ws, page["id"]) is None
+    assert page["id"] not in _trashed(owner) and _change(ws, page["id"])[1] == "live"
     assert owner.post("/api/pages", json={"id": page["id"]}).status_code == 409  # a live one does not
 
     # a block the trash still holds, inserted into a live page, leaves the trashed copy

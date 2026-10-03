@@ -7,6 +7,8 @@ import json
 
 from fastapi import HTTPException
 
+from .blocks_store import folder_path
+
 
 def parse_selection(raw: str | None) -> set[str] | None:
     if raw is None:
@@ -23,6 +25,20 @@ def parse_selection(raw: str | None) -> set[str] | None:
 def validate_selection(selected, available):
     if selected is not None and selected - set(available):
         raise HTTPException(status_code=400, detail="selection contains unknown import items; review the file again")
+
+
+def destination(conn, folder: str) -> tuple[str, list[str]]:
+    """Where an import files its pages: ``folder`` (the form field) names
+    the destination folder by id, "" the library's top. Returns ``(the
+    folder's id, "" for the top; its path, the names from the top)``, what
+    the import files below (``ops.ensure_filing`` ``under=``) and what its
+    review shows the paths under. 400 for an id that is no folder."""
+    if not folder:
+        return "", []
+    path = folder_path(conn, folder)
+    if not path:
+        raise HTTPException(status_code=400, detail="the destination folder does not exist")
+    return folder, path
 
 
 def archive_entries(zf):

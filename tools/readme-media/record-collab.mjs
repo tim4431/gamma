@@ -39,9 +39,9 @@ try {
   const [alex, maya, sam] = await Promise.all(['Alex', 'Maya', 'Sam'].map(n => new Account(server, n, password).login()));
   for (const a of [alex, maya, sam]) a.ws = team;
   await alex.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');
-  await alex.api('/api/blocks/fy0-h_BqOHcH', { method: 'PUT', body: { properties: { folder: 'Papers' } } });
+  await alex.file('fy0-h_BqOHcH', { folders: ['Papers'] });   // the folder made where missing (harness.mjs Account.file)
   const note = await alex.api('/api/pages', { method: 'POST', body: { title: 'Reading group: atom arrays' } });
-  await alex.api('/api/blocks/' + note.id, { method: 'PUT', body: { properties: { folder: 'Papers' } } });
+  await alex.file(note.id, { folders: ['Papers'] });
   await alex.api(`/api/blocks/${note.id}/children`, { method: 'PUT', body: { blocks: [
     { content: `Paper: [[${PAPER}]]`, children: [] },
     { content: 'Takeaway: two-atom entanglement survives a 110 µm move, and ==coherence is unaffected by transport==.', children: [] },

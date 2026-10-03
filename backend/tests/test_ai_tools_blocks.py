@@ -12,7 +12,7 @@ from ai_fixtures import ALLOW_ALL, FakeResp, children, folder, notes, org, props
 
 def test_read_block_outline_with_ids(notes):
     c, ids = notes
-    scope = folder("sandbox")
+    scope = folder(ids["sandbox"])
     text, action = run_agent_tool(ids["ws"], scope, "read_block", {"block_id": ids["page"]})
     assert action["kind"] == "read" and action["page_id"] == ids["page"]
     for key in ("top", "child", "other", "hl"):
@@ -25,7 +25,7 @@ def test_read_block_outline_with_ids(notes):
     assert "top-level idea" in text and ids["child"] in text
     assert ids["other"] not in text
     # Scope rules match the page tools.
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_block",
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_block",
                              {"block_id": ids["top"]})
     assert text.startswith("error")
     text, _ = run_agent_tool(ids["ws"], scope, "read_block", {"block_id": "nope"})
@@ -34,7 +34,7 @@ def test_read_block_outline_with_ids(notes):
 
 def test_edit_block(notes):
     c, ids = notes
-    scope = folder("sandbox")
+    scope = folder(ids["sandbox"])
     # A replace rewrites what the model read this turn (test_writer_races.py).
     run_agent_tool(ids["ws"], scope, "read_block", {"block_id": ids["child"]})
     text, action = run_agent_tool(ids["ws"], scope, "edit_block",
@@ -54,7 +54,7 @@ def test_edit_block(notes):
 
 def test_create_block_placement(notes):
     c, ids = notes
-    scope = folder("sandbox")
+    scope = folder(ids["sandbox"])
     text, action = run_agent_tool(ids["ws"], scope, "create_block",
                                   {"parent_id": ids["page"], "content": "appended note"})
     assert action["kind"] == "create" and action["page_id"] == ids["page"]
@@ -76,7 +76,7 @@ def test_create_block_placement(notes):
 
 def test_move_block_rules(notes):
     c, ids = notes
-    scope = folder("sandbox")
+    scope = folder(ids["sandbox"])
     # Reparent under a sibling.
     text, action = run_agent_tool(ids["ws"], scope, "move_block",
                                   {"block_id": ids["other"], "parent_id": ids["top"]})
@@ -94,7 +94,7 @@ def test_move_block_rules(notes):
     assert "move_page" in text
     # Highlights stay on their page; plain blocks may cross pages in scope.
     r = c.post("/api/blocks", json={"parent_id": "root", "content": "second page",
-                                    "properties": {"folder": "sandbox"}})
+                                    "properties": {"folders": [ids["sandbox"]]}})
     page2 = r.json()["id"]
     text, _ = run_agent_tool(ids["ws"], scope, "move_block",
                              {"block_id": ids["hl"], "parent_id": page2})
@@ -105,7 +105,7 @@ def test_move_block_rules(notes):
     assert action["page_id"] == page2 and action["src_page_id"] == ids["page"]
     assert children(c, page2) == [ids["child"]]
     # A page outside the scope can't receive blocks.
-    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "move_block",
+    text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                              {"block_id": ids["child"], "parent_id": ids["a"]})
     assert text.startswith("error")
 
@@ -255,7 +255,7 @@ def test_text_boxes_are_labelled_with_their_page(notes):
     c, ids = notes
     box = {"x": 40, "y": 60, "w": 180}
 
-    page = _block(c, "root", "boxes playground", {"folder": "sandbox"})
+    page = _block(c, "root", "boxes playground", {"folders": [ids["sandbox"]]})
     on_pdf = _block(c, page, "typed on the paper", {"text_box": box, "pdf_page": 3})
     sheet = _block(c, page, "", {"sheet": {}})
     on_sheet = _block(c, sheet, "typed on the sheet", {"text_box": box})
@@ -264,15 +264,15 @@ def test_text_boxes_are_labelled_with_their_page(notes):
     stale = _block(c, note, "moved onto the sheet", {"text_box": box, "pdf_page": 7})
     loose = _block(c, page, "on no page", {"text_box": box})
 
-    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": page})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "read_block", {"block_id": page})
     assert f"[{on_pdf}] (text box on p. 3) typed on the paper" in text
     assert f"[{on_sheet}] (text box on the page of paper above) typed on the sheet" in text
     assert f"[{stale}] (text box on the page of paper above) moved onto the sheet" in text
     assert f"[{loose}] (text box, not placed on a page) on no page" in text
     assert "area highlight" not in text and "(highlight:" not in text and "p. 7" not in text
-    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": on_pdf})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "read_block", {"block_id": on_pdf})
     assert "(text box on p. 3) typed on the paper" in text
-    text, _ = run_agent_tool(ids["ws"], folder("sandbox"), "read_block", {"block_id": stale})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "read_block", {"block_id": stale})
     assert "(text box on the page of paper above) moved onto the sheet" in text and "p. 7" not in text
 
     section = notes_focus_section(ids["ws"], SimpleNamespace(
@@ -289,11 +289,11 @@ def test_move_block_keeps_text_boxes_on_their_page(notes):
     highlight's anchor does: a box, or a note holding one, moves within its
     page only; a sheet takes its boxes along."""
     c, ids = notes
-    scope = folder("sandbox")
+    scope = folder(ids["sandbox"])
     box = {"x": 40, "y": 60, "w": 180}
 
-    page = _block(c, "root", "boxes to move", {"folder": "sandbox"})
-    other = _block(c, "root", "another page", {"folder": "sandbox"})
+    page = _block(c, "root", "boxes to move", {"folders": [ids["sandbox"]]})
+    other = _block(c, "root", "another page", {"folders": [ids["sandbox"]]})
     on_pdf = _block(c, page, "typed on the paper", {"text_box": box, "pdf_page": 1})
     holder = _block(c, page, "a note", {})
     _block(c, holder, "typed under the note", {"text_box": box, "pdf_page": 1})

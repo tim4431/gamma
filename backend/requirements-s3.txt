@@ -1,0 +1,5 @@
+# The S3-compatible store for uploaded files (GAMMA_BLOBS=s3: AWS S3,
+# Cloudflare R2, MinIO; gamma/blobs.py). Only that driver imports boto3, so
+# the default local store, the desktop app and a plain checkout need none of
+# this. The Docker image installs it beside requirements.txt.
+boto3==1.43.108

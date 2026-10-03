@@ -63,7 +63,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
         samples: Array.from({ length: 13 }, (_, i) => ({ x: 80 + i * 10, y, p: 0.2 + i * 0.05, t: i * 8 })) })] };
       const file = await alice.api("/api/upload-ink", { method: "POST", body: ink });
       return (await alice.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `Ink ${id}`,
-        properties: { ink_url: file.url, pdf_page: 1, pdf_position: file.pdf_position, ink_strokes: 1 } } })).id;
+        properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: 1 } } })).id;
     };
     noteId = await addInk("thin", 220, "#1f1f1f", 0.6);
     secondId = await addInk("other", 270, "#1d4ed8", 2);

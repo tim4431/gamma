@@ -33,7 +33,7 @@ def test_read_chats_returns_the_page_conversation_and_its_history(org):
     earlier = _archive(c, ids["a"], [{"role": "user", "text": "First look at the setup"},
                                      {"role": "ai", "text": "The setup is a 3D cavity."}])
     _save(c, ids["a"], CONVERSATION, title="Measurements")
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "read_chats", {"page_id": ids["a"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_chats", {"page_id": ids["a"]})
     assert action["kind"] == "read" and action["page_id"] == ids["a"]
     assert "cavity paper" in action["summary"]
     assert "the current conversation “Measurements”, 4 messages" in text
@@ -44,7 +44,7 @@ def test_read_chats_returns_the_page_conversation_and_its_history(org):
     # The earlier conversation is indexed by id, titled from its first message…
     assert f"chat_id={earlier} | “First look at the setup” | 2 messages" in text
     # …and read by that id.
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_chats",
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_chats",
                              {"page_id": ids["a"], "chat_id": earlier})
     assert "an earlier conversation" in text and "[2] AI: The setup is a 3D cavity." in text
     assert "Earlier conversations" not in text
@@ -57,7 +57,7 @@ def test_read_chats_windows_a_long_conversation(org):
     c, ids = org
     _save(c, ids["b"], [{"role": "user" if n % 2 else "ai", "text": f"message {n} " + "x" * 80}
                         for n in range(1, 11)])
-    scope = {**folder("readout"), "read_chars": 250}  # two ~100-char messages per window
+    scope = {**folder(ids["readout"]), "read_chars": 250}  # two ~100-char messages per window
     text, _ = run_agent_tool(ids["ws"], scope, "read_chats", {"page_id": ids["b"]})
     assert "[1] User: message 1" in text and "[2] AI: message 2" in text and "[3]" not in text
     assert f'call read_chats(page_id="{ids["b"]}", start=3) to continue' in text
@@ -68,25 +68,34 @@ def test_read_chats_windows_a_long_conversation(org):
 
 
 def test_read_chats_reaches_folder_chats_inside_the_scope(org):
+    """A folder's chat is kept under the folder's id: named by path or by
+    that id, ``home`` at the library root."""
     c, ids = org
-    _save(c, "home:readout", [{"role": "user", "text": "Which of these use a cavity?"}])
+    _save(c, ids["readout"], [{"role": "user", "text": "Which of these use a cavity?"}])
     _save(c, "home", [{"role": "user", "text": "Library-wide question"}])
-    text, action = run_agent_tool(ids["ws"], folder(""), "read_chats", {"folder": "readout"})
-    assert "folder “readout”" in text and "Which of these use a cavity?" in text
-    assert "page_id" not in action
+    for where in ("readout", ids["readout"]):
+        text, action = run_agent_tool(ids["ws"], folder(""), "read_chats", {"folder": where})
+        assert "folder “readout”" in text and "Which of these use a cavity?" in text
+        assert "page_id" not in action
     # No argument = the chat's own folder; a relative path resolves inside it.
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_chats", {})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_chats", {})
     assert "Which of these use a cavity?" in text
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_chats", {"folder": "nondestructive"})
-    assert text == "No AI chat is kept with folder “readout/nondestructive”."
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_chats", {"folder": "nondestructive"})
+    assert text == "No AI chat is kept with folder “readout / nondestructive”."
     text, _ = run_agent_tool(ids["ws"], folder(""), "read_chats", {})
     assert "the library root" in text and "Library-wide question" in text
+    # A folder that does not exist is an error, not an empty chat; a folder
+    # beside the chat's own is out of reach.
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_chats", {"folder": "nowhere"})
+    assert action["error"] and 'no folder "readout / nowhere"' in text
+    text, action = run_agent_tool(ids["ws"], folder(ids["cooling"]), "read_chats", {"folder": ids["readout"]})
+    assert action["error"] and "outside this chat's folder" in text and "cavity" not in text
 
 
 def test_read_chats_respects_the_scope(org):
     c, ids = org
     _save(c, ids["note"], [{"role": "user", "text": "private to the loose note"}])
-    for scope, args in [(folder("readout"), {"page_id": ids["note"]}),               # page outside the folder
+    for scope, args in [(folder(ids["readout"]), {"page_id": ids["note"]}),               # page outside the folder
                         ({"type": "page", "page_id": ids["a"]}, {"page_id": ids["note"]}),
                         ({"type": "page", "page_id": ids["a"]}, {"folder": "readout"})]:
         text, action = run_agent_tool(ids["ws"], scope, "read_chats", args)

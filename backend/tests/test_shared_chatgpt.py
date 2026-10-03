@@ -13,6 +13,7 @@ import time
 import pytest
 
 import gamma.chatgpt_oauth as co
+from conftest import account_of
 from gamma import ai_catalog
 from gamma.ai_protocols import chatgpt as chatgpt_proto
 
@@ -153,7 +154,7 @@ def test_expired_shared_token_refreshes_once_for_everyone(shared, monkeypatch):
 
     monkeypatch.setattr(co, "_token_request", slow_refresh)
     keys = []
-    users = ["gpt_member", "gpt_admin"] * 3
+    users = [account_of("gpt_member"), account_of("gpt_admin")] * 3
     threads = [threading.Thread(target=lambda u=u: keys.append(ai_runtime(u)["providers"][shared["id"]]["api_key"]))
                for u in users]
     for t in threads:
@@ -193,6 +194,7 @@ def test_subscription_usage_is_the_admins_to_see(shared, admin, member, monkeypa
 def test_the_allowance_meters_the_shared_sign_in(shared, admin):
     from gamma.ai_settings import ai_runtime
     assert admin.put("/api/admin/ai-providers", json={"allowance": {"accounts": 500}}).status_code == 200
-    rt = ai_runtime("gpt_member")
-    assert rt["providers"][shared["id"]]["allowance"] == {"user": "gpt_member", "limit": 500}
+    member_id = account_of("gpt_member")
+    rt = ai_runtime(member_id)
+    assert rt["providers"][shared["id"]]["allowance"] == {"user": member_id, "limit": 500}
     assert rt["allowance"]["limit"] == 500

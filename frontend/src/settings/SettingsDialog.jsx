@@ -8,7 +8,7 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { EFFORT_ORDER } from "../chat/effort.js";
+import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
@@ -21,7 +21,8 @@ import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
-import { resolveSettingsPane, searchSettings } from "./settingsNavigation";
+import { resolveSettingsPane } from "./settingsNavigation";
+import { searchSettings } from "./settingsSearch.js";
 import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,
@@ -48,6 +49,7 @@ import {
   RefreshIcon,
   SearchIcon,
   ServerIcon,
+  SlidersIcon,
   SparklesIcon,
   TerminalIcon,
   TypeIcon,
@@ -56,6 +58,7 @@ import {
   KeyboardIcon,
   LanguagesIcon,
   XIcon,
+  ZapIcon,
 } from "../shared/ui/Icons";
 
 // One rail: the account card on top (the Account & sync pane), then
@@ -73,8 +76,7 @@ const PREFERENCE_NAV = [
 const AI_NAV = [
   ["ai", T("Connections"), SparklesIcon],
   ["assistant", T("Chat"), MessageSquareIcon],
-  ["ai-advanced", T("Advanced"), ActivityIcon],
-  ["prompts", T("Prompts"), TypeIcon],
+  ["tools", T("Tool usage"), SlidersIcon],
   ["integrations", T("Integrations"), LinkIcon],
 ];
 const LIBRARY_NAV = [
@@ -407,9 +409,10 @@ function MetaStatusSection({ value }) {
     if (!p.has_meta) {
       return p.meta_error ? cell("bad", t("failed"), p.meta_error) : cell("muted", t("none"), t("No metadata yet"));
     }
-    const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
+    const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified,
+      user_verified: p.meta_user_verified });
     if (!src) return cell("ok", t("yes"), t("Metadata resolved"));
-    return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
+    return cell(src.warn ? "bad" : p.meta_source === "ai" && !p.meta_user_verified ? "muted" : "ok", src.short, t(src.hint));
   };
   // Text and index are separate columns: extraction state is only known once
   // the indexer has visited the doc, so an unindexed paper shows "unknown".
@@ -470,7 +473,7 @@ function MetaStatusSection({ value }) {
         <>
           <div className="setStats">
             <Stat icon={PaperIcon} label={t("verified")} value={counts.verified} total={list.length}
-              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
+              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited or verified by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
             <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
               title={t("Papers whose PDF yielded extractable text")} />
             <Stat icon={SearchIcon} label={t("indexed")} value={counts.indexed} total={list.length}
@@ -564,7 +567,7 @@ function MetaStatusSection({ value }) {
   );
 }
 
-// --- Assistant: agent, chat, context budgets, prompts -----------------------
+// --- Chat: defaults, prompts, context budgets -------------------------------
 
 // One accordion instead of three stacked textareas: only the prompt being
 // edited takes up space, and Restore default lights up only when it would
@@ -603,8 +606,8 @@ function PromptAccordion({ items }) {
   );
 }
 
-// Prompts pane: the three editable prompts as a collapsed accordion, with one
-// Save button for all of them.
+// The Chat pane's Prompts section: the editable prompts as a collapsed
+// accordion, with one Save button for all of them.
 function PromptsSettings({ value }) {
   const prompts = [
     { key: "chat", label: T("Chat system prompt"), icon: MessageSquareIcon,
@@ -626,43 +629,94 @@ function PromptsSettings({ value }) {
   const discard = () => prompts.forEach((p) => p.setDraft(p.saved || p.defaultValue || ""));
   useSettingsDraft("prompts", dirty, discard);
   return (
-    <>
-      <PaneHead icon={TypeIcon} title={t("Custom prompts")} />
-      <Section
-        title={t("Prompts")}
-        scope="account" prefs={SECTION_PREFS.prompts["Prompts"]}
-        action={
-          <span className="setControlGroup">
-            <button className="uiBtn sm" disabled={!dirty} onClick={discard}>{t("Cancel")}</button>
-            <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>{t("Save")}</button>
-          </span>
-        }
-      >
-        <PromptAccordion items={prompts} />
-      </Section>
-    </>
+    <Section
+      title={t("Prompts")}
+      scope="account" prefs={SECTION_PREFS.assistant["Prompts"]}
+      action={
+        <span className="setControlGroup">
+          <button className="uiBtn sm" disabled={!dirty} onClick={discard}>{t("Cancel")}</button>
+          <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>{t("Save")}</button>
+        </span>
+      }
+    >
+      <PromptAccordion items={prompts} />
+    </Section>
   );
 }
 
-// Chat behavior, followed by a comparison of each chat kind's permissions.
-function AssistantSettings({ value, ai }) {
+// The chat's defaults (effort, speed, snapshots).
+function ChatDefaults({ value, ai }) {
+  return (
+    <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
+      <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
+        <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
+          options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
+      </Row>
+      <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
+        title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
+        <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
+          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, v])]} />
+      </Row>
+      <Toggle
+        icon={RectSelectIcon}
+        label={t("Clear snapshots on click")}
+        hint={t("A plain click in the PDF also drops pending snapshots")}
+        title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
+        checked={value.chatImgAutoClear}
+        onChange={value.setChatImgAutoClear}
+      />
+    </Section>
+  );
+}
+
+// How much paper text a chat reads, with the Standard / Larger presets.
+function ContextSize({ value }) {
+  const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
+  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard"
+    : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
+  const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
+  const limits = [
+    [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
+      value.chatContextChars, value.setChatContextChars,
+      t("{shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.", { shared })],
+    [PaperIcon, t("Metadata extraction"), t("Read while detecting identifiers and extracting fields"),
+      value.metaContextChars, value.setMetaContextChars, shared],
+    [BookIcon, t("Multi-paper total"), t("Shared evenly by every selected paper"),
+      value.multiContextChars, value.setMultiContextChars, shared],
+  ];
+  return (
+    <Section
+      title={t("Context size")}
+      scope="account" prefs={SECTION_PREFS.assistant["Context size"]}
+      action={
+        <MenuSelect label={t("Context budget")} value={contextPreset}
+          onChange={(preset) => {
+            if (preset === "custom") return; // the sliders below are the custom values
+            const factor = preset === "larger" ? 2 : 1;
+            value.setChatContextChars(60000 * factor);
+            value.setMetaContextChars(6000 * factor);
+            value.setMultiContextChars(120000 * factor);
+          }} options={[["standard", t("Standard")], ["larger", t("Larger")], ["custom", t("Custom")]]} />
+      }
+    >
+      {limits.map(([icon, label, hint, current, setCurrent, title]) => (
+        <Row key={label} icon={icon} label={label} hint={t("{hint} · {current}", { hint: hint, current: approxPages(current) })}
+          title={title}>
+          <CharSlider value={current} onChange={setCurrent} />
+        </Row>
+      ))}
+    </Section>
+  );
+}
+
+// --- Tool usage: what the assistant may do, where it searches, its limits ---
+
+// The master switch and each chat kind's permissions, the two fetching and
+// reading helpers, the online search services and the tool limits.
+function ToolUsageSettings({ value }) {
   return (
     <>
-      <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
-        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
-          <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
-            options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
-        </Row>
-        <Toggle
-          icon={RectSelectIcon}
-          label={t("Clear snapshots on click")}
-          hint={t("A plain click in the PDF also drops pending snapshots")}
-          title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
-          checked={value.chatImgAutoClear}
-          onChange={value.setChatImgAutoClear}
-        />
-      </Section>
-      <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
+      <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.tools["Tools"]}>
         <Toggle icon={SparklesIcon} label={t("Assistant tools")}
           hint={t("Let chats read, search and edit your library")}
           title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
@@ -681,27 +735,7 @@ function AssistantSettings({ value, ai }) {
       <Section title={t("Online search")}>
         <OnlineSearchSettings />
       </Section>
-    </>
-  );
-}
-
-function AdvancedAiSettings({ value }) {
-  const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
-  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard"
-    : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
-  const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
-  const limits = [
-    [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
-      value.chatContextChars, value.setChatContextChars,
-      t("{shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.", { shared })],
-    [PaperIcon, t("Metadata extraction"), t("Read while detecting identifiers and extracting fields"),
-      value.metaContextChars, value.setMetaContextChars, shared],
-    [BookIcon, t("Multi-paper total"), t("Shared evenly by every selected paper"),
-      value.multiContextChars, value.setMultiContextChars, shared],
-  ];
-
-  return <>
-      <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
+      <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.tools["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
           title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
@@ -717,28 +751,8 @@ function AdvancedAiSettings({ value }) {
           <CharSlider value={value.agentReadChars} onChange={value.setAgentReadChars} />
         </Row>
       </Section>
-      <Section
-        title={t("Context size")}
-        scope="account" prefs={SECTION_PREFS.advanced["Context size"]}
-        action={
-          <MenuSelect label={t("Context budget")} value={contextPreset}
-            onChange={(preset) => {
-              if (preset === "custom") return; // the sliders below are the custom values
-              const factor = preset === "larger" ? 2 : 1;
-              value.setChatContextChars(60000 * factor);
-              value.setMetaContextChars(6000 * factor);
-              value.setMultiContextChars(120000 * factor);
-            }} options={[["standard", t("Standard")], ["larger", t("Larger")], ["custom", t("Custom")]]} />
-        }
-      >
-        {limits.map(([icon, label, hint, current, setCurrent, title]) => (
-          <Row key={label} icon={icon} label={label} hint={t("{hint} · {current}", { hint: hint, current: approxPages(current) })}
-            title={title}>
-            <CharSlider value={current} onChange={setCurrent} />
-          </Row>
-        ))}
-      </Section>
-  </>;
+    </>
+  );
 }
 
 
@@ -900,7 +914,7 @@ export default function SettingsDialog({
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
     const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
-      context: t("Single paper") }[activePane];
+      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
@@ -1029,17 +1043,18 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "assistant" ? <>
                   <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
-                  <AssistantSettings value={context} ai={aiValue} />
+                  <ChatDefaults value={context} ai={aiValue} />
+                  <PromptsSettings value={prompts} />
+                  <ContextSize value={context} />
                 </> : null}
-                {pane === "ai-advanced" ? <>
-                  <PaneHead icon={ActivityIcon} title={t("Advanced")} />
-                  <AdvancedAiSettings value={context} />
+                {pane === "tools" ? <>
+                  <PaneHead icon={SlidersIcon} title={t("Tool usage")} />
+                  <ToolUsageSettings value={context} />
                 </> : null}
-                {pane === "prompts" ? <PromptsSettings value={prompts} /> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
                 {pane === "account" ? <>
                   <UsersSettings value={users} selfOnly />
-                  {workspace ? <SyncSettings value={workspace} papers={papers} /> : null}
+                  {workspace ? <SyncSettings value={workspace} /> : null}
                 </> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
                 {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}

@@ -1,15 +1,17 @@
 """FastAPI application assembly: middleware, routers, startup maintenance, SPA serving."""
 
 import asyncio
+import html
+import mimetypes
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_sync, config, guests, jobs, migrations
+from . import backup_schedule, blobs, cloud_sync, config, db_copies, db_maintenance, guests, jobs, migrations
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -81,35 +83,112 @@ def _silence_windows_connection_reset():
     _ProactorBasePipeTransport._call_connection_lost = _quiet_call_connection_lost
 
 
-def _startup_maintenance():
-    """In this order: bring the data directory to the current schema version
-    (gamma/migrations.py — refuses to serve a newer or unmigratable data
-    directory), create users.db on a fresh install, seed the first admin,
-    then per workspace: apply the per-file schema statements (a restored
-    backup gains page_ops, WAL, ...). A workspace whose files fail to open
-    is logged and left out: the others are served. The stored files'
-    reconciliation (gamma/upload_gc.py) runs in the background once the
-    server is up, never here."""
-    log.info(f"[startup] Gamma {version.label()}")
+def _check_blob_store() -> None:
+    """The store the uploads live in (gamma/blobs.py), checked before the
+    data directory is touched: a bucket that cannot work stops the server
+    here with its reason, rather than after an account was seeded or at
+    the first upload."""
     try:
-        check_publish_config()
-    except ValueError as e:
-        log.error(f"[startup] {e}")
+        if blobs.check() != "local":
+            log.info(f"[startup] stored files: {blobs.driver().where}")
+    except blobs.BlobConfigError as e:
+        log.error(f"[startup] stored files: {e}")
         raise SystemExit(1)
+
+
+def _upgrade_data_directory() -> dict | None:
+    """Bring the data directory to the current schema version
+    (gamma/migrations.py), the first thing the server does. Returns None
+    when it is current, else the guidance for the person running the
+    server: the directory is newer than this build, older than it can
+    upgrade, or a step failed. The server then serves that guidance
+    (``_blocked_app``) instead of exiting, so a container that restarts on
+    its own shows the page at the usual address rather than looping on a
+    message in its log."""
     try:
         done = migrations.ensure_current()
     except migrations.MigrationError as e:
-        log.error(f"[startup] {e}")
-        raise SystemExit(1)
+        guide = migrations.guidance(e)
+        log.error(f"[startup] {guide['title']}: {guide['summary']}")
+        for n, step in enumerate(guide["steps"], 1):
+            log.error(f"[startup]   {n}. {step}")
+        return guide
     if done["applied"]:
         log.info(f"[startup] data directory upgraded from schema version {done['from']} "
                  f"to {done['to']} ({', '.join(done['applied'])}); snapshot: {done['backup']}")
+    return None
+
+
+_BLOCKED_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · Gamma</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box;
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: Canvas; color: CanvasText; }}
+  main {{ max-width: 640px; }}
+  h1 {{ font-size: 1.35rem; margin: 0 0 12px; }}
+  ol {{ padding-left: 1.3em; }} li {{ margin: 8px 0; }}
+  code {{ font: 13px/1.4 ui-monospace, Consolas, monospace; padding: 1px 5px; border-radius: 4px;
+          background: color-mix(in srgb, CanvasText 10%, Canvas); overflow-wrap: anywhere; }}
+  p.meta {{ opacity: .7; font-size: .9rem; }}
+</style></head>
+<body><main>
+<h1>{title}</h1>
+<p>{summary}</p>
+<ol>{steps}</ol>
+<p class="meta">Gamma {build} · data directory <code>{data_dir}</code> · snapshots in <code>{backups_dir}</code> ·
+<a href="https://github.com/tim4431/gamma/blob/main/docs/dev/migrations.md">how upgrades work</a></p>
+</main></body></html>
+"""
+
+
+def _blocked_app(guide: dict) -> FastAPI:
+    """The app served while the data directory cannot be upgraded by this
+    build: one page with the guidance at every address, and a 503 with the
+    same text as JSON under /api, so a browser, a script and the desktop
+    shell all learn what to do. Nothing else runs: no routers, no
+    background rounds, nothing that would open the databases."""
+    app = FastAPI(title="Gamma PDF Annotator", docs_url=None, redoc_url=None, openapi_url=None)
+
+    def step_html(text: str) -> str:
+        parts = html.escape(text).split("`")  # `code` spans in the guidance
+        return "".join(f"<code>{p}</code>" if i % 2 else p for i, p in enumerate(parts))
+
+    page = _BLOCKED_PAGE.format(
+        title=html.escape(guide["title"]), summary=step_html(guide["summary"]),
+        steps="".join(f"<li>{step_html(s)}</li>" for s in guide["steps"]),
+        build=html.escape(version.label()), data_dir=html.escape(guide["data_dir"]),
+        backups_dir=html.escape(guide["backups_dir"]))
+    body = {"error": "data_directory_not_upgradable", "build": version.label(), **guide}
+
+    @app.api_route("/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+    def blocked(path: str):  # awaits nothing: a def, off the event loop
+        if path == "api" or path.startswith("api/"):
+            return JSONResponse(body, status_code=503, headers={"Retry-After": "60"})
+        return HTMLResponse(page, status_code=503, headers={"Retry-After": "60"})
+
+    return app
+
+
+def _startup_maintenance():
+    """After the data directory is current: create users.db on a fresh
+    install, seed the first admin, then per workspace: apply the per-file
+    schema statements (a restored backup gains page_ops, WAL, ...). A
+    workspace behind on its own migration steps is skipped: the background
+    walk the lifespan starts (``migrations.warming``) upgrades it, or the
+    first request that opens it. A workspace whose files fail to open is
+    logged and left out: the others are served. The stored files'
+    reconciliation (gamma/upload_gc.py) runs in the background once the
+    server is up, never here."""
     connect_users_db().close()
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
         ws_root = ws_dir(ws_id)
         try:
+            if migrations.is_behind(ws_id):
+                continue
             if (ws_root / "pages.db").exists():
                 # connect_pages_db also switches the file to WAL and adds any
                 # table an older file lacks (page_ops, ...).
@@ -149,6 +228,16 @@ async def every(seconds: float, fn, failed: str):
 def create_app() -> FastAPI:
     setup_logging()
     _silence_windows_connection_reset()
+    log.info(f"[startup] Gamma {version.label()}")
+    try:
+        check_publish_config()
+    except ValueError as e:
+        log.error(f"[startup] {e}")
+        raise SystemExit(1)
+    _check_blob_store()
+    guide = _upgrade_data_directory()
+    if guide:
+        return _blocked_app(guide)
     mcp = LazyMCP()
     @asynccontextmanager
     async def lifespan(app):
@@ -161,11 +250,22 @@ def create_app() -> FastAPI:
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
+                every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
+                every(db_copies.interval_s(), db_copies.tick, "[dbcopies] round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"):
-            yield state
+            with migrations.warming():  # the workspaces still behind on their steps, one by one
+                yield state
 
     app = FastAPI(title="Gamma PDF Annotator", lifespan=lifespan)
+
+    @app.exception_handler(migrations.MigrationError)
+    async def workspace_not_upgraded(request: Request, exc: migrations.MigrationError):
+        # A workspace whose own migration steps failed as it opened
+        # (migrations.upgrade_workspace): it answers the startup page's
+        # guidance as a 503, and every other workspace is served.
+        return JSONResponse({"error": "workspace_not_upgradable", "build": version.label(),
+                             **migrations.guidance(exc)}, status_code=503, headers={"Retry-After": "60"})
 
     app.middleware("http")(session_middleware)
     app.add_middleware(JsonGzip)  # outermost: compresses what the rest answered
@@ -229,35 +329,70 @@ def create_app() -> FastAPI:
             ".woff2": "font/woff2",
         }
 
-        def revalidating(file: Path, request: Request):
-            """An unhashed file (index.html, favicons) changes in place on
-            upgrade, so it is sent ``no-cache``: the browser asks every time,
-            and gets a 304 when it already holds this version. Starlette's
-            FileResponse sets an ETag but never compares one, so without this
-            every revalidation carried the whole body."""
-            st = file.stat()
-            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
-            headers = {"Cache-Control": "no-cache", "ETag": etag}
-            if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304, headers=headers)
-            return FileResponse(file, media_type=media_types.get(file.suffix.lower()), headers=headers)
+        # The build writes a Brotli and a gzip copy beside every compressible
+        # file (frontend/vite.config.js); the first the request accepts is
+        # sent in the file's place.
+        precompressed = (("br", ".br"), ("gzip", ".gz"))
 
-        @app.get("/{path:path}", include_in_schema=False)
+        def accepted_codings(request: Request) -> set[str]:
+            """The content codings the request's Accept-Encoding names, less
+            those it refuses (``q=0``)."""
+            codings = set()
+            for item in request.headers.get("accept-encoding", "").lower().split(","):
+                name, _, q = item.partition(";")
+                try:
+                    if float(q.strip().removeprefix("q=") or 1) > 0:
+                        codings.add(name.strip())
+                except ValueError:
+                    pass
+            return codings
+
+        def static_file(file: Path, request: Request, cache_control: str):
+            """``file``, or its precompressed copy the request accepts, sent
+            with ``Content-Encoding`` and the file's own media type. A file
+            with a copy answers ``Vary: Accept-Encoding`` whichever goes out,
+            and each coding has an ETag of its own. A matching If-None-Match
+            gets a 304: Starlette's FileResponse sets an ETag but never
+            compares one, so without this every revalidation of an unhashed
+            file (index.html, favicons) carried the whole body."""
+            sent, coding, headers = file, "", {"Cache-Control": cache_control}
+            codings = accepted_codings(request)
+            for name, suffix in precompressed:
+                copy = file.with_name(file.name + suffix)
+                if copy.is_file():
+                    headers["Vary"] = "Accept-Encoding"
+                    if name in codings:
+                        sent, coding = copy, name
+                        break
+            st = sent.stat()
+            headers["ETag"] = f'"{st.st_mtime_ns:x}-{st.st_size:x}{"-" + coding if coding else ""}"'
+            if request.headers.get("if-none-match") == headers["ETag"]:
+                return Response(status_code=304, headers=headers)
+            if coding:
+                headers["Content-Encoding"] = coding
+            media_type = media_types.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0] or "text/plain"
+            return FileResponse(sent, media_type=media_type, headers=headers)
+
+        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
         async def spa(path: str, request: Request):
             if "\x00" in path:  # a scanner's NUL byte: not a file, never a crash
                 raise HTTPException(status_code=404)
+            if request.method == "HEAD" and (path == "api" or path.startswith("api/")):
+                # an API route without HEAD answers 405, not the app's page
+                raise HTTPException(status_code=405, headers={"Allow": "GET"})
             candidate = (static_dir / path).resolve()
             # Path-traversal guard: only serve files inside the static dir
             if path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
                 if path.startswith("assets/"):
                     # Vite content-hashes these filenames (the pdf.js worker
                     # among them) — safe to cache forever.
-                    return FileResponse(candidate, media_type=media_types.get(candidate.suffix.lower()),
-                                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
-                return revalidating(candidate, request)
+                    return static_file(candidate, request, "public, max-age=31536000, immutable")
+                # An unhashed file changes in place on upgrade: the browser
+                # asks every time, and gets a 304 when it holds this version.
+                return static_file(candidate, request, "no-cache")
             # index.html must revalidate every load, or clients keep referencing
             # deleted hashed assets after a deploy.
-            return revalidating(index_html, request)
+            return static_file(index_html, request, "no-cache")
 
     _startup_maintenance()
 

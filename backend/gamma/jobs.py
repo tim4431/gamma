@@ -257,8 +257,8 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
           key: str = "", artifact: bool = False) -> dict:
-    """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account, or
-    ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
+    """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
+    id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
     ``Busy``. ``artifact``: the job writes a file, so it needs room — 507
     when the disk or the account's share of finished files is full. 429
@@ -486,24 +486,15 @@ def sweep(now: float | None = None) -> int:
     return len(ids)
 
 
-def forget_account(username: str) -> None:
+def forget_account(user_id: str) -> None:
     """An account is deleted: its jobs stop and go, with their files."""
     with _lock:
         for live in list(_live.values()):
-            if live.owner != username:
+            if live.owner != user_id:
                 continue
             if live.state == "queued":
                 live.state = "cancelled"
                 _live.pop(live.id, None)
             else:
                 live.cancel.set()
-    _drop("owner = ?", (username,))
-
-
-def renamed(old: str, new: str) -> None:
-    """An account was renamed (its rows by ``admin.rename_account_rows``):
-    the jobs this process runs for it follow."""
-    with _lock:
-        for live in _live.values():
-            if live.owner == old:
-                live.owner = new
+    _drop("owner = ?", (user_id,))

@@ -15,10 +15,11 @@ template, also the key of the frontend's catalog, ``app/notices.js``) plus
 its ``params``, so the browser shows it in the interface language; ``title``
 is the same sentence filled in, for API readers and older frontends.
 
-Sources are plain functions ``fn(username) -> Notice | None`` registered
-with ``@source``; each must be cheap — a cached, in-memory or small
-database read — because ``for_user`` runs them on every poll of
-``GET /api/notices``. Admin-only sources are skipped for everyone else.
+Sources are plain functions ``fn(user_id) -> Notice | None`` (the
+account's id) registered with ``@source``; each must be cheap — a cached,
+in-memory or small database read — because ``for_user`` runs them on every
+poll of ``GET /api/notices``. Admin-only sources are skipped for everyone
+else.
 The one network call, the update check, sits behind
 ``version.check``'s six-hour cache; the one directory walk, the
 storage usage, runs only for an account under a quota and is remembered
@@ -63,7 +64,7 @@ _SOURCES: list[tuple[callable, bool]] = []
 
 
 def source(*, admin_only=False):
-    """Register a notice source: ``fn(username) -> Notice | None``."""
+    """Register a notice source: ``fn(user_id) -> Notice | None``."""
     def wrap(fn):
         _SOURCES.append((fn, admin_only))
         return fn
@@ -71,7 +72,7 @@ def source(*, admin_only=False):
 
 
 @source(admin_only=True)
-def update_available(_username):
+def update_available(_user_id):
     """A newer GitHub release than this build, or for a ``-dev`` build a
     newer build of its branch (nothing for a checkout, an air-gapped server
     or an unreachable GitHub)."""
@@ -84,7 +85,7 @@ def update_available(_username):
 
 
 @source(admin_only=True)
-def log_errors(_username):
+def log_errors(_user_id):
     """Errors logged since the account last looked at the server log. The
     fingerprint is the start time plus the newest error's seq: a restart
     resets both, so an old ack never covers a new error."""
@@ -96,7 +97,7 @@ def log_errors(_username):
 
 
 @source(admin_only=True)
-def database_damage(_username):
+def database_damage(_user_id):
     """Database files whose latest integrity check failed — a snapshot's,
     or the admin's "Check databases" (gamma/integrity.py: one small JSON
     file). Fingerprint: the files and when each was found, so a new
@@ -114,11 +115,11 @@ def database_damage(_username):
 
 
 @source()
-def backup_failed(username):
+def backup_failed(user_id):
     """The account's backup tasks whose last run failed (Settings →
     Backups shows the error). Another failed run, of any of them, is a new
     fingerprint."""
-    failed = [t for t in backup_schedule.list_tasks(username) if t.get("state") == "failed"]
+    failed = [t for t in backup_schedule.list_tasks(user_id) if t.get("state") == "failed"]
     if not failed:
         return None
     mark = ",".join(f"{t['id'][:12]}:{t.get('last_run') or ''}" for t in sorted(failed, key=lambda t: t["id"]))
@@ -128,13 +129,13 @@ def backup_failed(username):
     return notice("backup-failed", mark, "error", "backups", "{n} backup tasks failed", n=len(failed))
 
 
-def _conflict_marks(username, publications):
+def _conflict_marks(user_id, publications):
     """Per clone (or per publication), the open conflict count and newest
     conflict id, folded into one short digest (a fingerprint is capped at
     200 characters, which a dozen clones with conflicts would pass); a
     mirror with a page filter is a publication."""
     marks, total = [], 0
-    for mirror in sync_engine.list_mirrors(username):
+    for mirror in sync_engine.list_mirrors(user_id):
         if (mirror.get("page_filter") is not None) != publications:
             continue
         count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
@@ -145,24 +146,24 @@ def _conflict_marks(username, publications):
 
 
 @source()
-def mirror_conflicts(username):
-    """Open conflicts in the clones the account owns (Settings → Account & sync →
+def mirror_conflicts(user_id):
+    """Open conflicts in the clones the account owns (Settings → Workspaces →
     Clones). Fingerprint: per clone, the count and the newest
     conflict — a new one brings the notice back, resolving old ones does
     not."""
-    mark, total = _conflict_marks(username, publications=False)
+    mark, total = _conflict_marks(user_id, publications=False)
     if not total:
         return None
-    return notice("mirror-conflicts", mark, "warn", "account",
+    return notice("mirror-conflicts", mark, "warn", "workspaces",
                   "{n} sync conflict to look at in your clones" if total == 1
                   else "{n} sync conflicts to look at in your clones", n=total)
 
 
 @source()
-def publish_conflicts(username):
+def publish_conflicts(user_id):
     """Open conflicts in the pages the account publishes to Gamma Cloud
     (Settings → Account & sync → Publishing), fingerprinted like the clones'."""
-    mark, total = _conflict_marks(username, publications=True)
+    mark, total = _conflict_marks(user_id, publications=True)
     if not total:
         return None
     return notice("publish-conflicts", mark, "warn", "account",
@@ -171,10 +172,10 @@ def publish_conflicts(username):
 
 
 @source()
-def cloud_sync_failed(username):
+def cloud_sync_failed(user_id):
     """The account's Gamma Cloud sync in its error state (the Account
     pane's cloud row says why)."""
-    status = cloud_sync.profile_status(username)
+    status = cloud_sync.profile_status(user_id)
     if status.get("state") != "error":
         return None
     error = (status.get("error") or "").strip().rstrip(".")
@@ -185,20 +186,20 @@ def cloud_sync_failed(username):
 
 
 @source()
-def cloud_sync_choice(username):
+def cloud_sync_choice(user_id):
     """The first settings sync with Gamma Cloud found two different copies
     and waits for the person to merge them or keep one (the Account pane)."""
-    if cloud_sync.profile_status(username).get("state") != "choose":
+    if cloud_sync.profile_status(user_id).get("state") != "choose":
         return None
     return notice("cloud-sync-choice", "choose", "warn", "account",
                   "Your settings here and on Gamma Cloud differ: choose which to keep")
 
 
 @source()
-def free_translate_failing(username):
+def free_translate_failing(user_id):
     """Microsoft's free translation endpoint keeps failing for this account
     (translate_engines' in-memory streak); gone after one success."""
-    failing = translate_engines.free_failing(username)
+    failing = translate_engines.free_failing(user_id)
     if not failing:
         return None
     return notice("free-translate", failing["since"], "warn", "translation",
@@ -213,37 +214,37 @@ _usage: dict[str, tuple[float, int]] = {}
 _usage_lock = threading.Lock()
 
 
-def _usage_bytes(username: str) -> int:
+def _usage_bytes(user_id: str) -> int:
     now = time.monotonic()
     with _usage_lock:
-        known = _usage.get(username)
+        known = _usage.get(user_id)
         if known and now - known[0] < _USAGE_TTL:
             return known[1]
-    used = server_settings.usage_bytes(username)
+    used = server_settings.usage_bytes(user_id)
     with _usage_lock:
-        _usage[username] = (now, used)
+        _usage[user_id] = (now, used)
     return used
 
 
-def forget_usage(username: str | None = None) -> None:
+def forget_usage(user_id: str | None = None) -> None:
     """Drop the remembered usage (the tests)."""
     with _usage_lock:
-        if username is None:
+        if user_id is None:
             _usage.clear()
         else:
-            _usage.pop(username, None)
+            _usage.pop(user_id, None)
 
 
 @source()
-def storage_nearly_full(username):
+def storage_nearly_full(user_id):
     """The account's personal storage past nine tenths of its quota (warn)
     or full (error). Fingerprint: the threshold crossed, so each fires once
     until the pane is seen — and again after the usage drops and climbs
     back."""
-    quota_mb = server_settings.user_limits(username).get("quota_mb") or 0
+    quota_mb = server_settings.user_limits(user_id).get("quota_mb") or 0
     if not quota_mb:
         return None
-    used = _usage_bytes(username)
+    used = _usage_bytes(user_id)
     share = used / (quota_mb * MB)
     if share >= 1:
         return notice("storage", "full", "error", "account",
@@ -254,23 +255,23 @@ def storage_nearly_full(username):
     return None
 
 
-def seen_map(username: str) -> dict:
-    value, _ = get_pref(username, NOTICES_SEEN_PREF_KEY)
+def seen_map(user_id: str) -> dict:
+    value, _ = get_pref(user_id, NOTICES_SEEN_PREF_KEY)
     return value if isinstance(value, dict) else {}
 
 
-def for_user(username: str, is_admin: bool) -> list[dict]:
+def for_user(user_id: str, is_admin: bool) -> list[dict]:
     """The unresolved notices of an account, strongest tone first."""
     found = [notice for fn, admin_only in _SOURCES if is_admin or not admin_only
-             if (notice := fn(username)) is not None]
+             if (notice := fn(user_id)) is not None]
     if not found:
         return []
-    seen = seen_map(username)
+    seen = seen_map(user_id)
     return [asdict(n) for n in sorted(found, key=lambda n: -TONES.index(n.tone))
             if seen.get(n.id) != n.fingerprint]
 
 
-def mark_seen(username: str, notice_id: str, fingerprint: str) -> None:
+def mark_seen(user_id: str, notice_id: str, fingerprint: str) -> None:
     """Record that the account has seen this fingerprint of the notice."""
     if not _ID_RE.match(notice_id or "") or not isinstance(fingerprint, str) or len(fingerprint) > 200:
         raise ValueError("invalid notice")
@@ -281,4 +282,4 @@ def mark_seen(username: str, notice_id: str, fingerprint: str) -> None:
         if len(seen) > _MAX_SEEN:  # never grows past the sources that exist; a guard, not a policy
             seen = dict(list(seen.items())[-_MAX_SEEN:])
         return seen
-    update_pref(username, NOTICES_SEEN_PREF_KEY, change)
+    update_pref(user_id, NOTICES_SEEN_PREF_KEY, change)

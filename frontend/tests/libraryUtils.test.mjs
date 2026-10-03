@@ -1,21 +1,99 @@
-// Pure library rules: the folder-path functions against the cases
-// gamma/foldertags.py runs too (tests/shared/foldertags.json), then the
-// helpers only the frontend has.
+// Pure library rules: the folder and label trees of the listing, then the
+// dates, attachments and links.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { generateKeyBetween } from "fractional-indexing";
 import {
-  addFolderTag, cleanFolderPath, cleanFolderSegment, defaultPageTitle, findPageForUrl, isFreshLibrary,
-  formatFullDate, formatRelativeTime, formatShortDate, normalizeLinkInput, pageAttachment, parseFolderTags,
+  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  firstFolderPath, folderChain, folderEntries, folderPath, folderPosition, folderPositions, folderSubtree, formatFullDate, formatRelativeTime, formatShortDate,
+  inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
+  siblingFolders,
 } from "../src/library/libraryUtils.js";
 
-const shared = JSON.parse(await readFile(new URL("../../tests/shared/foldertags.json", import.meta.url), "utf8"));
+// The listing's trees: physics (with a subfolder whose name holds the path
+// separator and a comma), then biology; two labels.
+const [k1, k2] = [generateKeyBetween(null, null), generateKeyBetween(generateKeyBetween(null, null), null)];
+const listing = {
+  folders: { seq: 4, children: [
+    { id: "phys", content: "Physics", position: k1, properties: { pinned: "2026-09-01T00:00:00Z" }, children: [
+      { id: "qec", content: "QEC / codes, 2026", position: k1, properties: {}, children: [] },
+    ] },
+    { id: "bio", content: "Biology", position: k2, properties: {}, children: [] },
+  ] },
+  labels: { seq: 2, children: [
+    { id: "llm", content: "llm", position: k1, properties: {}, children: [] },
+    { id: "rev", content: "Review", position: k2, properties: {}, children: [] },
+  ] },
+};
 
-test("folder tag rules match gamma/foldertags.py", () => {
-  for (const c of shared.parse_tags) assert.deepEqual(parseFolderTags(c.input), c.output, JSON.stringify(c));
-  for (const c of shared.clean_segment) assert.equal(cleanFolderSegment(c.input), c.output, JSON.stringify(c));
-  for (const c of shared.clean_path) assert.equal(cleanFolderPath(c.input), c.output, JSON.stringify(c));
-  for (const c of shared.add_tag) assert.deepEqual(addFolderTag([...c.tags], c.path), c.output, c.note);
+test("libraryTree reads the folders by nesting and order, the labels flat", () => {
+  const tree = libraryTree(listing);
+  assert.deepEqual(tree.top, ["phys", "bio"]);
+  assert.deepEqual(childFolders(tree, ""), ["phys", "bio"]);
+  assert.deepEqual(childFolders(tree, "phys"), ["qec"]);
+  assert.deepEqual(childFolders(tree, "gone"), []);
+  assert.deepEqual(siblingFolders(tree, "").map((f) => f.name), ["Physics", "Biology"]);
+  assert.deepEqual(siblingFolders(tree, "phys"), [tree.folders.get("qec")]);
+  assert.deepEqual(siblingFolders(tree, "gone"), []);
+  assert.deepEqual(tree.folders.get("qec"), { id: "qec", name: "QEC / codes, 2026", parent: "phys", position: k1,
+    pinned: "", path: ["Physics", "QEC / codes, 2026"], children: [] });
+  assert.equal(tree.folders.get("phys").pinned, "2026-09-01T00:00:00Z");
+  assert.deepEqual([...tree.labels.values()].map((l) => l.name), ["llm", "Review"]);
+  assert.equal(libraryTree().folders.size, 0, "no listing yet: empty trees");
+});
+
+test("paths read as names joined, never split; labels by id, No label by its title", () => {
+  const tree = libraryTree(listing);
+  assert.equal(folderPath(tree, "qec"), "Physics / QEC / codes, 2026");
+  assert.equal(folderPath(tree, "gone"), "");
+  assert.deepEqual(folderEntries(tree), [{ id: "phys", name: "Physics" }, { id: "qec", name: "Physics / QEC / codes, 2026" }, { id: "bio", name: "Biology" }]);
+  assert.deepEqual(folderChain(tree, "qec"), ["phys", "qec"]);
+  assert.deepEqual(folderChain(tree, "gone"), []);
+  assert.ok(inFolder(tree, "qec", "phys") && inFolder(tree, "phys", "phys"));
+  assert.ok(!inFolder(tree, "phys", "qec") && !inFolder(tree, "bio", "phys"));
+  assert.deepEqual([...folderSubtree(tree, "phys")], ["phys", "qec"]);
+  assert.deepEqual([...folderSubtree(tree, "gone")], []);
+  assert.equal(labelName(tree, "rev"), "Review");
+  assert.equal(labelName(tree, NO_LABEL), NO_LABEL_TITLE);
+  assert.equal(labelName(tree, "gone"), "");
+});
+
+test("a filing keeps the ids that name a block; filing into a folder refines the one above away", () => {
+  const tree = libraryTree(listing);
+  assert.deepEqual(filedIn(tree.folders, ["bio", "gone", "phys"]), ["bio", "phys"], "a dangling id is passed by");
+  assert.deepEqual(filedIn(tree.labels, undefined), []);
+  assert.equal(firstFolderPath(tree, ["gone", "qec", "bio"]), "Physics / QEC / codes, 2026", "the first that names a block");
+  assert.equal(firstFolderPath(tree, ["gone"]), "");
+  assert.equal(firstFolderPath(tree, undefined), "");
+  assert.deepEqual(addToFolder(tree, ["phys", "bio"], "qec"), ["bio", "qec"], "physics gives way to its subfolder");
+  assert.deepEqual(addToFolder(tree, ["gone"], "bio"), ["bio"], "the refiling drops a dangling id");
+  assert.deepEqual(addToFolder(tree, [], "phys"), ["phys"]);
+});
+
+test("findNamed: exactly, else ignoring case", () => {
+  const items = [{ id: "a", name: "Review" }, { id: "b", name: "review" }];
+  assert.equal(findNamed(items, " review ").id, "b");
+  assert.equal(findNamed(items, "REVIEW").id, "a");
+  assert.equal(findNamed(items, "other"), null);
+});
+
+test("folderPosition orders by fractional keys: last, before a sibling, a sibling moved", () => {
+  const tree = libraryTree(listing);
+  assert.ok(folderPosition(tree, "") > k2, "a new top folder goes last");
+  const first = folderPosition(tree, "", "phys");
+  assert.ok(first < k1, "before the first");
+  const between = folderPosition(tree, "", "bio", "phys");
+  assert.ok(between < k2, "physics moved before biology stays before it");
+  assert.ok(folderPosition(tree, "bio") > "", "into an empty folder");
+});
+
+test("folderPositions: several folders in order between the same two neighbours, the moved ones counted out", () => {
+  const tree = libraryTree(listing);
+  const [a, b] = folderPositions(tree, "", "bio", ["qec", "phys"]);
+  assert.ok(a < b && b < k2, "both before biology, in order");
+  assert.deepEqual(folderPositions(tree, "", "", ["qec"]).map((p) => p > k2), [true], "after the last");
+  assert.deepEqual(folderPositions(tree, "", "bio", []), [], "nothing to place");
+  assert.equal(folderPositions(tree, "", "bio", ["phys"])[0], folderPosition(tree, "", "bio", "phys"));
 });
 
 test("formatShortDate: today with the time, yesterday, a day this year, else the year", () => {
@@ -80,8 +158,13 @@ test("normalizeLinkInput turns identifiers into URLs", () => {
 
 test("pageAttachment and defaultPageTitle", () => {
   assert.equal(pageAttachment({ properties: {} }), null);
+  // the stored copy's URL is derived from doc_id; a source_url of its own wins
   assert.deepEqual(pageAttachment({ properties: { doc_id: "d1", original_filename: "paper.pdf" } }),
-    { kind: "pdf", id: "d1", url: "", name: "paper.pdf" });
+    { kind: "pdf", id: "d1", url: "/api/uploads/d1.pdf", name: "paper.pdf" });
+  assert.deepEqual(pageAttachment({ properties: { doc_id: "d1", source_url: "https://x.test/p.pdf" } }),
+    { kind: "pdf", id: "d1", url: "https://x.test/p.pdf", name: "" });
+  assert.deepEqual(pageAttachment({ properties: { source_url: "/api/uploads/d1.pdf" } }),
+    { kind: "pdf", id: "", url: "/api/uploads/d1.pdf", name: "" });
   assert.equal(defaultPageTitle(null), "Untitled");
   assert.equal(defaultPageTitle({ name: "paper.pdf" }), "paper.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/a%20b.pdf" }), "a b.pdf");

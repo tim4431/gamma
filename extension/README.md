@@ -38,7 +38,9 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   when signed out or offline. The current server has a checkmark; removing it
   disconnects the Connector until you choose another address. Switching or
   removing an address does not sign out of its browser session. Saving
-  defaults remain shared across servers.
+  defaults remain shared across servers, except the default folder: each
+  server remembers its own (picked in options, or the one you last saved
+  into).
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when
@@ -64,7 +66,7 @@ a green check confirms the connection.
 
 This explicitly transfers the publisher cookies to Gamma for later backend
 PDF downloads, including the AI chat's **Fetch documents** tool. The AI receives
-the fetched text, never the cookie values. Settings → AI → Chat → Tools controls
+the fetched text, never the cookie values. Settings → AI → Tool usage → Tools controls
 **Use journal sign-ins** separately for folder, PDF and notes chats. Normal Save
 actions still transfer only the PDF. Connected
 journals are **refreshed automatically**: when you visit one and Gamma's copy

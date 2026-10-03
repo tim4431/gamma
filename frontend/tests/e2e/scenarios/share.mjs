@@ -51,17 +51,18 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
 
   await step("folder share: the folder view's link button shares every page filed there; visitors browse the listing", async () => {
     const paperA = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper A" } });
-    await alice.api(`/api/blocks/${paperA.id}`, { method: "PUT", body: { properties: { folder: "sharedlab" } } });
+    await alice.file(paperA.id, { folders: ["sharedlab"] });
     const paperB = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper B" } });
-    await alice.api(`/api/blocks/${paperB.id}`, { method: "PUT", body: { properties: { folder: "sharedlab" } } });
+    await alice.file(paperB.id, { folders: ["sharedlab"] });
     const deeper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper in a subfolder" } });
-    await alice.api(`/api/blocks/${deeper.id}`, { method: "PUT", body: { properties: { folder: "sharedlab/sub" } } });
+    await alice.file(deeper.id, { folders: ["sharedlab/sub"] });
+    const sharedlab = await alice.folder("sharedlab");
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: paperA.id, content: "a note inside the shared folder" } });
     const outside = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Not in the shared folder" } });
 
     // the owner: open the folder, share it from the browse bar's link button
     const ctx = await alice.context(browser);
-    const page = await openPage(ctx, `${server.base}/?folder=sharedlab&ws=${alice.ws}`);
+    const page = await openPage(ctx, `${server.base}/?folder=${sharedlab}&ws=${alice.ws}`);
     await page.click("button[aria-label='Share this folder']");
     await page.waitForSelector(".sharePopover");
     assert((await page.textContent(".sharePopover")).includes("Share folder “sharedlab”"), "the popover is about the folder");
@@ -76,7 +77,10 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.locator(".sharePopover").waitFor({ state: "detached" });
     assertNoProblems(page);
     await ctx.close();
-    assertEq((await alice.api("/api/share-settings/folder?name=sharedlab")).token, folderToken, "the folder's share");
+    assertEq((await alice.api(`/api/share-settings/folder/${sharedlab}`)).token, folderToken, "the folder's share");
+    // the share names the folder by id: renamed, the link opens it under its new name
+    await alice.api("/api/pages/folders/ops", { method: "POST", body: { ops: [{ op: "set", id: sharedlab, content: "sharedlab, renamed" }] } });
+    assertEq((await (await fetch(`${server.base}/api/share/${folderToken}`)).json()).folder_name, "sharedlab, renamed", "the link names the folder");
 
     // an anonymous visitor: the folder view itself — the library's own rows,
     // confined to the folder and stripped of everything that would change it
@@ -88,8 +92,8 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     assertEq(await v.locator(".folderNewBtn").count(), 0, "no New page / New folder for a visitor");
     assertEq(await v.locator(".fileRowPin").count(), 0, "no pins for a visitor");
     assertEq(await v.locator(".folderBackRow").count(), 0, "nothing above the shared folder");
-    assert((await v.textContent(".folderCurrent")).includes("sharedlab"), "the folder crumb");
-    assert((await v.textContent(".readOnlyTitle")).includes("sharedlab"), "the folder name in the topbar");
+    assert((await v.textContent(".folderCurrent")).includes("sharedlab, renamed"), "the folder crumb");
+    assert((await v.textContent(".readOnlyTitle")).includes("sharedlab, renamed"), "the folder name in the topbar");
     // into the subfolder and back up — never above the root
     await v.locator(".fileList .folderRow", { hasText: "sub" }).dblclick();
     await v.locator(".fileRow", { hasText: "in a subfolder" }).waitFor();
@@ -120,7 +124,20 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await dctx.close();
     const refused = await fetch(`${server.base}/api/blocks/${outside.id}?share=${folderToken}`);
     assertEq(refused.status, 403, "a page outside the folder is refused");
-    await alice.api("/api/share-settings/folder?name=sharedlab", { method: "DELETE" });
+
+    // the owner on their own link: Open in my library leaves the share for the folder itself
+    const octx = await alice.context(browser);
+    const o = await openPage(octx, `${server.base}/?share=${folderToken}`);
+    await o.locator(".fileRow", { hasText: "Folder share paper A" }).waitFor({ timeout: 15000 });
+    await o.getByRole("button", { name: "Open in my library" }).click();
+    await until(async () => !o.url().includes("share=") && new URL(o.url()).searchParams.get("folder") === sharedlab,
+      { what: "the owner's library, at the folder" });
+    assertEq(new URL(o.url()).searchParams.get("ws"), alice.ws, "in the share's workspace");
+    await o.locator(".fileRow", { hasText: "Folder share paper A" }).waitFor({ timeout: 15000 });
+    assert(await o.locator(".folderNewBtn").count() > 0, "the owner's own listing, editable");
+    assertNoProblems(o);
+    await octx.close();
+    await alice.api(`/api/share-settings/folder/${sharedlab}`, { method: "DELETE" });
   });
 
   await step("share view: the topbar says who shared it and what a visitor may do; Sign in keeps the page", async () => {
@@ -329,6 +346,11 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await until(async () => (await page.textContent("body")).includes("Can edit"), { what: "edit badge" });
     await editRow(page, "figure");
     await page.keyboard.type(" edited by bob");
+    // A share's editor makes no page in the owner's library.
+    await page.keyboard.type(" /page");
+    await page.waitForSelector(".slashMenu");
+    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 0, "/page offers no new page in a share");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("Backspace");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(account, pdfPageId)).includes("edited by bob"), { what: "bob's edit saved to alice's page" });
     assertNoProblems(page);

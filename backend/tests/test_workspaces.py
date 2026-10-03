@@ -6,7 +6,7 @@ under a role (owner / editor / viewer). A request picks its workspace with
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import guest_name, login, make_page, make_user, workspace_of
+from conftest import account_of, guest_name, login, make_page, make_user, workspace_of
 
 
 @pytest.fixture(scope="module")
@@ -91,12 +91,12 @@ def test_non_members_and_viewers(ann, ben, cid, lab):
     assert cid.post("/api/pages", json={"title": "x"}, headers=_in(lab)).status_code == 403
     assert cid.post("/api/uploads", files={"file": ("a.pdf", b"%PDF-1.4 x", "application/pdf")},
                     headers=_in(lab)).status_code == 403
-    # an editor's op carries their own name
+    # an editor's op carries their own account
     r = ben.post(f"/api/pages/{page['id']}/ops", headers=_in(lab), json={
         "client": "c", "ops": [{"op": "set", "id": page["id"], "content": "Lab page!"}]})
     assert r.status_code == 200, r.text
     log = ann.get(f"/api/pages/{page['id']}/ops", params={"since": 0}, headers=_in(lab)).json()
-    assert log["batches"][-1]["actor"] == "ws_ben"
+    assert log["batches"][-1]["actor"] == account_of("ws_ben")
 
 
 def test_owner_only_management_and_rails(ann, ben, cid, lab):
@@ -109,7 +109,7 @@ def test_owner_only_management_and_rails(ann, ben, cid, lab):
     assert ann.put(f"/api/workspaces/{lab}/members/ws_cid", json={"role": "king"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/nobody-here", json={"role": "viewer"}).status_code == 400
     from gamma import guests
-    assert ann.put(f"/api/workspaces/{lab}/members/{guests.new_guest()}", json={"role": "viewer"}).status_code == 400
+    assert ann.put(f"/api/workspaces/{lab}/members/{guests.new_guest()[1]}", json={"role": "viewer"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/ws_ann", json={"role": "editor"}).status_code == 400
     assert ann.delete(f"/api/workspaces/{lab}/members/ws_ann").status_code == 400
     # a second owner can be named, then the first may step down
@@ -142,7 +142,7 @@ def test_invites_by_cloud_username_need_cloud_sign_in(ann, ben, cid, lab, monkey
     assert not any(m.get("pending") for m in ann.get(f"/api/workspaces/{lab}").json()["members"])
 
 
-def test_several_personal_workspaces(ann, ben, boss):
+def test_several_personal_workspaces(ann, ben, boss, lab):
     """work / life / play: all personal, all metered against the account;
     the first is the default until another is made default; the last one
     cannot be deleted."""
@@ -180,9 +180,9 @@ def test_several_personal_workspaces(ann, ben, boss):
     assert ann.delete(f"/api/workspaces/{play['id']}").status_code == 200
     assert ann.get("/api/session").json()["default_workspace"] == home
     assert ann.delete(f"/api/workspaces/{home}").status_code == 400
-    # a shared workspace cannot be made someone's default
-    lab_ws = next(w for w in ann.get("/api/session").json()["workspaces"] if w["kind"] == "shared")
-    assert ann.put(f"/api/workspaces/{lab_ws['id']}", json={"default": True}).status_code == 400
+    # a shared workspace cannot be made someone's default (this module's own: another
+    # module's public one would answer 403, ann being no member of it)
+    assert ann.put(f"/api/workspaces/{lab}", json={"default": True}).status_code == 400
 
 
 def test_admin_converts_between_kinds(boss, ann, ben):
@@ -242,7 +242,7 @@ def test_workspace_update_is_atomic(boss, ann):
 def test_public_access_does_not_consume_workspace_creation_slots(boss, ann, monkeypatch):
     from gamma import workspaces
     public = boss.post("/api/workspaces", json={"name": "Public reading room", "kind": "shared", "access": "public"}).json()["id"]
-    monkeypatch.setattr(workspaces, "MAX_WORKSPACES_PER_USER", workspaces.membership_count("ws_ann") + 1)
+    monkeypatch.setattr(workspaces, "MAX_WORKSPACES_PER_USER", workspaces.membership_count(account_of("ws_ann")) + 1)
     created = ann.post("/api/workspaces", json={"name": "My extra library"})
     assert created.status_code == 200, created.text
     assert ann.post("/api/workspaces", json={"name": "Over the limit"}).status_code == 400
@@ -320,6 +320,40 @@ def test_prefs_follow_account_and_workspace(ann, lab):
     assert ann.get("/api/prefs/profile", headers=_in(mine)).json()["value"]["theme"] == "dark"
 
 
+def _prefs_in(ws):
+    """The workspace's ``workspace_prefs`` rows, as {(account id, key)}."""
+    from gamma.db import connect_pages_db
+    with connect_pages_db(ws) as conn:
+        return set(conn.execute("SELECT user_id, key FROM workspace_prefs"))
+
+
+def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
+    # removed by an owner or leaving: the account's tabs, recents and reading
+    # positions in that workspace go (and their copies from before step 34
+    # in users.db); everyone else's stay
+    from gamma.db import connect_users_db, page_now
+    room = boss.post("/api/workspaces", json={"name": "Prefs room", "kind": "shared", "owner": "ws_ann"}).json()["id"]
+    a, b = account_of("ws_ann"), account_of("ws_ben")
+    assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "editor"}).status_code == 200
+    for client in (ann, ben):
+        assert client.put("/api/prefs/open-tabs", json={"value": ["t"]}, headers=_in(room)).status_code == 200
+    assert ben.put("/api/prefs/read-pos", json={"value": {"d": 1}}, headers=_in(room)).status_code == 200
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO user_prefs VALUES (?, ?, 'recent-views', '[]', ?)", (b, room, page_now()))
+    assert _prefs_in(room) == {(a, "open-tabs"), (b, "open-tabs"), (b, "read-pos")}
+
+    assert ann.delete(f"/api/workspaces/{room}/members/ws_ben").status_code == 200
+    assert _prefs_in(room) == {(a, "open-tabs")}
+    with connect_users_db() as conn:
+        assert not conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ? AND workspace_id = ?", (b, room)).fetchone()
+    assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "viewer"}).status_code == 200
+    assert ben.get("/api/prefs/open-tabs", headers=_in(room)).json()["value"] is None
+    assert ben.put("/api/prefs/open-tabs", json={"value": ["again"]}, headers=_in(room)).status_code == 200
+    assert ben.delete(f"/api/workspaces/{room}/members/ws_ben").json()["left"] is True
+    assert _prefs_in(room) == {(a, "open-tabs")}
+    assert boss.delete(f"/api/workspaces/{room}").status_code == 200
+
+
 def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
     """An account's usage is its personal workspace's uploads, nothing else;
     a shared workspace has its own optional quota that admins set."""
@@ -333,7 +367,7 @@ def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
                  headers=_in(lab))
     assert r.status_code == 200, r.text
     assert ann.get("/api/quota").json()["used_bytes"] == ann_before
-    assert ben.get("/api/quota").json()["used_bytes"] == ben_before == server_settings.usage_bytes("ws_ben")
+    assert ben.get("/api/quota").json()["used_bytes"] == ben_before == server_settings.usage_bytes(account_of("ws_ben"))
     assert ann.get("/api/quota", headers=_in(lab)).json()["workspace_bytes"] > 0
     # the workspace's own quota: admin-only, 0/null = unlimited, enforced on upload
     assert ann.put(f"/api/workspaces/{lab}", json={"quota_mb": 1}).status_code == 403
@@ -382,7 +416,7 @@ def test_admin_creates_a_workspace_for_someone_and_hands_out_ownership(boss, ann
     assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared", "owner": "nobody"}).status_code == 400
     from gamma import guests
     assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared",
-                                              "owner": guests.new_guest()}).status_code == 400
+                                              "owner": guests.new_guest()[1]}).status_code == 400
     r = boss.post("/api/workspaces", json={"name": "Ann's course", "kind": "shared", "owner": "ws_ann"})
     assert r.status_code == 200, r.text
     ws = r.json()
@@ -461,11 +495,21 @@ def test_deleting_an_account_keeps_workspaces_with_other_owners(boss):
     solo = eve.post("/api/workspaces", json={"name": "Eve solo"}).json()["id"]  # a second personal one
     duo = boss.post("/api/workspaces", json={"name": "Eve+Fay", "kind": "shared", "owner": "ws_eve"}).json()["id"]
     assert eve.put(f"/api/workspaces/{duo}/members/ws_fay", json={"role": "owner"}).status_code == 200
+    # the account's prefs in the workspaces that stay: one it is a member
+    # of, and a public one it only reads
+    hall = boss.post("/api/workspaces", json={"name": "Eve's hall", "kind": "shared", "access": "public",
+                                              "public_role": "viewer"}).json()["id"]
+    for client, ws in ((eve, duo), (fay, duo), (eve, hall)):
+        assert client.put("/api/prefs/open-tabs", json={"value": ["t"]}, headers=_in(ws)).status_code == 200
+    e, f = account_of("ws_eve"), account_of("ws_fay")
+    assert _prefs_in(duo) == {(e, "open-tabs"), (f, "open-tabs")} and (e, "open-tabs") in _prefs_in(hall)
     personal = workspace_of("ws_eve")
     r = boss.delete("/api/admin/users/ws_eve")
     assert r.status_code == 200, r.text
     assert sorted(r.json()["deleted_workspaces"]) == sorted([personal, solo])
     from gamma import workspaces
-    assert workspaces.get(duo) and workspaces.role_of(duo, "ws_fay") == "owner"
+    assert workspaces.get(duo) and workspaces.role_of(duo, account_of("ws_fay")) == "owner"
     assert workspaces.get(solo) is None and workspaces.get(personal) is None
     assert fay.get("/api/blocks/root/children", headers=_in(duo)).status_code == 200
+    assert _prefs_in(duo) == {(f, "open-tabs")} and not {row for row in _prefs_in(hall) if row[0] == e}
+    assert boss.delete(f"/api/workspaces/{hall}").status_code == 200

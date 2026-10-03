@@ -1,6 +1,13 @@
 // Logseq-style block model: each block has id, content, properties, children.
-// Highlights are blocks with properties.highlight_id set.
-// Free notes are blocks without properties.highlight_id.
+// Highlights (link regions too) are blocks with a properties.pdf_position
+// that are no ink group, text box or sheet; the block id is the highlight's
+// id. Free notes are
+// the blocks without one. A pdf_position (gamma/highlights.py) is
+// {pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [{x1,
+// y1, x2, y2}, …]} (area: true on an area highlight): the 1-based page,
+// the page as measured when the place was taken, and the rectangles in
+// that frame, top-left origin. A highlight whose place on its page is not
+// known carries pageNumber alone.
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this
@@ -25,16 +32,27 @@ export function makeBlockId() {
 
 // --- shape helpers ---
 
+const isObject = (v) => Boolean(v) && typeof v === "object";
+
+// A highlight or a link region: a block with a pdf_position that is no ink
+// group, text box or sheet (the server's `kind` highlight, and link on the
+// page; gamma/highlights.py is_highlight).
 export function isHighlightBlock(b) {
-  return Boolean(b && b.properties && b.properties.highlight_id);
+  const p = b?.properties;
+  return Boolean(p && isObject(p.pdf_position) && p.ink_url === undefined && !isObject(p.text_box) && !isObject(p.sheet));
 }
 
 export function blockColor(b) {
   return (b?.properties?.color) || DEFAULT_COLOR;
 }
 
+// The PDF page a block is placed on: its position's (a highlight, a link
+// region, an ink group), a text box's pdf_page (a box stores no position,
+// markup/textBox.js); null for any other block.
 export function blockPage(b) {
-  return b?.properties?.pdf_page ?? null;
+  const p = b?.properties || {};
+  if (isObject(p.text_box)) return p.pdf_page ?? null;
+  return p.pdf_position?.pageNumber ?? null;
 }
 
 export function blockQuote(b) {
@@ -45,15 +63,14 @@ export function blockCollapsed(b) {
   return b?.properties?.collapsed ?? false;
 }
 
-export function blockHighlightId(b) {
-  return b?.properties?.highlight_id || null;
-}
-
+// The block's place on its PDF page, when it has one: a position with its
+// rectangles (not one of its page alone).
 export function blockPosition(b) {
-  return b?.properties?.pdf_position || null;
+  const pos = b?.properties?.pdf_position;
+  return pos?.boundingRect ? pos : null;
 }
 
-// Backwards-compat accessor view: let old code that reads b.color, b.quote, b.page, b.highlightId, b.position
+// Backwards-compat accessor view: let old code that reads b.color, b.quote, b.page, b.position
 // keep working without changes. Attaches convenience getters.
 export function withLegacyAccessors(b) {
   return {
@@ -61,7 +78,6 @@ export function withLegacyAccessors(b) {
     color: blockColor(b),
     quote: blockQuote(b),
     page: blockPage(b),
-    highlightId: blockHighlightId(b),
     position: blockPosition(b),
   };
 }
@@ -310,18 +326,15 @@ export function addChildBlock(blocks, id) {
 //     just append a new highlight-backed block without disturbing existing tree ---
 
 export function addHighlightAsBlock(blocks, highlight) {
-  const id = highlight.id || makeBlockId();
   const block = {
-    id,
+    id: highlight.id || makeBlockId(),
     parentId: null,
     children: [],
     content: highlight.comment?.text || "",
     properties: {
-      highlight_id: id,
       color: highlight.color || DEFAULT_COLOR,
       quote: highlight.content?.text || "",
-      pdf_page: highlight.position?.pageNumber || null,
-      pdf_position: highlight.position || null,
+      pdf_position: highlight.position,
     },
   };
   return [...(blocks || []), block];
@@ -340,7 +353,7 @@ export function blocksToHighlights(blocks) {
     for (const b of list || []) {
       if (isHighlightBlock(b) && blockPosition(b)) {
         out.push({
-          id: blockHighlightId(b),
+          id: b.id,
           content: { text: blockQuote(b) },
           comment: { text: b.content || "" },
           hasNote: (b.content || "").trim() !== "" || hasChildNote(b),

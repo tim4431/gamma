@@ -1,5 +1,5 @@
 """Render pages as an Obsidian vault: one ``<Title>.md`` per page in a
-directory tree that mirrors the folder labels, attachments (images and the
+directory tree that mirrors the folders, attachments (images and the
 PDFs) in ``attachments/``, links in Obsidian's own syntax, and a minimal
 ``.obsidian/app.json`` so the folder opens as a vault and re-imports as one.
 
@@ -27,6 +27,9 @@ Upload references are rewritten by the caller with ``collect_and_rewrite``
 import json
 import re
 
+from . import bibtex as bibtex_mod
+from .blocks_store import page_attachment
+from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
@@ -84,11 +87,12 @@ class VaultContext:
 
     # --- naming (built once, before any page renders) ------------------------
 
-    def name_pages(self, pages, folder_scope=None):
-        """``pages``: (page id, title, folder label) in export order."""
+    def name_pages(self, pages):
+        """``pages``: (page id, title, folder path — the names its directory
+        is made of, ``page_dir``) in export order."""
         used = set()
         for pid, title, folder in pages:
-            directory = page_dir(folder, folder_scope)
+            directory = page_dir(folder)
             stem = vault_name(title)
             name = stem
             n = 1
@@ -134,17 +138,12 @@ class VaultContext:
         return marker
 
 
-def page_dir(folder_label, folder_scope):
-    """The directory a page's file goes in (``"a/b/"``, or ``""``): its first
-    folder label below ``folder_scope`` (the exported folder), each segment
-    a valid file name. Shared with the annotated-PDF folder export."""
-    folders = [t.strip() for t in (folder_label or "").split(",") if t.strip()]
-    if folder_scope:
-        folders = [f[len(folder_scope) + 1:] for f in folders if f.startswith(folder_scope + "/")]
-    if not folders:
-        return ""
-    segs = [vault_name(s) for s in folders[0].split("/") if s.strip()]
-    return "/".join(segs) + "/" if segs else ""
+def page_dir(folder) -> str:
+    """The directory a page's file goes in (``"a/b/"``, or ``""``) for its
+    folder path ``folder`` (names; the export's choice — the first folder
+    below the exported folder), each name made a valid file name. Shared
+    with the annotated-PDF folder export."""
+    return "".join(f"{vault_name(name)}/" for name in folder)
 
 
 # --- links -------------------------------------------------------------------
@@ -180,7 +179,8 @@ def referenced_blocks(texts, ctx: VaultContext):
 
 # --- rendering ---------------------------------------------------------------
 
-def render_vault_page(page, ctx: VaultContext, highlights=True, notes=True):
+def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=True):
+    """One page as a vault note; ``tags`` are its labels' names."""
     props = page.get("properties") or {}
     title = (page.get("content") or "").strip() or "Untitled"
     page_id = page["id"]
@@ -188,7 +188,6 @@ def render_vault_page(page, ctx: VaultContext, highlights=True, notes=True):
     fm = []
     if vault_name(title) != title:
         fm.append(f"title: {_yaml_text(title)}")
-    tags = [t.strip() for t in (props.get("category") or "").split(",") if t.strip()]
     if tags:
         fm += _yaml_list("tags", dict.fromkeys(tags))
     aliases = props.get("aliases")
@@ -197,8 +196,8 @@ def render_vault_page(page, ctx: VaultContext, highlights=True, notes=True):
     pdf_leaf = ctx.pdf_leaf(page_id)
     if pdf_leaf:
         fm.append(f'source: "[[{pdf_leaf}]]"')
-    elif props.get("source_url"):
-        fm.append(f"source: {_yaml_text(props['source_url'])}")
+    elif attachment := page_attachment(props):
+        fm.append(f"source: {_yaml_text(attachment['url'])}")
     meta = props.get("meta")
     if isinstance(meta, dict):
         if meta.get("doi"):
@@ -213,7 +212,7 @@ def render_vault_page(page, ctx: VaultContext, highlights=True, notes=True):
 
     lines = ["---", *fm, "---", ""] if fm else []
     if props.get("bibtex"):
-        lines += ["```bibtex", (props["bibtex"] or "").strip(), "```", ""]
+        lines += ["```bibtex", bibtex_mod.page_entry(props), "```", ""]
 
     r = _Renderer(ctx, page_id, pdf_leaf, highlights, notes)
     for child in page["children"]:
@@ -235,12 +234,11 @@ class _Renderer:
 
     def _props(self, node):
         props = node.get("properties") or {}
-        if not self.highlights and (props.get("highlight_id") or props.get("link_url")):
+        if not self.highlights and (is_highlight(props) or props.get("link_url")):
             return {}
         return props
 
-    def _page_link(self, props):
-        page_no = props.get("pdf_page")
+    def _page_link(self, page_no):
         if page_no is None:
             return ""
         return f"[[{self.pdf_leaf}#page={page_no}|p. {page_no}]]" if self.pdf_leaf else f"p. {page_no}"
@@ -248,7 +246,7 @@ class _Renderer:
     def _box_link(self, props, on_sheet):
         """The page link of a text box on a PDF page; "" for any other block
         (a box under a sheet, ``on_sheet``, included)."""
-        return self._page_link(props) if box_page(props, on_sheet) else ""
+        return self._page_link(box_page(props, on_sheet))
 
     def _region(self, props, content):
         """A PDF link region → a link line, or None when it isn't one."""
@@ -278,13 +276,13 @@ class _Renderer:
         content = self._content(node)
         marker = self._marker(node)
         region = self._region(props, content)
-        quote = (props.get("quote") or "").strip() if props.get("highlight_id") else ""
+        quote = (props.get("quote") or "").strip() if is_highlight(props) else ""
 
         if region:
             lines += [region + (f" ^{marker}" if marker else ""), ""]
             self._children_as_list(node, lines, under_sheet)
         elif quote:
-            title = self._page_link(props)
+            title = self._page_link(page_of(props))
             lines.append(f"> [!quote] {title}".rstrip())
             lines += [f"> {q}" for q in quote.split("\n")]
             if marker:
@@ -337,7 +335,7 @@ class _Renderer:
         content = self._content(node)
         marker = self._marker(node)
         region = self._region(props, content)
-        quote = (props.get("quote") or "").strip() if props.get("highlight_id") else ""
+        quote = (props.get("quote") or "").strip() if is_highlight(props) else ""
         pad = " " * indent
         emitted = True
 
@@ -347,7 +345,7 @@ class _Renderer:
             qlines = quote.split("\n")
             lines.append(f"{pad}- > {qlines[0]}" + (f" ^{marker}" if marker else ""))
             lines += [f"{pad}  > {q}" for q in qlines[1:]]
-            link = self._page_link(props)
+            link = self._page_link(page_of(props))
             if link:
                 lines.append(f"{pad}  {link}")
             lines += [f"{pad}  {c}" for c in content.split("\n")] if content else []

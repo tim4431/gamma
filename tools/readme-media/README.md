@@ -139,7 +139,7 @@ node tools/readme-media/check-media.mjs notes
 Notes uses an isolated server and imports `artifacts/readme-media/demo.zip`;
 it needs no demo login or suite workspace. It records at a 130% interface size
 (Settings → Appearance): markdown and a `[[` link, a display equation typed
-with autocomplete, then `/page` makes the next block a sheet and a stylus
+with autocomplete, then `/note` makes the next block a sheet and a stylus
 sketches on it. The pen is real pen input (CDP `pointerType: 'pen'`), which
 writes on a sheet with the tools closed, since the sheet's own pen button sits
 below it. After a reload the recorder checks the text and the sheet's strokes.

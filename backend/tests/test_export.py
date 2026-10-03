@@ -5,7 +5,7 @@ page + EDN + area images)."""
 import io
 import zipfile
 
-from conftest import make_page
+from conftest import make_folder, make_page
 
 from gamma.markdown_export import build_tree, collect_and_rewrite, render_readable, slugify
 
@@ -19,8 +19,7 @@ def _highlight(hid, quote, note="", page=1, color="rgba(255, 226, 143, 0.65)", c
     return {
         "id": hid, "content": note, "children": children or [],
         "properties": {
-            "highlight_id": hid, "quote": quote, "pdf_page": page, "color": color,
-            "pdf_position": {"pageNumber": page, "boundingRect": {}, "rects": []},
+            "quote": quote, "color": color, "pdf_position": {"pageNumber": page},
         },
     }
 
@@ -152,12 +151,13 @@ def test_folder_md_export_links_papers_inside_the_export(guest):
     same export resolve to relative .md links, so the zip is self-contained."""
     from urllib.parse import quote
 
-    target = make_page(guest, "Target paper", properties={"folder": "proj"})
+    proj = make_folder(guest, "proj")
+    target = make_page(guest, "Target paper", properties={"folders": [proj]})
     _put_children(guest, target["id"], [
         {"id": "tb1", "content": "a shared finding\nsecond line", "properties": {}, "children": []},
         {"id": "tb2", "content": "see [[tb1]] again", "properties": {}, "children": []},
     ])
-    src = make_page(guest, "Source notes", properties={"folder": "proj"})
+    src = make_page(guest, "Source notes", properties={"folders": [proj]})
     link = _highlight("lk1", "linked region")
     link["properties"]["link_page_id"] = target["id"]
     _put_children(guest, src["id"], [
@@ -166,7 +166,7 @@ def test_folder_md_export_links_papers_inside_the_export(guest):
         link,
     ])
 
-    r = guest.get("/api/folders/export", params={"name": "proj"})
+    r = guest.get(f"/api/folders/{proj}/export")
     assert r.status_code == 200, r.text
     z = zipfile.ZipFile(io.BytesIO(r.content))
     target_file = f"{slugify('Target paper', target['id'])}.md"
@@ -212,15 +212,39 @@ def test_single_page_md_export_materializes_embeds(guest):
 
 
 def test_folder_export_zips_matching_pages(guest):
-    make_page(guest, "In folder A", properties={"folder": "research/optics"})
-    make_page(guest, "In subfolder", properties={"folder": "research/optics/lasers"})
-    make_page(guest, "Elsewhere", properties={"folder": "cooking"})
-    r = guest.get("/api/folders/export", params={"name": "research/optics"})
+    optics = make_folder(guest, "research/optics")
+    cooking = make_folder(guest, "cooking")
+    make_page(guest, "In folder A", properties={"folders": [optics]})
+    # filed outside the export too: the folder inside it is the one written
+    make_page(guest, "In subfolder", properties={"folders": [cooking, make_folder(guest, "research/optics/lasers")]})
+    make_page(guest, "Elsewhere", properties={"folders": [cooking]})
+    r = guest.get(f"/api/folders/{optics}/export")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/zip"
-    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    mds = [n for n in names if n.endswith(".md")]
+    assert "research-optics" in r.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    mds = {n: zf.read(n).decode() for n in zf.namelist() if n.endswith(".md")}
     assert len(mds) == 2  # the folder page + the subfolder page, not "cooking"
+    by_title = {next(line for line in text.splitlines() if line.startswith("title: ")): text
+                for text in mds.values()}
+    assert "folder:" not in by_title["title: In folder A"]           # the export's top
+    assert "\nfolder: lasers\n" in by_title["title: In subfolder"]  # below the exported folder
+
+
+def test_one_page_writes_its_folders_whole_path(guest):
+    page = make_page(guest, "Filed alone", properties={"folders": [make_folder(guest, "research/optics/lasers")]})
+    r = guest.get(f"/api/pages/{page['id']}/export")
+    assert r.status_code == 200, r.text
+    assert "\nfolder: research/optics/lasers\n" in r.text
+
+
+def test_a_folder_export_names_the_folder_by_id(guest):
+    assert guest.get("/api/folders/no-such-folder/export").status_code == 404
+    empty = make_folder(guest, "an empty folder")
+    r = guest.get(f"/api/folders/{empty}/export")
+    assert r.status_code == 404 and r.json()["detail"] == "no pages in that folder"
+    page = make_page(guest, "Not a folder")
+    assert guest.get(f"/api/folders/{page['id']}/export").status_code == 404
 
 
 def _blank_pdf_bytes():
@@ -233,15 +257,14 @@ def _blank_pdf_bytes():
 
 
 def _positioned(hid, quote, page=1, area=False, note=""):
-    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 800.0, "height": 1035.0}
-    pos = {"pageNumber": page, "boundingRect": rect, "rects": [rect]}
+    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
+    pos = {"pageNumber": page, "width": 800.0, "height": 1035.0, "boundingRect": rect, "rects": [rect]}
     if area:
         pos["area"] = True
     return {
         "id": hid, "content": note, "children": [],
         "properties": {
-            "highlight_id": hid, "quote": quote, "pdf_page": page,
-            "color": "rgba(170, 235, 170, 0.65)", "pdf_position": pos,
+            "quote": quote, "color": "rgba(170, 235, 170, 0.65)", "pdf_position": pos,
         },
     }
 
@@ -306,7 +329,12 @@ def test_logseq_graph_export(guest):
     from gamma.logseq_import import parse_edn
     parsed = parse_edn(edn)
     assert len(parsed["highlights"]) == 2
-    assert parsed["highlights"][0]["position"]["bounding"]["x1"] == 50.0
+    first = parsed["highlights"][0]["position"]
+    # Logseq repeats the page size in every rect; Gamma stores it once
+    assert first["bounding"]["x1"] == 50.0 and (first["bounding"]["width"], first["bounding"]["height"]) == (800.0, 1035.0)
+    assert all((r["width"], r["height"]) == (800.0, 1035.0) for r in first["rects"])
+    from gamma.logseq_import import edn_highlight_position
+    assert edn_highlight_position(parsed["highlights"][0]) == _positioned("th", "")["properties"]["pdf_position"]
 
 
 def test_logseq_graph_export_without_pdf(guest):
@@ -339,9 +367,9 @@ def test_slugify_and_rewrite_units():
 
 def test_build_tree_orders_children():
     rows = [
-        ("p", "root", "a0", "Page", "{}", "t", "t"),
-        ("c2", "p", "a2", "second", "{}", "t", "t"),
-        ("c1", "p", "a1", "first", "{}", "t", "t"),
+        ("p", "root", "a0", "Page", "{}", "t", "t", "p", "page"),
+        ("c2", "p", "a2", "second", "{}", "t", "t", "p", "note"),
+        ("c1", "p", "a1", "first", "{}", "t", "t", "p", "note"),
     ]
     page = build_tree(rows, "p")
     assert [c["content"] for c in page["children"]] == ["first", "second"]

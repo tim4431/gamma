@@ -13,6 +13,9 @@ turn may carry ``tool_calls`` ([{id, name, arguments-dict}]), and a
 carry ``images`` ([(media_type, base64)] — a rendered PDF page). Tools are
 declared once as ``{name, description, parameters}`` (gamma/ai_tools.py);
 each adapter maps both to its wire.
+
+Two knobs ride along with a call: ``effort`` (how hard the model thinks) and
+``speed`` (which of the provider's service tiers serves it — SPEED_ORDER).
 """
 
 import json
@@ -125,6 +128,66 @@ def listed_efforts(row) -> list | None:
     return None
 
 
+# The speed (service) tiers a call may ask for, in the order the pickers
+# offer them: "flex" trades latency for a lower price, "fast" buys the
+# provider's premium low-latency routing at a higher one. Each wire maps
+# these canonical names to its own values (``Protocol.speeds``); "" = no
+# preference — the field is left out and the provider routes as usual.
+SPEED_ORDER = ("flex", "fast")
+# What a listing may call them: the Codex catalog's service-tier ids
+# ("priority" is its fast one) beside the canonical names.
+SPEED_ALIASES = {"flex": "flex", "fast": "fast", "priority": "fast"}
+
+
+def served_speed_name(value) -> str | None:
+    """The SPEED_ORDER name of the tier a provider says it served a turn at
+    (OpenAI's ``service_tier``, Anthropic's ``usage.speed``): a tier Gamma
+    knows as itself, anything else it names ("default", "standard",
+    "scale" …) as "" — the usual routing — and None when it said nothing
+    (not a string, or empty), so the caller keeps what it asked for."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return SPEED_ALIASES.get(value.strip().lower(), "")
+
+
+def note_speed(state: dict, value) -> None:
+    """Record the served tier a stream event names in the stream's scratch
+    ``state`` (``events`` puts it on the turn's token report); an event
+    that names none leaves the last one."""
+    name = served_speed_name(value)
+    if name is not None:
+        state["speed"] = name
+
+
+def listed_speeds(row) -> list | None:
+    """A model listing row's speed tiers, in SPEED_ORDER: the Codex backend's
+    ``service_tiers`` ([{id, name}], or the older ``additional_speed_tiers``
+    [id]) or an Anthropic-style ``capabilities.speed`` ({tier: {supported}}).
+    ``[]`` when the row says the model takes none, None when it doesn't say —
+    Anthropic's listing carries no speed facts, so its models fall back to
+    what the wire itself can ask for (``Protocol.speed_tiers``)."""
+    if not isinstance(row, dict):
+        return None
+    tiers = row.get("service_tiers")
+    if not isinstance(tiers, list):
+        tiers = row.get("additional_speed_tiers")  # the Codex catalog's older field
+    names = None
+    if isinstance(tiers, list):
+        names = [t.get("id") if isinstance(t, dict) else t for t in tiers]
+    else:
+        caps = row.get("capabilities")
+        speed = caps.get("speed") if isinstance(caps, dict) else None
+        if isinstance(speed, dict):
+            if not speed.get("supported", True):
+                return []
+            names = [tier for tier, v in speed.items()
+                     if tier != "supported" and isinstance(v, dict) and v.get("supported")]
+    if names is None:
+        return None
+    found = {SPEED_ALIASES.get(n) for n in names if isinstance(n, str)}
+    return [name for name in SPEED_ORDER if name in found]
+
+
 def sse_json(response):
     """The JSON events of a server-sent-events response, up to ``[DONE]``."""
     for raw in response:
@@ -162,6 +225,9 @@ class Protocol:
     # endpoint — a custom base URL on the same wire shows neither.
     key_placeholder = ""
     key_url = ""
+    # The speed tiers this wire can ask for: canonical name (SPEED_ORDER) ->
+    # the value it sends. Empty = the wire has no speed control.
+    speeds: dict = {}
 
     @property
     def base_url(self) -> str:
@@ -177,13 +243,26 @@ class Protocol:
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None,
-                cache_key="") -> URLRequest:
+                cache_key="", speed="") -> URLRequest:
         """The provider call. ``cache_key`` names the conversation (one
         opaque id per chat) for the provider's prompt cache: the wires that
-        take a routing hint send it, the others ignore it. A tool spec with
-        a ``hosted`` entry is the provider's own tool (hosted_web_search)
-        and goes out as that entry."""
+        take a routing hint send it, the others ignore it. ``speed`` is a
+        SPEED_ORDER name, sent as this wire's own value (``speed_value``) and
+        left out when the wire can't ask for it. A tool spec with a
+        ``hosted`` entry is the provider's own tool (hosted_web_search) and
+        goes out as that entry."""
         raise NotImplementedError
+
+    def speed_tiers(self, conf) -> list:
+        """The speed tiers an entry may be asked for when its model listing
+        names none (``listed_speeds``), in SPEED_ORDER: the wire's own, which
+        a wire that only has them on the provider's own endpoint narrows."""
+        return [name for name in SPEED_ORDER if name in self.speeds]
+
+    def speed_value(self, speed) -> str:
+        """A SPEED_ORDER name as this wire's own value, "" when it has none
+        for it — then the request leaves the field out."""
+        return self.speeds.get(speed or "", "")
 
     def hosted_web_search(self, conf) -> dict | None:
         """The provider's own web-search tool on this wire, as the tools
@@ -200,12 +279,24 @@ class Protocol:
         """The provider's token report as ``{input, output, cache_read,
         cache_write}``: ``input`` is the whole prompt as the provider counted
         it, ``cache_read`` / ``cache_write`` the parts of it that came from /
-        went to the prompt cache. None when the object carries no counts."""
+        went to the prompt cache. None when the object carries no counts.
+        The report a turn ends with (``read_reply``, ``events``) also carries
+        ``speed`` — the SPEED_ORDER name of the tier the provider says it
+        served the turn at, "" for its usual routing (``served_speed_name``)
+        — when the provider said; a turn it said nothing about has no such
+        key, and the caller keeps the speed it asked for."""
         raise NotImplementedError
+
+    def served_speed(self, data) -> str | None:
+        """The tier a non-streamed response body says it was served at, as
+        ``served_speed_name`` reads it: None when the body names none (the
+        default — a wire without service tiers)."""
+        return None
 
     def read_reply(self, response, on_usage=None) -> str:
         """The full reply text of an open response; ``on_usage`` hears the
-        token counts when the provider reports them."""
+        token counts when the provider reports them (with the served
+        ``speed`` when it named one — ``usage``)."""
         if self.streams_only:
             parts = []
             for kind, data in self.events(response):
@@ -216,6 +307,9 @@ class Protocol:
             return "".join(parts)
         data = json.loads(response.read())
         usage = self.usage(data.get("usage"))
+        speed = self.served_speed(data)
+        if usage and speed is not None:
+            usage["speed"] = speed
         if usage and on_usage:
             on_usage(usage)
         return self.reply_text(data)
@@ -228,10 +322,11 @@ class Protocol:
         consumer can preview a long argument while the model is still
         writing it; the ``tool`` event with the parsed arguments always
         follows. A last ``("usage", {...})`` event reports the turn's token
-        counts when the provider sent them, and ``("stop", reason)`` the
-        provider's stop reason (``truncated_stop`` says whether it means
-        the reply was cut off). Raises on a fully empty response (neither
-        text nor tool calls) with the stop reason attached."""
+        counts when the provider sent them (plus the served ``speed`` when
+        it named one — ``usage``), and ``("stop", reason)`` the provider's
+        stop reason (``truncated_stop`` says whether it means the reply was
+        cut off). Raises on a fully empty response (neither text nor tool
+        calls) with the stop reason attached."""
         state = {"got": False, "stop": "", "usage": None}
         seen = False
         for event in sse_json(response):
@@ -243,6 +338,8 @@ class Protocol:
             state["got"] = state["got"] or out[0] == "tool"
             yield out
         if state["usage"]:
+            if state.get("speed") is not None:
+                state["usage"]["speed"] = state["speed"]
             yield ("usage", state["usage"])
         if state["stop"] and state["got"]:
             yield ("stop", state["stop"])
@@ -253,7 +350,8 @@ class Protocol:
 
     def stream_event(self, event, state):
         """The events one parsed SSE event yields; ``state`` is the stream's
-        scratch dict (``stop`` and ``usage`` are read at the end)."""
+        scratch dict (``stop``, ``usage`` and ``speed`` — ``note_speed`` —
+        are read at the end)."""
         raise NotImplementedError
 
     def stream_end(self, state):
@@ -269,13 +367,15 @@ class Protocol:
 
     def models(self, data, conf) -> list:
         """The chat models of a listing body as ``[{id, context_window,
-        efforts}]`` (0 = the listing names no window, efforts None = it names
-        no effort levels — listed_efforts), in the order to offer them."""
+        efforts, speeds}]`` (0 = the listing names no window, efforts /
+        speeds None = it names no effort levels / speed tiers —
+        listed_efforts, listed_speeds), in the order to offer them."""
         rows = [r for r in (data.get("data") or []) if isinstance(r, dict) and r.get("id")]
         found = {}
         for row in rows:
             found.setdefault(str(row["id"]), row)
-        return [{"id": mid, "context_window": listed_window(found[mid]), "efforts": listed_efforts(found[mid])}
+        return [{"id": mid, "context_window": listed_window(found[mid]),
+                 "efforts": listed_efforts(found[mid]), "speeds": listed_speeds(found[mid])}
                 for mid in sorted(found)]
 
     def ping_request(self, conf) -> URLRequest:

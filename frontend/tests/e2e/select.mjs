@@ -40,6 +40,7 @@ export const GROUPS = [
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"] },
   { id: "auth", files: ["auth.mjs"] },
   { id: "quick-open", files: ["quickOpen.mjs"] },
+  { id: "folders", files: ["folders.mjs"] },
   { id: "trash", files: ["trash.mjs"] },
   { id: "ipad", files: ["ipad.mjs"] },
   { id: "replica", files: ["replica.mjs"] },
@@ -164,7 +165,8 @@ export const RULES = [
   ["backend/gamma/routers/links.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/routers/metadata.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share"]],
-  ["backend/gamma/foldertags.py", ["notes-pdf-share", "files"]],
+  // deleting a folder or a label (the trees' other writes are ops, ALL below)
+  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/clip.py", []], // the browser extension's ingest

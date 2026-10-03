@@ -18,7 +18,6 @@ import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
 import { t } from "../shared/i18n/i18n.js";
-export { xhrUpload };
 
 // What the page around the chip provides: navigation and promotion come from
 // App (they need the page's folder and openBlock); a chip rendered with no

@@ -3,7 +3,7 @@ and the ``notes-pdf`` export mode end to end."""
 
 import io
 
-from conftest import make_page, require_math_renderer, workspace_of, guest_name
+from conftest import make_folder, make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.note_markup import MATH, TEXT
 from gamma.pdf_document import PAGE_H, chunks, inline, render_document
@@ -21,11 +21,10 @@ def _block(bid, content, properties=None, children=()):
 
 
 def _highlight(bid, quote, note="", page=3, children=()):
-    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 800.0, "height": 1035.0}
+    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
     return _block(bid, note, {
-        "highlight_id": bid, "quote": quote, "pdf_page": page,
-        "color": "rgba(170, 235, 170, 0.65)",
-        "pdf_position": {"pageNumber": page, "boundingRect": rect, "rects": [rect]},
+        "quote": quote, "color": "rgba(170, 235, 170, 0.65)",
+        "pdf_position": {"pageNumber": page, "width": 800.0, "height": 1035.0, "boundingRect": rect, "rects": [rect]},
     }, children)
 
 
@@ -408,9 +407,10 @@ def test_export_notes_pdf_switches(guest):
 
 
 def test_folder_notes_pdf_export_is_one_document(guest):
-    make_page(guest, "Folder page one", properties={"folder": "notesdoc"})
-    make_page(guest, "Folder page two", properties={"folder": "notesdoc/sub"})
-    r = guest.get("/api/folders/export", params={"name": "notesdoc", "mode": "notes-pdf"})
+    notesdoc = make_folder(guest, "notesdoc")
+    make_page(guest, "Folder page one", properties={"folders": [notesdoc]})
+    make_page(guest, "Folder page two", properties={"folders": [make_folder(guest, "notesdoc/sub")]})
+    r = guest.get(f"/api/folders/{notesdoc}/export", params={"mode": "notes-pdf"})
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/pdf"
     titles = _text(r.content, 1) + _text(r.content, 2)

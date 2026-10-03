@@ -146,6 +146,36 @@ export class Account {
     if (!r.ok) { const e = new Error(`${method} ${pathname} -> ${r.status}: ${text.slice(0, 300)}`); e.status = r.status; e.data = data; throw e; }
     return data;
   }
+  // The folder at `path` ("a/b": names from the top) or the label `name`,
+  // made through its tree's ops where missing (POST /api/pages/folders/ops,
+  // docs/dev/home_library.md "Folders and labels"); its id.
+  async folder(path) {
+    return this.treeBlock("folders", path.split("/").map((name) => name.trim()).filter(Boolean));
+  }
+  async label(name) {
+    return this.treeBlock("labels", [name]);
+  }
+  async treeBlock(tree, names) {
+    let node = (await this.api(`/api/blocks/${tree}/subtree`)).block;
+    for (const name of names) {
+      let next = node.children.find((child) => child.content === name);
+      if (!next) {
+        next = { id: `e2e${Math.random().toString(36).slice(2, 12)}`, children: [] };
+        await this.api(`/api/pages/${tree}/ops`, { method: "POST",
+          body: { ops: [{ op: "insert", id: next.id, parent: node.id, content: name }] } });
+      }
+      node = next;
+    }
+    return node.id;
+  }
+  // File a page in folders (paths) and labels (names), made where missing:
+  // the page's `folders` / `labels` set to their ids.
+  async file(pageId, { folders, labels } = {}) {
+    const properties = {};
+    if (folders) { properties.folders = []; for (const path of folders) properties.folders.push(await this.folder(path)); }
+    if (labels) { properties.labels = []; for (const name of labels) properties.labels.push(await this.label(name)); }
+    return this.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties } });
+  }
   async upload(pathname, bytes, filename, type) {
     const fd = new FormData();
     fd.append("file", new Blob([bytes], { type }), filename);

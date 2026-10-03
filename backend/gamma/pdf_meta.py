@@ -12,13 +12,13 @@ search indexer when it walks a document anyway, and on demand by the
 endpoint for anything that predates the table. A file pdfium cannot read is
 stored with ``pages = 0`` so it is not parsed again on every open. Rows of
 documents no page carries any more are purged with the text index
-(``block_index.purge_page_data``)."""
+(``pdf_index.purge_unused``)."""
 
 import json
 import threading
 
 from . import pdf_text
-from .db import connect_data_db, page_now, pdf_upload_path
+from .db import connect_data_db, page_now, safe_doc_id
 from .logbuf import log
 
 # Bump when the stored shape changes; older rows are recomputed lazily.
@@ -83,11 +83,13 @@ def ensure(ws: str, doc_id: str) -> dict | None:
 
 
 def _compute(ws: str, doc_id: str) -> dict | None:
+    from .storage import find_upload_file  # local: storage imports this module
+
     try:
-        path = pdf_upload_path(ws, doc_id)
+        path = find_upload_file(f"{safe_doc_id(doc_id)}.pdf", ws)
     except ValueError:
         return None
-    if not path.is_file():
+    if path is None:
         return None
     size = path.stat().st_size
     dims = [[round(w, 2), round(h, 2)] for w, h in pdf_text.page_sizes(str(path))]

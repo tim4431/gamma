@@ -11,7 +11,7 @@ from gamma.ai_tools import run_agent_tool
 def test_references_expand_reads_but_not_writes(org, scope_type):
     c, ids = org
     child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": "mentionneedle"}).json()["id"]
-    scope = {"type": scope_type, "page_id": ids["b"], "folder": "readout",
+    scope = {"type": scope_type, "page_id": ids["b"], "folder": ids["readout"],
              "context_pages": [ids["note"], "missing"]}
     for tool, args in [("read_page", {"page_id": ids["note"]}),
                        ("read_block", {"block_id": child}),
@@ -113,7 +113,7 @@ def test_selection_crop_redraws_the_saved_region(org, monkeypatch):
     assert rendered == [(2, (0.09, 0.39, 0.51, 0.46))]
     for bad in ("0.5,0.1,0.2,0.3", "0,0,1", "a,b,c,d", "0,0,1.5,1"):
         assert c.get(f"/api/ai/selection-crop/{doc}?page=2&box={bad}").status_code == 400
-    assert c.get(f"/api/ai/selection-crop/not-hex?page=2&box=0,0,1,1").status_code == 400
+    assert c.get("/api/ai/selection-crop/not-hex?page=2&box=0,0,1,1").status_code == 400
 
 
 def test_context_deduplicates_and_rejects_non_pages(org):

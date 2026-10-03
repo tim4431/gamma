@@ -60,33 +60,36 @@ def test_profile_is_one_account_wide_object(alice):
     # The preference profile follows the account, not the workspace: a write
     # through one workspace reads back through any other (or none).
     from gamma import db
-    from conftest import workspace_of
+    from conftest import account_of, workspace_of
     assert "profile" in db.USER_PREF_KEYS
+    me = account_of("prefs_alice")
     profile = {"theme": "sepia", "enterNewNote": True, "agentPerms": {"pdf": {"block_edit": False}}}
     r = alice.put("/api/prefs/profile", json={"value": profile}, headers={"X-Gamma-Workspace": workspace_of("prefs_alice")})
     assert r.status_code == 200 and r.json()["updated_at"]
     body = alice.get("/api/prefs/profile", headers={"X-Gamma-Workspace": "some-other-workspace"}).json()
     assert body["value"] == profile and body["updated_at"] == r.json()["updated_at"]
-    assert db.get_profile("prefs_alice") == (profile, body["updated_at"])
+    assert db.get_profile(me) == (profile, body["updated_at"])
     # set_profile goes through set_pref (last write wins, a newer updated_at)
-    later = db.set_profile("prefs_alice", {"theme": "gray"})
+    later = db.set_profile(me, {"theme": "gray"})
     assert later > body["updated_at"]
     assert alice.get("/api/prefs/profile").json() == {"key": "profile", "cloud_choice": False, "value": {"theme": "gray"},
                                                       "updated_at": later}
     with pytest.raises(ValueError):
-        db.set_profile("prefs_alice", ["not", "an", "object"])
+        db.set_profile(me, ["not", "an", "object"])
 
 
 def test_profile_patch_sets_only_the_named_entries(alice):
     # the web app's save: the entries it changed, every other one kept as stored
     from gamma import db
-    db.set_profile("prefs_alice", {"theme": "dark", "language": "en"})
-    before = db.get_profile("prefs_alice")[1]
+    from conftest import account_of
+    me = account_of("prefs_alice")
+    db.set_profile(me, {"theme": "dark", "language": "en"})
+    before = db.get_profile(me)[1]
     r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewNote": True}})
     assert r.status_code == 200
     assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewNote": True}
     assert r.json()["updated_at"] > before
-    assert db.get_profile("prefs_alice") == (r.json()["value"], r.json()["updated_at"])
+    assert db.get_profile(me) == (r.json()["value"], r.json()["updated_at"])
     assert alice.patch("/api/prefs/profile", json={"set": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
     assert alice.patch("/api/prefs/profile", json={"set": ["theme"]}).status_code == 422
     # the cloud sync's merge base is not a pref the generic endpoints serve
@@ -95,7 +98,7 @@ def test_profile_patch_sets_only_the_named_entries(alice):
 
 def test_profile_must_be_an_object_within_the_size_cap(alice):
     from gamma import db
-    assert db.get_profile("prefs_nobody") == ({}, "")
+    assert db.get_profile("no-such-account") == ({}, "")
     assert alice.put("/api/prefs/profile", json={"value": ["theme"]}).status_code == 400
     assert alice.put("/api/prefs/profile", json={"value": "dark"}).status_code == 400
     assert alice.put("/api/prefs/profile", json={"value": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
@@ -109,6 +112,52 @@ def test_prefs_require_session(client):
     anon = TestClient(app)
     assert anon.get("/api/prefs/open-tabs").status_code == 401
     assert anon.put("/api/prefs/open-tabs", json={"value": []}).status_code == 401
+
+
+def _stored(ws, user_id):
+    """The account's rows in the workspace's ``workspace_prefs`` ({key:
+    value}) and its users.db ``user_prefs`` rows ({(workspace, key)})."""
+    from gamma.db import connect_pages_db, connect_users_db
+    with connect_pages_db(ws) as conn:
+        kept_here = dict(conn.execute("SELECT key, value FROM workspace_prefs WHERE user_id = ?", (user_id,)))
+    with connect_users_db() as conn:
+        in_users_db = set(conn.execute("SELECT workspace_id, key FROM user_prefs WHERE user_id = ?", (user_id,)))
+    return kept_here, in_users_db
+
+
+def test_workspace_prefs_are_kept_in_their_workspace(alice):
+    # Open tabs, recents and reading positions live in the workspace's own
+    # pages.db, per account, each workspace with its own value; users.db
+    # keeps only the account-wide keys. Same endpoints, same helpers.
+    from gamma import db
+    from conftest import account_of, workspace_of
+    me, home = account_of("prefs_alice"), workspace_of("prefs_alice")
+    r = alice.post("/api/workspaces", json={"name": "Prefs elsewhere"})
+    assert r.status_code == 200, r.text
+    other = r.json()["id"]
+    assert alice.put("/api/prefs/open-tabs", json={"value": ["home-tab"]}, headers={"X-Gamma-Workspace": home}).status_code == 200
+    assert alice.put("/api/prefs/open-tabs", json={"value": ["other-tab"]}, headers={"X-Gamma-Workspace": other}).status_code == 200
+    assert alice.put("/api/prefs/read-pos", json={"value": {"d1": 4}}, headers={"X-Gamma-Workspace": home}).status_code == 200
+    assert alice.put("/api/prefs/ai-provider", json={"value": "mine"}, headers={"X-Gamma-Workspace": other}).status_code == 200
+    assert alice.get("/api/prefs/open-tabs", headers={"X-Gamma-Workspace": other}).json()["value"] == ["other-tab"]
+    assert alice.get("/api/prefs/open-tabs").json()["value"] == ["home-tab"]  # no workspace named: the default one
+    assert alice.get("/api/prefs/ai-provider", headers={"X-Gamma-Workspace": home}).json()["value"] == "mine"
+    kept_home, in_users_db = _stored(home, me)
+    assert kept_home == {"open-tabs": '["home-tab"]', "read-pos": '{"d1": 4}'}
+    assert _stored(other, me)[0] == {"open-tabs": '["other-tab"]'}
+    assert ("", "ai-provider") in in_users_db and not {k for _, k in in_users_db} & {"open-tabs", "read-pos"}
+    assert db.get_pref(me, "open-tabs", other)[0] == ["other-tab"] and db.get_pref(me, "ai-provider", home)[0] == "mine"
+    # a synced copy older than the stored value is not written; a newer one is
+    stamp = db.get_pref(me, "open-tabs", home)[1]
+    assert db.set_pref(me, "open-tabs", ["stale"], home, updated_at="2020-01-01T00:00:00.000000Z") == stamp
+    newer = "2999-01-01T00:00:00.000000Z"
+    assert db.set_pref(me, "open-tabs", ["synced"], home, updated_at=newer) == newer
+    assert db.get_pref(me, "open-tabs", home) == (["synced"], newer)
+    assert db.restamp_pref(me, "open-tabs", newer, "2999-01-01T00:00:00.001000Z", home)
+    # a call that names no workspace keeps a workspace-scoped key in users.db
+    db.set_pref(me, "open-tabs", ["nowhere"])
+    assert db.get_pref(me, "open-tabs")[0] == ["nowhere"] and ("", "open-tabs") in _stored(home, me)[1]
+    assert db.get_pref(me, "open-tabs", home)[0] == ["synced"]
 
 
 # --- AI provider entries (GUI key management) ---------------------------------
@@ -467,14 +516,14 @@ def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
 def test_shared_provider_admin_api_is_admin_session_only(alice, admin, shared):
     from gamma.app import app
     from gamma.integrations import create_token
-    from conftest import workspace_of
+    from conftest import account_of, workspace_of
     for method, path in (("get", "/api/admin/ai-providers"), ("put", "/api/admin/ai-providers"),
                          ("post", "/api/admin/ai-providers"),
                          ("put", f"/api/admin/ai-providers/{shared['id']}"),
                          ("delete", f"/api/admin/ai-providers/{shared['id']}")):
         assert getattr(alice, method)(path, **({} if method in ("get", "delete") else {"json": {}})).status_code == 403
     # An admin's integration token is not an admin session.
-    token = create_token("prefs_admin", workspace_of("prefs_admin"), "script", 1)["token"]
+    token = create_token(account_of("prefs_admin"), workspace_of("prefs_admin"), "script", 1)["token"]
     bearer = TestClient(app)
     bearer.headers["Authorization"] = f"Bearer {token}"
     assert bearer.get("/api/admin/ai-providers").status_code == 403
@@ -597,7 +646,7 @@ def test_rename_user_moves_rows_and_directory(client):
 def test_rename_user_refuses_guest_and_collisions(client, capsys):
     import manage
     from gamma import guests
-    manage.rename_user(guests.new_guest(), "prefs_someone")
+    manage.rename_user(guests.new_guest()[1], "prefs_someone")
     assert "cannot be renamed" in capsys.readouterr().out
     manage.create_user("prefs_carol", "pw3")
     manage.rename_user("prefs_carol", "prefs_bobby")  # prefs_bobby exists from the test above

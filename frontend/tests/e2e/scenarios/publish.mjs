@@ -152,7 +152,7 @@ export async function publishScenarios(env) {
       assertEq(await page.locator(".mirrorPill").count(), 0, "no sync pill away from the published page");
       await page.goto(pageUrl);
       await pill.waitFor();
-      // Settings → Account & sync lists it under Publishing and keeps it out of the clones
+      // Settings → Account & sync lists it under Publishing; Workspaces keeps it out of the clones
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
       const nav = page.getByRole("navigation", { name: "Settings categories" });
@@ -160,6 +160,7 @@ export async function publishScenarios(env) {
       const row = page.locator(".aiProvRow[data-publication]");
       await row.waitFor();
       assert((await row.textContent()).includes("1 published page"), "the count of published pages");
+      await nav.getByRole("button", { name: "Workspaces", exact: true }).click();
       await page.getByText("No clones yet.", { exact: true }).waitFor();
       assertEq(await page.locator(".aiProvRow", { hasText: "clone of" }).count(), 0, "no publication among the clones");
       await page.keyboard.press("Escape");

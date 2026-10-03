@@ -7,7 +7,7 @@ workspace list, backups. Whatever its scope (auth.require_user)."""
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import account_of, login, make_page, make_user, workspace_of
 from gamma import ai_settings
 from gamma.integrations import create_token
 
@@ -33,8 +33,8 @@ def owner():
 @pytest.mark.parametrize("scope", ["read", "write"])
 def test_a_token_never_changes_the_account(owner, scope):
     ws = workspace_of("tas_owner")
-    entry = next(e for e in ai_settings.load_provider_entries("tas_owner"))
-    c = _bearer(create_token("tas_owner", ws, f"tok-{scope}", 90, scope=scope)["token"])
+    entry = next(e for e in ai_settings.load_provider_entries(account_of("tas_owner")))
+    c = _bearer(create_token(account_of("tas_owner"), ws, f"tok-{scope}", 90, scope=scope)["token"])
     pid = entry["id"]
     for method, path, body in (
         ("PUT", f"/api/ai/providers/{pid}", {"base_url": "https://attacker.example/v1"}),
@@ -65,9 +65,9 @@ def test_a_token_never_changes_the_account(owner, scope):
     ):
         r = c.request(method, path, json=body)
         assert r.status_code == 403, (method, path, r.status_code, r.text)
-    stored = next(e for e in ai_settings.load_provider_entries("tas_owner") if e["id"] == pid)
+    stored = next(e for e in ai_settings.load_provider_entries(account_of("tas_owner")) if e["id"] == pid)
     assert stored.get("base_url", "") != "https://attacker.example/v1"
-    assert len(ai_settings.load_provider_entries("tas_owner")) == 1
+    assert len(ai_settings.load_provider_entries(account_of("tas_owner"))) == 1
     assert owner.get("/api/prefs/profile").json()["value"]["chatSystemPrompt"] == "be careful"
     assert owner.get("/api/workspaces/mine").status_code == 200
 
@@ -75,7 +75,7 @@ def test_a_token_never_changes_the_account(owner, scope):
 def test_a_token_still_reaches_its_workspace(owner):
     ws = workspace_of("tas_owner")
     page = make_page(owner, "Token reach")
-    c = _bearer(create_token("tas_owner", ws, "reach", 90, scope="write")["token"])
+    c = _bearer(create_token(account_of("tas_owner"), ws, "reach", 90, scope="write")["token"])
     assert c.get("/api/sync/whoami").json()["scope"] == "write"
     assert c.get(f"/api/blocks/{page['id']}").json()["content"] == "Token reach"
     assert c.get(f"/api/blocks/{page['id']}/subtree").status_code == 200

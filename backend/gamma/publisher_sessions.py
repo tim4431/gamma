@@ -1,6 +1,7 @@
 """Private, encrypted publisher-cookie snapshots imported by the Connector.
 
-PDF requests and AI paper fetches opt into an authenticated user's snapshots.
+PDF requests and AI paper fetches opt into an authenticated user's snapshots
+(``current_user``: the account's id, which every snapshot is sealed with).
 A connection authorizes one exact HTTPS host; cookies never authorize sibling hosts.
 A snapshot also keeps the connecting browser's User-Agent: requests to that
 host present it, so a cookie the site bound to that browser (a bot-check
@@ -128,10 +129,10 @@ def browser_agent(value) -> str:
     return value if all(32 <= ord(c) < 127 for c in value) else ""
 
 
-def save(username: str, host: str, cookies: list, user_agent: str = "") -> dict:
+def save(user_id: str, host: str, cookies: list, user_agent: str = "") -> dict:
     host = valid_host(host)
     cookies = normalize_cookies(host, cookies)
-    payload = {"user": username, "host": host, "cookies": cookies}
+    payload = {"user": user_id, "host": host, "cookies": cookies}
     agent = browser_agent(user_agent)
     if agent:
         payload["agent"] = agent
@@ -141,51 +142,28 @@ def save(username: str, host: str, cookies: list, user_agent: str = "") -> dict:
     expires = max(c["expires"] for c in cookies)
     with connect_users_db() as conn:
         conn.execute(
-            "INSERT INTO publisher_sessions (username, host, encrypted, expires_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(username, host) DO UPDATE SET "
+            "INSERT INTO publisher_sessions (user_id, host, encrypted, expires_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, host) DO UPDATE SET "
             "encrypted=excluded.encrypted, expires_at=excluded.expires_at, updated_at=excluded.updated_at",
-            (username, host, encrypted, expires, updated))
+            (user_id, host, encrypted, expires, updated))
         conn.commit()
     return {"host": host, "expires_at": expires, "updated_at": updated}
 
 
-def list_sessions(username: str) -> list[dict]:
+def list_sessions(user_id: str) -> list[dict]:
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM publisher_sessions WHERE username=? AND expires_at<=?",
-                     (username, time.time()))
+        conn.execute("DELETE FROM publisher_sessions WHERE user_id=? AND expires_at<=?",
+                     (user_id, time.time()))
         rows = conn.execute("SELECT host, expires_at, updated_at FROM publisher_sessions "
-                            "WHERE username=? ORDER BY host", (username,)).fetchall()
+                            "WHERE user_id=? ORDER BY host", (user_id,)).fetchall()
         conn.commit()
     return [{"host": h, "expires_at": e, "updated_at": u} for h, e, u in rows]
 
 
-def disconnect(username: str, host: str) -> None:
+def disconnect(user_id: str, host: str) -> None:
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM publisher_sessions WHERE username=? AND host=?", (username, host))
+        conn.execute("DELETE FROM publisher_sessions WHERE user_id=? AND host=?", (user_id, host))
         conn.commit()
-
-
-def rename_account(conn, old: str, new: str) -> None:
-    """Carry an account's connections over to its new name (the account
-    rename, ``routers/admin.rename_account_rows``). Every snapshot is sealed
-    with the name it belongs to (``cookie_jar`` checks it), so each is
-    re-sealed under the new one; a snapshot that no longer opens is dropped
-    (it could never be used again). Caller commits."""
-    rows = conn.execute("SELECT host, encrypted FROM publisher_sessions WHERE username=?",
-                        (old,)).fetchall()
-    if not rows:
-        return
-    box = cipher()
-    for host, encrypted in rows:
-        try:
-            payload = json.loads(box.decrypt(encrypted.encode("ascii")))
-        except (InvalidToken, ValueError):
-            conn.execute("DELETE FROM publisher_sessions WHERE username=? AND host=?", (old, host))
-            continue
-        payload["user"] = new
-        sealed = box.encrypt(json.dumps(payload).encode()).decode("ascii")
-        conn.execute("UPDATE publisher_sessions SET username=?, encrypted=? WHERE username=? AND host=?",
-                     (new, sealed, old, host))
 
 
 class _PublisherPolicy(DefaultCookiePolicy):
@@ -202,12 +180,12 @@ class _PublisherPolicy(DefaultCookiePolicy):
 
 def _snapshots() -> list[dict]:
     """The current user's unexpired, decryptable snapshots (their payloads)."""
-    username = current_user.get()
-    if not username:
+    user_id = current_user.get()
+    if not user_id:
         return []
     with connect_users_db() as conn:
         rows = conn.execute("SELECT host, encrypted FROM publisher_sessions "
-                            "WHERE username=? AND expires_at>?", (username, time.time())).fetchall()
+                            "WHERE user_id=? AND expires_at>?", (user_id, time.time())).fetchall()
     if not rows:
         return []
     try:
@@ -220,7 +198,7 @@ def _snapshots() -> list[dict]:
             payload = json.loads(box.decrypt(encrypted.encode("ascii")))
         except (InvalidToken, ValueError):
             continue
-        if isinstance(payload, dict) and payload.get("user") == username and payload.get("host") == host:
+        if isinstance(payload, dict) and payload.get("user") == user_id and payload.get("host") == host:
             out.append(payload)
     return out
 

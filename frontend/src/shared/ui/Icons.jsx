@@ -157,6 +157,9 @@ export const AlertCircleIcon = (p) => (
 export const ActivityIcon = (p) => (
   <Icon {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>
 );
+export const ZapIcon = (p) => (
+  <Icon {...p}><path d="M13 2 4.1 12.7a.7.7 0 0 0 .54 1.15H10l-1 8.15L18.9 11.3a.7.7 0 0 0-.54-1.15H12.5z" /></Icon>
+);
 export const UploadIcon = (p) => (
   <Icon {...p}><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M21 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2" /></Icon>
 );
@@ -432,18 +435,21 @@ export function LabelGlyph({ dashed } = {}) {
 // `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
 // "PDF" lettering a solid band there; without it the surface's CSS sizes
 // the tile. A PDF's glyph carries `.pdf`, tinted with --kind-pdf.
-export function FileGlyph({ isPdf, size }) {
+// `label`: a short format stamp on the page (the PDF card's "PDF", the
+// bibliography card's "BIB"); a file-format token, so it is not translated.
+export function FileGlyph({ isPdf, label = "", size }) {
   const small = !!size && size < 24;
+  const stamp = isPdf ? "PDF" : label;
   return (
     <svg className={`tileGlyph fileGlyph${isPdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
       style={size ? { width: size, height: size } : undefined} aria-hidden="true"
       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
       <path d="M14 2v6h6" />
-      {isPdf && small ? (
+      {stamp && small ? (
         <rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none" />
-      ) : isPdf ? (
-        <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">PDF</text>
+      ) : stamp ? (
+        <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">{stamp}</text>
       ) : (
         <>
           <line x1="8" y1="13" x2="16" y2="13" />

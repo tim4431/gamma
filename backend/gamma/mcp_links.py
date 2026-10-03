@@ -2,15 +2,16 @@
 
 A pasted URL is an identifier, never a fetch target or an additional grant.
 A page, block or page-share link resolves to a page (``page_id``); a
-folder-share link resolves to the folder (``folder``) — the same pages the
-share view lists — unless it also names a page in that folder.
+folder-share link resolves to the folder (``folder``, its id, with its path
+as ``title``) — the same pages the share view lists — unless it also names
+a page in that folder.
 """
 
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .auth import ShareScope
-from .blocks_store import page_root_id
-from .db import connect_pages_db, connect_users_db
+from .blocks_store import PATH_SEP, folder_path, page_root_id
+from .db import connect_pages_db, connect_users_db, share_token_workspace
 
 LINK_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -55,9 +56,13 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
     if values.get("share"):
         # Resolve only in the granted workspace, including restricted shares.
         # The integration already has workspace access; share audience adds none.
-        with connect_users_db() as conn:
-            row = conn.execute("SELECT page_id, folder FROM shares WHERE token = ? AND workspace_id = ?",
-                               (values["share"], ws)).fetchone()
+        # The token names its workspace (<workspace id>.<secret>): another's, or
+        # a link minted before tokens carried one, is not looked up.
+        row = None
+        if share_token_workspace(values["share"]) == ws:
+            with connect_users_db() as conn:
+                row = conn.execute("SELECT page_id, folder FROM shares WHERE token = ? AND workspace_id = ?",
+                                   (values["share"], ws)).fetchone()
         if not row:
             raise ValueError("This share link is unavailable in the connected workspace.")
         if row[0]:
@@ -67,7 +72,11 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
         else:
             folder = row[1]
     if folder and not page_id and not block_id:
-        reference = {"workspace_id": ws, "folder": folder,
+        with connect_pages_db(ws) as conn:
+            path = folder_path(conn, folder)
+        if not path:
+            raise ValueError("The shared folder is unavailable in the connected workspace.")
+        reference = {"workspace_id": ws, "folder": folder, "title": PATH_SEP.join(path),
                      "url": base + "/?" + urlencode({"ws": ws, "folder": folder})}
         if values.get("quote"):
             reference["selected_quote"] = values["quote"]

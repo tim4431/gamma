@@ -13,10 +13,10 @@ router = APIRouter(prefix="/api", tags=["notices"])
 
 
 def _account(request: Request) -> str | None:
-    user = signed_in(request)
+    user_id = signed_in(request)
     if request.state.is_guest or is_token(request):
         return None
-    return user
+    return user_id
 
 
 @router.get("/notices")
@@ -24,10 +24,10 @@ def list_notices(request: Request):
     """``{notices: [{id, fingerprint, tone, pane, title}]}``, strongest
     first. Sync on purpose: the release check may hit the network when its
     cache is stale."""
-    user = _account(request)
-    if not user:
+    user_id = _account(request)
+    if not user_id:
         return {"notices": []}
-    return {"notices": notices.for_user(user, bool(request.state.is_admin))}
+    return {"notices": notices.for_user(user_id, bool(request.state.is_admin))}
 
 
 class SeenRequest(BaseModel):
@@ -38,11 +38,11 @@ class SeenRequest(BaseModel):
 def mark_seen(notice_id: str, payload: SeenRequest, request: Request):
     """The account has looked at the pane this notice points to; it stays
     quiet until its fingerprint changes."""
-    user = _account(request)
-    if not user:
+    user_id = _account(request)
+    if not user_id:
         raise HTTPException(403, "notices follow an account")
     try:
-        notices.mark_seen(user, notice_id, payload.fingerprint)
+        notices.mark_seen(user_id, notice_id, payload.fingerprint)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"ok": True}

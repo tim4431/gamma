@@ -4,12 +4,13 @@ account follows it through the real HTTP API — the engine's transport is
 an in-process TestClient carrying the write token."""
 
 import io
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_user, workspace_of
+from conftest import account_of, login, make_user
 from gamma import sync_engine
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.integrations import create_token
@@ -38,6 +39,7 @@ class Side:
     def __init__(self, name):
         self.name = name
         self.ws = make_user(name, "pw")
+        self.id = account_of(name)
         self.client = login(name, "pw")
         self.client.headers["X-Gamma-Workspace"] = self.ws
 
@@ -49,6 +51,21 @@ class Side:
         r = self.client.post("/api/pages", json={"title": title, "properties": props})
         assert r.status_code == 200, r.text
         return r.json()
+
+    def folder(self, bid, name, parent="folders"):
+        """A folder made here (an insert on the ``folders`` tree); its id."""
+        self.ops("folders", [{"op": "insert", "id": bid, "parent": parent, "content": name}])
+        return bid
+
+    def folders(self):
+        """{id: (parent, name)} of every folder here."""
+        tree = self.client.get("/api/blocks/root/children").json()["folders"]["children"]
+        out, todo = {}, [("folders", n) for n in tree]
+        while todo:
+            parent, node = todo.pop()
+            out[node["id"]] = (parent, node["content"])
+            todo += [(node["id"], c) for c in node["children"]]
+        return out
 
     def ops(self, page_id, ops):
         r = self.client.post(f"/api/pages/{page_id}/ops", json={"client": "t", "ops": ops})
@@ -80,7 +97,7 @@ def _pair(mode="two-way", scope="write"):
     _n[0] += 1
     remote = Side(f"mr_remote{_n[0]}")
     local = Side(f"mr_local{_n[0]}")
-    token = create_token(remote.name, remote.ws, "mirror", 90, scope=scope)["token"]
+    token = create_token(remote.id, remote.ws, "mirror", 90, scope=scope)["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token, "mode": mode})
     assert r.status_code == 201, r.text
     mirror = r.json()
@@ -100,13 +117,15 @@ def test_create_validates_the_remote_and_fills_the_copy():
     remote, local, mirror = _pair()
     assert mirror["remote_ws"] == remote.ws and mirror["mode"] == "two-way"
     assert mirror["status"]["remote_user"] == remote.name and mirror["name"].endswith("(offline copy)")
-    page = remote.page("Paper A", folder="physics")
+    physics = remote.folder("mrPhysics", "physics")
+    page = remote.page("Paper A", folders=[physics])
     remote.insert(page["id"], "blkA1", "first note")
     remote.insert(page["id"], "blkA2", "second note")
     status = _sync(local)
     assert status["pages_pulled"] >= 1
     assert local.texts(page["id"]) == {"blkA1": "first note", "blkA2": "second note"}
-    assert local.pages()[page["id"]]["properties"]["folder"] == "physics"
+    assert local.pages()[page["id"]]["properties"]["folders"] == [physics]
+    assert local.folders() == {physics: ("folders", "physics")}  # the tree came along
     # a second round changes nothing and pushes nothing
     status = _sync(local)
     assert status["pages_pulled"] == 0 and status["pages_pushed"] == 0
@@ -129,7 +148,7 @@ def test_edits_flow_both_ways_and_different_blocks_merge():
     assert status["pages_pushed"] == 1
     assert remote.texts(page["id"]) == {"b1": "one (local)", "b2": "two", "b3": "three from local"}
     log = remote.client.get(f"/api/pages/{page['id']}/ops?since=0").json()["batches"]
-    assert log[-1]["actor"] == remote.name and log[-1]["client"] == "sync"
+    assert log[-1]["actor"] == remote.id and log[-1]["client"] == "sync"
     # both sides edit different blocks between rounds → both survive
     remote.ops(page["id"], [{"op": "set", "id": "b2", "content": "two (remote)"}])
     local.ops(page["id"], [{"op": "set", "id": "b3", "content": "three (local again)"}])
@@ -193,7 +212,7 @@ def test_pages_come_and_go_on_both_sides():
         remote.insert(p["id"], f"{p['id']}_c", "note")
     _sync(local)
     # new pages on each side
-    new_remote = remote.page("New remote", folder="in")
+    new_remote = remote.page("New remote", folders=[remote.folder("mrIn", "in")])
     new_local = local.page("New local")
     local.insert(new_local["id"], "nl1", "local note")
     # deletions
@@ -204,7 +223,8 @@ def test_pages_come_and_go_on_both_sides():
     remote.client.delete(f"/api/blocks/{edited_then_deleted['id']}").raise_for_status()
     _sync(local)
     lp, rp = local.pages(), remote.pages()
-    assert new_remote["id"] in lp and lp[new_remote["id"]]["properties"]["folder"] == "in"
+    assert new_remote["id"] in lp and lp[new_remote["id"]]["properties"]["folders"] == ["mrIn"]
+    assert local.folders()["mrIn"] == ("folders", "in")
     assert new_local["id"] in rp and remote.texts(new_local["id"]) == {"nl1": "local note"}
     assert gone_remote["id"] not in lp and gone_local["id"] not in rp
     assert edited_then_deleted["id"] in rp and remote.texts(edited_then_deleted["id"]) == {
@@ -215,6 +235,42 @@ def test_pages_come_and_go_on_both_sides():
     remote.ops(keep["id"], [{"op": "set", "id": keep["id"], "content": "Keep (renamed)"}])
     _sync(local)
     assert local.pages()[keep["id"]]["content"] == "Keep (renamed)"
+
+
+def test_the_folder_and_label_trees_travel_like_pages():
+    """The pseudo-pages ``folders`` / ``labels`` are in both feeds and are
+    reconciled three ways like a page, before the pages: a rename, a move,
+    a new folder on either side go over, both sides' new folders are kept,
+    and a page filed in a new folder arrives with its folder there."""
+    remote, local, _ = _pair()
+    top = remote.folder("mtTop", "Top")
+    remote.folder("mtSub", "Sub", parent=top)
+    remote.ops("labels", [{"op": "insert", "id": "mtLabel", "parent": "labels", "content": "todo"}])
+    _sync(local)
+    assert local.folders() == {"mtTop": ("folders", "Top"), "mtSub": ("mtTop", "Sub")}
+    labels = local.client.get("/api/blocks/labels/subtree").json()["block"]["children"]
+    assert [(n["id"], n["content"]) for n in labels] == [("mtLabel", "todo")]
+
+    # both sides change the tree between rounds
+    remote.ops("folders", [{"op": "set", "id": "mtTop", "content": "Top (renamed there)"}])
+    local.ops("folders", [{"op": "move", "id": "mtSub", "parent": "folders"}])
+    local.folder("mtMine", "Made here")
+    remote.folder("mtTheirs", "Made there")
+    filed = local.page("Filed in a new folder", folders=["mtMine"], labels=["mtLabel"])
+    _sync(local)
+    expect = {"mtTop": ("folders", "Top (renamed there)"), "mtSub": ("folders", "Sub"),
+              "mtMine": ("folders", "Made here"), "mtTheirs": ("folders", "Made there")}
+    assert local.folders() == expect and remote.folders() == expect
+    assert remote.pages()[filed["id"]]["properties"] == {"folders": ["mtMine"], "labels": ["mtLabel"]}
+    # a folder deleted there goes here; the page refiled there comes back unfiled
+    assert remote.client.delete("/api/folders/mtMine").json()["pages"] == [filed["id"]]
+    _sync(local)
+    assert "mtMine" not in local.folders() and "folders" not in local.pages()[filed["id"]]["properties"]
+    # a second round has nothing to do
+    status = _sync(local)
+    assert status["pages_pulled"] == 0 and status["pages_pushed"] == 0
+    names = {row["page_id"]: row["title"] for row in local.client.get(f"/api/mirrors/{local.ws}/log").json()["changes"]}
+    assert names["folders"] == "Folders"
 
 
 def test_files_travel_by_hash():
@@ -244,7 +300,15 @@ def test_a_file_missing_from_the_copy_is_fetched_again():
     _sync(local)
     path = ws_uploads_dir(local.ws) / f"{up['doc_id']}.pdf"
     assert path.is_file()
-    path.unlink()
+    # The pulled PDF's manifest walk (pdf_meta.schedule) runs on a background
+    # thread and may still hold the file open; Windows refuses the unlink
+    # until it closes.
+    for _ in range(40):
+        try:
+            path.unlink()
+            break
+        except PermissionError:
+            time.sleep(0.05)
     assert sync_engine.missing_uploads(local.ws) == {f"{up['doc_id']}.pdf"}
     status = _sync(local)  # nothing changed on either side, the file still comes back
     assert status["files_pulled"] == 1 and path.read_bytes() == PDF
@@ -407,7 +471,7 @@ def test_detach_keeps_the_link_and_relink_merges_three_ways():
     assert local.client.get(f"/api/mirrors/{local.ws}").json()["mode"] == "off"
     remote.ops(page["id"], [{"op": "set", "id": "dt1", "content": "ONE two three"}])
     local.ops(page["id"], [{"op": "set", "id": "dt1", "content": "one two THREE"}])
-    st = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+    local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1")
     assert remote.texts(page["id"])["dt1"] == "ONE two three" and local.texts(page["id"])["dt1"] == "one two THREE"
     # relink with the stored token: what both sides did meanwhile merges from the saved base
     r = local.client.post(f"/api/mirrors/{local.ws}/relink", json={})
@@ -428,7 +492,7 @@ def test_link_an_existing_workspace_adopts_one_side_and_keeps_the_other_text():
     local.client.post("/api/pages", json={"id": page["id"], "title": "Shared id"}).raise_for_status()
     local.insert(page["id"], "lk1", "the copy's text")
     mine = local.page("Only here")
-    token = create_token(remote.name, remote.ws, "link", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws, "adopt": "theirs"})
     assert r.status_code == 201, r.text
@@ -726,7 +790,7 @@ def test_both_sides_drawing_in_one_group_keep_every_stroke():
     page = remote.page("Ink on both sides")
     u0 = _ink_file(remote, [("a", 100)])
     remote.ops(page["id"], [{"op": "insert", "id": "inkG", "parent": page["id"], "content": "",
-                             "props": {"ink_url": u0, "pdf_page": 1, "ink_strokes": 1}}])
+                             "props": {"ink_url": u0, "ink_strokes": 1}}])
     _sync(local)
     assert _strokes(local, "inkG") == (u0, ["a"])
     ur = _ink_file(remote, [("a", 100), ("x", 300)])

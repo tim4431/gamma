@@ -556,6 +556,38 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // Notion's /page: a new page in the library, filed where this one is,
+  // linked where the command was typed and opened with its title ready.
+  await step("notes: /page makes a page in this page's folder, links it where it was typed and opens it; Back shows the link under its title", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Subpage source" } });
+    await alice2.file(src.id, { folders: ["Projects"] });
+    const folder = await alice2.folder("Projects");
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "spblock", parent: src.id, position: "a0", content: "See" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "See");
+      await p2.keyboard.type(" /page");
+      await p2.waitForSelector(".slashMenu");
+      assertEq(await p2.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "New page", "/page is the new page");
+      await p2.keyboard.press("Enter");
+      await p2.waitForSelector(".titleEdit", { timeout: 5000 });
+      const made = await until(() => { const id = new URL(p2.url()).searchParams.get("block"); return id !== src.id && id; }, { what: "the new page opens" });
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `See [[${made}]]`, { what: "its link replaced the command" });
+      const filed = (await alice2.api(`/api/blocks/${made}/subtree`)).block.properties.folders;
+      assertEq(JSON.stringify(filed), JSON.stringify([folder]), "filed in the source page's folder");
+      await p2.keyboard.type("Meeting notes");
+      await p2.keyboard.press("Enter");
+      await until(async () => (await alice2.api(`/api/blocks/${made}/subtree`)).block.content === "Meeting notes", { what: "the title saved" });
+      await p2.getByRole("button", { name: "Back", exact: true }).click();
+      await until(() => new URL(p2.url()).searchParams.get("block") === src.id, { what: "Back returns to the source page" });
+      await until(async () => (await row(p2, "See").locator(".blockRefChip").innerText()) === "Meeting notes", { what: "the link shows the title" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Ctrl+F on a page opens the compact find bar (Settings → Search). With no
   // PDF to step through it still counts what the details would list, and
   // says when the notes search stopped early.

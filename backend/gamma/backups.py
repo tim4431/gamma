@@ -6,8 +6,11 @@ runs) at its relative path, optionally the ``uploads/`` directories too, and
 a ``manifest.json``. Two producers, one shape:
 
 - the migration runner takes one (databases only, marked ``auto``) before
-  upgrading the data directory (``gamma/migrations.py``); only the newest
-  ``KEEP_BACKUPS`` of those are kept, pruned once an upgrade has finished;
+  upgrading the data directory (``gamma/migrations.py``): users.db, and
+  every workspace's databases when a pending step walks them all; a
+  workspace's own steps add its two databases to it as they run
+  (``add_workspace``). Only the newest ``KEEP_BACKUPS`` of those are kept,
+  pruned once an upgrade has finished;
 - admins take them from Settings → Server or ``manage.py backups
   --create`` (with or without uploads), download them as a zip, delete them.
   Nothing ever prunes these.
@@ -30,19 +33,23 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 import zipfile
 from contextlib import closing
 from pathlib import Path
 
 from . import config, integrity, jobs
-from .db import page_now
+from .db import close_connections, page_now
 
 KEEP_BACKUPS = 3        # automatic (pre-upgrade) snapshots kept; hand-made ones are never pruned
 NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9_.-]{1,40}$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 AUTO_LABEL_RE = re.compile(r"^v\d+$")  # the runner's label, for snapshots from before the `auto` flag
 UPGRADE_MARKER = "upgrade.json"        # names the snapshot of an upgrade that has not finished
+ADDED_LIST = "workspaces.jsonl"        # the workspaces added to a snapshot after it was taken, a line each
+
+_adding = threading.Lock()
 
 
 def snapshot_db(src: Path, dst: Path) -> str:
@@ -75,15 +82,19 @@ def _upload_dirs() -> list[Path]:
     return dirs
 
 
-def create(label: str, uploads: bool = False, *, auto: bool = False, progress=None) -> dict:
+def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces: bool = True,
+           progress=None) -> dict:
     """Snapshot the data directory into ``backups/<time>-<label>/`` (relative
     paths kept) with a manifest. ``uploads`` copies the upload files too (a
     file removed while the copy runs is left out, never a failed backup).
     ``auto`` marks the migration runner's snapshots, the only ones
-    ``prune_backups`` removes. ``progress`` (a background job's report,
-    gamma/jobs.py) hears each database and each file copied. Returns the
-    backup's info dict; raises ValueError on a bad label and OSError when
-    the copy cannot be written (nothing is left behind then)."""
+    ``prune_backups`` removes. ``workspaces=False`` copies users.db alone
+    (the runner's, when only workspace steps are pending: each workspace's
+    files come in with ``add_workspace``). ``progress`` (a background job's
+    report, gamma/jobs.py) hears each database and each file copied.
+    Returns the backup's info dict; raises ValueError on a bad label and
+    OSError when the copy cannot be written (nothing is left behind
+    then)."""
     progress = progress or jobs.no_progress
     from .migrations import data_version  # local: migrations imports this module
 
@@ -101,7 +112,7 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, progress=No
     checks = {}
     try:
         files = []
-        databases = integrity.db_files()
+        databases = integrity.db_files() if workspaces else [f for f in (config.USERS_DB,) if f.exists()]
         for n, src in enumerate(databases):
             rel = src.relative_to(config.DATA_DIR)
             progress(phase="databases", done=n, total=len(databases), unit="files", item=rel.as_posix())
@@ -125,7 +136,7 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, progress=No
         work.mkdir(parents=True, exist_ok=True)
         (work / "manifest.json").write_text(json.dumps({
             "created_at": page_now(), "label": label, "schema_version": data_version(),
-            "files": files, "uploads": bool(uploads), "upload_files": upload_files,
+            "files": files, "workspaces": workspaces, "uploads": bool(uploads), "upload_files": upload_files,
             "auto": auto, "integrity": checks, "complete": True,
             "note": "Snapshot of the Gamma data directory (gamma/backups.py). Restore with "
                     "`manage.py backups --restore <name>` while the server is stopped.",
@@ -138,6 +149,84 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, progress=No
     return info(target.name)
 
 
+def add_workspace(name: str, ws: str) -> str:
+    """Copy one workspace's databases into the snapshot ``name``, at
+    ``workspaces/<ws>/`` as ``create`` lays them out: what the migration
+    runner does before that workspace's own steps run
+    (gamma/migrations.py). A workspace the snapshot holds already keeps
+    that copy, the one from before its upgrade. The copy is written under a
+    dot-name and renamed once both files are in, then listed with its
+    checks as a line of ``ADDED_LIST``, which ``info`` adds to the
+    manifest's ``files`` and ``integrity`` (one line each, so the walk over
+    every workspace never rewrites a growing manifest). Returns the
+    snapshot's path; raises FileNotFoundError for an unknown snapshot and
+    OSError when the copy cannot be written (nothing is left behind
+    then)."""
+    path = backup_path(name)
+    if not path or not (path / "manifest.json").is_file():
+        raise FileNotFoundError(name)
+    target = path / "workspaces" / ws
+    if (target / "pages.db").is_file():
+        return str(path)
+    work = target.with_name(f".{ws}.part")
+    shutil.rmtree(str(work), ignore_errors=True)
+    checks = {}
+    try:
+        for db_name in ("pages.db", "data.db"):
+            src = config.WORKSPACES_DIR / ws / db_name
+            if src.is_file():
+                checks[f"workspaces/{ws}/{db_name}"] = snapshot_db(src, work / db_name)
+        shutil.rmtree(str(target), ignore_errors=True)  # a directory without its pages.db: no copy of it
+        work.rename(target)
+    except BaseException:
+        shutil.rmtree(str(work), ignore_errors=True)
+        raise
+    line = json.dumps({"workspace": ws, "at": page_now(), "files": sorted(checks), "integrity": checks})
+    with _adding, open(path / ADDED_LIST, "a", encoding="utf-8") as listed:
+        listed.write(line + "\n")
+    integrity.record(checks, f"server backup {name}")
+    return str(path)
+
+
+def _added(path: Path) -> list[dict]:
+    """The workspaces ``add_workspace`` put into the snapshot at ``path``."""
+    try:
+        lines = (path / ADDED_LIST).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    added = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue  # a line cut short by a crash: its copy was renamed in, never listed
+        if isinstance(entry, dict):
+            added.append(entry)
+    return added
+
+
+def latest_auto() -> dict | None:
+    """The newest automatic snapshot's manifest, with its ``name`` (no
+    size, so cheap), or None."""
+    if not config.BACKUPS_DIR.is_dir():
+        return None
+    for d in sorted(config.BACKUPS_DIR.iterdir(), reverse=True):
+        manifest = _manifest(d) if d.is_dir() and NAME_RE.match(d.name) else None
+        if manifest and is_auto(manifest):
+            return {**manifest, "name": d.name}
+    return None
+
+
+def _manifest(path: Path) -> dict | None:
+    """The manifest of the backup at ``path``; None when it has none (an
+    interrupted snapshot) or it cannot be read."""
+    try:
+        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
 def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
@@ -146,14 +235,17 @@ def info(name: str) -> dict | None:
     """The backup's manifest plus its name, path, size, ``damaged`` (the
     database copies that failed their check) and ``auto`` as pruning reads
     it (``is_auto``: an old manifest has no flag); None for an unknown name
-    or an interrupted snapshot (no manifest)."""
+    or an interrupted snapshot (no manifest). The workspaces added to it
+    later (``add_workspace``) are in its ``files`` and ``integrity``."""
     path = backup_path(name)
-    if not path or not path.is_dir():
+    manifest = _manifest(path) if path and path.is_dir() else None
+    if manifest is None:
         return None
-    try:
-        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    added = _added(path)
+    if added:
+        manifest["files"] = [*manifest.get("files", []), *(f for a in added for f in a.get("files", []))]
+        manifest["integrity"] = {**manifest.get("integrity", {}),
+                                 **{k: v for a in added for k, v in (a.get("integrity") or {}).items()}}
     return {"name": name, "path": str(path), "size_bytes": _dir_size(path), **manifest,
             "auto": is_auto(manifest), "damaged": integrity.damaged(manifest.get("integrity"))}
 
@@ -243,7 +335,10 @@ def zip_backup(name: str) -> Path:
 def restore(name: str) -> dict:
     """Copy a backup's files back over the data directory (server STOPPED —
     open handles would see torn writes). Files the backup lacks stay as they
-    are; uploads come back only from a backup that carried them. The
+    are (in a runner's snapshot without the workspaces: those of every
+    workspace its upgrade has not changed yet), and the workspace copies
+    added to it later (``add_workspace``) come back with it. Uploads come
+    back only from a backup that carried them. The
     unreferenced-file clocks of every restored pages.db start over
     (``upload_gc.restart_clocks``: an old snapshot never makes a file due at
     once). An unfinished upgrade is abandoned with it: the next start
@@ -254,11 +349,15 @@ def restore(name: str) -> dict:
     path = backup_path(name)
     if not path or not path.is_dir():
         raise FileNotFoundError(name)
+    close_connections()  # this process's cached handles on the files about to be copied over
     count, pages_dbs = 0, []
     for f in path.rglob("*"):
-        if not f.is_file() or f.name == "manifest.json":
+        rel = f.relative_to(path)
+        if not f.is_file() or f.name == "manifest.json" or rel.as_posix() == ADDED_LIST:
             continue
-        dest = config.DATA_DIR / f.relative_to(path)
+        if any(part.startswith(".") for part in rel.parts):
+            continue  # a workspace copy cut short (add_workspace's dot-name)
+        dest = config.DATA_DIR / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         # WAL/SHM sidecars of the live file would replay stale pages over the
         # restored database: drop them with it.

@@ -29,6 +29,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .highlights import position
+
 FORMAT = "gamma-ink"
 VERSION = 1
 MAX_STROKES = 5000
@@ -225,16 +227,13 @@ def bounding_box(ink: InkFile) -> tuple[float, float, float, float] | None:
 
 
 def pdf_position(ink: InkFile) -> dict | None:
-    """The group's bounding box in the highlight ``pdf_position`` shape, so
-    jump-to-position, markers and export anchoring treat ink like any other
-    region on the page."""
+    """The group's bounding box as a ``pdf_position`` (gamma/highlights.py)
+    in the file's page frame, so jump-to-position, markers and export
+    anchoring treat ink like any other region on the page."""
     box = bounding_box(ink)
     if not box or ink.space.kind != "pdf-page":
         return None
-    page = ink.space.page
-    rect = {"x1": round(box[0], 2), "y1": round(box[1], 2), "x2": round(box[2], 2), "y2": round(box[3], 2),
-            "width": ink.space.width, "height": ink.space.height, "pageNumber": page}
-    return {"pageNumber": page, "boundingRect": rect, "rects": [dict(rect)]}
+    return position(ink.space.page, ink.space.width, ink.space.height, [tuple(round(v, 2) for v in box)])
 
 
 def parse_color(value: str) -> tuple[float, float, float, float]:

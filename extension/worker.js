@@ -4,7 +4,7 @@
 // blocked fetch to. State lives in chrome.storage.session so it survives the
 // worker being put to sleep.
 
-import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
+import { api, ApiError, checkedDefaultFolder, getSettings, rememberFolder, serverOrigin, whoAmI } from "./api.js";
 import {
   NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, needsYouMessage, nextToOpen,
   sameWork, siteOf,
@@ -602,16 +602,37 @@ async function bytesFromTab(url, tabId) {
   throw lastErr;
 }
 
+// Past this a PDF goes up in parts (gamma/upload_parts.py): a proxy in
+// front of the server caps a request's body (Cloudflare at 100 MB). The
+// web app's shared/lib/uploadParts.js speaks the same protocol.
+const PART_BYTES = 32 * 1024 * 1024;
+
 async function uploadBlob(tabId, blob, url, expectedOrigin) {
-  const form = new FormData();
   const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
-  form.append("file", blob, name);
   if (tabId != null) await progress(tabId, "uploading…");
-  const up = await api("/uploads", { form, expectedOrigin });
-  return up.doc_id;
+  if (blob.size <= PART_BYTES) {
+    const form = new FormData();
+    form.append("file", blob, name);
+    return (await api("/uploads", { form, expectedOrigin })).doc_id;
+  }
+  const opened = await api("/uploads/parts", { json: { size: blob.size, name }, expectedOrigin });
+  const partBytes = Math.max(1, Math.min(PART_BYTES, opened.part_bytes || PART_BYTES));
+  try {
+    for (let offset = 0; offset < blob.size;) {
+      const form = new FormData();
+      form.append("offset", String(offset));
+      form.append("part", blob.slice(offset, Math.min(offset + partBytes, blob.size)), "part");
+      offset = (await api(`/uploads/parts/${opened.token}`, { form, expectedOrigin })).received;
+      if (tabId != null) await progress(tabId, `uploading… ${Math.round((offset / blob.size) * 100)}%`);
+    }
+    return (await api(`/uploads/parts/${opened.token}/finish`, { method: "POST", expectedOrigin })).doc_id;
+  } catch (err) {
+    api(`/uploads/parts/${opened.token}`, { method: "DELETE", expectedOrigin }).catch(() => {});
+    throw err;
+  }
 }
 
-async function savePaper({ tabId, candidate, folder, labels, title, source_url }) {
+async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
   const settings = await getSettings();
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   // A PDF tab has no title of its own; the registry record previewed for the
@@ -619,19 +640,27 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
   // still replace it, a user rename never is).
   const st = tabId != null ? await getTabState(tabId) : {};
   const previewTitle = st.preview && st.preview.title || "";
-  const payload = {
-    source_url: cand.source_url || source_url || "",
-    pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
-    title: title != null ? title : (cand.title || previewTitle),
-    folder: folder != null ? folder : settings.folder,
-    labels: labels != null ? labels : settings.labels,
-    allow_oa: settings.allowOa, save_copy: settings.saveCopy,
-  };
   // The URL this browser could download itself: the tab that *is* a PDF, or
   // the page's advertised PDF link.
   const fetchUrl = cand.pdf_url || (cand.is_pdf_tab ? cand.source_url : "");
   if (tabId != null) await progress(tabId, "resolving…");
+  // Everything that talks to the server runs inside this try, so an
+  // unreachable server or an expired sign-in ends the same way wherever it
+  // shows up: the tab's error set, a 401 forgetting the signed-in state.
+  let filing;
   try {
+    // The popup names the folder (an id, or a typed new one's path); the
+    // shortcut and the context menu save into the default one, if the
+    // library still has it (checkedDefaultFolder: a deleted one is forgotten).
+    filing = folder != null ? { folder, folder_path: folder_path || "" } : await checkedDefaultFolder(settings);
+    const payload = {
+      source_url: cand.source_url || source_url || "",
+      pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
+      title: title != null ? title : (cand.title || previewTitle),
+      ...filing,
+      labels: labels != null ? labels : settings.labels,
+      allow_oa: settings.allowOa, save_copy: settings.saveCopy,
+    };
     if (cand.is_pdf_tab && fetchUrl) {
       // The tab is the PDF — upload the bytes the browser already has access
       // to instead of making the server re-download (it may not be able to).
@@ -657,6 +686,9 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       if (tabId != null) await progress(tabId, "saving to your library…");
       out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     }
+    // The folder saved into becomes the default; labels are per-paper, so they
+    // are not remembered (each popup starts from the options-page defaults).
+    await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
     if (tabId != null && await serverOrigin() === settings.server) await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server });
     return out;
   } catch (err) {

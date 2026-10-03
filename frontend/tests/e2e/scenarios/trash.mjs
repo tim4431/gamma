@@ -9,8 +9,9 @@ export async function trashScenarios(env) {
   if (!wanted("trash")) return;
   server.manage("create-user", "trash-user", "trash-pw");
   const user = await new Account(server, "trash-user", "trash-pw").login();
-  const pageApi = (title, folder = "") => user.api("/api/pages", { method: "POST", body: { title, folder } });
-  const doomed = await pageApi("Doomed page", "bin/tests");
+  const pageApi = (title, folders = []) => user.api("/api/pages", { method: "POST", body: { title, folders } });
+  const binTests = await user.folder("bin/tests");
+  const doomed = await pageApi("Doomed page", [binTests]);
   await user.api("/api/blocks", { method: "POST", body: { parent_id: doomed.id, content: "a note that survives" } });
   const forever = await pageApi("Gone for good");
   const library = async () => (await user.api("/api/blocks/root/children")).children.map((b) => b.id);
@@ -34,14 +35,14 @@ export async function trashScenarios(env) {
       const entry = dialog.locator(`.aiProvRow[data-page="${doomed.id}"]`);
       await entry.waitFor();
       assert(/Deleted .* by trash-user/.test(await entry.textContent()), "who deleted it, and when");
-      assert((await entry.textContent()).includes("bin/tests"), "the folder it comes back to");
+      assert((await entry.textContent()).includes("bin / tests"), "the folder it comes back to");
       await entry.getByRole("button", { name: "Restore", exact: true }).click();
       await entry.waitFor({ state: "detached" });
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await row.waitFor();
       assert((await library()).includes(doomed.id), "back in the library");
       const { block } = await user.api(`/api/blocks/${doomed.id}/subtree`);
-      assertEq(block.properties.folder, "bin/tests", "filed where it was");
+      assertEq(JSON.stringify(block.properties.folders), JSON.stringify([binTests]), "filed where it was");
       assertEq(JSON.stringify(block.children.map((c) => c.content)), JSON.stringify(["a note that survives"]), "its notes came back");
       assertNoProblems(page);
     } finally { await ctx.close(); }

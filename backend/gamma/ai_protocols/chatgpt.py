@@ -14,7 +14,7 @@ from urllib.request import Request as URLRequest, urlopen
 
 from .. import chatgpt_oauth
 from ..logbuf import log
-from .base import listed_efforts, listed_window
+from .base import listed_efforts, listed_speeds, listed_window
 from .responses import ResponsesWire, responses_body
 
 # GET {base}/models gates its answer on the caller's version, so the listing
@@ -87,8 +87,9 @@ class ChatGPT(ResponsesWire):
     has_account_usage = True
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
-        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key),
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
+        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key,
+                                 self.speed_value(speed)),
                 "instructions": system or "You are a helpful research assistant.",
                 "include": []}
         return URLRequest(f"{conf['base_url']}/responses", data=json.dumps(body).encode(), headers={
@@ -124,8 +125,8 @@ class ChatGPT(ResponsesWire):
             # listed ones rather than dropped.
             (hidden if visibility == "hide" else listed).setdefault(slug, m)
         found = {**listed, **{k: v for k, v in hidden.items() if k not in listed}}
-        return [{"id": slug, "context_window": listed_window(m), "efforts": listed_efforts(m)}
-                for slug, m in found.items()]
+        return [{"id": slug, "context_window": listed_window(m), "efforts": listed_efforts(m),
+                 "speeds": listed_speeds(m)} for slug, m in found.items()]
 
     def account_usage_request(self, conf):
         # Codex's account client's .../backend-api/wham/usage, sibling of the

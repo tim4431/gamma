@@ -74,7 +74,7 @@ def _prune(now: float):
         del _requests[rid]
 
 
-def open_request(user: str, source: str, *, wall: str, url: str, pdf_url: str = "",
+def open_request(user_id: str, source: str, *, wall: str, url: str, pdf_url: str = "",
                  detail: str = "") -> dict:
     """The waiting request for ``source`` — a new one, or the account's
     request for the same work that is still waiting (a model retrying a
@@ -85,14 +85,14 @@ def open_request(user: str, source: str, *, wall: str, url: str, pdf_url: str = 
     key = source_key(source)
     with _lock:
         _prune(now)
-        mine = [r for r in _requests.values() if r["user"] == user]
+        mine = [r for r in _requests.values() if r["user_id"] == user_id]
         for req in mine:
             if req["key"] == key and req["status"] == WAITING:
                 req.update(wall=wall, detail=detail)
                 return dict(req)
         for req in mine[:max(0, len(mine) - MAX_PER_ACCOUNT + 1)]:
             del _requests[req["id"]]
-        req = {"id": secrets.token_urlsafe(18), "user": user, "key": key, "source": source,
+        req = {"id": secrets.token_urlsafe(18), "user_id": user_id, "key": key, "source": source,
                "url": url, "pdf_url": pdf_url, "host": urlsplit(url).hostname or "",
                "wall": wall, "detail": detail, "status": WAITING, "created": now,
                "created_at": page_now(), "watched": 0.0, "note": "", "background": False,
@@ -101,58 +101,58 @@ def open_request(user: str, source: str, *, wall: str, url: str, pdf_url: str = 
         return dict(req)
 
 
-def get(user: str, rid: str) -> dict | None:
+def get(user_id: str, rid: str) -> dict | None:
     with _lock:
         _prune(time.time())
         req = _requests.get(rid)
-        return dict(req) if req and req["user"] == user else None
+        return dict(req) if req and req["user_id"] == user_id else None
 
 
-def waiting(user: str) -> list[dict]:
+def waiting(user_id: str) -> list[dict]:
     """The account's requests still waiting for a PDF, oldest first — the
     Background tasks rows (``routers/jobs.py``)."""
     with _lock:
         _prune(time.time())
         return [public(req) for req in _requests.values()
-                if req["user"] == user and req["status"] == WAITING]
+                if req["user_id"] == user_id and req["status"] == WAITING]
 
 
 def target(rid: str) -> dict | None:
     """Where a request's ``/go`` link leads, for anyone holding the link
-    (``{"url", "host", "user"}``); the page decides how far to trust it."""
+    (``{"url", "host", "user_id"}``); the page decides how far to trust it."""
     with _lock:
         req = _requests.get(rid)
         if not req or time.time() - req["created"] > TTL:
             return None
-        return {"url": req["url"], "host": req["host"], "user": req["user"]}
+        return {"url": req["url"], "host": req["host"], "user_id": req["user_id"]}
 
 
-def _update(user: str, rid: str, **fields) -> dict | None:
+def _update(user_id: str, rid: str, **fields) -> dict | None:
     with _changed:
         req = _requests.get(rid)
-        if not req or req["user"] != user:
+        if not req or req["user_id"] != user_id:
             return None
         req.update(fields)
         _changed.notify_all()
         return dict(req)
 
 
-def watch(user: str, rid: str, note: str = "", background: bool = False) -> dict | None:
+def watch(user_id: str, rid: str, note: str = "", background: bool = False) -> dict | None:
     """The Connector took the request's tab, and what it is doing there
     (a NOTES entry; "" when it just took it), in a tab of its own out of
     sight (``background``) or one the user sees: the card says so, and a
     reply waiting on it gives the user more time."""
-    return _update(user, rid, watched=time.time(), note=note if note in NOTES else "",
+    return _update(user_id, rid, watched=time.time(), note=note if note in NOTES else "",
                    background=bool(background))
 
 
-def dismiss(user: str, rid: str, note: str = "") -> dict | None:
+def dismiss(user_id: str, rid: str, note: str = "") -> dict | None:
     """Settle a waiting request without a PDF. ``note`` is what the user
     wants the assistant to do instead — only a skip inside a live reply has
     one, and only the model ever reads it."""
     with _changed:
         req = _requests.get(rid)
-        if not req or req["user"] != user:
+        if not req or req["user_id"] != user_id:
             return None
         if req["status"] == WAITING:
             req["status"] = DISMISSED
@@ -165,13 +165,13 @@ class Settled(Exception):
     """The request is no longer waiting (delivered, dismissed or expired)."""
 
 
-def deliver(user: str, rid: str, data: bytes, from_url: str = "") -> dict | None:
+def deliver(user_id: str, rid: str, data: bytes, from_url: str = "") -> dict | None:
     """Keep the text of the PDF the user got for request ``rid``; raises
     ai_web.FetchError when it is not a readable PDF and Settled when the
     request no longer waits for one. None = no such request."""
     from .ai_web import pdf_document
 
-    req = get(user, rid)
+    req = get(user_id, rid)
     if req is None:
         return None
     if req["status"] != WAITING:
@@ -182,7 +182,7 @@ def deliver(user: str, rid: str, data: bytes, from_url: str = "") -> dict | None
     doc.update(delivered=True, request=rid)
     with _changed:
         live = _requests.get(rid)
-        if not live or live["user"] != user:
+        if not live or live["user_id"] != user_id:
             return None
         if live["status"] != WAITING:  # delivered from elsewhere meanwhile
             raise Settled(live["status"])
@@ -210,7 +210,7 @@ def _trim_locked(keep: dict) -> None:
         old["pdf"] = None
 
 
-def wait_for_all(user: str, rids: list, *, stopped: threading.Event | None = None) -> dict:
+def wait_for_all(user_id: str, rids: list, *, stopped: threading.Event | None = None) -> dict:
     """Block until every request of ``rids`` has settled, or the wait gives
     up. Returns ``{rid: (outcome, note)}`` — ``"delivered"``, ``"dismissed"``
     (with what the user wants done instead), ``"expired"`` (still waiting
@@ -228,7 +228,7 @@ def wait_for_all(user: str, rids: list, *, stopped: threading.Event | None = Non
             pending, latest = [], 0.0
             for rid in rids:
                 req = _requests.get(rid)
-                if not req or req["user"] != user:
+                if not req or req["user_id"] != user_id:
                     continue
                 if req["status"] == WAITING:
                     pending.append(rid)
@@ -257,26 +257,26 @@ def _monotonic_of(wall_clock: float) -> float:
     return time.monotonic() - max(0.0, time.time() - wall_clock)
 
 
-def held_pdf(user: str, rid: str) -> tuple[bytes, str] | None:
+def held_pdf(user_id: str, rid: str) -> tuple[bytes, str] | None:
     """The PDF delivered for request ``rid`` and the address it came from,
     while it is still held; None otherwise."""
     with _lock:
         _prune(time.time())
         req = _requests.get(rid)
-        if not req or req["user"] != user or not req["pdf"]:
+        if not req or req["user_id"] != user_id or not req["pdf"]:
             return None
         return req["pdf"], req["from_url"] or req["pdf_url"] or req["url"]
 
 
-def delivered(user: str | None, source: str) -> dict | None:
+def delivered(user_id: str | None, source: str) -> dict | None:
     """The document the user delivered for ``source`` (by any spelling of
     it, or by the URLs its request named), newest first."""
-    if not user:
+    if not user_id:
         return None
     key = source_key(source)
     with _lock:
         for req in reversed(_requests.values()):
-            if (req["user"] == user and req["doc"]
+            if (req["user_id"] == user_id and req["doc"]
                     and (req["key"] == key or source in (req["url"], req["pdf_url"]))):
                 return req["doc"]
     return None

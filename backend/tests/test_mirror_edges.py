@@ -5,7 +5,6 @@ text, a round cut short between the push and its bookkeeping, a block moved
 to another page while edited here, resolving a conflict after further
 typing. Every case ends with both sides holding the same tree and nothing
 written on either side lost."""
-from fractional_indexing import generate_key_between
 from gamma import sync_engine
 from gamma.integrations import create_token
 from test_mirror import Side, _pair, _sync, _transport  # noqa: F401 — the transport fixture applies here too
@@ -57,7 +56,7 @@ def test_typing_while_a_round_pushes_is_kept_and_merged(monkeypatch):
 
 def test_two_clones_of_one_remote_edit_the_same_blocks():
     remote, a, _ = _pair()
-    token = create_token(remote.name, remote.ws, "mirror-b", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "mirror-b", 90, scope="write")["token"]
     b = Side("mr_edge_b")
     r = b.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token, "mode": "two-way"})
     assert r.status_code == 201, r.text
@@ -151,14 +150,15 @@ def test_props_changed_here_and_text_changed_there_both_survive():
     remote, local, _ = _pair()
     page = remote.page("Props")
     remote.ops(page["id"], [{"op": "insert", "id": "h1", "parent": page["id"], "position": "a0",
-                             "content": "a highlight", "props": {"color": "yellow", "highlight_id": "hl-1"}}])
+                             "content": "a highlight", "props": {"color": "yellow", "pdf_position": {"pageNumber": 1}}}])
     _sync(local)
     local.ops(page["id"], [{"op": "set", "id": "h1", "props": {"color": "green"}}])
     remote.ops(page["id"], [{"op": "set", "id": "h1", "content": "a highlight, annotated"}])
     _sync(local)
     for side in (remote, local):
         t = flat(side.tree(page["id"]))["h1"]
-        assert (t["content"], t["props"]["color"], t["props"]["highlight_id"]) == ("a highlight, annotated", "green", "hl-1"), side.name
+        assert (t["content"], t["props"]["color"], t["props"]["pdf_position"]) == (
+            "a highlight, annotated", "green", {"pageNumber": 1}), side.name
     assert conflicts(local) == []
 
 

@@ -14,7 +14,7 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `extension` | `extension.yml` | manual dispatch only (`release` skill) | `gamma-connector-<version>.zip` → GitHub Release `extension-v<version>` |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -159,8 +159,10 @@ run in a bare context, `ipad/scripts/core.test.mjs`), the browser suite
 builds its Zotero fixture from a backend test module — Playwright's
 Chromium installed with its system deps; on a failure the harness's
 `failures/` folders — screenshots, page problems, the error, the server
-log tail — are uploaded as the `e2e-failures` artifact), and a manifest
-parse + zip of the extension. No installers. A PR that changes only
+log tail — are uploaded as the `e2e-failures` artifact), and the extension's unit
+tests (Node 22, `node --test extension/tests/*.test.mjs` — the pure
+modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
+by hand) followed by a manifest parse + zip of the extension. No installers. A PR that changes only
 `cloud/`, `cloud.yml`, the `update-account-server` or `update-demo-server`
 skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
 `build-site` skill or `PRIVACY.md` — skips it (`paths-ignore`); `cloud.yml`

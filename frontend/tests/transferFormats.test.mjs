@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { exportFormatOf, exportJobBody, exportSummary, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 const paper = { hasPdf: true, pdfStored: true };
@@ -81,4 +81,46 @@ test("imports show options only for embedded annotations and omit inapplicable s
     assert.deepEqual(result.payload, { source, strip: true });
   }
   assert.equal(resolveImport("annots", { hasPdf: false }).definition.id, "zotero");
+});
+
+test("BibTeX is offered where there is something to cite, and reviews itself", () => {
+  // No switches, but the step is worth showing: it previews the real entries.
+  const page = resolveExport({ format: "bibtex", ...allOff }, { ...paper, hasMeta: true });
+  assert.equal(page.definition.id, "bibtex");
+  assert.equal(page.needsReview, true);
+  assert.deepEqual(page.controls, []);
+  assert.equal(hasReviewStep(page.definition), true);
+  assert.deepEqual(page.payload, { format: "bibtex", ...allOff });
+  // The step renders the summary, so it has to say something for one page too.
+  assert.match(exportSummary(page), /citation entry as a \.bib file/);
+
+  // A page with no paper record has no entry to write, so the card is absent.
+  const bare = resolveExport({ format: "bibtex", ...allOff }, paper);
+  assert(!bare.formats.some(({ id }) => id === "bibtex"));
+  assert.notEqual(bare.definition.id, "bibtex");
+
+  // A folder always offers it — its pages are what get cited.
+  const folder = resolveExport({ format: "bibtex", ...allOff }, { folder: "Reading" });
+  assert.equal(folder.definition.category, "Papers");
+  assert.match(folder.definition.hint, /One \.bib/);
+  assert.match(exportSummary(folder, "Reading"), /Pages without paper metadata are left out/);
+  assert.deepEqual(exportJobBody(folder.payload, { folder: "Reading" }),
+    { folder: "Reading", mode: "bibtex", pdf: false, highlights: false, notes: false });
+  assert.equal(exportFormatOf("bibtex").id, "bibtex");
+});
+
+test("the review is fetched for whichever target the dialog is on", () => {
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1" }), "/api/bibliography?folder=f1");
+  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1" }), "/api/bibliography?page_id=p%201");
+});
+
+test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
+  // No token: the bare export path.
+  assert.equal(bibliographyUrl("/api", { folder: "f1" }), "/api/folders/f1/export?mode=bibtex");
+  assert.equal(bibliographyUrl("/api", { pageId: "p 1" }), "/api/pages/p%201/export?mode=bibtex");
+  // With one: the fixed link Overleaf refreshes from. The token names the
+  // workspace, so no ?ws= rides along.
+  const shared = bibliographyUrl("https://host/api", { folder: "f1", share: "tok en" });
+  assert.equal(shared, "https://host/api/folders/f1/export?mode=bibtex&share=tok%20en");
+  assert(!shared.includes("ws="));
 });

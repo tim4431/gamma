@@ -8,7 +8,7 @@ import re
 from urllib.request import Request as URLRequest
 
 from .base import (EMPTY_REPLY_HINT, TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, multipart_body,
-                   parse_tool_args, tool_image_turns)
+                   note_speed, parse_tool_args, served_speed_name, tool_image_turns)
 from .responses import OPENAI_RESPONSES
 
 # Listings include models the chat endpoint can't use.
@@ -27,6 +27,14 @@ class OpenAIChat(Protocol):
     label = "OpenAI Chat Completions API"
     key_placeholder = "sk-proj-…"
     key_url = "https://platform.openai.com/api-keys"
+    # The same tiers as its Responses wire: "priority" is fast mode (it also
+    # answers to "fast"), "flex" the cheaper, slower one.
+    speeds = OPENAI_RESPONSES.speeds
+
+    def speed_tiers(self, conf):
+        # A compatible server bills and routes however it likes; only
+        # OpenAI itself is known to take the field.
+        return super().speed_tiers(conf) if is_openai_platform(conf["base_url"]) else []
 
     def wire(self, conf, tools=None):
         # Tool calls to OpenAI itself go over the Responses API (reasoning
@@ -35,7 +43,7 @@ class OpenAIChat(Protocol):
         return OPENAI_RESPONSES if tools and is_openai_platform(conf["base_url"]) else self
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
         messages = [dict(m) for m in messages]
         if pdf_b64s or images:
             last = messages[attach_index(messages)]
@@ -80,6 +88,9 @@ class OpenAIChat(Protocol):
                                            "parameters": t["parameters"]}} for t in functions]
         if effort:
             body["reasoning_effort"] = effort
+        service_tier = self.speed_value(speed) if is_openai_platform(conf["base_url"]) else ""
+        if service_tier:
+            body["service_tier"] = service_tier
         if cache_key and is_openai_platform(conf["base_url"]):
             # Routes every turn of one conversation to the same cache; a
             # compatible server may reject fields it doesn't know.
@@ -110,11 +121,18 @@ class OpenAIChat(Protocol):
                  "cache_write": 0}
         return usage if (usage["input"] or usage["output"]) else None
 
+    def served_speed(self, data):
+        # The completion says which tier served it ("default", "flex",
+        # "priority", "scale") — what was asked for may have been routed
+        # elsewhere; a compatible server leaves the field out.
+        return served_speed_name(data.get("service_tier"))
+
     def stream_event(self, event, state):
         if event.get("error"):
             raise RuntimeError((event["error"] or {}).get("message") or "stream error")
         if event.get("usage"):
             state["usage"] = self.usage(event["usage"]) or state["usage"]
+        note_speed(state, event.get("service_tier"))  # every chunk carries the served tier
         choice = (event.get("choices") or [{}])[0]
         delta = choice.get("delta") or {}
         if delta.get("content"):

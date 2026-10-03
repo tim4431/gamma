@@ -3,13 +3,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { libraryAccess } from "../src/library/libraryAccess.js";
+import { libraryTree } from "../src/library/libraryUtils.js";
+
+const node = (id, content, children = []) => ({ id, content, children });
 
 test("a member organizes the whole library", () => {
   const lib = libraryAccess({ role: "owner" });
   assert.equal(lib.root, "");
   assert.ok(lib.browse && lib.organize && lib.pin && lib.history);
-  assert.ok(lib.contains("") && lib.contains("a/b"));
-  assert.equal(lib.clamp("a/b"), "a/b");
+  assert.ok(lib.contains("") && lib.contains("f1"));
+  assert.equal(lib.clamp("f1"), "f1");
   assert.equal(lib.clamp(""), "");
 });
 
@@ -21,16 +24,20 @@ test("a workspace viewer browses everything but changes nothing", () => {
 });
 
 test("a folder share visitor is confined to the folder and its subfolders", () => {
-  const lib = libraryAccess({ shareMode: true, shareFolder: "lab/readout" });
-  assert.equal(lib.root, "lab/readout");
+  // The share's listing carries the shared folder's own tree only.
+  const tree = libraryTree({ folders: { children: [node("readout", "readout", [node("sub", "sub")])] } });
+  const lib = libraryAccess({ shareMode: true, shareFolder: "readout", tree });
+  assert.equal(lib.root, "readout");
   assert.ok(lib.browse);
   assert.ok(!lib.organize && !lib.pin && !lib.history);
-  assert.ok(lib.contains("lab/readout") && lib.contains("lab/readout/sub"));
-  assert.ok(!lib.contains("lab") && !lib.contains("lab/readouts") && !lib.contains(""));
-  assert.equal(lib.clamp("lab/readout/sub"), "lab/readout/sub");
-  assert.equal(lib.clamp("lab"), "lab/readout");
-  assert.equal(lib.clamp(""), "lab/readout");
-  assert.equal(lib.clamp(undefined), "lab/readout");
+  assert.ok(lib.contains("readout") && lib.contains("sub"));
+  assert.ok(!lib.contains("lab") && !lib.contains(""));
+  assert.equal(lib.clamp("sub"), "sub");
+  assert.equal(lib.clamp("lab"), "readout");
+  assert.equal(lib.clamp(""), "readout");
+  assert.equal(lib.clamp(undefined), "readout");
+  // Before the listing arrives the shared folder is still its own root.
+  assert.equal(libraryAccess({ shareMode: true, shareFolder: "readout" }).clamp("readout"), "readout");
 });
 
 test("a page share has no library to browse", () => {

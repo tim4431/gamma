@@ -1,8 +1,10 @@
 // The guide engine: which tour is running and at which step, how a step
-// advances (Next, or the step's event firing), demo steps that act on the
-// UI themselves (`do: [...]`), which triggered tour or hint is offered
-// (guide/triggers.js), and where progress is kept. The overlay only renders
-// what this hook says; anchors are resolved by id. docs/dev/onboarding.md.
+// advances (Next, or the step's event firing — a light step keeps Next and
+// its event only ticks it; a `creates` one waits for it), demo steps that
+// act on the UI themselves (`do: [...]`), which triggered tour or hint is
+// offered (guide/triggers.js), and where progress is kept. The overlay only
+// renders what this hook says, scenes included (guide/scene.js); anchors
+// are resolved by id. docs/dev/onboarding.md.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANCHORS, anchorElement } from "./anchors.js";
 import { guideEvents, eventMatches } from "./events.js";
@@ -76,6 +78,14 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
     { find: action.context ? services.findFigure : services.findEquation, context: action.context, services });
   if (action.note) return typeDemoNote(t(action.note), services.prepareNote, live, cancelled);
   if (action.wait) { await sleep(action.wait); return; }
+  // Shows what the demo just made (the snapshot in the chat): the spotlight
+  // and the pointer go there and stay a moment; nothing is touched.
+  if (action.point) {
+    const el = await waitAnchor(action.point);
+    live({ anchor: action.point, cursor: centerOf(el) });
+    await sleep(action.wait ?? 1200);
+    return;
+  }
   if (action.waitFor) { await waitEvent(action.waitFor, seen, action.timeout); return; }
   if (action.click) {
     const el = await waitAnchor(action.click);
@@ -201,6 +211,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     return tour.steps.filter((s) => stepApplies(s, factsRef.current, siblingDone)
       && !(s.creates && anchorElement(s.creates)));
   };
+  // The step a run would open on: the first one that will show here — an
+  // optional step whose anchor is missing would be passed over. None means
+  // the tour has nothing to show (the PDF tour after the notebook view's,
+  // on a paper with no contents and translation off), so it is neither
+  // listed nor offered.
+  const firstShown = (tour) => stepsFor(tour).find((s) => !s.optional || anchorElement(s.anchor));
 
   const start = useCallback((tourId, at = 0) => {
     const tour = TOURS[tourId];
@@ -225,7 +241,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const canStart = (tourId) => {
     const tour = TOURS[tourId];
     if (!tour || tour.hint || !enabled || !factsMatch(tour.requires, factsRef.current)) return false;
-    const first = stepsFor(tour).find((s) => !s.optional || anchorElement(s.anchor));
+    const first = firstShown(tour);
     if (!first) return false;
     if (tour.show || !first.anchor) return true;
     return !!anchorElement([...(ANCHORS[first.anchor]?.open || []), first.anchor][0]);
@@ -240,12 +256,16 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     activity.current = null;
   }, []);
 
+  // The step whose demo was skipped: on a step that also invites a try
+  // (`do` and `advanceOn`), Skip stops watching and hands over.
+  const [skippedDemo, setSkippedDemo] = useState(null);
   const finished = useRef(null); // the tour whose last step just completed
   // Moves on from step `from`, or from wherever the run is (null): a pass-over
   // the engine scheduled for one step never moves a later one.
   // Past the last step the tour is done; one with a `finishCard` shows it
   // (still "running", so nothing else is offered meanwhile).
   const advance = useCallback((from = null) => {
+    setSkippedDemo(null);
     setRun((r) => {
       if (!r || (from !== null && r.index !== from)) return r;
       if (r.finishing) { activity.current = null; return null; }
@@ -271,6 +291,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const next = useCallback(() => advance(), [advance]);
 
   const back = useCallback(() => {
+    setSkippedDemo(null);
     setRun((r) => (r && r.index > 0 ? { ...r, index: r.index - 1, done: false } : r));
   }, []);
 
@@ -319,7 +340,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     if (!event && !settled) return;
     const tour = TRIGGERED.find((candidate) => canOffer(candidate, {
       facts: current, progress: progress.current.read(candidate, scope), event, seen: seen.current.get(candidate.id) || 0,
-    }));
+    }) && (candidate.hint || !!firstShown(candidate)));
     if (!tour) return;
     offeredThisLoad.current = true;
     activity.current = "offered";
@@ -401,6 +422,10 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   useEffect(() => () => { tourEnd.current.splice(0).forEach((fn) => fn()); }, [runningTour]);
   useEffect(() => {
     if (!step?.do) return undefined;
+    if (skippedDemo === step.id) {
+      setLive({ anchor: null, cursor: null, busy: false, finished: true, stepId: step.id });
+      return undefined;
+    }
     let cancelled = false;
     const cleanups = [];
     // A tour's vars may depend on the facts (the first tour's demo paper).
@@ -439,7 +464,13 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
       }
     })();
     return () => { cancelled = true; cleanups.forEach((cleanup) => cleanup()); unsubscribe(); setLive({ anchor: null, cursor: null, busy: false }); };
-  }, [step]);
+  }, [step, skippedDemo]);
+  // Skip on a demo: its actions stop (their cleanups run). A demo that hands
+  // over to the user stays on its step for the try; any other moves on.
+  const skipDemo = useCallback(() => {
+    if (step?.do && step.advanceOn) setSkippedDemo(step.id);
+    else advance();
+  }, [step, advance]);
 
   // Before a step shows: an anchor inside a closed surface is revealed
   // through its `open` path — or the step's `reveal` anchor is, when the
@@ -534,8 +565,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
       else servicesRef.current.openSettings?.("ai");
     } else if (id === "tours") showToursMenu();
   }, [stop, start]);
+  // Where a window would dock on that side, for a scene's drag (App's own
+  // drop-preview geometry).
+  const dockZone = useCallback((win, side) => servicesRef.current.dockZone?.(win, side) || null, []);
   return {
     running: !!run && runAvailable,
+    dockZone,
     // Past the last step: the finish card (null otherwise) and its tiles' action.
     finishCard, finishAction,
     offer: offerCard,
@@ -549,7 +584,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     count: steps.length - intros,
     live: { ...live, busy },
     // next() also skips: a demo's actions stop when its step is left.
-    start, next, back, dismiss,
+    start, next, back, dismiss, skipDemo,
     // The tours the Tours menu lists here, in registry order.
     startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title }) => ({ id, title })),
   };

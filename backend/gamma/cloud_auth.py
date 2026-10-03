@@ -4,9 +4,9 @@ seam that turns a verified cloud identity into an ordinary session.
 
 Nothing downstream changes: the callback mints the same ``sessions`` row
 the password login does, and every other module keeps reading
-``request.state.user``. What this module adds is the ``identities`` table
-in users.db — which cloud subject is which local account — and the rules
-for an identity this server has not seen (``policy``):
+``request.state.user_id``. What this module adds is the ``identities``
+table in users.db — which cloud subject is which local account (its id) —
+and the rules for an identity this server has not seen (``policy``):
 
 - ``refuse`` (the self-hosted default): only linked accounts sign in;
 - ``claim``: an account whose username equals the cloud username and that
@@ -80,7 +80,7 @@ from cryptography.fernet import InvalidToken
 
 from . import config, mcp_oauth, workspaces
 from .chatgpt_oauth import _b64url
-from .db import connect_users_db, page_now
+from .db import account_id, account_name, connect_users_db, page_now
 from .logbuf import log
 from .publisher_sessions import cipher
 from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_settings, validate_public_url
@@ -118,6 +118,12 @@ def _conn() -> sqlite3.Connection:
     conn = connect_users_db()
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def name_of(user_id: str) -> str:
+    """The username an account is logged under."""
+    with _conn() as conn:
+        return account_name(conn, user_id)
 
 
 # --- settings -----------------------------------------------------------------
@@ -344,7 +350,8 @@ def needs_connect() -> bool:
 
 def begin(request, *, link_user: str | None, next_path: str) -> str:
     """Store the pending sign-in and return the account server's authorize
-    URL to send the browser to."""
+    URL to send the browser to. ``link_user``: the id of the signed-in
+    account the identity is to be linked to."""
     cfg = settings()
     if not cfg["enabled"]:
         raise CloudAuthError("Cloud sign-in is not set up on this server.")
@@ -470,8 +477,8 @@ def exchange(request, *, code: str, state: str) -> tuple[dict, dict, str]:
 
 # --- identities ---------------------------------------------------------------
 
-def identity_of(conn, username: str):
-    return conn.execute("SELECT * FROM identities WHERE provider = ? AND username = ?", (PROVIDER, username)).fetchone()
+def identity_of(conn, user_id: str):
+    return conn.execute("SELECT * FROM identities WHERE provider = ? AND user_id = ?", (PROVIDER, user_id)).fetchone()
 
 
 def identity_by_subject(conn, subject: str):
@@ -491,8 +498,8 @@ def _decrypt(stored: str) -> str:
         return ""
 
 
-def link(conn, username: str, claims: dict, refresh_token: str = "") -> str:
-    """Insert or refresh the identity row of ``username`` (a sign-in clears
+def link(conn, user_id: str, claims: dict, refresh_token: str = "") -> str:
+    """Insert or refresh the identity row of the account ``user_id`` (a sign-in clears
     ``revoked_at``). The refresh token is Fernet-encrypted at rest. Returns
     the refresh token a new one replaced, for the caller to revoke once
     committed."""
@@ -502,24 +509,24 @@ def link(conn, username: str, claims: dict, refresh_token: str = "") -> str:
     stored_refresh = cipher().encrypt(refresh_token.encode()).decode("ascii") if refresh_token else ""
     now = page_now()
     conn.execute(
-        "INSERT INTO identities (provider, subject, username, email, claims, refresh_token, created_at, last_login_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, subject) DO UPDATE SET username = excluded.username, "
+        "INSERT INTO identities (provider, subject, user_id, email, claims, refresh_token, created_at, last_login_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, subject) DO UPDATE SET user_id = excluded.user_id, "
         "email = excluded.email, claims = excluded.claims, last_login_at = excluded.last_login_at, revoked_at = '', "
         "refresh_token = CASE WHEN excluded.refresh_token = '' THEN identities.refresh_token ELSE excluded.refresh_token END",
-        (PROVIDER, claims["sub"], username, claims.get("email", ""), json.dumps(_public_claims(claims)),
+        (PROVIDER, claims["sub"], user_id, claims.get("email", ""), json.dumps(_public_claims(claims)),
          stored_refresh, now, now))
     return replaced if replaced != refresh_token else ""
 
 
-def unlink(conn, username: str) -> bool:
-    cur = conn.execute("DELETE FROM identities WHERE provider = ? AND username = ?", (PROVIDER, username))
+def unlink(conn, user_id: str) -> bool:
+    cur = conn.execute("DELETE FROM identities WHERE provider = ? AND user_id = ?", (PROVIDER, user_id))
     return bool(cur.rowcount)
 
 
-def status_of(username: str) -> dict | None:
+def status_of(user_id: str) -> dict | None:
     """What the account page shows: the linked cloud identity, or None."""
     with _conn() as conn:
-        row = identity_of(conn, username)
+        row = identity_of(conn, user_id)
     if not row:
         return None
     return {"subject": row["subject"], "email": row["email"], **json.loads(row["claims"] or "{}"),
@@ -527,14 +534,14 @@ def status_of(username: str) -> dict | None:
             "revoked_at": row["revoked_at"]}
 
 
-def refresh_token_of(username: str) -> str:
-    return grant_of(username)[1]
+def refresh_token_of(user_id: str) -> str:
+    return grant_of(user_id)[1]
 
 
-def grant_of(username: str) -> tuple[str, str]:
+def grant_of(user_id: str) -> tuple[str, str]:
     """(subject, refresh token) of the account's identity; ("", "") without one."""
     with _conn() as conn:
-        row = identity_of(conn, username)
+        row = identity_of(conn, user_id)
     return (row["subject"], _decrypt(row["refresh_token"])) if row else ("", "")
 
 
@@ -582,8 +589,8 @@ def refresh_grant(refresh_token: str) -> dict:
                       _client_form(cfg, grant_type="refresh_token", refresh_token=refresh_token))
 
 
-def access_token_for(username: str, *, fresh: bool = False) -> str | None:
-    """An access token for the account server on behalf of ``username``, or
+def access_token_for(user_id: str, *, fresh: bool = False) -> str | None:
+    """An access token for the account server on behalf of ``user_id``, or
     None: cloud sign-in off, no identity, no refresh token, the account
     server unreachable (a warning), or the grant revoked (``_grant_refused``).
     A cached token is handed out until shortly before it expires; ``fresh``
@@ -593,7 +600,7 @@ def access_token_for(username: str, *, fresh: bool = False) -> str | None:
     if not settings()["enabled"]:
         return None
     with _conn() as conn:
-        row = identity_of(conn, username)
+        row = identity_of(conn, user_id)
     if not row:
         return None
     subject = row["subject"]
@@ -611,7 +618,7 @@ def access_token_for(username: str, *, fresh: bool = False) -> str | None:
             if e.error == "invalid_grant":
                 _grant_refused(subject, used)
             else:
-                log.warning(f"cloud: could not refresh the Gamma Cloud grant of {row['username']} "
+                log.warning(f"cloud: could not refresh the Gamma Cloud grant of {name_of(user_id)} "
                             f"(tried again at the next check): {e}")
             return None
         rotated = tokens.get("refresh_token") or used
@@ -646,10 +653,11 @@ def _grant_refused(subject: str, used: str) -> None:
             return
         conn.execute("UPDATE identities SET refresh_token = '', revoked_at = ? WHERE provider = ? AND subject = ?",
                      (page_now(), PROVIDER, subject))
-        ended = conn.execute("DELETE FROM sessions WHERE username = ? AND via = 'cloud'", (row["username"],)).rowcount
+        ended = conn.execute("DELETE FROM sessions WHERE user_id = ? AND via = 'cloud'", (row["user_id"],)).rowcount
+        name = account_name(conn, row["user_id"])
         conn.commit()
     forget_access(subject)
-    log.warning(f"cloud: Gamma Cloud revoked the grant of {row['username']} (signed out on the account server); "
+    log.warning(f"cloud: Gamma Cloud revoked the grant of {name} (signed out on the account server); "
                 f"ended {ended} session(s) its cloud sign-ins opened here")
 
 
@@ -703,19 +711,19 @@ def revoke_later(tokens) -> None:
         threading.Thread(target=lambda: [revoke_refresh(t) for t in tokens], name="cloud-revoke", daemon=True).start()
 
 
-def resolve_account(claims: dict) -> str:
-    """The callback's second half: the local username this identity signs
-    in as — linking, claiming or provisioning per the rules in the module
-    docstring — or CloudAuthError. Commits, then revokes the refresh token
-    the new one replaced."""
+def resolve_account(claims: dict) -> tuple[str, str]:
+    """The callback's second half: the local account this identity signs in
+    as, ``(id, username)`` — linking, claiming or provisioning per the rules
+    in the module docstring — or CloudAuthError. Commits, then revokes the
+    refresh token the new one replaced."""
     stale: list[str] = []
-    username = _resolve(claims, stale)
-    workspaces.claim_pending_memberships(username, claims["sub"])  # invitations by cloud username
+    user_id, username = _resolve(claims, stale)
+    workspaces.claim_pending_memberships(user_id, claims["sub"])  # invitations by cloud username
     revoke_later(stale)
-    return username
+    return user_id, username
 
 
-def _resolve(claims: dict, stale: list[str]) -> str:
+def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
     from . import seed
 
     cfg = settings()
@@ -726,31 +734,34 @@ def _resolve(claims: dict, stale: list[str]) -> str:
     with _conn() as conn:
         known = identity_by_subject(conn, subject)
         if link_user:
-            if known and known["username"] != link_user:
-                raise CloudAuthError(f"That Gamma Cloud account is already linked to \"{known['username']}\".")
+            name = account_name(conn, link_user)
+            if known and known["user_id"] != link_user:
+                raise CloudAuthError(f"That Gamma Cloud account is already linked to "
+                                     f"\"{account_name(conn, known['user_id'])}\".")
             mine = identity_of(conn, link_user)
             if mine and mine["subject"] != subject:
-                raise CloudAuthError(f"\"{link_user}\" is already linked to another Gamma Cloud account. Unlink it first.")
-            if conn.execute("SELECT is_guest FROM users WHERE username = ?", (link_user,)).fetchone()[0]:
+                raise CloudAuthError(f"\"{name}\" is already linked to another Gamma Cloud account. Unlink it first.")
+            if conn.execute("SELECT is_guest FROM users WHERE id = ?", (link_user,)).fetchone()[0]:
                 raise CloudAuthError("The guest account cannot be linked.")
             stale.append(link(conn, link_user, claims, claims.get("_refresh_token", "")))
             conn.commit()
-            log.info(f"cloud sign-in: linked {link_user} to cloud username {username}")
-            return link_user
+            log.info(f"cloud sign-in: linked {name} to cloud username {username}")
+            return link_user, name
         if known:
-            stale.append(link(conn, known["username"], claims, claims.get("_refresh_token", "")))
+            stale.append(link(conn, known["user_id"], claims, claims.get("_refresh_token", "")))
             conn.commit()
-            return known["username"]
-        row = conn.execute("SELECT username, is_guest FROM users WHERE username = ?", (username,)).fetchone()
+            return known["user_id"], account_name(conn, known["user_id"])
+        row = conn.execute("SELECT id, username, is_guest FROM users WHERE username = ?", (username,)).fetchone()
         if row is None:
             # Cloud usernames are lowercase; a local username may not be. One
             # case-insensitive match claims, an ambiguous set does not.
-            rows = conn.execute("SELECT username, is_guest FROM users WHERE LOWER(username) = ?", (username,)).fetchall()
+            rows = conn.execute("SELECT id, username, is_guest FROM users WHERE LOWER(username) = ?",
+                                (username,)).fetchall()
             if len(rows) == 1:
                 row = rows[0]
         exists = bool(row) and not row["is_guest"]
         local = row["username"] if row else username
-        taken = bool(row) and (row["is_guest"] or identity_of(conn, local) is not None)
+        taken = bool(row) and (row["is_guest"] or identity_of(conn, row["id"]) is not None)
         is_admin_seed = bool(admin_subject) and subject == admin_subject
         if taken:
             raise CloudAuthError(f"The username \"{local}\" on this server belongs to someone else. "
@@ -759,22 +770,23 @@ def _resolve(claims: dict, stale: list[str]) -> str:
             if not (cfg["policy"] == "claim" or is_admin_seed):
                 raise CloudAuthError(f"\"{local}\" exists on this server but is not linked to your Gamma Cloud "
                                      "account. Sign in with its password and link it from Settings → Account & sync.")
-            stale.append(link(conn, local, claims, claims.get("_refresh_token", "")))
+            stale.append(link(conn, row["id"], claims, claims.get("_refresh_token", "")))
             if is_admin_seed:
-                conn.execute("UPDATE users SET is_admin = 1 WHERE username = ?", (local,))
+                conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (row["id"],))
             conn.commit()
             log.info(f"cloud sign-in: {local} claimed by cloud username {username}")
-            return local
+            return row["id"], local
         if not (cfg["policy"] == "provision" or is_admin_seed):
             raise CloudAuthError("Your Gamma Cloud account is not linked to an account on this server. "
                                  "Ask the admin to create one, or sign in with a password and link it.")
     # New account: the seed helper makes the row + personal workspace.
     seed.create_cloud_account(username, is_admin=is_admin_seed)
     with connect_users_db() as conn:
-        stale.append(link(conn, username, claims, claims.get("_refresh_token", "")))
+        user_id = account_id(conn, username)
+        stale.append(link(conn, user_id, claims, claims.get("_refresh_token", "")))
         conn.commit()
     log.info(f"cloud sign-in: provisioned account {username}" + (" (admin)" if is_admin_seed else ""))
-    return username
+    return user_id, username
 
 
 def safe_next(raw: str) -> str:

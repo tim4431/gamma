@@ -13,7 +13,7 @@ deploy/
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
   compose.build.yml    layered on compose.yml: build from ./src instead of pulling
   Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
-  .env.example         → .env: public URL, registration mode, SMTP, Turnstile, Google/GitHub, hostname
+  .env.example         → .env: public URL, SMTP, Google/GitHub, hostname (not the sign-up gate)
   share.env.example    → share.env: the share host's cloud client and page hosts
   demo/                the public demo, its own compose project (demo/README.md)
 ```
@@ -62,7 +62,8 @@ proxy's rate limits. A host whose default network predates the pin needs
    curl -O https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/compose.yml
    curl -O https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/Caddyfile
    curl -o .env https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/.env.example
-   # fill in .env: SMTP, Turnstile; CADDY_HOST is the hostname above
+   # fill in .env: public URL, SMTP, Google/GitHub; CADDY_HOST is the hostname above
+   # (Turnstile and the registration mode are set later on the Admin page, not here)
    chmod 600 .env
    # the network Caddy shares with the demo (demo/README.md), once per host
    docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge
@@ -90,10 +91,48 @@ proxy's rate limits. A host whose default network predates the pin needs
 
    From then on the **Admin** page in the portal does this: accounts
    (search, plan, verify, admin, rename, delete), invites, the OIDC clients
-   of hosted servers, the audit log.
+   of hosted servers, the sign-up settings, the audit log.
 5. **Sign in** at https://account.gammapdf.com/login, change the password
    under Settings, then register a second account in a private window with
    an invite code to see the verify mail arrive.
+
+## The sign-up settings
+
+The registration mode (`open` / `invite` / `closed`), the Cloudflare
+Turnstile keys and extra blocked mail domains are edited on the **Admin
+page → Settings**. They live in `cloud.db` and take effect without a
+restart. `GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
+`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` in `.env` are not read; the startup
+log names any still set so they can be deleted. `manage.py settings`
+shows and sets the same values from the shell.
+
+### Opening registration
+
+Set **Registration** to `open`. The sign-up forms drop the invite field
+and a new account gets the `free` plan. Invite codes still work and still
+grant their plan.
+
+Do these two **before** the switch:
+
+1. **Turnstile**, on the same tab (how to get the keys is below). The check
+   runs only with both keys stored, and the tab shows a warning while
+   registration is open without it.
+2. **The Cloudflare rate rule** on `/api/register` (below). The in-process
+   limiter resets when the container restarts; Cloudflare's rule does not.
+
+What else limits abuse, with nothing to configure:
+
+- **The verify mail is the gate.** An unverified account cannot sign in to
+  or connect any Gamma server.
+- **One inbox, one account.** `f.o.o+1@gmail.com` and `foo@gmail.com` are
+  the same mailbox, so the second registration is a 409.
+- **Throwaway-mail domains are refused**, subdomains included. The
+  Settings tab's list adds to the built-in one.
+- **Five registrations an hour per IP**, with an IPv6 /64 counted as one.
+
+A catch-all domain of someone's own still yields any number of verifiable
+addresses; only Turnstile and the rate rules limit that. Watch the account
+list and the audit log for a while after the switch.
 
 ## Mail from noreply@gammapdf.com
 
@@ -128,10 +167,11 @@ above.
 - **Rate rules** (Security → WAF → Rate limiting): `/api/login`,
   `/api/register`, `/api/reset/request`, `/authorize/login` and `/token` —
   e.g. 30 requests per minute per IP. The server has its own in-process
-  limits as the second line.
+  limits as the second line. With `open` registration `/api/register`
+  is the one that matters: make its rule stricter than the rest.
 - **Turnstile** (dashboard → Turnstile → add widget for the hostname,
-  managed mode): the site key and secret go into `.env`; register and
-  reset then show the widget.
+  managed mode): put the site key and secret key into Admin → Settings;
+  register and reset then show the widget.
 - **Cache**: nothing to do — the server sets `Cache-Control: no-store` on
   the API and the pages; only `/jwks` is cacheable (5 min).
 - **Access** is NOT used: the portal must be reachable by everyone.

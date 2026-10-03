@@ -1,5 +1,5 @@
 """What a provider entry offers, asked live: its model listing and each
-model's context window and reasoning-effort levels. The protocol adapters
+model's context window, reasoning-effort levels and speed tiers. The protocol adapters
 (gamma/ai_protocols) build the requests and read the answers; this module
 fetches and caches them. Nothing here is a table of model names — model
 facts come from the provider, or from the public models.dev catalog when
@@ -31,7 +31,8 @@ MODEL_CATALOG = os.environ.get("GAMMA_MODEL_CATALOG", "").strip().lower() not in
 WINDOW_TTL = 6 * 3600
 WINDOW_RETRY = 600
 
-# "<provider id>|<base url>" -> {"windows": {model: n}, "efforts": {model: [level]}, "until": t}
+# "<provider id>|<base url>" -> {"windows": {model: n}, "efforts": {model: [level]},
+#                                "speeds": {model: [tier]}, "until": t}
 _listings = {}
 _listings_lock = threading.Lock()
 # index: model id -> [(provider key, {"window": n, "efforts": (level, …) | None})]
@@ -45,16 +46,16 @@ def fetch_json(req: URLRequest):
 
 
 def list_models(conf: dict) -> list:
-    """The entry's chat models as ``[{id, context_window, efforts}]`` (0 /
-    None = the listing names none), in the order to offer them. Raises what
-    the fetch raises (an HTTPError carries the provider's status)."""
+    """The entry's chat models as ``[{id, context_window, efforts, speeds}]``
+    (0 / None = the listing names none), in the order to offer them. Raises
+    what the fetch raises (an HTTPError carries the provider's status)."""
     proto = ai_protocols.of(conf)
     return proto.models(fetch_json(proto.models_request(conf)), conf)
 
 
 def _listed(provider_id: str, conf: dict) -> dict:
-    """{"windows": {model: n}, "efforts": {model: [level]}} from the entry's
-    own listing, cached."""
+    """{"windows": {model: n}, "efforts": {model: [level]}, "speeds": {model:
+    [tier]}} from the entry's own listing, cached."""
     key = f"{provider_id}|{conf['base_url']}"
     with _listings_lock:
         now = time.time()
@@ -65,11 +66,13 @@ def _listed(provider_id: str, conf: dict) -> dict:
             models = list_models(conf)
             _listings[key] = {"windows": {m["id"]: m["context_window"] for m in models if m["context_window"]},
                               "efforts": {m["id"]: m["efforts"] for m in models if m.get("efforts") is not None},
+                              "speeds": {m["id"]: m["speeds"] for m in models if m.get("speeds") is not None},
                               "until": now + WINDOW_TTL}
         except Exception as e:
             log.warning(f"[ai] model listing for model facts failed ({conf.get('name')}): {e}")
             _listings[key] = {"windows": cached["windows"] if cached else {},
-                              "efforts": cached["efforts"] if cached else {}, "until": now + WINDOW_RETRY}
+                              "efforts": cached["efforts"] if cached else {},
+                              "speeds": cached["speeds"] if cached else {}, "until": now + WINDOW_RETRY}
         return _listings[key]
 
 
@@ -186,3 +189,19 @@ def reasoning_efforts(provider_id: str, conf: dict, model: str) -> tuple:
         return list(listed), "provider"
     found = _catalog_value(model, conf, "efforts", len)
     return (list(found), "models.dev") if found is not None else (None, "")
+
+
+def speed_tiers(provider_id: str, conf: dict, model: str) -> tuple:
+    """``(tiers, source)`` for one of the entry's models: the service tiers
+    it may be asked to run at, in ``ai_protocols.SPEED_ORDER`` (``[]`` =
+    none — no speed control), from its own listing (``"provider"``) or, when
+    that names none, from the wire itself (``"protocol"``). models.dev
+    carries no speed facts, so a wire-wide answer is as specific as it gets:
+    Anthropic's listing says nothing about speed, so fast mode is offered
+    for every model its endpoint serves and one that doesn't take it is
+    refused upstream."""
+    listed = _listed(provider_id, conf)["speeds"].get(model)
+    if listed is not None:
+        return list(listed), "provider"
+    tiers = ai_protocols.of(conf).speed_tiers(conf)
+    return (tiers, "protocol") if tiers else ([], "")

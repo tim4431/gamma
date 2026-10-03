@@ -169,15 +169,15 @@ def test_daily_calendar_utc_boundaries_totals_and_reset(org, monkeypatch):
     c.delete("/api/ai/usage")
     with connect_users_db() as conn:
         for user, at, tokens in [
-            (ids["user"], "2023-03-02T23:59:59", 999),  # outside the calendar
-            (ids["user"], "2023-03-03T00:00:00", 10),
-            (ids["user"], "2024-02-29T00:00:00", 20),
-            (ids["user"], "2024-02-29T23:59:59", 30),
-            (ids["user"], "2024-03-01T00:00:00", 40),
+            (ids["user_id"], "2023-03-02T23:59:59", 999),  # outside the calendar
+            (ids["user_id"], "2023-03-03T00:00:00", 10),
+            (ids["user_id"], "2024-02-29T00:00:00", 20),
+            (ids["user_id"], "2024-02-29T23:59:59", 30),
+            (ids["user_id"], "2024-03-01T00:00:00", 40),
             ("another-account", "2024-03-01T00:00:00", 9999),
         ]:
             conn.execute(
-                "INSERT INTO ai_usage (username, at, kind, provider_id, provider_name, model, "
+                "INSERT INTO ai_usage (user_id, at, kind, provider_id, provider_name, model, "
                 "input, output, cache_read, cache_write) VALUES (?, ?, 'chat', 'own', 'Own', 'model', ?, 2, 3, 1)",
                 (user, at, tokens))
     data = c.get("/api/ai/usage").json()
@@ -190,3 +190,123 @@ def test_daily_calendar_utc_boundaries_totals_and_reset(org, monkeypatch):
     assert sum(day["calls"] for day in daily) == 4
     c.delete("/api/ai/usage")
     assert all(day["calls"] == 0 for day in c.get("/api/ai/usage").json()["daily"])
+
+
+def _model_lines(text):
+    return [l["model"] for l in (json.loads(l) for l in text.splitlines() if l.strip()) if "model" in l]
+
+
+def test_reply_speed_is_what_the_provider_served(org, monkeypatch):
+    """The reply's ``speed`` is the tier that served it, not the one asked
+    for: the stream's head names the tier the wire asked for, and when the
+    provider's report says it ran at another, the ``model`` line comes
+    again, corrected, before the usage line (which stays counts only). A
+    provider that says nothing leaves the asked-for tier standing."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    def turn(usage):
+        return FakeResp([
+            {"type": "message_start", "message": {"usage": usage}},
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello."}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}},
+        ])
+
+    # Asked for fast on Anthropic itself, served standard.
+    monkeypatch.setattr(ai_mod, "_open_ai",
+                        lambda *a, **kw: turn({"input_tokens": 50, "output_tokens": 1, "speed": "standard"}))
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "speed": "fast"})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert [m["speed"] for m in _model_lines(r.text)] == ["fast", ""]
+    assert lines[-2]["model"]["speed"] == "" and lines[-1] == {
+        "usage": {"input": 50, "output": 4, "cache_read": 0, "cache_write": 0}}
+    # Served as asked: one model line, fast.
+    monkeypatch.setattr(ai_mod, "_open_ai",
+                        lambda *a, **kw: turn({"input_tokens": 50, "output_tokens": 1, "speed": "fast"}))
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "speed": "fast"})
+    assert [m["speed"] for m in _model_lines(r.text)] == ["fast"]
+    # The provider says nothing: what was asked for stands.
+    monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: turn({"input_tokens": 50, "output_tokens": 1}))
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "speed": "fast"})
+    assert [m["speed"] for m in _model_lines(r.text)] == ["fast"]
+    # Nothing asked for: "" throughout, and a "standard" report changes nothing.
+    monkeypatch.setattr(ai_mod, "_open_ai",
+                        lambda *a, **kw: turn({"input_tokens": 50, "output_tokens": 1, "speed": "standard"}))
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True})
+    assert [m["speed"] for m in _model_lines(r.text)] == [""]
+
+    # A non-streamed reply carries the served speed in its model field.
+    class _Ctx(FakeResp):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_read(resp, proto, on_usage=None):
+        on_usage({"input": 7, "output": 1, "cache_read": 0, "cache_write": 0, "speed": ""})
+        return "ok"
+
+    monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: _Ctx([]))
+    monkeypatch.setattr(ai_mod, "_read_reply", fake_read)
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": False, "speed": "fast"})
+    assert r.status_code == 200, r.text
+    assert r.json()["model"]["speed"] == "" and "speed" not in r.json()["usage"]
+
+
+def test_agent_reply_speed_follows_the_rounds(org, monkeypatch):
+    """Over an agent reply's rounds the last report wins: a first round
+    served fast and a second served standard leave the reply at standard,
+    the model line re-sent once, where it changed."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+    calls = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            return FakeResp([
+                {"type": "message_start", "message": {"usage": {"input_tokens": 100, "output_tokens": 1,
+                                                                "speed": "fast"}}},
+                {"type": "content_block_start", "content_block":
+                    {"type": "tool_use", "id": "t1", "name": "list_pages"}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}},
+                {"type": "content_block_stop"},
+                {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 20}},
+            ])
+        return _turn("Done.", {"input_tokens": 300, "output_tokens": 1, "speed": "standard"})
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "list", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "speed": "fast"})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert [m["speed"] for m in _model_lines(r.text)] == ["fast", ""]
+    usage = [l["usage"] for l in lines if "usage" in l]
+    assert len(usage) == 2 and not any("speed" in u for u in usage)
+    # The corrected model line comes right before the round's usage line.
+    second = [i for i, l in enumerate(lines) if "model" in l][1]
+    assert "usage" in lines[second + 1]
+
+
+def test_a_speed_the_wire_never_asks_for_is_not_claimed(org, monkeypatch):
+    """Fast mode asked of a service that speaks Anthropic's API behind
+    another host is never sent (the wire has no tier there), so the reply
+    reports the usual routing rather than a tier nobody was asked for."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    r = c.post("/api/ai/providers", json={"protocol": "anthropic", "api_key": "sk-other-key",
+                                          "base_url": "https://api.moonshot.ai/anthropic",
+                                          "models": "kimi-served"})
+    assert r.status_code == 200, r.text
+    other = next(p for p in r.json()["providers"] if p["base_url"] == "https://api.moonshot.ai/anthropic")
+    try:
+        monkeypatch.setattr(ai_mod, "_open_ai",
+                            lambda *a, **kw: _turn("Hello.", {"input_tokens": 5, "output_tokens": 1}))
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "speed": "fast", "model": "kimi-served"})
+        assert r.status_code == 200, r.text
+        assert [(m["name"], m["speed"]) for m in _model_lines(r.text)] == [("kimi-served", "")]
+    finally:
+        assert c.delete(f"/api/ai/providers/{other['id']}").status_code == 200

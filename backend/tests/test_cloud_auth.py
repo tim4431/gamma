@@ -15,12 +15,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
 
-from gamma import cloud_auth, cloud_sync
+from gamma import cloud_auth, cloud_sync, migrations, version
 from gamma.db import connect_users_db, get_profile, set_profile
 from gamma.server_settings import _set_raw
 
@@ -58,6 +58,7 @@ class FakeAccountServer:
         self.minted = 0
         self.prefs = {}       # subject -> {key: {value, updated_at}}
         self.servers = {}     # subject -> {url: name}
+        self.reports = {}     # subject -> {url: the last body posted for it}
         self.directory = {}   # cloud username -> subject
         self.connects = []    # the forms of the connect token calls
 
@@ -158,6 +159,7 @@ class FakeAccountServer:
             mine = self.servers.setdefault(subject, {})
             if method == "POST":
                 mine[body["url"]] = body["name"]
+                self.reports.setdefault(subject, {})[body["url"]] = body
                 return {"server": {"url": body["url"], "name": body["name"]}}
             if method == "DELETE":
                 return {"ok": True, "removed": mine.pop(body["url"], None) is not None}
@@ -262,12 +264,12 @@ def test_provision_policy_creates_account(cloud, monkeypatch):
     c2 = browser()
     assert callback(c2, start(c2)).headers["location"] == "/"
     assert c2.get("/api/session").json()["user"] == "ca_alice"
-    assert cloud_auth.refresh_token_of("ca_alice") == "rt-1" and cloud.revoked == []
+    assert cloud_auth.refresh_token_of(account_of("ca_alice")) == "rt-1" and cloud.revoked == []
     # a newer sign-in replaces the refresh token and gives the old one back
     cloud.refresh = "rt-2"
     c3 = browser()
     assert callback(c3, start(c3)).headers["location"] == "/"
-    assert cloud_auth.refresh_token_of("ca_alice") == "rt-2" and cloud.revoked == ["rt-1"]
+    assert cloud_auth.refresh_token_of(account_of("ca_alice")) == "rt-2" and cloud.revoked == ["rt-1"]
 
 
 def test_sign_in_names_this_install(cloud, monkeypatch):
@@ -470,10 +472,11 @@ def test_rename_and_delete_follow_identities(cloud, monkeypatch):
     make_user("ca_root", "pw-ca_root-123", is_admin=1)
     admin = login("ca_root", "pw-ca_root-123")
     assert admin.post("/api/admin/users/ynez/rename", json={"new_username": "ynez2"}).status_code == 200
-    assert cloud_auth.status_of("ynez2")["username"] == "ynez"
+    ynez = account_of("ynez2")
+    assert cloud_auth.status_of(ynez)["username"] == "ynez"
     assert admin.delete("/api/admin/users/ynez2").status_code == 200
     with connect_users_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM identities WHERE username = 'ynez2'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM identities WHERE user_id = ?", (ynez,)).fetchone()[0] == 0
     assert cloud.revoked == ["rt-1"]
 
 
@@ -483,9 +486,9 @@ def test_cli_link_and_unlink(cloud, capsys):
     manage.link_identity("ca_frank", "sub-ca_frank", "ca_frank", "ca_frank@example.org")
     manage.list_identities()
     assert "ca_frank" in capsys.readouterr().out
-    assert cloud_auth.status_of("ca_frank")["username"] == "ca_frank"
+    assert cloud_auth.status_of(account_of("ca_frank"))["username"] == "ca_frank"
     manage.unlink_identity("ca_frank")
-    assert cloud_auth.status_of("ca_frank") is None
+    assert cloud_auth.status_of(account_of("ca_frank")) is None
 
 
 # --- the grant: access tokens, the grant check, the profile, the server list ---
@@ -516,17 +519,17 @@ def test_access_token_refresh_rotation_and_cache(cloud, monkeypatch):
     link_account(cloud, "ca_jo")
     grants = lambda: [f for f in cloud.token_calls if f["grant_type"] == "refresh_token"]  # noqa: E731
     # the sign-in's own access token is cached: no refresh
-    first = cloud_auth.access_token_for("ca_jo")
+    first = cloud_auth.access_token_for(account_of("ca_jo"))
     assert first and grants() == []
     # past its lifetime the grant is refreshed, the rotated token saved, the new access token cached
     cloud_auth._access.clear()
-    second = cloud_auth.access_token_for("ca_jo")
+    second = cloud_auth.access_token_for(account_of("ca_jo"))
     assert second != first and len(grants()) == 1 and grants()[0]["refresh_token"] == "rt-1"
-    assert cloud_auth.refresh_token_of("ca_jo") == "rt-1+"
-    assert cloud_auth.access_token_for("ca_jo") == second and len(grants()) == 1
+    assert cloud_auth.refresh_token_of(account_of("ca_jo")) == "rt-1+"
+    assert cloud_auth.access_token_for(account_of("ca_jo")) == second and len(grants()) == 1
     # fresh (the hourly check) refreshes regardless, from the newest token
-    assert cloud_auth.access_token_for("ca_jo", fresh=True) not in (first, second)
-    assert grants()[-1]["refresh_token"] == "rt-1+" and cloud_auth.refresh_token_of("ca_jo") == "rt-1++"
+    assert cloud_auth.access_token_for(account_of("ca_jo"), fresh=True) not in (first, second)
+    assert grants()[-1]["refresh_token"] == "rt-1+" and cloud_auth.refresh_token_of(account_of("ca_jo")) == "rt-1++"
 
     # one refresh at a time: callers waiting on the lock take the cached token
     def slow_http(url, *a, **kw):
@@ -537,14 +540,14 @@ def test_access_token_refresh_rotation_and_cache(cloud, monkeypatch):
     monkeypatch.setattr(cloud_auth, "_http", slow_http)
     cloud_auth._access.clear()
     got = []
-    threads = [threading.Thread(target=lambda: got.append(cloud_auth.access_token_for("ca_jo"))) for _ in range(4)]
+    threads = [threading.Thread(target=lambda: got.append(cloud_auth.access_token_for(account_of("ca_jo")))) for _ in range(4)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert len(set(got)) == 1 and got[0] and len(grants()) == 3
     # no identity, no token
-    assert cloud_auth.access_token_for("nobody-here") is None
+    assert cloud_auth.access_token_for(account_of("nobody-here")) is None
 
 
 def test_revoked_grant_ends_cloud_sessions_only(cloud):
@@ -552,14 +555,14 @@ def test_revoked_grant_ends_cloud_sessions_only(cloud):
     password_session = login("ca_kim", "pw-ca_kim-123")
     assert cloud_session.get("/api/session").json()["user"] == "ca_kim"
     with connect_users_db() as conn:
-        vias = sorted(r[0] for r in conn.execute("SELECT via FROM sessions WHERE username = 'ca_kim'"))
+        vias = sorted(r[0] for r in conn.execute("SELECT via FROM sessions WHERE user_id = ?", (account_of("ca_kim"),)))
     assert vias == ["", "", "cloud"]  # the linking browser's password login, the second login, the cloud sign-in
     # the person signs this server out on the Devices page
     cloud.live.clear()
-    assert cloud_sync.check_all() == {"ca_kim": ""}
+    assert cloud_sync.check_all() == {account_of("ca_kim"): ""}
     assert cloud_session.get("/api/session").json()["user"] is None
     assert password_session.get("/api/session").json()["user"] == "ca_kim"
-    status = cloud_auth.status_of("ca_kim")
+    status = cloud_auth.status_of(account_of("ca_kim"))
     assert status["offline"] is False and status["revoked_at"]
     # no token left: the next check asks nothing
     before = len(cloud.calls)
@@ -568,15 +571,15 @@ def test_revoked_grant_ends_cloud_sessions_only(cloud):
     c = browser()
     assert callback(c, start(c)).headers["location"] == "/"
     assert c.get("/api/session").json()["user"] == "ca_kim"
-    assert cloud_auth.status_of("ca_kim")["revoked_at"] == "" and cloud_auth.refresh_token_of("ca_kim") == "rt-1"
+    assert cloud_auth.status_of(account_of("ca_kim"))["revoked_at"] == "" and cloud_auth.refresh_token_of(account_of("ca_kim")) == "rt-1"
 
 
 def test_offline_check_changes_nothing(cloud, monkeypatch):
     c = link_account(cloud, "ca_lee")
     cloud.offline = True
-    assert cloud_sync.check_all() == {"ca_lee": ""}
+    assert cloud_sync.check_all() == {account_of("ca_lee"): ""}
     assert c.get("/api/session").json()["user"] == "ca_lee"
-    assert cloud_auth.refresh_token_of("ca_lee") == "rt-1" and cloud_auth.status_of("ca_lee")["revoked_at"] == ""
+    assert cloud_auth.refresh_token_of(account_of("ca_lee")) == "rt-1" and cloud_auth.status_of(account_of("ca_lee"))["revoked_at"] == ""
     # an answer that is not a refusal changes nothing either
     cloud.offline = False
 
@@ -586,12 +589,12 @@ def test_offline_check_changes_nothing(cloud, monkeypatch):
         return cloud.http(url, *a, **kw)
 
     monkeypatch.setattr(cloud_auth, "_http", unavailable)
-    assert cloud_sync.check_all() == {"ca_lee": ""}
-    assert c.get("/api/session").json()["user"] == "ca_lee" and cloud_auth.refresh_token_of("ca_lee") == "rt-1"
+    assert cloud_sync.check_all() == {account_of("ca_lee"): ""}
+    assert c.get("/api/session").json()["user"] == "ca_lee" and cloud_auth.refresh_token_of(account_of("ca_lee")) == "rt-1"
     # back online: the check refreshes, syncs and checks in
     monkeypatch.setattr(cloud_auth, "_http", cloud.http)
-    assert cloud_sync.check_all() == {"ca_lee": "ok"}
-    assert cloud_auth.refresh_token_of("ca_lee") == "rt-1+"
+    assert cloud_sync.check_all() == {account_of("ca_lee"): "ok"}
+    assert cloud_auth.refresh_token_of(account_of("ca_lee")) == "rt-1+"
 
 
 def _elsewhere(cloud, name, value):
@@ -609,11 +612,11 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
     # a server with no profile yet takes the cloud's at sign-in, before the browser loads
     _elsewhere(cloud, "ca_mia", {"theme": "dark"})
     c = link_account(cloud, "ca_mia")
-    value, at = get_profile("ca_mia")
+    value, at = get_profile(account_of("ca_mia"))
     assert value == {"theme": "dark"}
     assert at == cloud.prefs["sub-ca_mia"]["profile"]["updated_at"][:-1] + "000Z"
     assert c.get("/api/prefs/profile").json()["value"] == {"theme": "dark"}
-    assert cloud_sync.sync_profile("ca_mia") == "same"
+    assert cloud_sync.sync_profile(account_of("ca_mia")) == "same"
 
     # a change here is pushed once it settles: three quick changes, one PUT
     monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 0.2)
@@ -623,15 +626,15 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
     assert until(lambda: _cloud_copy(cloud, "ca_mia") == {"theme": "night"})
     time.sleep(0.3)
     assert len(puts()) == 1 and not cloud_sync._timers
-    assert cloud_sync.sync_profile("ca_mia") == "same"
+    assert cloud_sync.sync_profile(account_of("ca_mia")) == "same"
 
     # a change elsewhere is pulled by the hourly check
     _elsewhere(cloud, "ca_mia", {"theme": "night", "enterNewNote": True})
-    assert cloud_sync.check("ca_mia") == "ok" and get_profile("ca_mia")[0] == {"theme": "night", "enterNewNote": True}
+    assert cloud_sync.check(account_of("ca_mia")) == "ok" and get_profile(account_of("ca_mia"))[0] == {"theme": "night", "enterNewNote": True}
 
     # the cloud lost its copy: this one goes up again
     cloud.prefs["sub-ca_mia"].clear()
-    assert cloud_sync.sync_profile("ca_mia") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_mia")) == "pushed"
     assert _cloud_copy(cloud, "ca_mia") == {"theme": "night", "enterNewNote": True}
     # only the profile travels: never the provider entries or the active entry
     assert {path for _, path in cloud.calls if path.startswith("/api/me/prefs")} == {"/api/me/prefs/profile"}
@@ -643,16 +646,16 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
 def test_first_sync_asks_when_the_copies_differ(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     make_user("ca_ria", "pw-ca_ria-123")
-    set_profile("ca_ria", {"theme": "sepia", "enterNewNote": False})
+    set_profile(account_of("ca_ria"), {"theme": "sepia", "enterNewNote": False})
     _elsewhere(cloud, "ca_ria", {"theme": "light", "enterNewNote": True})
     c = link_account(cloud, "ca_ria")
     # neither copy replaced the other: the person chooses
-    assert get_profile("ca_ria")[0] == {"theme": "sepia", "enterNewNote": False}
+    assert get_profile(account_of("ca_ria"))[0] == {"theme": "sepia", "enterNewNote": False}
     assert _cloud_copy(cloud, "ca_ria") == {"theme": "light", "enterNewNote": True}
     assert c.get("/api/auth/cloud/sync-status").json()["profile"]["state"] == "choose"
     assert c.get("/api/prefs/profile").json()["cloud_choice"] is True
     assert "cloud-sync-choice" in [n["id"] for n in c.get("/api/notices").json()["notices"]]
-    assert cloud_sync.check("ca_ria") == "ok" and cloud_sync.profile_status("ca_ria")["state"] == "choose"
+    assert cloud_sync.check(account_of("ca_ria")) == "ok" and cloud_sync.profile_status(account_of("ca_ria"))["state"] == "choose"
     assert c.post("/api/auth/cloud/sync", json={"action": "sync"}).json()["outcome"] == "choose"
     assert ("PUT", "/api/me/prefs/profile") not in cloud.calls
 
@@ -662,31 +665,31 @@ def test_first_sync_asks_when_the_copies_differ(cloud, monkeypatch):
                                              "defaults": {"theme": "light", "enterNewNote": False, "pdfDarkPage": False}})
     assert r.status_code == 200 and r.json()["outcome"] == "merged" and r.json()["profile"]["state"] == "synced"
     both = {"theme": "sepia", "enterNewNote": True, "pdfDarkPage": False}
-    assert get_profile("ca_ria")[0] == both and _cloud_copy(cloud, "ca_ria") == both
+    assert get_profile(account_of("ca_ria"))[0] == both and _cloud_copy(cloud, "ca_ria") == both
     assert c.get("/api/prefs/profile").json()["cloud_choice"] is False
     assert "cloud-sync-choice" not in [n["id"] for n in c.get("/api/notices").json()["notices"]]
     # a base agreed with another cloud account (unlinked, then linked to someone else's) is no base
-    assert cloud_sync._base_of("ca_ria") == both
+    assert cloud_sync._base_of(account_of("ca_ria")) == both
     monkeypatch.setattr(cloud_auth, "grant_of", lambda username: ("sub-someone-else", "rt"))
-    assert cloud_sync._base_of("ca_ria") is None
+    assert cloud_sync._base_of(account_of("ca_ria")) is None
 
 
 def test_fetch_and_push_replace_one_copy(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     make_user("ca_sia", "pw-ca_sia-123")
-    set_profile("ca_sia", {"theme": "sepia"})
+    set_profile(account_of("ca_sia"), {"theme": "sepia"})
     _elsewhere(cloud, "ca_sia", {"theme": "light", "language": "zh"})
     c = link_account(cloud, "ca_sia")
-    assert cloud_sync.profile_status("ca_sia")["state"] == "choose"
+    assert cloud_sync.profile_status(account_of("ca_sia"))["state"] == "choose"
     # push: this server's copy replaces the cloud's, even though the cloud's is newer
     r = c.post("/api/auth/cloud/sync", json={"action": "push"})
     assert r.json() == {"outcome": "pushed", "profile": r.json()["profile"]} and r.json()["profile"]["state"] == "synced"
-    assert _cloud_copy(cloud, "ca_sia") == {"theme": "sepia"} and get_profile("ca_sia")[0] == {"theme": "sepia"}
+    assert _cloud_copy(cloud, "ca_sia") == {"theme": "sepia"} and get_profile(account_of("ca_sia"))[0] == {"theme": "sepia"}
     # fetch: the cloud's copy replaces this one, a newer change here included
     _elsewhere(cloud, "ca_sia", {"theme": "night"})
-    set_profile("ca_sia", {"theme": "gray", "enterNewNote": True})
+    set_profile(account_of("ca_sia"), {"theme": "gray", "enterNewNote": True})
     assert c.post("/api/auth/cloud/sync", json={"action": "fetch"}).json()["outcome"] == "pulled"
-    assert get_profile("ca_sia")[0] == {"theme": "night"}
+    assert get_profile(account_of("ca_sia"))[0] == {"theme": "night"}
     assert c.post("/api/auth/cloud/sync", json={"action": "sync"}).json()["outcome"] == "same"
     # nothing to fetch
     cloud.prefs["sub-ca_sia"].clear()
@@ -702,34 +705,34 @@ def test_changes_on_two_servers_merge_per_preference(cloud, monkeypatch):
     c = link_account(cloud, "ca_tom")
     edit = lambda **entries: c.patch("/api/prefs/profile", json={"set": entries}).json()  # noqa: E731
     edit(theme="light", language="en", enterNewNote=False)
-    assert cloud_sync.sync_profile("ca_tom") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_tom")) == "pushed"
     # here the theme, elsewhere the language, before either synced: both kept
     edit(theme="dark")
     _elsewhere(cloud, "ca_tom", {"theme": "light", "language": "zh", "enterNewNote": False})
-    assert cloud_sync.sync_profile("ca_tom") == "merged"
+    assert cloud_sync.sync_profile(account_of("ca_tom")) == "merged"
     both = {"theme": "dark", "language": "zh", "enterNewNote": False}
-    assert get_profile("ca_tom")[0] == both and _cloud_copy(cloud, "ca_tom") == both
+    assert get_profile(account_of("ca_tom"))[0] == both and _cloud_copy(cloud, "ca_tom") == both
     # one preference changed on both sides: the newer profile's value
     edit(theme="sepia")
     _elsewhere(cloud, "ca_tom", {**both, "theme": "night"})
-    assert cloud_sync.sync_profile("ca_tom") == "pulled" and get_profile("ca_tom")[0]["theme"] == "night"
+    assert cloud_sync.sync_profile(account_of("ca_tom")) == "pulled" and get_profile(account_of("ca_tom"))[0]["theme"] == "night"
     _elsewhere(cloud, "ca_tom", {**both, "theme": "gray"})
     edit(theme="solarized")
-    assert cloud_sync.sync_profile("ca_tom") == "pushed" and _cloud_copy(cloud, "ca_tom")["theme"] == "solarized"
+    assert cloud_sync.sync_profile(account_of("ca_tom")) == "pushed" and _cloud_copy(cloud, "ca_tom")["theme"] == "solarized"
 
 
 def test_a_stale_tab_does_not_undo_a_synced_change(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     c = link_account(cloud, "ca_ula")
     c.patch("/api/prefs/profile", json={"set": {"theme": "light", "language": "en"}})
-    assert cloud_sync.sync_profile("ca_ula") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_ula")) == "pushed"
     # the other server changes the theme and this server pulls it ...
     _elsewhere(cloud, "ca_ula", {"theme": "dark", "language": "en"})
-    assert cloud_sync.sync_profile("ca_ula") == "pulled"
+    assert cloud_sync.sync_profile(account_of("ca_ula")) == "pulled"
     # ... while a tab loaded before that still shows "light": it saves only what it changed
     r = c.patch("/api/prefs/profile", json={"set": {"language": "zh"}})
     assert r.json()["value"] == {"theme": "dark", "language": "zh"}
-    assert cloud_sync.sync_profile("ca_ula") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_ula")) == "pushed"
     assert _cloud_copy(cloud, "ca_ula") == {"theme": "dark", "language": "zh"}
 
 
@@ -753,7 +756,7 @@ def test_a_push_that_loses_a_race_merges_again(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     c = link_account(cloud, "ca_wes")
     c.patch("/api/prefs/profile", json={"set": {"theme": "light", "language": "en"}})
-    assert cloud_sync.sync_profile("ca_wes") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_wes")) == "pushed"
     c.patch("/api/prefs/profile", json={"set": {"theme": "dark"}})
     raced = []
 
@@ -763,9 +766,9 @@ def test_a_push_that_loses_a_race_merges_again(cloud, monkeypatch):
             _elsewhere(cloud, "ca_wes", {"theme": "light", "language": "zh"})
         return cloud.http(url, data=data, headers=headers, method=method, timeout=timeout)
     monkeypatch.setattr(cloud_auth, "_http", racing)
-    assert cloud_sync.sync_profile("ca_wes") == "merged"
+    assert cloud_sync.sync_profile(account_of("ca_wes")) == "merged"
     assert raced and _cloud_copy(cloud, "ca_wes") == {"theme": "dark", "language": "zh"}
-    assert get_profile("ca_wes")[0] == {"theme": "dark", "language": "zh"}
+    assert get_profile(account_of("ca_wes"))[0] == {"theme": "dark", "language": "zh"}
 
 
 def test_edit_right_after_a_pull_counts_as_newer(cloud, monkeypatch):
@@ -774,16 +777,16 @@ def test_edit_right_after_a_pull_counts_as_newer(cloud, monkeypatch):
     link_account(cloud, "ca_pia")
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     ahead = "2999-01-01T00:00:00.000000Z"
-    set_profile("ca_pia", {"theme": "dark"}, updated_at=ahead)
-    assert set_profile("ca_pia", {"theme": "sepia"}) == "2999-01-01T00:00:00.001000Z"
+    set_profile(account_of("ca_pia"), {"theme": "dark"}, updated_at=ahead)
+    assert set_profile(account_of("ca_pia"), {"theme": "sepia"}) == "2999-01-01T00:00:00.001000Z"
     # a synced copy never replaces a newer one here
-    assert set_profile("ca_pia", {"theme": "old"}, updated_at="2020-01-01T00:00:00.000000Z") == "2999-01-01T00:00:00.001000Z"
-    assert get_profile("ca_pia")[0] == {"theme": "sepia"}
+    assert set_profile(account_of("ca_pia"), {"theme": "old"}, updated_at="2020-01-01T00:00:00.000000Z") == "2999-01-01T00:00:00.001000Z"
+    assert get_profile(account_of("ca_pia"))[0] == {"theme": "sepia"}
     # pushed with that time, the account server clamps it to its now, and this server keeps the clamped time
-    assert cloud_sync.sync_profile("ca_pia") == "pushed"
+    assert cloud_sync.sync_profile(account_of("ca_pia")) == "pushed"
     stored = cloud.prefs["sub-ca_pia"]["profile"]["updated_at"]
-    assert stored < "2999" and get_profile("ca_pia")[1] == stored[:-1] + "000Z"
-    assert cloud_sync.sync_profile("ca_pia") == "same"
+    assert stored < "2999" and get_profile(account_of("ca_pia"))[1] == stored[:-1] + "000Z"
+    assert cloud_sync.sync_profile(account_of("ca_pia")) == "same"
 
 
 def test_no_network_without_identity(cloud, monkeypatch):
@@ -792,9 +795,9 @@ def test_no_network_without_identity(cloud, monkeypatch):
     c = login("ca_nia", "pw-ca_nia-123")
     assert c.put("/api/prefs/profile", json={"value": {"theme": "dark"}}).status_code == 200
     assert cloud_sync._timers == {}
-    assert cloud_auth.access_token_for("ca_nia") is None
+    assert cloud_auth.access_token_for(account_of("ca_nia")) is None
     assert cloud_sync.check_all() == {}
-    assert cloud_sync.sync_profile("ca_nia") == "" and cloud_sync.register_server("ca_nia", url="https://x.example") is False
+    assert cloud_sync.sync_profile(account_of("ca_nia")) == "" and cloud_sync.register_server(account_of("ca_nia"), url="https://x.example") is False
     assert cloud.calls == []
     # cloud sign-in off, even with an identity row: no call at all
     link_account(cloud, "ca_nell")
@@ -803,7 +806,7 @@ def test_no_network_without_identity(cloud, monkeypatch):
     nell = login("ca_nell", "pw-ca_nell-123")
     assert nell.put("/api/prefs/profile", json={"value": {"theme": "dark"}}).status_code == 200
     assert cloud_sync._timers == {} and cloud_sync.check_all() == {}
-    assert cloud_auth.access_token_for("ca_nell") is None
+    assert cloud_auth.access_token_for(account_of("ca_nell")) is None
 
 
 def test_server_registration(cloud, monkeypatch):
@@ -815,7 +818,11 @@ def test_server_registration(cloud, monkeypatch):
     # the hourly check refreshes the entry (an upsert), from the remembered address
     posts = lambda: [x for x in cloud.calls if x == ("POST", "/api/me/servers")]  # noqa: E731
     before = len(posts())
-    assert cloud_sync.check_all() == {"ca_ola": "ok"} and len(posts()) == before + 1
+    assert cloud_sync.check_all() == {account_of("ca_ola"): "ok"} and len(posts()) == before + 1
+    # it reports the build and the data directory's schema version, nothing else, on sign-in and on each check
+    assert migrations.data_version() and version.label()
+    assert cloud.reports["sub-ca_ola"][local] == {"url": local, "name": socket.gethostname()[:80],
+                                                  "version": version.label(), "schema": migrations.data_version()}
     # unlinking takes it off the list, then revokes the grant (refreshed first when no access token is cached)
     cloud_auth._access.clear()
     assert c.post("/api/auth/cloud/unlink").json()["ok"] is True
@@ -836,7 +843,24 @@ def test_server_registration(cloud, monkeypatch):
     assert cloud.servers.get("sub-ca_quin", {}) == {}
     # a failure is a warning, never an error to the person
     cloud.offline = True
-    assert cloud_sync.register_server("ca_pat", url="https://gamma.example.org") is False
+    assert cloud_sync.register_server(account_of("ca_pat"), url="https://gamma.example.org") is False
+
+
+def test_server_registration_reports_the_build(cloud, monkeypatch):
+    local = "http://127.0.0.1:9124"
+    link_account(cloud, "ca_ula", base_url=local)
+    posted = lambda: cloud.reports["sub-ca_ula"][local]  # noqa: E731
+    assert posted()["version"] == version.label() and posted()["schema"] == migrations.data_version()
+    # every check reports the numbers as they are now
+    monkeypatch.setattr(version, "VERSION", "9.9.9")
+    monkeypatch.setattr(version, "COMMIT", "abc123def456")
+    monkeypatch.setattr(migrations, "data_version", lambda: 77)
+    assert cloud_sync.check_all() == {account_of("ca_ula"): "ok"}
+    assert posted()["version"] == "v9.9.9 (abc123def456)" and posted()["schema"] == 77
+    # a fresh install has no users database yet: the schema is left out, the build still reported
+    monkeypatch.setattr(migrations, "data_version", lambda: None)
+    assert cloud_sync.check_all() == {account_of("ca_ula"): "ok"}
+    assert "schema" not in posted() and posted()["version"] == "v9.9.9 (abc123def456)"
 
 
 def test_sync_status(cloud, monkeypatch):
@@ -860,7 +884,7 @@ def test_sync_status(cloud, monkeypatch):
     assert cloud.prefs["sub-ca_tia"]["profile"]["value"] == {"theme": "dark"}
     # the account server unreachable: the check's failure is an error with its message; reading it asks nothing
     cloud.offline = True
-    assert cloud_sync.sync_profile("ca_tia") == ""
+    assert cloud_sync.sync_profile(account_of("ca_tia")) == ""
     before = len(cloud.calls)
     got = status(c)["profile"]
     assert got["state"] == "error" and "offline" in got["error"] and len(cloud.calls) == before
@@ -870,7 +894,7 @@ def test_sync_status(cloud, monkeypatch):
     assert status(c)["profile"]["state"] == "pending"
     # back online, the check pushes it
     cloud.offline = False
-    assert cloud_sync.check("ca_tia") == "ok"
+    assert cloud_sync.check(account_of("ca_tia")) == "ok"
     assert status(c)["profile"]["state"] == "synced" and cloud.prefs["sub-ca_tia"]["profile"]["value"] == {"theme": "sepia"}
     # cloud sign-in off: off, whatever was last recorded
     monkeypatch.delenv("GAMMA_CLOUD_ISSUER")

@@ -4,7 +4,8 @@ workspace directories."""
 
 import io
 
-from gamma.routers.metadata import _find_doi_candidates, _build_bibtex
+from gamma.bibtex import build_entry
+from gamma.routers.metadata import _find_doi_candidates
 from gamma.block_index import fts_query
 from gamma.routers.ai import _parse_images
 
@@ -24,7 +25,7 @@ def test_doi_candidates_keep_uppercase_suffixes():
 
 
 def test_build_bibtex_arxiv():
-    bib = _build_bibtex({
+    bib = build_entry({
         "title": "A Paper", "authors": ["Ada Lovelace", "Alan Turing"],
         "year": "2019", "venue": "", "arxiv_id": "1810.11086", "doi": "",
     })
@@ -106,9 +107,10 @@ def test_extract_pdf_annotations_resolves_indirects():
     assert len(found) == 1
     a = found[0]
     assert a["content"] == "a note"
-    assert a["page"] == 1
+    pos = a["position"]
+    assert (pos["pageNumber"], pos["width"], pos["height"]) == (1, 612, 792)  # the page box, once
     # y flipped to top-left origin: 792 - 720 = 72
-    assert abs(a["position"]["boundingRect"]["y1"] - 72.0) < 0.01
+    assert abs(pos["boundingRect"]["y1"] - 72.0) < 0.01 and list(pos["boundingRect"]) == ["x1", "y1", "x2", "y2"]
     assert a["color"].startswith("rgba(255, 229,")
 
 

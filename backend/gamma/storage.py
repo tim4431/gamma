@@ -1,8 +1,10 @@
 """Uploaded-file helpers: media types, content-hash storage (atomic,
 verified writes), lookup, and the one grammar of a reference to a stored
-file. What becomes of a file nothing references any more is
-gamma/upload_gc.py."""
+file. Where the files live (the workspace's uploads directory or a bucket)
+is gamma/blobs.py, which every read and write here goes through; what
+becomes of a file nothing references any more is gamma/upload_gc.py."""
 
+import errno
 import hashlib
 import json
 import os
@@ -11,8 +13,7 @@ import secrets
 import urllib.parse
 from pathlib import Path
 
-from . import pdf_meta
-from .db import ws_uploads_dir
+from . import blobs, pdf_meta
 from .logbuf import log
 from .server_settings import check_upload_allowed
 
@@ -199,7 +200,8 @@ def write_atomic(path: Path, data: bytes) -> None:
     renamed over the name. Whatever stops a write half way (a full disk, a
     killed process) leaves nothing under the name — never a truncated file
     that the next upload of the same bytes would take for stored. Every
-    writer of a stored file goes through here."""
+    writer of a stored file goes through here: the local driver's ``put``
+    and the S3 driver's cached copies (gamma/blobs.py)."""
     partial = path.parent / ".partial"
     partial.mkdir(parents=True, exist_ok=True)
     tmp = partial / secrets.token_hex(8)
@@ -210,15 +212,7 @@ def write_atomic(path: Path, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        try:
-            os.replace(tmp, path)
-        except PermissionError:
-            # Windows refuses a rename over a name another thread is renaming
-            # into place at the same moment. The name is the content's hash,
-            # so a stored copy of the same size already is these bytes.
-            if not (path.is_file() and path.stat().st_size == len(data)):
-                raise
-            os.unlink(tmp)
+        _rename_over(tmp, path, len(data))
     except BaseException:
         try:
             os.unlink(tmp)
@@ -227,57 +221,137 @@ def write_atomic(path: Path, data: bytes) -> None:
         raise
 
 
-def _cut_short(path: Path, data: bytes) -> bool:
-    """Whether a stored copy whose size differs from ``data`` is a write that
-    stopped early. Only a PDF is ever rewritten under its name (embedded
+def _rename_over(tmp: Path, path: Path, size: int) -> None:
+    """``tmp`` — complete, flushed, ``size`` bytes — renamed over ``path``."""
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        # Windows refuses a rename over a name another thread is renaming
+        # into place at the same moment. The name is the content's hash,
+        # so a stored copy of the same size already is these bytes.
+        if not (path.is_file() and path.stat().st_size == size):
+            raise
+        os.unlink(tmp)
+
+
+def place_file(tmp: Path, path: Path) -> None:
+    """Make the complete local file ``tmp`` the stored file ``path``:
+    flushed to disk, then renamed over the name like write_atomic's temp
+    file — ``tmp`` is one, in ``path``'s ``.partial/`` (an upload assembled
+    in parts, gamma/upload_parts.py), so this is a rename and never a copy
+    of the bytes. ``tmp`` is consumed whatever happens: renamed, or removed
+    when the rename fails."""
+    try:
+        size = tmp.stat().st_size
+        with open(tmp, "rb+") as f:
+            os.fsync(f.fileno())
+        _rename_over(tmp, path, size)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _cut_short(ws: str, filename: str, size: int, head) -> bool:
+    """Whether a stored copy whose size differs from the new data's ``size``
+    is a write that stopped early (``head(n)``: the new data's first ``n``
+    bytes). Only a PDF is ever rewritten under its name (embedded
     annotations stripped, routers/imports.py), so any other file of the
     wrong size is not what its name says; a PDF is cut short when its bytes
     are the beginning of the real ones."""
-    if path.suffix != ".pdf":
+    if not filename.endswith(".pdf"):
         return True
-    stored = path.read_bytes()
-    return len(stored) < len(data) and data.startswith(stored)
+    path = blobs.open_path(ws, filename)
+    stored = path.read_bytes() if path else b""  # gone meanwhile: written again
+    return len(stored) < size and head(len(stored)) == stored
 
 
-def _store(ws: str, filename: str, data: bytes) -> bool:
-    """Write ``data`` as the workspace's upload ``filename`` unless it is
+def _store_with(ws: str, filename: str, size: int, head, put) -> bool:
+    """Store the workspace's upload ``filename`` (``size`` bytes, their
+    first ``n`` read by ``head(n)``, written by ``put()``) unless it is
     stored already; returns whether it was. A stored copy is re-dated
-    (``os.utime``): the upload→reference window gets its grace again and an
-    unreferenced file's retention starts over (gamma/upload_gc.py). A copy an
-    earlier, non-atomic write left short is rewritten. The storage limits
-    gate new bytes only (check_upload_allowed raises 413/507 past them)."""
-    target = ws_uploads_dir(ws) / filename
-    try:
-        size = target.stat().st_size
-    except FileNotFoundError:
-        size = None
-    if size is not None and size != len(data) and _cut_short(target, data):
-        log.warning(f"[uploads] {filename} in workspace {ws} held {size} of {len(data)} bytes — rewritten")
-        write_atomic(target, data)
+    (``blobs.touch``): the upload→reference window gets its grace again and
+    an unreferenced file's retention starts over (gamma/upload_gc.py). A
+    copy an earlier, non-atomic write left short is rewritten. The storage
+    limits gate new bytes only (check_upload_allowed raises 413/507 past
+    them)."""
+    stored = blobs.size(ws, filename)
+    if stored is not None and stored != size and _cut_short(ws, filename, size, head):
+        log.warning(f"[uploads] {filename} in workspace {ws} held {stored} of {size} bytes — rewritten")
+        put()
         return True
-    if size is not None:
+    if stored is not None:
         from . import upload_gc  # local: upload_gc imports this module
 
         with upload_gc.guard(ws):  # never between the purge's check and its delete
-            try:
-                os.utime(target)
+            if blobs.touch(ws, filename):
                 return True
-            except FileNotFoundError:
-                pass  # purged a moment ago (gamma/upload_gc.py): store it again
-    check_upload_allowed(ws, len(data))
-    write_atomic(target, data)
+            # purged a moment ago (gamma/upload_gc.py): store it again
+    check_upload_allowed(ws, size)
+    put()
     return False
 
 
-def store_pdf(ws: str, data: bytes) -> tuple[str, str, bool]:
+def _store(ws: str, filename: str, data: bytes) -> bool:
+    """``_store_with`` for bytes in memory."""
+    return _store_with(ws, filename, len(data), lambda n: data[:n], lambda: blobs.put(ws, filename, data))
+
+
+def _head_of(path: Path, n: int) -> bytes:
+    with open(path, "rb") as f:
+        return f.read(n)
+
+
+def _store_path(ws: str, filename: str, path: Path, size: int) -> bool:
+    """``_store_with`` for a complete file in ``blobs.partial_dir(ws)``,
+    stored by ``blobs.put_path`` (a rename, locally) and consumed whatever
+    the outcome: a dedup hit or a failed put removes it."""
+    try:
+        return _store_with(ws, filename, size, lambda n: _head_of(path, n),
+                           lambda: blobs.put_path(ws, filename, path))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def put_upload(ws: str, name: str, data: bytes) -> None:
+    """Store ``data`` as the workspace's file ``name`` as it is, written
+    whole: no hashing, no dedup, no quota. For the writers that store bytes
+    under a name chosen elsewhere and check them themselves — the PDF
+    proxy's cache and a clip (``can_store``), a mirror's pull
+    (``matches_name``), a restore, a PDF stripped of its annotations, the
+    AI chat's re-download."""
+    blobs.put(ws, name, data)
+
+
+def pdf_url(doc_id: str) -> str:
+    """Where the stored PDF ``doc_id`` is served: what a page carrying it
+    shows unless it stores a ``source_url`` of its own
+    (blocks_store.page_attachment)."""
+    return f"/api/uploads/{doc_id}.pdf"
+
+
+def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
     """Store PDF bytes under their content hash in the workspace (callers
-    validate with :func:`is_pdf` first). Returns ``(doc_id, source_url,
-    already_existed)``. Dedup first: a re-upload of a stored file adds no
-    bytes."""
+    validate with :func:`is_pdf` first). Returns ``(doc_id,
+    already_existed)``; the file is at ``pdf_url(doc_id)``. Dedup first: a
+    re-upload of a stored file adds no bytes."""
     doc_id = content_digest(data)
     already_existed = _store(ws, f"{doc_id}.pdf", data)
     pdf_meta.schedule(ws, doc_id)  # the viewer's manifest, ready before the first open
-    return doc_id, f"/api/uploads/{doc_id}.pdf", already_existed
+    return doc_id, already_existed
+
+
+def store_pdf_path(ws: str, path: Path, size: int, doc_id: str) -> tuple[str, bool]:
+    """:func:`store_pdf` for a PDF assembled on disk — an upload in parts
+    (gamma/upload_parts.py): ``path``, in ``blobs.partial_dir(ws)``, holds
+    ``size`` bytes whose content digest is ``doc_id`` (the caller hashed
+    them as they arrived and checked the PDF header), so storing it is a
+    rename, never a copy. ``path`` is consumed either way."""
+    already_existed = _store_path(ws, f"{doc_id}.pdf", path, size)
+    pdf_meta.schedule(ws, doc_id)
+    return doc_id, already_existed
 
 
 def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
@@ -289,7 +363,11 @@ def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:
-    """The uploaded file `filename` in the workspace's uploads dir, or None.
+    """A local file holding the workspace's stored file ``filename``, or
+    None (no such file, or a name that cannot be one). Under the local
+    driver it is the file in the uploads directory; under S3 the node's
+    cached copy, which this call may download from the bucket first
+    (gamma/blobs.py ``open_path``), so read it soon.
 
     Deliberately scoped to the single named workspace — the caller resolves
     which (the session's workspace or a validated share's). No cross-workspace
@@ -298,7 +376,56 @@ def find_upload_file(filename: str, ws: str) -> Path | None:
     if not ws:
         return None
     try:
-        path = ws_uploads_dir(ws) / filename
+        return blobs.open_path(ws, filename)
     except ValueError:
         return None
-    return path if path.is_file() else None
+
+
+class StoredFile(os.PathLike):
+    """One of a workspace's stored files by name, looked up when it is used:
+    what ``UploadDir(ws) / name`` gives the code written against a directory
+    of files (the exporters, the PDF writers, ``ink.read_upload``).
+    ``is_file()`` / ``exists()`` ask the store; ``read_bytes()``, ``stat()``
+    and ``os.fspath()`` read the local copy ``find_upload_file`` gives
+    (FileNotFoundError when there is none). Making one reads nothing, so an
+    export that lists its files first fetches each only as it packs it."""
+
+    def __init__(self, ws: str, name: str):
+        self.ws, self.name = ws, name
+
+    def exists(self) -> bool:
+        try:
+            return blobs.exists(self.ws, self.name)
+        except ValueError:
+            return False
+
+    is_file = exists
+
+    def _local(self) -> Path:
+        path = find_upload_file(self.name, self.ws)
+        if path is None:
+            raise FileNotFoundError(errno.ENOENT, "no such stored file", self.name)
+        return path
+
+    def __fspath__(self) -> str:
+        return str(self._local())
+
+    def stat(self):
+        return self._local().stat()
+
+    def read_bytes(self) -> bytes:
+        return self._local().read_bytes()
+
+    def __repr__(self) -> str:
+        return f"StoredFile({self.ws!r}, {self.name!r})"
+
+
+class UploadDir:
+    """A workspace's stored files where code expects a directory of them:
+    ``UploadDir(ws) / name`` is a :class:`StoredFile`."""
+
+    def __init__(self, ws: str):
+        self.ws = ws
+
+    def __truediv__(self, name: str) -> StoredFile:
+        return StoredFile(self.ws, name)

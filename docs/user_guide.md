@@ -16,7 +16,7 @@ A new account starts with a **Welcome** page: the first steps in short, with a s
 
 On open, each paper's title, authors and venue are filled in automatically (arXiv → DOI → AI), see [Metadata and citations](#metadata-and-citations).
 
-**Guided tours.** The account menu (top right) → **Tours** lists the tours that fit where you are: **Your first paper** and **AI chat** anywhere, **Sharing a page** and **Editing tables** on a page, **Handwriting** and **The PDF viewer** on a PDF, **The notebook view** in a notebook's viewer — short walkthroughs that point at the real controls and wait for you to try them. A new, empty library is offered **Your first paper** when you arrive. Short tips and tour offers also appear right after you first use a feature, saying what just happened; turn them off in Settings → Appearance → **Suggest tours**.
+**Guided tours.** The account menu (top right) → **Tours** lists the tours that fit where you are: **Your first paper** and **AI chat** anywhere, **Sharing a page** and **Editing tables** on a page, **Handwriting** and **The PDF viewer** on a PDF, **The notebook view** in a notebook's viewer — short walkthroughs that show each move on the real controls; try it yourself, or press Next to go on. A new, empty library is offered **Your first paper** when you arrive. Short tips and tour offers also appear right after you first use a feature, saying what just happened; turn them off in Settings → Appearance → **Suggest tours**.
 
 ## Reading and highlighting
 
@@ -58,7 +58,7 @@ The strip's **Text** tool (**T** while the strip is open) puts typed text on a P
 
 A notebook is a page with sheets of blank paper to write on, like a Notability note, and any page can become one: its sheets sit among its notes. Write on them with the same pens and highlighters as on a PDF, and type on them with the Text tool.
 
-- **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/page** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
+- **+ → New notebook** makes a page with one sheet and opens it in the notebook view. In any page, type **/note** in a block (an empty block becomes the sheet; otherwise the sheet goes right after it), or choose **Add page below** from a block's handle menu.
 - **Two views.** The notes view draws each sheet right among your notes, with its tools under it: its pen, its **Paper**, a replay of what's written on it, **+** for another sheet after it, and **Notebook view**, which shows the sheets large in the viewer instead, with your notes beside them. **Notes view** in the viewer's side bar, or closing the viewer, goes back. Each page remembers its view in this browser.
 - Writing near the bottom of the last sheet adds the next one, so there is always paper below. **Add page** at the end of the notebook view adds one too. A new sheet takes the paper of the sheet before it.
 - **Paper** sets a sheet's size (A4, Letter, A5), orientation, pattern (blank, ruled, grid, dots), line spacing and background; *Apply to all pages* gives every sheet that paper.
@@ -98,6 +98,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 - **Formatting keys** are Obsidian's: Ctrl+B / I / E / Shift+X / Shift+H toggle bold, italic, code, strike and highlight; Ctrl+K makes a link and fills it from a URL on the clipboard.
 - **Block commands**: Ctrl+Shift+K deletes the line (a one-line note as a whole, its children staying), ↑/↓ on a note's first or last line step into the neighbour, and **Ctrl+Shift+P** runs the rest by name — move or duplicate a note, new note above, indent, collapse, toggle a to-do, select its text. Give any of them keys in Settings → Keyboard, where every shortcut is listed and changeable. The full list: [Shortcut cheat sheet](#shortcut-cheat-sheet).
 - **`[[` links** between notes and pages: type `[[` and pick a page by its title (or a note block below the pages); typing a page's exact title between `[[` and `]]` links it too, and a title no page has stays a dashed *unlinked* chip. Inserted references are clickable chips, and a **Linked from** section under a page's notes lists the blocks on other pages that link to it (click one to open it there). `![[block]]` **embeds** show the source block and let you edit it right there.
+- **New page from a note**: type **/page** in a block, as in Notion. A new page is made in the library, filed in the same folder as the page you are on, its link goes where you typed, and it opens with its title ready to type. **Back** returns you to the link.
 - **"/" menu**: type `/` for headings, callouts, code, colored text, and everything else, grouped as Text, Math, Insert, Link and Style; keep typing to filter (type `red` for the colors).
 - **Paste**: URLs offer *link / mention / embed*; multi-line text offers *Text / Blocks* (Blocks parses markdown into an outline); a table from Excel or Sheets pastes as a markdown table.
 - **Highlights and notes are linked both ways**: click a note to jump the PDF to its highlight; click a highlight to jump to its note. Ctrl+click a note's card to add its quote to the chat. An existing note can be attached to a highlight later: the **⊕** on its row starts attach mode — then click the highlight.
@@ -109,7 +110,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 Open the chat from the **View menu (≡, top right) → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again. **Open ChatGPT sign-in** opens OpenAI's page in a new tab. When Gamma runs on your own computer (the desktop app, or a localhost install), it connects as soon as you have signed in. When it runs on another machine, the sign-in ends on a page that cannot load ("localhost refused to connect"). That is expected: copy that page's address and paste it into the dialog, and Gamma connects right away. Or enter the one-time code the dialog shows at auth.openai.com/codex/device. That needs device code sign-in turned on in ChatGPT's security settings; for a school or work account, its administrator turns it on. Until something is connected, the chat shows a setup card instead of a message box: pick a service there and the connect dialog opens on it. The dialog links to the page where that service makes keys, checks the key as you paste it, and picks the service's first model for you (add more if you like); **Connect** saves and tests it, and from the chat's card you land back in the chat, ready to ask. A guest account can't store keys; it gets AI only when the administrator shares a connection.
 
 - **The message box** holds everything that goes with a message: the context chips on top, your text, then a row with **+** (attach files or library pages), **Full PDF**, the **model chip** and Send. **Enter sends**, Shift+Enter is a newline.
-- **Model and reasoning effort**: click the model chip (for example *gpt-5.2 ▾*) to switch the model or set the reasoning effort. The menu lists only the levels the picked model takes; a level it lacks becomes the nearest one it has. Each answer names the model and effort that wrote it, under the reply. The ⚙ in the chat header keeps the context size, the tools and the token counts.
+- **Model, reasoning effort and speed**: click the model chip (for example *gpt-5.2 ▾*) to switch the model, set the reasoning effort, or pick a speed. The effort menu lists only the levels the picked model takes; a level it lacks becomes the nearest one it has. **Speed** appears when the model's provider offers a faster route to it. *Fast* (Anthropic's fast mode, OpenAI's and Codex's Fast) answers quicker at a higher price per token; *flex* costs less and takes longer. Only models that offer the tier get it. The chip shows it as a lightning bolt (a clock for *flex*); hover for its name. Each answer names the model, effort and speed that wrote it, under the reply. The ⚙ in the chat header keeps the context size, the tools and the token counts.
 - **Voice**: the mic dictates into the box. It shows only when one of your connections can transcribe (an OpenAI API key).
 - **Context**: in a paper the chat reads that paper's text automatically. **Full PDF** (shown while a PDF is in context) attaches the actual file, so the model sees figures and tables; it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
 - **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights).
@@ -142,9 +143,9 @@ In a paper or a notes page it can also edit your notes when you ask: rewrite a b
 
 So you can ask it to read a folder of papers and write what it finds into your notes. You approve the edits one by one, or once for the whole conversation. A card left unanswered for ten minutes, or a reply you stop, makes no change.
 
-**Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+**Settings → AI → Tool usage → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
 
-While it works, a pill under your question says what it is doing ("Searching library for …", or "Fetching 4 documents…" when it reads several at once). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. Each note change has an undo button that reverts just that change, and **Revert all** takes back the whole list. A reverted change has a redo button that puts it back. A revert or redo keeps what you typed since. If you changed the AI's own words, it asks first and shows what reverting anyway would remove. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+While it works, a pill under your question says what it is doing ("Searching library for …", or "Fetching 4 documents…" when it reads several at once). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. Each note change has an undo button that reverts just that change, and **Revert all** takes back the whole list. A reverted change has a redo button that puts it back. A revert or redo keeps what you typed since. If you changed the AI's own words, it asks first and shows what reverting anyway would remove. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Tool usage, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ### When a publisher blocks a paper
 
@@ -152,17 +153,17 @@ A journal that wants a sign-in or a CAPTCHA can stop the server but not your bro
 
 ### Longer work
 
-Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Chat → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
+Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Tool usage → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
 
 ## Library and organization
 
 The home page is a recents feed of all your pages, with a **Recently viewed** strip on top (its cards show a snapshot of where you left off — click × to remove one). Until the library holds a page of your own, **Start your library** sits on top instead: open a paper from a link, upload PDFs, write a note page, import a library (Zotero, Obsidian, Logseq, Notion, Markdown), or take the first tour.
 
-- **Folders** are paths: drop a paper into `qc/neutral-atom` and the hierarchy builds itself — a **qc** folder with a **neutral-atom** subfolder; add `qc/superconducting` and the sibling appears. A paper can live in several folders at once (dragging onto a folder *adds* it there). Drop a paper on the **back row** inside a folder to take it out; drag a folder onto another folder to move its whole subtree.
-- **Labels** are flat tags for cross-cutting facets (an author, a keyword); a paper can carry several, and each is one click to filter by. Edit both from the label row under a paper's title: type `name/` for a folder, anything else for a label.
+- **Folders** nest: **New folder** makes one (empty ones stay, and everyone in the workspace sees them), and a folder holds subfolders. A paper can live in several folders at once (dragging onto a folder, or onto a folder in the path above the listing, *adds* it there). Drop a paper on the **back row** inside a folder to take it out; drag a folder onto another folder to move its whole subtree. Renaming or moving a folder changes none of its papers, its share link or its chat. Under **Custom order** folders keep the order you give them: drag one to the top or bottom edge of another to put it there.
+- **Labels** are flat tags for cross-cutting facets (an author, a keyword); a paper can carry several, and each is one click to filter by. Edit both from the label row under a paper's title: type a name and pick a folder or label from the suggestions, or press Enter — a name no label or folder has becomes a new label (*New folder* in the suggestions makes a folder instead). Names may contain any character.
 - **Selection works like a file manager**: click selects, Ctrl+click toggles, Shift+click extends, **double-click opens** (on a phone or tablet a single tap opens), Escape clears. Right-click a page for Open / Rename · Pin / **Add label** / **Move to folder** (flyouts with checkmarks) / Duplicate · Copy link / Share… / Export… / Ask AI about this page · Delete — acting on a multi-selection applies to all of it. A folder's menu has **New page here** and **New subfolder**, Share… and **Export…** for everything inside it.
 - **Recently deleted**: a deleted page is kept for 30 days with its notes, highlights, files and chats — the trash button at the right end of the library's toolbar (or *Recently deleted* in Ctrl+Shift+P) lists them with who deleted each and when. **Restore** puts a page back in the folders it was in; the trash icon (or **Empty**) deletes for good. Deleting a folder's pages with the folder sends them there too. Viewers of a shared workspace can neither delete nor restore.
-- **Sort** (modified / added / viewed / title) is remembered per folder; toggles switch grid/list and folders/files. The list view reads as a table: each row's kind (PDF, Page, or a folder's page count) and the date the sort uses (modified, viewed or added — the column header says which). Pin papers to keep them in a strip at the top. Card strips scroll sideways with a plain mouse wheel.
+- **Sort** (modified / added / viewed / title / custom order) is remembered per folder; toggles switch grid/list and folders/files. The list view reads as a table: each row's kind (PDF, Page, or a folder's page count) and the date the sort uses (modified, viewed or added — the column header says which). Pin papers to keep them in a strip at the top. Card strips scroll sideways with a plain mouse wheel.
 - **Files inside notes**: any upload (a PDF, a markdown file, a dataset) dropped on a block becomes a small file card. Right-click a PDF or markdown card → *Add to library* turns it into a page of its own.
 
 ## Search
@@ -182,6 +183,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 - The **(i) button** in the Notes panel's title row opens the metadata popover: title, authors, venue, year, DOI, arXiv — all editable (Enter saves), with **↻ refetch**, an AI title-fill button, and a health check of the extracted PDF text (with a preview of what the AI actually reads).
 - The share popover holds the **BibTeX** entry and a slide-ready **citation** that pastes into PowerPoint with real italics, each with a copy button.
+- **Cite key** is the name your LaTeX document cites the paper by. Left empty it is made from the first author and the year (shown greyed out); type one to pin it, and refetching the metadata keeps it. Papers imported from Zotero keep the key Better BibTeX gave them, so existing `.tex` files go on working.
 - Settings → Maintenance shows a per-paper metadata and search-index health table with batch retry.
 
 ## Sharing a page
@@ -223,9 +225,9 @@ Your library lives on your server and opens from any browser — the office desk
 **Making one**
 
 - **Desktop app** (the easy way): open the remote server, open the workspace switcher, and click the **clone** chip on the workspace's row. The app creates a local server if needed, sets up the copy and opens it; from then on it syncs in the background whichever server the window shows, and the row's chip reads *open clone*.
-- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Account & sync → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
+- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
 
-A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Account & sync → Clones lists every copy with its state, conflicts and these actions.
+A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Workspaces → Clones lists every copy with its state, conflicts and these actions.
 
 ## Gamma Connector
 
@@ -272,8 +274,11 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 
 - **Annotated PDF**: highlights, handwriting and text boxes become real PDF annotations; notes can be drawn onto the page with leader lines — math, CJK and images included.
 - **Notes as PDF** or **Markdown** (highlights as quotes, images bundled or linked).
+- **BibTeX**: a `.bib` file — one paper's entry, or every paper in a folder in one bibliography. Before anything downloads you see the papers on the left with the key each will be cited by, and the picked one's entry on the right; papers without metadata are listed there too, so you can tell why one is missing. Copy takes one entry or the whole bibliography. Repeated citation keys get `a`, `b`, … so the file is valid LaTeX.
 - **Obsidian vault** (wikilinks, `^id` block anchors, highlights as quote callouts linking the PDF page), **Logseq graph**, **Zotero library** (RDF with PDFs and annotations, ready to import), or a **Gamma zip** another Gamma can merge.
 - Switches choose the layers (highlights, notes, bundle the files); the last choice is remembered.
+
+**Keeping a bibliography up to date.** Share a folder (right-click → *Share…*), then open **Export → BibTeX** and expand *Keep this .bib up to date*: the link there always serves the folder's current entries. Paste it into Overleaf (Upload → From External URL) and its Refresh button pulls your latest papers — anyone with that link can read the folder, since it is the share link itself.
 
 ## Backups
 
@@ -282,6 +287,23 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 - **The whole server** (administrators): Settings → Server → *Server backups* snapshots every account and workspace; restore with the server stopped (`manage.py backups --restore`).
 
 Account credentials and private AI keys are never part of an export.
+
+## Upgrading
+
+A new Gamma upgrades your data by itself. On its first start it takes a snapshot of every database into the data directory's `backups/` folder, then brings the data to its own shape, step by step; the log says what it did. The desktop app updates itself; a Docker server updates when its image is pulled (the compose template runs Watchtower, which does that for you), and the next start upgrades the data.
+
+Very old data may need one stop on the way. Each release can upgrade data from a certain version on and drops the older steps; if your data is older than that, Gamma **changes nothing** and shows one page at its usual address instead of the app:
+
+> **This Gamma needs an earlier release to upgrade your data first**
+>
+> Your data directory is at schema version 12; this Gamma (schema 31) upgrades from version 19 on. Nothing has been changed. Run the Gamma release of 2026-10-01 once on the same data directory: it upgrades it to schema version 24, taking a snapshot of the databases first; then start this version again and it finishes the upgrade.
+>
+> 1. Back up the data directory: a plain copy of the folder or volume is enough.
+> 2. Docker Compose: in `docker-compose.yml` set `image: ghcr.io/tim4431/gamma:sha-8708ebb`, run `docker compose up -d`, wait for the log line "data directory upgraded" (`docker logs gamma`), then put the image back and run `docker compose up -d` again.
+> 3. Docker without Compose: `docker run --rm -v <your data volume>:/data ghcr.io/tim4431/gamma:sha-8708ebb`, wait for the same log line, stop it with Ctrl+C, then start your usual container.
+> 4. Desktop app: install that release from the GitHub releases page, open it once with this data directory, then install the current version again.
+
+The page names the exact image or release to run, so follow what it says rather than this example. The same text is in the server log and in `python manage.py migrate`. Your data stays as it was until you run that release; the upgrade snapshot lets you go back if anything looks wrong (`manage.py backups --restore <name>`, with the server stopped). The same page appears, with different steps, if the data was written by a newer Gamma than the one running, or if an upgrade step failed: then it names the cause and the snapshot, and the upgrade resumes at the next start once the cause is fixed.
 
 ## Install as an app
 
@@ -315,17 +337,16 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 
 | Group | Pane | What's there |
 |---|---|---|
-| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
-| Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
+| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
+| Preferences | Appearance | Theme (system + seven), flip page colors, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
-| | Translation | The viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |
+| | Language and Translation | The interface language, the viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |
 | | Keyboard | Every shortcut, rebindable; what Enter makes (a new note or a new line) |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
-| | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
-| | Advanced | Tool limits, context budgets |
-| | Prompts | The system prompts |
+| | Chat | Default reasoning effort, default speed, snapshot clearing, the system prompts, context budgets |
+| | Tool usage | Which tools the agent may use per chat kind, background fetching, the reading helper, online search services, tool limits |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
-| Library | Workspaces | Personal and shared workspaces, export / import |
+| Library | Workspaces | Personal and shared workspaces, export / import, **Clones** (offline copies) |
 | | Backups | Scheduled backup tasks and server-side snapshots |
 | | Maintenance | Storage, search-index rebuild, metadata health table |
 | Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, the database check, server backups, the log |

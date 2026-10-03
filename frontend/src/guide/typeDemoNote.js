@@ -13,10 +13,14 @@ export async function typeDemoNote(text, prepareNote, live, cancelled) {
   }
   if (cancelled()) return;
   element.scrollIntoView({ block: "nearest" });
+  // The pointer goes to the note, then steps out of the way while the
+  // words appear (as the demo's typing in a field does).
   const rect = element.getBoundingClientRect();
-  live({ anchor: "notes.editor", cursor: { x: rect.left + 15, y: rect.top + 12 } });
+  const at = { x: rect.left + 15, y: rect.top + rect.height / 2 };
+  live({ anchor: "notes.editor", cursor: at });
   await sleep(550);
   if (cancelled()) return;
+  live({ anchor: "notes.editor", cursor: { ...at, faded: true } });
   const view = EditorView.findFromDOM(element.firstElementChild);
   if (!view) throw new Error("note editor is unavailable");
   view.focus();

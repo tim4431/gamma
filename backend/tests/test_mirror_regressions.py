@@ -17,7 +17,7 @@ import threading
 
 import pytest
 
-from gamma import ops, sync_engine
+from gamma import sync_engine
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.integrations import create_token
 from gamma.sync_tree import snapshot_from_tree
@@ -318,8 +318,8 @@ def test_the_app_quit_after_a_push_then_the_remote_edits_the_new_block(monkeypat
 def test_a_text_edit_whose_push_answer_was_lost_is_not_merged_twice(monkeypatch, remote_forgot):
     """The edit landed, its answer was lost, the remote typed elsewhere in
     the block: the next round finds the edit there (the batch answered
-    under its id — or, the remote having forgotten it, shown in its text)
-    and merges nothing twice ("jumps jumps")."""
+    under its id — or, the remote no longer knowing the id, shown in its
+    text) and merges nothing twice ("jumps jumps")."""
     remote, local, _ = _pair()
     page = remote.page(f"Lost answer, same block ({remote_forgot})")["id"]
     remote.insert(page, "lt1", "The quick fox", position="a0")
@@ -329,8 +329,9 @@ def test_a_text_edit_whose_push_answer_was_lost_is_not_merged_twice(monkeypatch,
     assert _round(local)["last_error"]
     undo()
     remote.ops(page, [{"op": "set", "id": "lt1", "content": "The quick brown fox jumps", "base": "The quick fox jumps"}])
-    if remote_forgot:
-        monkeypatch.setattr(ops, "_replays", type(ops._replays)())  # a restart there
+    if remote_forgot:  # its row pruned there, or a remote that kept ids in memory restarted
+        with connect_pages_db(remote.ws) as conn:
+            conn.execute("UPDATE page_ops SET batch_id = '' WHERE page_id = ?", (page,))
     _sync(local)
     assert local.texts(page)["lt1"] == "The quick brown fox jumps" == remote.texts(page)["lt1"]
     assert conflicts(local) == []
@@ -400,7 +401,7 @@ def _lose_create_answer(monkeypatch, how="reset"):
 
 
 def _link(remote, local, adopt="theirs"):
-    token = create_token(remote.name, remote.ws, "link", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws, "adopt": adopt})
     assert r.status_code == 201, r.text

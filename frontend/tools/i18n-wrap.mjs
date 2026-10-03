@@ -117,7 +117,7 @@ export function wrapFile(file, suspects) {
     }
     return false;
   };
-  const settingsNav = rel === "settings/settingsNavigation.js";
+  const settingsNav = rel === "settings/settingsSearch.js";
   traverse(ast, {
     JSXText(p) {
       if (!lines.has(p.node.loc.start.line) || covered(p.node)) return;

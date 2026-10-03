@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  EMPTY_VIEW, addChildBlock, addSiblingBlock, blocksToHighlights, closeEditing, extractBlock, findBlockContext,
-  flattenBlocks, indentBlock, insertChild, insertSibling, isDescendant, isFolded, isFoldedAway, makeBlockId,
+  EMPTY_VIEW, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
+  closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling, isDescendant,
+  isFolded, isFoldedAway, isHighlightBlock, makeBlockId,
   normalizeBlocks, outdentBlock, revealBlock, toggleFold, visibleBlocks, visibleNeighbor, withEditing,
 } from "../src/shared/model/blockModel.js";
 
@@ -135,11 +136,30 @@ test("normalizeBlocks gives every node a children array and nothing else", () =>
   assert.deepEqual(out, [{ id: "x", content: "", properties: { collapsed: true }, children: [{ id: "y", content: "", children: [] }] }]);
 });
 
-test("blocksToHighlights lists positioned highlight blocks and whether they carry a note", () => {
-  const pos = { pageNumber: 2, rects: [] };
-  const hl = (id, content, children = []) => N(id, children, { content, properties: { highlight_id: id, quote: "q", color: "red", pdf_page: 2, pdf_position: pos } });
+const POS = { pageNumber: 2, width: 600, height: 800, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [{ x1: 1, y1: 2, x2: 3, y2: 4 }] };
+
+test("blocksToHighlights lists positioned highlight blocks, by block id, and whether they carry a note", () => {
+  const hl = (id, content, children = []) => N(id, children, { content, properties: { quote: "q", color: "red", pdf_position: POS } });
   const out = blocksToHighlights([N("plain"), hl("h1", ""), hl("h2", "a comment"), hl("h3", "", [N("k", [], { content: " " }), N("m", [], { content: "note" })]),
-    N("nopos", [], { properties: { highlight_id: "nopos" } })]);
+    N("pageonly", [], { properties: { quote: "q", pdf_position: { pageNumber: 4 } } }),
+    N("ink", [], { properties: { ink_url: "/api/uploads/a.ink", pdf_position: POS } })]);
   assert.deepEqual(out.map((h) => [h.id, h.hasNote]), [["h1", false], ["h2", true], ["h3", true]]);
-  assert.deepEqual(out[0], { id: "h1", content: { text: "q" }, comment: { text: "" }, hasNote: false, color: "red", position: pos });
+  assert.deepEqual(out[0], { id: "h1", content: { text: "q" }, comment: { text: "" }, hasNote: false, color: "red", position: POS });
+});
+
+test("a highlight is a block with a position that is no ink group; its page is the position's", () => {
+  const [hl, pageOnly, link, ink, box, note] = [
+    { pdf_position: POS }, { pdf_position: { pageNumber: 4 } }, { pdf_position: POS, link_url: "https://x.test" },
+    { ink_url: "", pdf_position: POS }, { text_box: { x: 1 }, pdf_page: 5 }, {},
+  ].map((properties, i) => N(`b${i}`, [], { properties }));
+  assert.deepEqual([hl, pageOnly, link, ink, box, note].map(isHighlightBlock), [true, true, true, false, false, false]);
+  assert.deepEqual([hl, pageOnly, link, ink, box, note].map(blockPage), [2, 4, 2, 2, 5, null]);
+  // the place on the page: a position with its rectangles, not its page alone
+  assert.deepEqual([hl, pageOnly].map(blockPosition), [POS, null]);
+});
+
+test("a highlight made in the viewer is a block whose id is the highlight's, its position as given", () => {
+  const [block] = addHighlightAsBlock([], { id: "hx", position: POS, content: { text: "q" }, comment: { text: "c" }, color: "red" });
+  assert.deepEqual(block, { id: "hx", parentId: null, children: [], content: "c",
+    properties: { color: "red", quote: "q", pdf_position: POS } });
 });

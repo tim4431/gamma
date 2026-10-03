@@ -45,12 +45,10 @@ export function serializeInk(ink) {
 }
 
 // What a group's block carries for its file at `url`: the reference, the
-// stroke count and, on a PDF page, the page and the box in the highlight
-// shape. Every client writes these the same way; null clears a key.
+// stroke count and, on a PDF page, its place there (pdfPositionOf). Every
+// client writes these the same way; null clears a key.
 export function inkProps(ink, url) {
-  const pdf = ink.space?.kind === "pdf-page";
-  return { ink_url: url, ink_strokes: ink.strokes.length,
-    pdf_page: pdf ? ink.space.page : null, pdf_position: pdf ? pdfPositionOf(ink) : null };
+  return { ink_url: url, ink_strokes: ink.strokes.length, pdf_position: pdfPositionOf(ink) };
 }
 
 const ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -226,15 +224,16 @@ export function inkBounds(ink) {
   return out;
 }
 
-// The group's box in the highlight `pdf_position` shape (what jump-to-
-// position, the sidebar marker and the exporters read).
+// The group's box as a `pdf_position` in the file's page frame
+// (shared/model/blockModel.js; what jump-to-position, the sidebar marker
+// and the exporters read): null off a PDF page or with no strokes.
 export function pdfPositionOf(ink) {
   const b = inkBounds(ink);
   if (!b || ink.space?.kind !== "pdf-page") return null;
   const r2 = (v) => Math.round(v * 100) / 100;
-  const rect = { x1: r2(b[0]), y1: r2(b[1]), x2: r2(b[2]), y2: r2(b[3]),
-    width: ink.space.width, height: ink.space.height, pageNumber: ink.space.page };
-  return { pageNumber: ink.space.page, boundingRect: rect, rects: [{ ...rect }] };
+  const rect = { x1: r2(b[0]), y1: r2(b[1]), x2: r2(b[2]), y2: r2(b[3]) };
+  return { pageNumber: ink.space.page, width: ink.space.width, height: ink.space.height,
+    boundingRect: rect, rects: [{ ...rect }] };
 }
 
 function segDist2(px, py, ax, ay, bx, by) {

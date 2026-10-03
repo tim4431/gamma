@@ -1,28 +1,45 @@
 """Versioned upgrades of the data directory.
 
-The data directory has ONE schema version, stored as ``PRAGMA user_version``
-of ``users.db`` (``db.SCHEMA_VERSION`` is what this code expects). A
-release that changes stored shapes ships a numbered step here and bumps the
-constant; the step is the whole change — moved files, rebuilt tables,
-rewritten rows — and ``db.py``'s ``CREATE TABLE`` statements always describe
-the CURRENT shape, so nothing is patched lazily on connect any more.
+Two stamps, one number. ``PRAGMA user_version`` of ``users.db`` is the data
+directory's schema version (``db.SCHEMA_VERSION`` is what this code
+expects); each workspace's ``pages.db`` has its own, the newest step whose
+per-workspace part has run on it (``db.workspace_version``: a file stamped
+0 is at ``db.WS_VERSION_BASE``). A release that changes stored shapes ships
+a numbered step here and bumps the constant; the step is the whole change —
+moved files, rebuilt tables, rewritten rows — and ``db.py``'s ``CREATE
+TABLE`` statements always describe the CURRENT shape, so nothing is
+patched lazily on a read.
+
+A step has a global part (``STEPS``: a function of the users.db
+connection, run at startup) and/or, from version 34 on, a workspace part
+(``WORKSPACE_STEPS``: a function of one workspace's files, run on each
+workspace when it is first opened after the upgrade, ``upgrade_workspace``;
+in a background walk after startup, ``warm``; by ``manage.py migrate``; and
+on a restored backup's copy). Steps up to the base walk every workspace
+themselves (``_each_pages_db``).
 
 The rules that keep this safe and small:
 
 - **Runs before anything else.** ``ensure_current()`` is the first thing
   the server does at startup (and ``python manage.py migrate`` by hand). A
-  data directory AHEAD of the binary is refused with a clear message — an
-  older Gamma never opens files it does not understand.
-- **Backup first.** Before the first pending step every database file is
+  data directory AHEAD of the binary, or below ``MIN_UPGRADABLE``, is
+  refused: the server then serves one page saying what to run instead
+  (``guidance()``, gamma/app.py), and an older Gamma never opens files it
+  does not understand.
+- **Backup first.** Before an upgrade changes anything users.db — and
+  every workspace's databases when a pending step walks them — is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
-  rewrite them). An upgrade that does not finish keeps that snapshot named
-  in ``backups/upgrade.json`` and every retry reuses it, so a restart loop
-  neither piles up copies nor rotates the clean one out. Once an upgrade
-  finishes, only the newest ``backups.KEEP_BACKUPS`` automatic snapshots
-  are kept; hand-made ones are never pruned.
+  rewrite them). A workspace's own steps copy its two databases into that
+  snapshot first (``workspaces/<id>/``). An upgrade that does not finish
+  keeps that snapshot named in ``backups/upgrade.json`` and every retry
+  reuses it, so a restart loop neither piles up copies nor rotates the
+  clean one out. Once an upgrade finishes, only the newest
+  ``backups.KEEP_BACKUPS`` automatic snapshots are kept; hand-made ones are
+  never pruned.
 - **One step, one stamp.** Steps run in order; the version is stamped after
-  each one, so an interrupted upgrade resumes at the step that did not
+  each one (in users.db for a global part, in the pages.db for a workspace
+  part), so an interrupted upgrade resumes at the step that did not
   finish. Every step is written to be re-runnable (it checks what it is
   about to do).
 - **Nothing piles up.** A step is kept only while ``MIN_UPGRADABLE`` is
@@ -36,23 +53,47 @@ Docs: docs/dev/migrations.md.
 """
 
 import json
+import re
 import shutil
 import sqlite3
-from contextlib import closing
+import threading
+import time
+from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 
 from . import backups, config
-from .db import PAGES_SCHEMA, SCHEMA_VERSION, USERS_SCHEMA, page_now, safe_ws_id, users_db_version
+from .blocks_store import FOLDERS, folder_by_path
+from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USER_PREF_KEYS, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
+                 connect_pages_db, new_account_id, page_now, register_functions, safe_ws_id, users_db_version,
+                 workspace_ids, workspace_version, ws_dir)
 from .logbuf import log
-from .normalize import normalize_data_db, normalize_pages_db
+from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db, page_changes,
+                        page_ops_batch_id, pages_db_chats)
 
-# Lowest version this release can still upgrade from (0 = the unversioned
-# layout every Gamma before schema versions wrote).
-MIN_UPGRADABLE = 0
+# The lowest version this release upgrades from: a data directory at it
+# has had the steps up to it, and this release carries the steps after it
+# (docs/dev/migrations.md "Nothing piles up"). One below it must first run
+# UPGRADE_VIA, the newest release that still carries the deleted steps.
+MIN_UPGRADABLE = 19
+UPGRADE_VIA = {
+    "image": "ghcr.io/tim4431/gamma:sha-8708ebb",  # the server image built from that release
+    "release": "the Gamma release of 2026-10-01",
+    "schema": 24,                                   # what it brings a data directory to
+}
 
 
 class MigrationError(RuntimeError):
-    pass
+    """The data directory cannot be brought to SCHEMA_VERSION by this
+    process: a step failed (``step``, ``snapshot``), or one of the two
+    refusals below. With ``workspace``, one workspace's own steps failed as
+    it opened (``upgrade_workspace``): that workspace is not served, every
+    other one is. ``guidance()`` turns any of them into what the person
+    should do."""
+
+    step = ""
+    snapshot = ""
+    version: int | None = None
+    workspace = ""
 
 
 class NewerDataError(MigrationError):
@@ -79,12 +120,27 @@ def data_version() -> int | None:
 
 
 def pending_steps(version: int) -> list:
+    """The global steps a data directory at ``version`` has still to run."""
     return [(v, name, fn) for v, name, fn in STEPS if v > version]
+
+
+def workspace_steps_after(version: int) -> list:
+    """The workspace steps a pages.db at ``version`` has still to run."""
+    return [(v, name, fn) for v, name, fn in WORKSPACE_STEPS if v > version]
+
+
+def _newest_step() -> int:
+    """The version the steps lead to (SCHEMA_VERSION, as the bump rule
+    keeps it)."""
+    return max(v for v, _, _ in STEPS + WORKSPACE_STEPS)
 
 
 def status() -> dict:
     """``{"version", "target", "fresh", "pending": [{"version", "name"}],
-    "backups": [...]}`` for the CLI and the startup line."""
+    "workspace_steps": [{"version", "name"}], "backups": [...]}`` for the
+    CLI and the startup line: the global steps still to run, and every
+    workspace step a workspace can be behind on. Cheap: it opens no
+    workspace (``workspaces_behind`` counts those, for the CLI)."""
     version = data_version()
     fresh = version is None
     pending = [] if fresh else pending_steps(version)
@@ -93,6 +149,7 @@ def status() -> dict:
         "target": SCHEMA_VERSION,
         "fresh": fresh,
         "pending": [{"version": v, "name": name} for v, name, _ in pending],
+        "workspace_steps": [{"version": v, "name": name} for v, name, _ in workspace_steps_after(WS_VERSION_BASE)],
         "backups": [b["name"] for b in backups.list_backups()],
     }
 
@@ -100,32 +157,41 @@ def status() -> dict:
 # --- the runner ---------------------------------------------------------------
 
 def ensure_current(dry_run: bool = False) -> dict:
-    """Bring the data directory to SCHEMA_VERSION. Returns ``{"from", "to",
-    "applied": [names], "backup": path | None}``. Raises ``NewerDataError``
-    / ``TooOldDataError`` (refuse to run) or ``MigrationError`` (a step
-    failed — the version stays at the last completed step; fix or restore
-    the backup and rerun)."""
+    """Bring the data directory to SCHEMA_VERSION: the global steps, then
+    users.db stamped. The workspace steps this upgrade brings run on each
+    workspace later (``upgrade_workspace``). Returns ``{"from", "to",
+    "applied": [names], "workspace_steps": [names], "backup": path |
+    None}``. Raises ``NewerDataError`` / ``TooOldDataError`` (refuse to
+    run) or ``MigrationError`` (a step failed — the version stays at the
+    last completed step; fix or restore the backup and rerun)."""
     version = data_version()
     if version is None:
-        return {"from": SCHEMA_VERSION, "to": SCHEMA_VERSION, "applied": [], "backup": None}
+        return {"from": SCHEMA_VERSION, "to": SCHEMA_VERSION, "applied": [], "workspace_steps": [], "backup": None}
     if version > SCHEMA_VERSION:
-        raise NewerDataError(
-            f"the data directory ({config.DATA_DIR}) is at schema version {version}, newer than "
-            f"this Gamma (version {SCHEMA_VERSION}). Run the Gamma release that wrote it, or "
-            f"restore the matching snapshot from {config.BACKUPS_DIR}.")
+        raise _refusal(NewerDataError, version,
+                       f"the data directory ({config.DATA_DIR}) is at schema version {version}, newer than "
+                       f"this Gamma (version {SCHEMA_VERSION}). Run the Gamma release that wrote it, or "
+                       f"restore the matching snapshot from {config.BACKUPS_DIR}.")
     if version < MIN_UPGRADABLE:
-        raise TooOldDataError(
-            f"the data directory is at schema version {version}; this release upgrades from "
-            f"{MIN_UPGRADABLE} at the earliest. Run an intermediate Gamma release first.")
+        raise _refusal(TooOldDataError, version,
+                       f"the data directory is at schema version {version}; this release upgrades from "
+                       f"{MIN_UPGRADABLE} at the earliest. Run {UPGRADE_VIA['release']} "
+                       f"({UPGRADE_VIA['image']}) once on the same data directory first: it brings it "
+                       f"to schema version {UPGRADE_VIA['schema']}.")
     pending = pending_steps(version)
-    result = {"from": version, "to": SCHEMA_VERSION, "applied": [], "backup": None}
+    result = {"from": version, "to": SCHEMA_VERSION, "applied": [],
+              "workspace_steps": [name for _, name, _ in workspace_steps_after(version)], "backup": None}
     if dry_run:
         return result
-    if not pending:
+    newest = _newest_step()
+    if version >= newest:
         if backups.unfinished_upgrade():  # stamped its last step, stopped before tidying up
             _finish_upgrade()
         return result
-    result["backup"] = _snapshot_before(version)
+    # The workspaces' files are copied up front only when a pending step
+    # walks them all (the steps up to the base); a workspace step copies its
+    # own workspace's into the same snapshot when it runs.
+    result["backup"] = _snapshot_before(version, workspaces=any(v <= WS_VERSION_BASE for v, _, _ in pending))
     log.info(f"[migrate] upgrading data directory from schema version {version} to "
              f"{SCHEMA_VERSION}; snapshot in {result['backup']}")
     for v, name, fn in pending:
@@ -135,22 +201,116 @@ def ensure_current(dry_run: bool = False) -> dict:
                 conn.execute(f"PRAGMA user_version = {v}")
                 conn.commit()
         except Exception as e:
-            raise MigrationError(
+            failed = MigrationError(
                 f"migration step {v} ({name}) failed: {e}. The data directory is at the last "
                 f"completed step; fix the cause and rerun `manage.py migrate`, or restore "
-                f"{result['backup']}.") from e
+                f"{result['backup']}.")
+            failed.step, failed.snapshot, failed.version = f"{v} ({name})", result["backup"], data_version()
+            raise failed from e
         result["applied"].append(name)
         log.info(f"[migrate] step {v} ({name}) done")
+    if data_version() < newest:  # the newest steps have a workspace part only
+        with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+            conn.execute(f"PRAGMA user_version = {newest}")
+            conn.commit()
     _finish_upgrade()
+    if result["workspace_steps"]:
+        log.info(f"[migrate] workspace steps {', '.join(result['workspace_steps'])} run on each workspace as it "
+                 f"is opened, and in the background")
     return result
 
 
-def _snapshot_before(version: int) -> str:
-    """The snapshot this upgrade rolls back to. An earlier attempt that did
-    not finish (a failed step, a crash — and a restart loop retrying it)
-    took one before it changed anything, and that one is reused: retries
-    neither pile up copies nor push the clean one out. A snapshot that
-    cannot be written stops the upgrade before any step runs."""
+def _refusal(kind, version: int, message: str) -> MigrationError:
+    error = kind(message)
+    error.version = version
+    return error
+
+
+def guidance(error: MigrationError) -> dict:
+    """What the person running this server should do about ``error``, as
+    ``{"title", "summary", "steps": [str], "data_dir", "backups_dir",
+    "snapshot"}`` — the one text the startup page, the API's 503, the
+    CLI and the log share (gamma/app.py ``_blocked_app``, ``manage.py
+    migrate``). Nothing below changes the data directory; every path tells
+    the person their data is intact before it tells them what to run."""
+    data_dir, backups_dir = str(config.DATA_DIR), str(config.BACKUPS_DIR)
+    if isinstance(error, TooOldDataError):
+        via = UPGRADE_VIA
+        return {
+            "title": "This Gamma needs an earlier release to upgrade your data first",
+            "summary": (f"Your data directory is at schema version {error.version}; this Gamma (schema "
+                        f"{SCHEMA_VERSION}) upgrades from version {MIN_UPGRADABLE} on. Nothing has been "
+                        f"changed. Run {via['release']} once on the same data directory: it upgrades it to "
+                        f"schema version {via['schema']}, taking a snapshot of the databases first; then "
+                        f"start this version again and it finishes the upgrade."),
+            "steps": [
+                f"Back up the data directory ({data_dir}): a plain copy of the folder or volume is enough.",
+                f"Docker Compose: in docker-compose.yml set `image: {via['image']}`, run `docker compose up -d`, "
+                f"wait for the log line \"data directory upgraded\" (`docker logs gamma`), then put the image "
+                f"back and run `docker compose up -d` again.",
+                f"Docker without Compose: `docker run --rm -v <your data volume>:/data {via['image']}`, wait for "
+                f"the same log line, stop it with Ctrl+C, then start your usual container.",
+                "Desktop app: install that release from the GitHub releases page, open it once with this data "
+                "directory, then install the current version again.",
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
+        }
+    if isinstance(error, NewerDataError):
+        return {
+            "title": "This data directory was written by a newer Gamma",
+            "summary": (f"Your data directory is at schema version {error.version}; this Gamma expects "
+                        f"{SCHEMA_VERSION} and will not touch it. Nothing has been changed."),
+            "steps": [
+                "Run the Gamma release that wrote it (the newer one), or",
+                f"restore the snapshot that release took before upgrading, from {backups_dir}: with the server "
+                f"stopped, `manage.py backups` lists them and `manage.py backups --restore <name>` puts one back.",
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
+        }
+    if error.workspace:
+        kept = (f"A copy of its databases from before the upgrade is in {error.snapshot}, under "
+                f"workspaces/{error.workspace}/." if error.snapshot else
+                "No copy of its databases could be taken, so nothing in it was changed.")
+        return {
+            "title": "This workspace could not be upgraded",
+            "summary": (f"The upgrade of workspace {error.workspace} stopped at migration step {error.step}; it "
+                        f"is at schema version {error.version}, the last step that completed, and is not served "
+                        f"until the step succeeds. Every other workspace is served. The upgrade is tried again "
+                        f"the next time the workspace is opened."),
+            "steps": [
+                f"Read the cause in the server log: {error}",
+                "Fix it (disk space, file permissions, a damaged database) and open the workspace again, or run "
+                "`manage.py migrate` with the server stopped: the upgrade continues where it stopped.",
+                kept,
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
+        }
+    back = (f"Or go back: with the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` "
+            f"restores the snapshot, then run the previous release." if error.snapshot else
+            "Or go back to the previous release with the snapshot `manage.py backups` lists.")
+    return {
+        "title": "The upgrade of your data directory stopped",
+        "summary": (f"Migration step {error.step} failed; the data directory is at schema version "
+                    f"{error.version}, the last step that completed. A snapshot of every database from before "
+                    f"the upgrade is kept, and the upgrade resumes from this step at the next start."),
+        "steps": [
+            f"Read the cause in the server log: {error}",
+            "Fix it (disk space, file permissions, a damaged database) and start the server again: the "
+            "upgrade continues where it stopped, with the same snapshot.",
+            back,
+        ],
+        "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
+    }
+
+
+def _snapshot_before(version: int, workspaces: bool) -> str:
+    """The snapshot this upgrade rolls back to: users.db, and every
+    workspace's databases when ``workspaces`` (a pending step walks them).
+    An earlier attempt that did not finish (a failed step, a crash — and a
+    restart loop retrying it) took one before it changed anything, and that
+    one is reused: retries neither pile up copies nor push the clean one
+    out. A snapshot that cannot be written stops the upgrade before any
+    step runs."""
     unfinished = backups.unfinished_upgrade()
     if unfinished:
         kept = backups.info(unfinished.get("backup") or "")
@@ -159,7 +319,7 @@ def _snapshot_before(version: int) -> str:
                      f"{unfinished.get('from')}; its snapshot {kept['name']} is kept")
             return kept["path"]
     try:
-        taken = backups.create(f"v{version}", auto=True)
+        taken = backups.create(f"v{version}", auto=True, workspaces=workspaces)
         backups.mark_upgrade({"from": version, "to": SCHEMA_VERSION, "backup": taken["name"],
                               "started_at": page_now()})
     except Exception as e:
@@ -179,425 +339,501 @@ def _finish_upgrade() -> None:
         log.warning(f"[migrate] could not prune old pre-upgrade snapshots: {e}")
 
 
+# --- per workspace --------------------------------------------------------------
+# A workspace's steps (WORKSPACE_STEPS) run when its pages.db is first
+# opened behind them (db._open_ws_db calls upgrade_workspace), in the
+# background walk after startup (``warming``), by ``manage.py migrate``
+# (``upgrade_workspaces``) and on a restored backup's copy
+# (ws_backup._normalize_copies, ``run_workspace_steps``).
+
+WARM_PAUSE_MAX_S = 1.0  # the background walk rests as long as its last workspace took, at most this
+
+_locks_guard = threading.Lock()
+_ws_locks: dict[str, threading.Lock] = {}  # per workspace: one thread runs its steps, the others wait
+_snapshot_lock = threading.Lock()
+_snapshot: tuple = ()  # (backups dir, name, the data version it holds): where the workspaces' copies go
+
+
+def _workspace_lock(ws: str) -> threading.Lock:
+    with _locks_guard:
+        return _ws_locks.setdefault(ws, threading.Lock())
+
+
+def upgrade_workspace(conn) -> None:
+    """Run the workspace steps a pages.db is behind on, as a connection
+    opens it (db._open_ws_db: the SQL functions registered, the schema
+    statements not applied yet). Under this process's lock for the
+    workspace, so a second thread opening it waits here rather than on
+    SQLite's busy timeout, and finds the version current when it reads it
+    again. A file with no tables yet (the connection created it) is
+    stamped current: the schema statements give it the current shape.
+    Otherwise the workspace's two databases are copied into the upgrade's
+    snapshot first (``_snapshot_workspace``), then the steps run
+    (``run_workspace_steps``). Raises MigrationError when the copy cannot
+    be written or a step fails: the workspace is not served (a request gets
+    a 503 with ``guidance``), every other one is, and the next open tries
+    again."""
+    ws = conn.ws
+    with _workspace_lock(ws):
+        stamp = workspace_version(conn)
+        pending = workspace_steps_after(stamp)
+        if not pending:
+            return
+        if not conn.execute("SELECT 1 FROM sqlite_master").fetchone():
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+        started = time.monotonic()
+        snapshot = _snapshot_workspace(ws, stamp, pending)
+        data_db = Path(conn._path).with_name("data.db")
+        with (closing(sqlite3.connect(str(data_db), timeout=BUSY_TIMEOUT_S)) if data_db.is_file()
+              else nullcontext()) as data:
+            run_workspace_steps(ws, conn, data, pending, snapshot=snapshot)
+        log.debug(f"[migrate] workspace {ws}: steps {', '.join(str(v) for v, _, _ in pending)} done in "
+                  f"{time.monotonic() - started:.2f} s; its files from before are in {snapshot}")
+
+
+def run_workspace_steps(ws: str, pages, data, steps, *, snapshot: str = "") -> None:
+    """``steps`` (``workspace_steps_after`` the file's version) on one
+    workspace's files, in order: each in one transaction on ``pages``, taken
+    with ``BEGIN IMMEDIATE`` (the workspace's write lock), which also
+    writes its stamp; ``data`` (the workspace's data.db, None when there is
+    none) has a transaction of its own, committed just before. A step does
+    not commit. ``ws`` is '' for a backup's copy. The version is read again
+    under the lock, so a step another process ran meanwhile is not run
+    twice. Raises MigrationError naming the step that failed, both its
+    transactions rolled back: the version stays at the last completed
+    step."""
+    for v, name, fn in steps:
+        try:
+            pages.execute("BEGIN IMMEDIATE")
+            if workspace_version(pages) >= v:
+                pages.rollback()
+                continue
+            if data is not None:
+                data.execute("BEGIN")
+            fn(ws, pages, data)
+            if data is not None:
+                data.commit()
+            pages.execute(f"PRAGMA user_version = {v}")
+            pages.commit()
+        except Exception as e:
+            pages.rollback()
+            if data is not None:
+                data.rollback()
+            where = f"workspace {ws}" if ws else "a backup's copy"
+            failed = MigrationError(
+                f"migration step {v} ({name}) failed on {where}: {e}. It is at the last completed step; "
+                f"fix the cause and open it again (or run `manage.py migrate`).")
+            failed.step, failed.snapshot, failed.workspace = f"{v} ({name})", snapshot, ws
+            failed.version = workspace_version(pages)
+            raise failed from e
+
+
+def _snapshot_workspace(ws: str, stamp: int, pending: list) -> str:
+    """Copy the workspace's databases into the upgrade's snapshot before
+    its steps run (``backups.add_workspace``: one it holds already keeps
+    its first copy); returns the snapshot's path. Raises MigrationError
+    when the copy cannot be written: nothing was changed then."""
+    try:
+        return backups.add_workspace(_upgrade_snapshot(stamp), ws)
+    except Exception as e:
+        failed = MigrationError(f"could not snapshot workspace {ws} before upgrading it: {e}. Nothing was "
+                                f"changed; free disk space (or fix the cause) and open it again.")
+        failed.step, failed.version, failed.workspace = f"{pending[0][0]} ({pending[0][1]})", stamp, ws
+        raise failed from e
+
+
+def _upgrade_snapshot(stamp: int) -> str:
+    """The snapshot a workspace at ``stamp`` is copied into: the newest
+    automatic one (the snapshot of the latest upgrade), once it holds a
+    data directory at least that new (its ``schema_version``) — restoring
+    it then gives users.db and the workspace's files of one time. When
+    there is none (deleted, or a workspace copied in behind a current data
+    directory), a new one of users.db alone is taken. Looked up once per
+    process."""
+    global _snapshot
+    with _snapshot_lock:
+        where = str(config.BACKUPS_DIR)
+        if (_snapshot and _snapshot[0] == where and _snapshot[2] >= stamp
+                and backups.backup_path(_snapshot[1]).is_dir()):
+            return _snapshot[1]
+        newest = backups.latest_auto()
+        if newest is None or (newest.get("schema_version") or 0) < stamp:
+            newest = backups.create(f"v{data_version()}", auto=True, workspaces=False)
+        _snapshot = (where, newest["name"], newest.get("schema_version") or 0)
+        return newest["name"]
+
+
+def is_behind(ws: str) -> bool:
+    """Whether the workspace's pages.db has a workspace step still to run,
+    read from its stamp without opening it for real. False at once,
+    opening nothing, while no workspace step is above WS_VERSION_BASE. A
+    file that cannot be read counts as behind: opening it says what is
+    wrong."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return False
+    path = ws_dir(ws) / "pages.db"
+    if not path.is_file():
+        return False
+    try:
+        with closing(sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_S)) as conn:
+            return bool(workspace_steps_after(workspace_version(conn)))
+    except sqlite3.Error:
+        return True
+
+
+def workspaces_behind() -> list[str]:
+    """Every workspace ``is_behind`` (``manage.py migrate --status``: one
+    read of every workspace's pages.db, so never on the startup path)."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return []
+    return [ws for ws in workspace_ids() if is_behind(ws)]
+
+
+def upgrade_workspaces(stop: threading.Event | None = None) -> dict:
+    """Open every workspace that is behind (``is_behind``), past the
+    connection cache, so its steps run (``upgrade_workspace``); returns
+    ``{"upgraded": [ids], "failed": {id: error}}``. A workspace that fails
+    is logged and the walk goes on. ``stop`` (the background walk's) makes
+    it rest after each workspace as long as that one took, at most
+    WARM_PAUSE_MAX_S, so requests keep most of the disk, and end early once
+    set."""
+    done = {"upgraded": [], "failed": {}}
+    for ws in workspace_ids():
+        if stop is not None and stop.is_set():
+            break
+        if not is_behind(ws):
+            continue
+        started = time.monotonic()
+        try:
+            connect_pages_db(ws).close()
+        except Exception as e:  # noqa: BLE001 — one workspace never stops the walk
+            done["failed"][ws] = str(e)
+            log.error(f"[migrate] workspace {ws} could not be upgraded, the others go on: {e}")
+        else:
+            done["upgraded"].append(ws)
+        if stop is not None:
+            stop.wait(min(time.monotonic() - started, WARM_PAUSE_MAX_S))
+    return done
+
+
+def warm(stop: threading.Event | None = None) -> dict:
+    """The background walk after startup: ``upgrade_workspaces``, resting
+    between workspaces, so most are upgraded before anyone opens them (the
+    first request to one that is not does it inline). Returns at once,
+    opening nothing, while no workspace step is above WS_VERSION_BASE."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return {"upgraded": [], "failed": {}}
+    done = upgrade_workspaces(stop or threading.Event())
+    if done["upgraded"] or done["failed"]:
+        log.info(f"[migrate] background walk: {len(done['upgraded'])} workspace(s) upgraded, "
+                 f"{len(done['failed'])} failed")
+    return done
+
+
+def _warm_thread(stop: threading.Event) -> None:
+    try:
+        warm(stop)
+    except Exception:  # noqa: BLE001 — a daemon thread's error goes to the log
+        log.exception("[migrate] the background walk failed")
+
+
+@contextmanager
+def warming():
+    """While the app runs (its lifespan): ``warm`` in a daemon thread,
+    started only when a workspace step is above WS_VERSION_BASE, and told
+    to stop at shutdown (it finishes the workspace it is on; one cut off by
+    the exit rolls back and runs again at the next open)."""
+    stop = threading.Event()
+    if workspace_steps_after(WS_VERSION_BASE):
+        threading.Thread(target=_warm_thread, args=(stop,), name="migrate-warm", daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+
+
 # --- steps --------------------------------------------------------------------
-# Each step gets an open users.db connection (autocommit off) and must leave
-# the database consistent when it returns; the runner stamps the version.
+# A global step (STEPS) gets an open users.db connection (autocommit off)
+# and must leave the database consistent when it returns; the runner stamps
+# the version. From version 34 on it keeps the previous release able to
+# read users.db (columns and tables are added; a rename or a drop waits a
+# release), and it never touches a workspace's files: that is a workspace
+# step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on one workspace's
+# pages.db and data.db connections (data None when there is no data.db; ws
+# '' on a backup's copy), inside the runner's transaction (it does not
+# commit). A workspace step is also what a restored backup goes through,
+# so it is re-runnable and finds a table it changes missing on an old copy
+# (the schema statements, applied after it, create that one).
 
 def _columns(conn, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
 
 
-def _v1_baseline(conn: sqlite3.Connection) -> None:
-    """Everything before workspaces, in its final shape: the columns that
-    used to be added lazily on connect, share rows keyed by page, the
-    per-user files normalized (gamma/normalize.py)."""
-    cols = _columns(conn, "users")
-    if "is_admin" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-    if "max_upload_mb" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN max_upload_mb INTEGER")
-        conn.execute("ALTER TABLE users ADD COLUMN quota_mb INTEGER")
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'shares'").fetchone():
-        conn.execute("""CREATE TABLE shares (
-            token TEXT PRIMARY KEY, username TEXT NOT NULL, doc_id TEXT NOT NULL DEFAULT '',
-            page_id TEXT, audience TEXT NOT NULL DEFAULT 'anyone', role TEXT NOT NULL DEFAULT 'view',
-            allowed_users TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
-    share_cols = _columns(conn, "shares")
-    if "page_id" not in share_cols:
-        conn.execute("ALTER TABLE shares ADD COLUMN page_id TEXT")
-    if "audience" not in share_cols:
-        conn.execute("ALTER TABLE shares ADD COLUMN audience TEXT NOT NULL DEFAULT 'anyone'")
-        conn.execute("ALTER TABLE shares ADD COLUMN role TEXT NOT NULL DEFAULT 'view'")
-        conn.execute("ALTER TABLE shares ADD COLUMN allowed_users TEXT NOT NULL DEFAULT ''")
-    conn.commit()
+# users.db as schema version 24 shaped it, frozen: steps 20-24 create their
+# tables from this, never from db.USERS_SCHEMA, which step 25 moved on (an
+# account is named by its id there).
+_V24_USERS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT '',
+        provider_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        input INTEGER NOT NULL DEFAULT 0,
+        output INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        cache_write INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS ai_usage_user_at ON ai_usage (username, at)",
+    """CREATE TABLE IF NOT EXISTS mcp_oauth (
+        kind TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        value TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, key_hash)
+    )""",
+    """CREATE TABLE IF NOT EXISTS integration_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        username TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'read'
+    )""",
+    """CREATE TABLE IF NOT EXISTS mirrors (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+        remote_url TEXT NOT NULL,
+        remote_ws TEXT NOT NULL,
+        remote_name TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'two-way',
+        remote_cursor TEXT NOT NULL DEFAULT '',
+        local_cursor TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        poll_s INTEGER NOT NULL DEFAULT 30,
+        on_change INTEGER NOT NULL DEFAULT 1,
+        page_filter TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS publisher_sessions (
+        username TEXT NOT NULL,
+        host TEXT NOT NULL,
+        encrypted TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (username, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        is_guest INTEGER NOT NULL DEFAULT 0,
+        is_admin INTEGER NOT NULL DEFAULT 0,
+        max_upload_mb INTEGER,
+        quota_mb INTEGER,
+        default_workspace TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS identities (
+        provider TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        username TEXT NOT NULL REFERENCES users(username),
+        email TEXT NOT NULL DEFAULT '',
+        claims TEXT NOT NULL DEFAULT '{}',
+        refresh_token TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        last_login_at TEXT NOT NULL,
+        revoked_at TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (provider, subject)
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS identities_account ON identities(provider, username)""",
+    """CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        username TEXT NOT NULL REFERENCES users(username),
+        guest_date TEXT,
+        created_at TEXT NOT NULL,
+        via TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'personal',
+        access TEXT NOT NULL DEFAULT 'private',
+        public_role TEXT NOT NULL DEFAULT 'viewer',
+        quota_mb INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS workspace_members (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        username TEXT NOT NULL REFERENCES users(username),
+        role TEXT NOT NULL,
+        added_by TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, username)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_wm_user ON workspace_members(username)",
+    """CREATE TABLE IF NOT EXISTS pending_memberships (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        subject TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        invited_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, subject)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)",
+    """CREATE TABLE IF NOT EXISTS shares (
+        token TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        folder TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        allowed_users TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''",
+    """CREATE TABLE IF NOT EXISTS user_prefs (
+        username TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (username, workspace_id, key)
+    )""",
+    """CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        params TEXT NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL,
+        progress TEXT NOT NULL DEFAULT '{}',
+        result TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        artifact_name TEXT NOT NULL DEFAULT '',
+        artifact_type TEXT NOT NULL DEFAULT '',
+        artifact_size INTEGER NOT NULL DEFAULT 0,
+        downloaded_at TEXT NOT NULL DEFAULT '',
+        instance TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT '',
+        finished_at TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
+]
 
-    # Per-user files: content normalization + legacy tables.
-    users_dir = config.LEGACY_USERS_DIR
-    if users_dir.is_dir():
-        for user_dir in sorted(users_dir.iterdir()):
-            if not user_dir.is_dir():
-                continue
-            if (user_dir / "pages.db").is_file():
-                with closing(sqlite3.connect(str(user_dir / "pages.db"))) as pdb:
-                    for stmt in PAGES_SCHEMA:
-                        pdb.execute(stmt)
-                    normalize_pages_db(pdb)
-            if (user_dir / "data.db").is_file():
-                with closing(sqlite3.connect(str(user_dir / "data.db"))) as ddb:
-                    normalize_data_db(ddb, keep_prefs=True)
-
-    # Shares minted when they were keyed by PDF: resolve to the page, or drop.
-    doc_col = "doc_id" if "doc_id" in _columns(conn, "shares") else "''"
-    rows = conn.execute(
-        f"SELECT token, username, {doc_col} FROM shares WHERE page_id IS NULL OR page_id = ''").fetchall()
-    for token, username, doc_id in rows:
-        page_id = None
-        pages_db = users_dir / str(username) / "pages.db"
-        if doc_id and pages_db.is_file():
-            with closing(sqlite3.connect(str(pages_db))) as pdb:
-                row = pdb.execute(
-                    "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                    "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
-                page_id = row[0] if row else None
-        if page_id:
-            conn.execute("UPDATE shares SET page_id = ? WHERE token = ?", (page_id, token))
-        else:
-            conn.execute("DELETE FROM shares WHERE token = ?", (token,))
-    conn.commit()
-
-
-def _v2_workspaces(conn: sqlite3.Connection) -> None:
-    """users/<username>/ becomes workspaces/<id>/ — one personal workspace
-    per account (the account is its owner and it becomes the default);
-    personal prefs move from data.db to users.db; shares are keyed by
-    workspace."""
-    for stmt in USERS_SCHEMA:
-        if "CREATE TABLE IF NOT EXISTS shares" in stmt or "ON shares(" in stmt:
-            continue  # rebuilt below from the old rows (the indexes: step 21's shape)
-        conn.execute(stmt)
-    if "default_workspace" not in _columns(conn, "users"):
-        conn.execute("ALTER TABLE users ADD COLUMN default_workspace TEXT NOT NULL DEFAULT ''")
-    conn.commit()
-
-    now = page_now()
-    config.WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
-    for username, ws_id in conn.execute(
-            "SELECT username, default_workspace FROM users ORDER BY created_at").fetchall():
-        if not ws_id:
-            # The rows naming the new directory are committed BEFORE anything
-            # moves: a crash after this point resumes by moving the files into
-            # the id recorded here, never into a second, empty workspace.
-            from .workspaces import new_workspace_id  # local: workspaces imports seed
-            ws_id = new_workspace_id()
-            conn.execute("INSERT OR IGNORE INTO workspaces (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
-                         (ws_id, username, username, now))
-            conn.execute("INSERT OR IGNORE INTO workspace_members (workspace_id, username, role, added_by, added_at) "
-                         "VALUES (?, ?, 'owner', ?, ?)", (ws_id, username, username, now))
-            conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws_id, username))
-            conn.commit()
-        src = config.LEGACY_USERS_DIR / username
-        dst = config.WORKSPACES_DIR / ws_id
-        if src.is_dir() and not dst.exists():
-            src.rename(dst)
-        elif not dst.exists():
-            _fresh_workspace_files(dst)
-        _move_prefs(conn, username, ws_id, dst / "data.db")  # a no-op once done: resumable
-        conn.commit()
-
-    # Shares: (username, page) → (workspace, page). Rows of unknown accounts
-    # have nothing to resolve through and go.
-    if "workspace_id" not in _columns(conn, "shares"):
-        conn.execute("DROP TABLE IF EXISTS shares_new")
-        conn.execute(next(s for s in USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS shares" in s)
-                     .replace("CREATE TABLE IF NOT EXISTS shares", "CREATE TABLE shares_new"))
-        conn.execute(
-            "INSERT OR IGNORE INTO shares_new (token, workspace_id, page_id, created_by, audience, role, "
-            "allowed_users, created_at) "
-            "SELECT s.token, u.default_workspace, s.page_id, s.username, s.audience, s.role, "
-            "s.allowed_users, s.created_at FROM shares s JOIN users u ON u.username = s.username "
-            "WHERE s.page_id IS NOT NULL AND s.page_id != '' AND u.default_workspace != ''")
-        conn.execute("DROP TABLE shares")
-        conn.execute("ALTER TABLE shares_new RENAME TO shares")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id)")
-        conn.commit()
-
-    # Directories without an account row stay where they are, but say so.
-    legacy = config.LEGACY_USERS_DIR
-    if legacy.is_dir():
-        leftovers = [d.name for d in legacy.iterdir() if d.is_dir()]
-        if leftovers:
-            log.warning(f"[migrate] {legacy} still holds directories with no account: "
-                        f"{', '.join(leftovers)} — inspect and delete them by hand")
-        else:
-            shutil.rmtree(str(legacy), ignore_errors=True)
+# pages.db as schema version 25 shaped it, frozen: the statements steps 20-25
+# found a workspace's file with (``_each_pages_db`` applies them), never
+# db.PAGES_SCHEMA, whose block table step 26 moved on (its typed hot fields)
+# and whose tombstones step 27 folded into the change log. A step after 27
+# that walks the workspaces applies none of them (``schema=()``: its files
+# are in the shape step 27 left, and these would give every file its
+# ``deleted_pages`` back) or a frozen copy of its own time.
+_V25_PAGES_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS unified_blocks (
+        id TEXT PRIMARY KEY,
+        parent_id TEXT REFERENCES unified_blocks(id),
+        position TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        properties TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ub_parent ON unified_blocks(parent_id, position)",
+    """CREATE TABLE IF NOT EXISTS deleted_pages (
+        page_id TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL,
+        actor TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS sync_pages (
+        page_id TEXT PRIMARY KEY,
+        remote_seq INTEGER NOT NULL DEFAULT 0,
+        base TEXT NOT NULL DEFAULT '{}',
+        synced_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS sync_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL,
+        stats TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        mine TEXT NOT NULL DEFAULT '',
+        theirs TEXT NOT NULL DEFAULT '',
+        result TEXT NOT NULL DEFAULT '',
+        base TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS upload_orphans (
+        name TEXT PRIMARY KEY,
+        since TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS page_ops (
+        page_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        actor TEXT NOT NULL DEFAULT '',
+        client TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        ops TEXT NOT NULL,
+        PRIMARY KEY (page_id, seq)
+    ) WITHOUT ROWID""",
+]
 
 
-def _fresh_workspace_files(target: Path) -> None:
-    """Empty pages.db (with its root row) + data.db + uploads/ — for an
-    account whose directory had gone missing."""
-    from .seed import create_workspace_files  # local: seed imports db
-
-    target.mkdir(parents=True, exist_ok=True)
-    create_workspace_files(target.name)
-
-
-# The account-wide pref keys when step 2 ran (frozen: db.USER_PREF_KEYS has
-# moved on since — step 17 folded `appearance` into `profile`).
-_V2_ACCOUNT_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "appearance"})
-
-
-def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Path) -> None:
-    """data.db `prefs` rows → users.db user_prefs (personal keys with
-    workspace '' , the rest under the new workspace), then drop the table —
-    after the copies are committed, so a crash in between loses nothing."""
-    if not data_db.is_file():
-        return
-    with closing(sqlite3.connect(str(data_db))) as ddb:
-        if ddb.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'prefs'").fetchone():
-            for key, value, updated_at in ddb.execute("SELECT key, value, updated_at FROM prefs"):
-                scope = "" if key in _V2_ACCOUNT_PREF_KEYS else ws_id
-                conn.execute(
-                    "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)", (username, scope, key, value, updated_at))
-            conn.commit()
-        normalize_data_db(ddb)
-
-
-def _v3_workspace_access(conn: sqlite3.Connection) -> None:
-    """Workspaces gain an access setting (private / public + the role every
-    signed-in account gets in a public one) and their own optional storage
-    quota; nothing is moved. Existing rows keep today's behaviour: private,
-    no workspace quota."""
-    cols = _columns(conn, "workspaces")
-    if "access" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN access TEXT NOT NULL DEFAULT 'private'")
-    if "public_role" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN public_role TEXT NOT NULL DEFAULT 'viewer'")
-    if "quota_mb" not in cols:
-        conn.execute("ALTER TABLE workspaces ADD COLUMN quota_mb INTEGER")
-    conn.commit()
-
-
-def _v4_workspace_kinds(conn: sqlite3.Connection) -> None:
-    """Workspaces gain a ``kind``. An account's default workspace and any
-    workspace with a single member are personal (the account's own library,
-    metered against it); everything with more members is shared (from now
-    on admin-managed). A default workspace that had other members stays
-    personal — personal workspaces have no other members — and those
-    memberships are dropped, named in the log so an admin can put the
-    people into a shared workspace instead."""
-    if "kind" not in _columns(conn, "workspaces"):
-        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'personal'")
-    conn.commit()
-    defaults = {r[0]: r[1] for r in conn.execute(
-        "SELECT default_workspace, username FROM users WHERE default_workspace != ''")}
-    for ws, in conn.execute("SELECT id FROM workspaces").fetchall():
-        people = [r[0] for r in conn.execute(
-            "SELECT username FROM workspace_members WHERE workspace_id = ? ORDER BY added_at", (ws,))]
-        if ws in defaults:
-            extra = [u for u in people if u != defaults[ws]]
-            if extra:
-                log.warning(f"[migrate] personal workspace {ws} of {defaults[ws]} had other members "
-                            f"({', '.join(extra)}); they were removed — give them a shared workspace")
-                conn.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND username != ?",
-                             (ws, defaults[ws]))
-            kind = "personal"
-        else:
-            kind = "personal" if len(people) == 1 else "shared"
-        conn.execute("UPDATE workspaces SET kind = ?, access = CASE WHEN ? = 'personal' THEN 'private' ELSE access END, "
-                     "quota_mb = CASE WHEN ? = 'personal' THEN NULL ELSE quota_mb END WHERE id = ?",
-                     (kind, kind, kind, ws))
-    conn.commit()
-
-
-def _v5_publisher_sessions(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS publisher_sessions" in s))
-    conn.commit()
-
-
-def _v6_integration_tokens(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS integration_tokens" in s))
-    conn.commit()
-
-
-def _v7_mcp_oauth(conn: sqlite3.Connection) -> None:
-    conn.execute(next(s for s in USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS mcp_oauth" in s))
-    conn.commit()
-
-
-def _v8_ai_usage(conn: sqlite3.Connection) -> None:
-    """Adds the ``ai_usage`` table (+ index) in users.db: per-account token counts of AI calls."""
-    for stmt in USERS_SCHEMA:
-        if "ai_usage" in stmt:
-            conn.execute(stmt)
-    conn.commit()
-
-
-def _each_pages_db(step: str, fn) -> None:
-    """``fn(conn)`` on every workspace's pages.db (the file's current schema
-    statements applied first). A file that fails — a damaged database — is
-    logged as an error and skipped: one broken library must not keep every
-    other account's server from starting. That workspace stays as it was
-    for an admin to restore; a restore from the step's snapshot needs the
-    step run again on that file."""
+def _each_pages_db(step: str, fn, schema=_V25_PAGES_SCHEMA) -> None:
+    """``fn(conn)`` on every workspace's pages.db, the ``schema`` statements
+    applied first (``_V25_PAGES_SCHEMA`` unless the step says otherwise) and
+    the SQL functions registered (``db.register_functions``), then the
+    file's own version raised to the step's (``step`` is ``"<version>
+    (<name>)"``), so a file the steps up to the base walked carries a
+    stamp. A file that fails — a damaged database — is logged as an error
+    and skipped: one broken library must not keep every other account's
+    server from starting. That workspace stays as it was for an admin to
+    restore; a restore from the step's snapshot needs the step run again on
+    that file. Steps from version 34 on never walk the workspaces: their
+    workspace part is a WORKSPACE_STEPS function."""
     if not config.WORKSPACES_DIR.is_dir():
         return
+    version = int(step.split(" ", 1)[0])
     for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
         pages_db = ws_root / "pages.db"
         if not ws_root.is_dir() or not pages_db.is_file() or ws_root.name.startswith("."):
             continue  # (a dot-name: a deleted workspace's leftover, workspaces.remove_leftovers)
         try:
             with closing(sqlite3.connect(str(pages_db))) as pdb:
-                for stmt in PAGES_SCHEMA:
+                register_functions(pdb)
+                for stmt in schema:
                     pdb.execute(stmt)
                 fn(pdb)
+                if pdb.execute("PRAGMA user_version").fetchone()[0] < version:
+                    pdb.execute(f"PRAGMA user_version = {version}")
+                pdb.commit()
         except sqlite3.Error as e:
             log.error(f"[migrate] step {step}: workspace {ws_root.name} skipped, its pages.db failed: {e}")
-
-
-def _v9_upload_path_titles(conn: sqlite3.Connection) -> None:
-    """Runs the content normalizers over every workspace's pages.db once
-    more: the ``upload_path_titles`` step (a directory path that leaked into
-    ``original_filename`` and the generated title) used to be repaired on
-    every library listing, with raw SQL outside the op log; now it is a
-    one-time rewrite like the other content shapes."""
-    _each_pages_db("9 (upload_path_titles)", normalize_pages_db)
-
-
-def _v10_mirrors(conn: sqlite3.Connection) -> None:
-    """``integration_tokens`` gains ``scope`` (read, the old meaning, or
-    write — a token a mirror pushes with) and users.db gains ``mirrors``
-    (local workspaces that are offline copies of a remote one)."""
-    if "scope" not in _columns(conn, "integration_tokens"):
-        conn.execute("ALTER TABLE integration_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'read'")
-    conn.execute(next(s for s in USERS_SCHEMA if "CREATE TABLE IF NOT EXISTS mirrors" in s))
-    conn.commit()
-
-
-def _v11_mirror_cadence(conn: sqlite3.Connection) -> None:
-    """``mirrors`` gains its cadence: ``poll_s`` (how often a round checks
-    the original, 0 = only by hand) and ``on_change`` (a round a few seconds
-    after a local edit). A mirror's ``mode`` may now also be ``off`` — detached,
-    the link kept for a later re-link."""
-    cols = _columns(conn, "mirrors")
-    if "poll_s" not in cols:
-        conn.execute("ALTER TABLE mirrors ADD COLUMN poll_s INTEGER NOT NULL DEFAULT 30")
-    if "on_change" not in cols:
-        conn.execute("ALTER TABLE mirrors ADD COLUMN on_change INTEGER NOT NULL DEFAULT 1")
-    conn.commit()
-
-
-def _v12_sync_log_stats(conn: sqlite3.Connection) -> None:
-    """Every workspace's ``sync_log`` gains ``stats``: the git-style block
-    counts of what a round did to the page (JSON ``{add, del, mod}``; rows
-    from before carry none and show without counts)."""
-    def add_stats(pdb):
-        if "stats" not in _columns(pdb, "sync_log"):
-            pdb.execute("ALTER TABLE sync_log ADD COLUMN stats TEXT NOT NULL DEFAULT ''")
-        pdb.commit()
-
-    _each_pages_db("12 (sync_log_stats)", add_stats)
-
-
-def _v13_sync_conflict_base(conn: sqlite3.Connection) -> None:
-    """Every workspace's ``sync_conflicts`` gains ``base``: the text a merged
-    block had before either side edited it, so the resolver can show what
-    each side changed (rows from before carry none and show as before)."""
-    def add_base(pdb):
-        if "base" not in _columns(pdb, "sync_conflicts"):
-            pdb.execute("ALTER TABLE sync_conflicts ADD COLUMN base TEXT NOT NULL DEFAULT ''")
-        pdb.commit()
-
-    _each_pages_db("13 (sync_conflict_base)", add_base)
-
-
-def _v14_identities(conn: sqlite3.Connection) -> None:
-    """Adds ``identities`` (+ its unique index) in users.db: the cloud
-    identity linked to an account (gamma/cloud_auth.py)."""
-    for stmt in USERS_SCHEMA:
-        if "identities" in stmt:
-            conn.execute(stmt)
-    conn.commit()
-
-
-# The per-protocol default models Gamma used to serve for an entry with no
-# models picked. Frozen here: the running code no longer has a default.
-_V15_OLD_DEFAULT_MODELS = {
-    "anthropic": "claude-haiku-4-5-20251001",
-    "openai": "gpt-4o-mini",
-    "chatgpt": "gpt-5.1",
-}
-
-
-def _v15_ai_explicit_models(conn: sqlite3.Connection) -> None:
-    """AI provider entries (users.db ``user_prefs`` key ``ai-settings``) with
-    no models picked get the default they were implicitly using written in:
-    entries no longer fall back to a built-in model, so nothing an account
-    relies on disappears."""
-    rows = conn.execute(
-        "SELECT username, workspace_id, value FROM user_prefs WHERE key = 'ai-settings'").fetchall()
-    for username, ws, value in rows:
-        try:
-            data = json.loads(value)
-        except ValueError:
-            continue
-        entries = data.get("providers") if isinstance(data, dict) else None
-        if not isinstance(entries, list):
-            continue
-        changed = False
-        for e in entries:
-            default = _V15_OLD_DEFAULT_MODELS.get(e.get("protocol")) if isinstance(e, dict) else None
-            if default and not str(e.get("models") or "").strip():
-                e["models"] = default
-                changed = True
-        if changed:
-            conn.execute(
-                "UPDATE user_prefs SET value = ? WHERE username = ? AND workspace_id = ? AND key = 'ai-settings'",
-                (json.dumps(data), username, ws))
-    conn.commit()
-
-
-def _v16_pending_memberships(conn: sqlite3.Connection) -> None:
-    """Adds ``pending_memberships`` (+ its subject index) in users.db: shared
-    workspace invitations waiting for a Gamma Cloud account's first sign-in
-    (gamma/workspaces.py)."""
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pending_memberships (workspace_id TEXT NOT NULL REFERENCES workspaces(id), "
-        "subject TEXT NOT NULL, username TEXT NOT NULL, role TEXT NOT NULL, invited_by TEXT NOT NULL DEFAULT '', "
-        "created_at TEXT NOT NULL, PRIMARY KEY (workspace_id, subject))")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)")
-    conn.commit()
-
-
-def _v17_profile(conn: sqlite3.Connection) -> None:
-    """The account-wide ``appearance`` pref ({theme, pdfDark}) becomes the
-    first two entries of the new ``profile`` pref ({theme, pdfDarkPage}, keyed
-    by the web app's preference names), keeping its updated_at; an account
-    that somehow has a profile already keeps it. ``appearance`` rows are
-    dropped."""
-    rows = conn.execute(
-        "SELECT username, value, updated_at FROM user_prefs WHERE key = 'appearance' AND workspace_id = ''").fetchall()
-    for username, value, updated_at in rows:
-        try:
-            old = json.loads(value)
-        except ValueError:
-            continue
-        if not isinstance(old, dict):
-            continue
-        profile = {}
-        if isinstance(old.get("theme"), str):
-            profile["theme"] = old["theme"]
-        if isinstance(old.get("pdfDark"), bool):
-            profile["pdfDarkPage"] = old["pdfDark"]
-        if profile:
-            conn.execute(
-                "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
-                "VALUES (?, '', 'profile', ?, ?)", (username, json.dumps(profile), updated_at))
-    conn.execute("DELETE FROM user_prefs WHERE key = 'appearance'")
-    conn.commit()
-
-
-def _v18_cloud_grant(conn: sqlite3.Connection) -> None:
-    """``sessions`` gains ``via`` ('' a password or the guest, 'cloud' a
-    Gamma Cloud sign-in) and ``identities`` gains ``revoked_at``: the grant
-    check (gamma/cloud_sync.py) ends only the sessions a cloud sign-in
-    minted when the account server refuses that account's grant. Sessions
-    that exist already count as password sessions."""
-    if "via" not in _columns(conn, "sessions"):
-        conn.execute("ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT ''")
-    if "revoked_at" not in _columns(conn, "identities"):
-        conn.execute("ALTER TABLE identities ADD COLUMN revoked_at TEXT NOT NULL DEFAULT ''")
-    conn.commit()
-
-
-def _v19_mirror_page_filter(conn: sqlite3.Connection) -> None:
-    """``mirrors`` gains ``page_filter``: NULL (every page travels, what
-    every existing mirror keeps) or a JSON list of page ids, the only pages a
-    round looks at — a page published to the share host
-    (gamma/sync_engine.py, gamma/publish.py)."""
-    if "page_filter" not in _columns(conn, "mirrors"):
-        conn.execute("ALTER TABLE mirrors ADD COLUMN page_filter TEXT")
-    conn.commit()
 
 
 def _v20_guest_accounts(conn: sqlite3.Connection) -> None:
@@ -687,35 +923,477 @@ def _v24_jobs(conn: sqlite3.Connection) -> None:
     users.db: background jobs — exports, backups, restores, imports, the
     search indexer — with their progress, result and produced file
     (gamma/jobs.py). Nothing else changes."""
-    for stmt in USERS_SCHEMA:
+    for stmt in _V24_USERS_SCHEMA:
         if stmt.startswith(("CREATE TABLE IF NOT EXISTS jobs ", "CREATE INDEX IF NOT EXISTS idx_jobs_")):
             conn.execute(stmt)
     conn.commit()
 
 
+# The op-log labels of writers that are no account, frozen: a share link's
+# visitor (gamma/auth.py LINK_ACTOR_PREFIX) and a mirror's round
+# (gamma/sync_engine.py ACTOR). Step 25 keeps them as they are.
+_V25_LINK_PREFIX = "link:"
+_V25_MIRROR_ACTOR = "mirror"
+# The users.db tables whose ``username`` column becomes ``user_id``.
+_V25_RENAMED = ("sessions", "identities", "integration_tokens", "publisher_sessions", "workspace_members",
+                "user_prefs", "ai_usage")
+# The users.db columns that keep their name and hold the id from step 25 on.
+_V25_PEOPLE = (("workspaces", "created_by"), ("workspace_members", "added_by"),
+               ("pending_memberships", "invited_by"), ("mirrors", "owner"), ("jobs", "owner"))
+# The users.db tables step 25 rebuilds or creates, as schema versions 25-30
+# shaped them, frozen: step 25 builds them from this, never from
+# db.USERS_SCHEMA, whose ``sessions`` step 31 moved on (``guest_date`` went).
+# The tables step 25 leaves standing (mirrors, workspaces, jobs, ...) are not
+# here: it only rewrites their rows.
+_V25_USERS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT '',
+        provider_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        input INTEGER NOT NULL DEFAULT 0,
+        output INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        cache_write INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS ai_usage_user_at ON ai_usage (user_id, at)",
+    """CREATE TABLE IF NOT EXISTS integration_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'read'
+    )""",
+    """CREATE TABLE IF NOT EXISTS publisher_sessions (
+        user_id TEXT NOT NULL,
+        host TEXT NOT NULL,
+        encrypted TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS users (
+        id TEXT NOT NULL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        is_guest INTEGER NOT NULL DEFAULT 0,
+        is_admin INTEGER NOT NULL DEFAULT 0,
+        max_upload_mb INTEGER,
+        quota_mb INTEGER,
+        default_workspace TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS identities (
+        provider TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        email TEXT NOT NULL DEFAULT '',
+        claims TEXT NOT NULL DEFAULT '{}',
+        refresh_token TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        last_login_at TEXT NOT NULL,
+        revoked_at TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (provider, subject)
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS identities_account ON identities(provider, user_id)""",
+    """CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        guest_date TEXT,
+        created_at TEXT NOT NULL,
+        via TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS workspace_members (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        role TEXT NOT NULL,
+        added_by TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_wm_user ON workspace_members(user_id)",
+    """CREATE TABLE IF NOT EXISTS shares (
+        token TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        folder TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''",
+    """CREATE TABLE IF NOT EXISTS share_users (
+        token TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        PRIMARY KEY (token, user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_prefs (
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, workspace_id, key)
+    )""",
+]
+# mcp_oauth records that name an account (an assistant's consent and code, a
+# cloud sign-in that links): minutes-long, dropped rather than rewritten.
+_V25_NAMED_OAUTH = ("consent", "code", "cloud_login")
+
+
+def _v25_account_ids(conn: sqlite3.Connection) -> None:
+    """Accounts are keyed by a stable id: ``users`` gains ``id`` (a random
+    token, the primary key) beside a unique ``username``, and every column
+    that named an account holds the id — ``username`` columns become
+    ``user_id`` (rows of no account dropped), ``created_by`` / ``added_by``
+    / ``invited_by`` / ``owner`` keep their names (a name no account has
+    becomes ''; a job of one goes). ``shares.allowed_users`` becomes
+    ``share_users`` rows (names no account has dropped). The publisher
+    sessions are sealed under the id. Then every workspace's op log,
+    tombstones and trashed pages' ``deleted_by``, and the backup task files,
+    name the id. users.db changes as one transaction; the rest is rewritten
+    where it still names an account, so a rerun finishes what a crash
+    left."""
+    if "id" not in _columns(conn, "users"):
+        conn.execute("BEGIN")
+        _v25_users_db(conn)
+        conn.commit()
+    ids = dict(conn.execute("SELECT username, id FROM users").fetchall())
+    known = set(ids.values())
+    _each_pages_db("25 (account_ids)", lambda pdb: _v25_actors(pdb, ids, known))
+    tasks = config.BACKUPS_DIR / "tasks"
+    for path in sorted(tasks.glob("*.json")) if tasks.is_dir() else []:
+        task = json.loads(path.read_text(encoding="utf-8"))
+        owner = task.get("owner") or ""
+        if owner and owner not in known:
+            temp = path.with_suffix(".tmp")
+            temp.write_text(json.dumps({**task, "owner": ids.get(owner, "")}), encoding="utf-8")
+            temp.replace(path)
+
+
+def _rebuild_table(conn, schema: list, table: str, columns: str, select: str) -> None:
+    """Recreate ``table`` as the ``schema`` statements shape it, with its
+    indexes, from the rows ``select`` reads out of the old one (into
+    ``columns``). ``schema`` is the list of the step's time: a frozen one
+    for a step a later step moved past, db.USERS_SCHEMA for the newest."""
+    create = next(s for s in schema if s.startswith(f"CREATE TABLE IF NOT EXISTS {table} ("))
+    conn.execute(f"DROP TABLE IF EXISTS {table}_new")
+    conn.execute(create.replace(f"IF NOT EXISTS {table} (", f"{table}_new (", 1))
+    conn.execute(f"INSERT INTO {table}_new ({columns}) {select}")
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+    for stmt in schema:
+        if re.search(rf" ON {table} ?\(", stmt):
+            conn.execute(stmt)
+
+
+def _v25_users_db(conn) -> None:
+    """Step 25's users.db half (one transaction, the caller's)."""
+    conn.execute("ALTER TABLE users ADD COLUMN id TEXT")
+    for name, in conn.execute("SELECT username FROM users").fetchall():
+        conn.execute("UPDATE users SET id = ? WHERE username = ?", (new_account_id(), name))
+    cols = _columns(conn, "users")
+    _rebuild_table(conn, _V25_USERS_SCHEMA, "users", ", ".join(cols), f"SELECT {', '.join(cols)} FROM users")
+    for table in _V25_RENAMED:
+        cols = _columns(conn, table)
+        new = ", ".join("user_id" if c == "username" else c for c in cols)
+        old = ", ".join("u.id" if c == "username" else f"t.{c}" for c in cols)
+        _rebuild_table(conn, _V25_USERS_SCHEMA, table, new,
+                       f"SELECT {old} FROM {table} t JOIN users u ON u.username = t.username")
+    conn.execute("DELETE FROM jobs WHERE owner != '' AND owner NOT IN (SELECT username FROM users)")
+    for table, column in _V25_PEOPLE:
+        conn.execute(f"UPDATE {table} SET {column} = "
+                     f"COALESCE((SELECT u.id FROM users u WHERE u.username = {table}.{column}), '')")
+    conn.execute(next(s for s in _V25_USERS_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS share_users (")))
+    for token, allowed in conn.execute("SELECT token, allowed_users FROM shares WHERE allowed_users != ''").fetchall():
+        for item in allowed.split(","):
+            name, _, role = item.strip().partition(":")
+            conn.execute("INSERT OR IGNORE INTO share_users (token, user_id, role) "
+                         "SELECT ?, id, ? FROM users WHERE username = ?",
+                         (token, role if role in ("view", "edit") else "view", name))
+    cols = [c for c in _columns(conn, "shares") if c != "allowed_users"]
+    old = ", ".join("COALESCE(u.id, '')" if c == "created_by" else f"s.{c}" for c in cols)
+    _rebuild_table(conn, _V25_USERS_SCHEMA, "shares", ", ".join(cols),
+                   f"SELECT {old} FROM shares s LEFT JOIN users u ON u.username = s.created_by")
+    conn.execute(f"DELETE FROM mcp_oauth WHERE kind IN ({', '.join('?' * len(_V25_NAMED_OAUTH))})", _V25_NAMED_OAUTH)
+    _v25_reseal_publisher_sessions(conn)
+
+
+def _v25_reseal_publisher_sessions(conn) -> None:
+    """A publisher snapshot is sealed with the account it belongs to
+    (gamma/publisher_sessions.py checks it on use): seal each under the id.
+    One that no longer opens could never be used again and goes."""
+    rows = conn.execute("SELECT user_id, host, encrypted FROM publisher_sessions").fetchall()
+    if not rows:
+        return
+    from cryptography.fernet import InvalidToken
+
+    from .publisher_sessions import cipher  # local: the key file is only needed here
+
+    box = cipher()
+    for user_id, host, encrypted in rows:
+        try:
+            payload = json.loads(box.decrypt(encrypted.encode("ascii")))
+        except (InvalidToken, ValueError):
+            conn.execute("DELETE FROM publisher_sessions WHERE user_id = ? AND host = ?", (user_id, host))
+            continue
+        payload["user"] = user_id
+        conn.execute("UPDATE publisher_sessions SET encrypted = ? WHERE user_id = ? AND host = ?",
+                     (box.encrypt(json.dumps(payload).encode()).decode("ascii"), user_id, host))
+
+
+def _v25_actor(actor: str, ids: dict, known: set) -> str:
+    """A writer as step 25 records it: an account's name becomes its id; an
+    id, a label of a writer that is no account and '' stay; a name no
+    account has becomes ''."""
+    if not actor or actor in known or actor.startswith(_V25_LINK_PREFIX) or actor == _V25_MIRROR_ACTOR:
+        return actor
+    return ids.get(actor, "")
+
+
+def _v25_actors(pdb, ids: dict, known: set) -> None:
+    """One workspace's op log, tombstones and trashed pages name the id."""
+    for table in ("page_ops", "deleted_pages"):
+        for actor, in pdb.execute(f"SELECT DISTINCT actor FROM {table}").fetchall():
+            new = _v25_actor(actor, ids, known)
+            if new != actor:
+                pdb.execute(f"UPDATE {table} SET actor = ? WHERE actor = ?", (new, actor))
+    for page_id, props in pdb.execute(
+            "SELECT id, properties FROM unified_blocks WHERE parent_id = 'trash'").fetchall():
+        try:
+            data = json.loads(props or "{}")
+        except ValueError:
+            continue
+        by = data.get("deleted_by")
+        new = _v25_actor(by, ids, known) if isinstance(by, str) else by
+        if new != by:
+            pdb.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
+                        (json.dumps({**data, "deleted_by": new}), page_id))
+    pdb.commit()
+
+
+def _v26_block_columns(conn: sqlite3.Connection) -> None:
+    """Every workspace's block table gains its typed hot fields, indexed:
+    ``page_id`` (stored, filled in by the parent walk — the page a row lives
+    under, '' on the reserved rows) and the generated ``kind`` and
+    ``doc_id`` (gamma/normalize.py ``block_columns``, which a restored older
+    backup goes through as well). One transaction per file; a file that has
+    them is left as it is."""
+    _each_pages_db("26 (block_columns)", block_columns)
+
+
+def _v27_page_changes(conn: sqlite3.Connection) -> None:
+    """Every workspace's pages.db gains its change log, ``page_changes``
+    (gamma/normalize.py ``page_changes``, which a restored older backup goes
+    through as well): a row per page with seqs in the order the pages were
+    last written — live in the library, deleted in Recently deleted — then
+    one per ``deleted_pages`` tombstone, which is dropped. One transaction
+    per file. A mirror's cursors into the old time-ordered feeds mean
+    nothing in the log: they start over (``''``), and the next round walks
+    both feeds whole, finding nothing to do for a page that did not move."""
+    _each_pages_db("27 (page_changes)", page_changes)
+    conn.execute("UPDATE mirrors SET remote_cursor = '', local_cursor = '' "
+                 "WHERE remote_cursor != '' OR local_cursor != ''")
+    conn.commit()
+
+
+def _v28_chats_and_notes_index(conn: sqlite3.Connection) -> None:
+    """Every workspace's pages.db takes what its data.db held that is not
+    derived, and the notes index: the AI chats move in (gamma/normalize.py
+    ``pages_db_chats`` — ``chats.block_id`` becomes ``bucket``), the notes
+    index is created there and built from the blocks (``block_fts``: the
+    view, the FTS5 table, the triggers), and data.db drops its own notes
+    index and bookkeeping (``normalize_data_db``). A restored older backup
+    goes through the same. The files are at step 27's shape: no frozen
+    statements first. Re-running finds the chats moved and builds the
+    index again."""
+    _each_pages_db("28 (chats_and_notes_index)", _v28_workspace, schema=())
+
+
+def _v28_workspace(pdb: sqlite3.Connection) -> None:
+    data_db = Path(pdb.execute("PRAGMA database_list").fetchone()[2]).with_name("data.db")
+    pages_db_chats(pdb, data_db)
+    block_fts(pdb)
+    if data_db.is_file():
+        with closing(sqlite3.connect(str(data_db))) as ddb:
+            normalize_data_db(ddb)
+
+
+def _v29_folder_blocks(conn: sqlite3.Connection) -> None:
+    """Folders and labels become blocks (docs/dev/home_library.md). Every
+    workspace's pages.db: the ``kind`` column gains its ``folder`` /
+    ``label`` cases (``block_columns``), and the folder and label trees are
+    built from the paths and names in use, the pages' filing and the folder
+    chats rewritten to their ids (``folder_blocks``; a restored older backup
+    goes through both). Then in users.db, per workspace: a folder share
+    names its folder's id (one whose folder is gone is deleted), and each
+    account's ``pinned-folders`` pref becomes ``pinned`` on those folders —
+    the newest pin of any member, as the folder is one block for all of
+    them — and is dropped. Re-runnable: a converted file is left as it is,
+    and the users.db half resolves the paths against the trees it finds."""
+    _each_pages_db("29 (folder_blocks)", lambda pdb: _v29_workspace(conn, pdb), schema=())
+    conn.execute("DELETE FROM user_prefs WHERE key = 'pinned-folders'")
+    conn.commit()
+
+
+def _v29_workspace(conn: sqlite3.Connection, pdb: sqlite3.Connection) -> None:
+    block_columns(pdb)
+    folder_blocks(pdb)
+    ws = Path(pdb.execute("PRAGMA database_list").fetchone()[2]).parent.name
+    folders = {r[0] for r in pdb.execute("SELECT id FROM unified_blocks WHERE page_id = ?", (FOLDERS,))}
+
+    def folder_of(value: str) -> str:
+        if value in folders:
+            return value
+        found = folder_by_path(pdb, [s for s in value.split("/") if s.strip()])
+        return found[0] if found else ""
+
+    pins: dict[str, str] = {}
+    for (raw,) in conn.execute("SELECT value FROM user_prefs WHERE key = 'pinned-folders' AND workspace_id = ?",
+                               (ws,)).fetchall():
+        try:
+            listed = json.loads(raw)
+        except ValueError:
+            continue
+        for pin in listed if isinstance(listed, list) else []:
+            folder_id = folder_of(str(pin.get("path") or "")) if isinstance(pin, dict) else ""
+            if folder_id:
+                pins[folder_id] = max(pins.get(folder_id, ""), str(pin.get("at") or "") or page_now())
+    for folder_id, at in pins.items():
+        props = json.loads(pdb.execute("SELECT properties FROM unified_blocks WHERE id = ?", (folder_id,)).fetchone()[0])
+        if str(props.get("pinned") or "") < at:
+            pdb.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
+                        (json.dumps({**props, "pinned": at}), folder_id))
+    pdb.commit()
+    for token, value in conn.execute("SELECT token, folder FROM shares WHERE workspace_id = ? AND folder != ''",
+                                     (ws,)).fetchall():
+        folder_id = folder_of(value)
+        # One share per folder (idx_shares_folder): a second path that
+        # resolves to the same folder (a case variant) would keep its path
+        # and never open, so it goes like a share whose folder is gone.
+        if folder_id and folder_id != value:
+            folder_id = "" if conn.execute("UPDATE OR IGNORE shares SET folder = ? WHERE token = ?",
+                                           (folder_id, token)).rowcount == 0 else folder_id
+        if not folder_id:
+            conn.execute("DELETE FROM share_users WHERE token = ?", (token,))
+            conn.execute("DELETE FROM shares WHERE token = ?", (token,))
+    conn.commit()
+
+
+def _v30_highlight_shape(conn: sqlite3.Connection) -> None:
+    """The highlight shape (gamma/highlights.py). Every workspace's
+    pages.db: the ``kind`` column's ``highlight`` case reads
+    ``pdf_position`` (``block_columns``), and the blocks take the shape
+    (``highlight_shape``: the block id is the highlight's id, a position
+    keeps the page size once, ``pdf_page`` goes but on text boxes, links
+    to a highlight name its block, a page's PDF URL is derived from its
+    ``doc_id``). Nothing is stamped or touched: a shape is no edit, and
+    a mirror and its remote upgraded apart rewrite their copies of a page
+    alike. users.db is untouched. Re-runnable: a converted file is left as
+    it is; a restored older backup goes through the same."""
+    _each_pages_db("30 (highlight_shape)", _v30_workspace, schema=())
+
+
+def _v30_workspace(pdb: sqlite3.Connection) -> None:
+    block_columns(pdb)
+    highlight_shape(pdb)
+
+
+def _v31_session_columns(conn: sqlite3.Connection) -> None:
+    """``sessions`` loses ``guest_date``, a column the guest login wrote and
+    nothing read: the table is rebuilt in its db.USERS_SCHEMA shape with its
+    rows, so every session stays signed in. This is the newest step, so it
+    builds from the live statements; a step that moves ``sessions`` on
+    again freezes them. A table without the column is left as it is."""
+    cols = [c for c in _columns(conn, "sessions") if c != "guest_date"]
+    if len(cols) < len(_columns(conn, "sessions")):
+        _rebuild_table(conn, USERS_SCHEMA, "sessions", ", ".join(cols), f"SELECT {', '.join(cols)} FROM sessions")
+    conn.commit()
+
+
+def _v32_share_token_workspace(conn: sqlite3.Connection) -> None:
+    """A share token carries its workspace, ``<workspace id>.<secret>``
+    (``db.share_token_workspace``), so a router can place share traffic by
+    the prefix without a lookup. Every token of ``shares`` without a dot
+    (the bare secret every share had until now) gains its share's workspace
+    id and a dot in front, and the ``share_users`` rows keyed by it follow,
+    in one transaction. Links sent out before this step stop opening.
+    Re-runnable: a token with a dot is left as it is."""
+    conn.execute("UPDATE share_users SET token = (SELECT s.workspace_id || '.' || s.token FROM shares s "
+                 "WHERE s.token = share_users.token) "
+                 "WHERE instr(token, '.') = 0 AND token IN (SELECT token FROM shares)")
+    conn.execute("UPDATE shares SET token = workspace_id || '.' || token WHERE instr(token, '.') = 0")
+    conn.commit()
+
+
+def _v33_page_ops_batch_id(conn: sqlite3.Connection) -> None:
+    """Every workspace's op log keeps the client's name for each batch
+    (gamma/ops.py ``apply_ops``): ``page_ops`` gains ``batch_id`` and
+    ``cursor`` ('' on the rows logged before) and the unique index on page,
+    client and batch id (gamma/normalize.py ``page_ops_batch_id``, which a
+    restored older backup goes through as well), so a retried batch is
+    answered from its row across restarts instead of from memory. No frozen
+    statements first (``schema=()``); users.db is untouched. Re-runnable: a
+    file that has them is left as it is."""
+    _each_pages_db("33 (page_ops_batch_id)", page_ops_batch_id, schema=())
+
+
+def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The prefs that name a workspace's pages (open tabs, recents, reading
+    positions: every key but ``db.USER_PREF_KEYS``) move into the workspace.
+    Its pages.db gains ``workspace_prefs`` (db.WORKSPACE_PREFS_SCHEMA), and
+    the rows users.db ``user_prefs`` holds under the workspace's id are
+    copied in through a read connection of the step's own; a row the
+    workspace has at the same or a later time is kept, so a second run
+    changes nothing and never undoes a later write. A backup's copy (``ws``
+    '') has nothing to copy: its table starts empty. users.db is not
+    written: the release before reads its rows there."""
+    pages.execute(WORKSPACE_PREFS_SCHEMA)
+    if not ws or not config.USERS_DB.is_file():
+        return
+    with closing(sqlite3.connect(str(config.USERS_DB), timeout=BUSY_TIMEOUT_S)) as users:
+        if not users.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_prefs'").fetchone():
+            return
+        account_wide = sorted(USER_PREF_KEYS)
+        rows = users.execute(
+            "SELECT user_id, key, value, updated_at FROM user_prefs WHERE workspace_id = ? "
+            f"AND key NOT IN ({', '.join('?' * len(account_wide))})", (ws, *account_wide)).fetchall()
+    pages.executemany(
+        "INSERT INTO workspace_prefs (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at "
+        "WHERE excluded.updated_at > workspace_prefs.updated_at", rows)
+
+
 STEPS = [
-    (1, "baseline", _v1_baseline),
-    (2, "workspaces", _v2_workspaces),
-    (3, "workspace_access", _v3_workspace_access),
-    (4, "workspace_kinds", _v4_workspace_kinds),
-    (5, "publisher_sessions", _v5_publisher_sessions),
-    (6, "integration_tokens", _v6_integration_tokens),
-    (7, "mcp_oauth", _v7_mcp_oauth),
-    (8, "ai_usage", _v8_ai_usage),
-    (9, "upload_path_titles", _v9_upload_path_titles),
-    (10, "mirrors", _v10_mirrors),
-    (11, "mirror_cadence", _v11_mirror_cadence),
-    (12, "sync_log_stats", _v12_sync_log_stats),
-    (13, "sync_conflict_base", _v13_sync_conflict_base),
-    (14, "identities", _v14_identities),
-    (15, "ai_explicit_models", _v15_ai_explicit_models),
-    (16, "pending_memberships", _v16_pending_memberships),
-    (17, "profile", _v17_profile),
-    (18, "cloud_grant", _v18_cloud_grant),
-    (19, "mirror_page_filter", _v19_mirror_page_filter),
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
     (22, "upload_orphans", _v22_upload_orphans),
     (23, "page_trash", _v23_page_trash),
     (24, "jobs", _v24_jobs),
+    (25, "account_ids", _v25_account_ids),
+    (26, "block_columns", _v26_block_columns),
+    (27, "page_changes", _v27_page_changes),
+    (28, "chats_and_notes_index", _v28_chats_and_notes_index),
+    (29, "folder_blocks", _v29_folder_blocks),
+    (30, "highlight_shape", _v30_highlight_shape),
+    (31, "session_columns", _v31_session_columns),
+    (32, "share_token_workspace", _v32_share_token_workspace),
+    (33, "page_ops_batch_id", _v33_page_ops_batch_id),
+]
+
+# The workspace parts of the steps from version 34 on: (version, name,
+# fn(ws, pages, data)), in order; a step with a global part too has its
+# entry in STEPS under the same version and name.
+WORKSPACE_STEPS = [
+    # Next release: a global step deletes the users.db user_prefs rows whose workspace_id is not '' (34 kept them).
+    (34, "workspace_prefs", _v34_workspace_prefs),
 ]

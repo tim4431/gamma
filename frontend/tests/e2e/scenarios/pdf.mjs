@@ -49,6 +49,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // An AI record no registry confirmed carries the red "!" until the user
+  // verifies it in the metadata popover; the source file is a read-only row.
+  await step("pdf: Verify vouches for an unverified metadata record; the source file is a table row", async () => {
+    const meta = { title: "Quantum entanglement in Rydberg arrays", authors: ["A. Writer"], year: "2026", source: "ai", unverified: true };
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta, bibtex: "@article{writer2026,\n  title = {Quantum entanglement in Rydberg arrays}\n}" } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.locator(".metaWarnDot").waitFor();
+    await page.click("button[aria-label='Paper metadata']");
+    const pop = page.locator(".metaPopover");
+    const row = (key) => pop.locator(".metaRow").filter({ has: page.locator(".metaKey").getByText(key, { exact: true }) });
+    assertEq(await row("Source").locator(".metaValWarn").innerText(), "AI-extracted — unverified");
+    const path = await row("Source file").locator(".metaPath").innerText();
+    assert(path.startsWith("/api/uploads/") && path.includes(docId), `source file row: ${path}`);
+    assertEq(await pop.locator("input:not(.metaInput)").count(), 0, "the path is not an edit box");
+    await row("Source").getByRole("button", { name: "Verify", exact: true }).click();
+    await until(async () => (await account.api(`/api/blocks/${pageId}`)).properties.meta.user_verified === true, { what: "the verified mark saved" });
+    await until(async () => (await row("Source").innerText()).includes("AI-extracted — verified by hand"), { what: "the Source row says verified" });
+    assertEq(await page.locator(".metaWarnDot").count(), 0, "the red ! is gone");
+    assertEq(await row("Source").getByRole("button").count(), 0, "nothing left to verify");
+    await page.click("button[aria-label='Paper metadata']");
+    // The later steps expect a page without metadata.
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
   // The spans must not inherit the interface language: pdf.js measures them
   // in the PDF's language, and a Chinese <html lang> resolves the generic
   // font families to CJK fonts — spans (and every highlight made from a
@@ -81,10 +107,15 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assert(quote.includes("entanglement in Rydberg"), `quote: ${quote}`);
     const saved = await until(async () => {
       const d = await account.api(`/api/blocks/${pageId}/subtree`);
-      const h = (d.block.children || []).find((b) => b.properties?.highlight_id);
-      return h && h.properties.pdf_position ? h : null;
+      return (d.block.children || []).find((b) => b.properties?.pdf_position) || null;
     }, { what: "highlight block with pdf_position" });
-    assertEq(saved.properties.pdf_position.pageNumber ?? saved.properties.pdf_position.page, 1, "highlight page");
+    // The block is the highlight: no second id, the page and its size once.
+    const { pdf_position: pos, ...rest } = saved.properties;
+    assert(!("highlight_id" in rest) && !("pdf_page" in rest), `no highlight_id or pdf_page: ${JSON.stringify(rest)}`);
+    assertEq(pos.pageNumber, 1, "highlight page");
+    assert(pos.width > 0 && pos.height > 0, "the page size the rects are measured in");
+    assert(pos.rects.length && pos.rects.every((r) => JSON.stringify(Object.keys(r)) === '["x1","y1","x2","y2"]')
+      && JSON.stringify(Object.keys(pos.boundingRect)) === '["x1","y1","x2","y2"]', `rects carry no size or page: ${JSON.stringify(pos)}`);
     assertNoProblems(page);
     await page.reload();
     await waitForPdf(page, 1);
@@ -141,7 +172,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   await step("pdf: a highlight with a note shows a badge that opens the note", async () => {
     const data = await account.api(`/api/blocks/${pageId}/subtree`);
-    const highlight = data.block.children.find((block) => block.properties?.highlight_id);
+    const highlight = data.block.children.find((block) => block.properties?.pdf_position);
     await account.api(`/api/blocks/${highlight.id}`, { method: "PUT", body: { content: "A note on this passage" } });
     await page.reload();
     await waitForPdf(page);
@@ -628,14 +659,14 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   // stays on screen until the new one commits): a crop taken then showed that
   // paper's page under the new paper's note, and stuck — cached by rect alone.
   await step("pdf: a note's area-highlight thumbnail comes from its own paper after switching papers", async () => {
-    const rect = { x1: 60, y1: 40, x2: 480, y2: 110, width: 612, height: 792, pageNumber: 2 };
-    const area = (parent, content, id) => account.api("/api/blocks", { method: "POST", body: { parent_id: parent, content,
-      properties: { highlight_id: id, quote: "", color: "rgba(255, 229, 100, 0.55)", pdf_page: 2,
-        pdf_position: { pageNumber: 2, boundingRect: rect, rects: [rect], area: true } } } });
-    await area(pageId, "rydberg top of page two", "area-rydberg");
+    const rect = { x1: 60, y1: 40, x2: 480, y2: 110 };
+    const area = (parent, content) => account.api("/api/blocks", { method: "POST", body: { parent_id: parent, content,
+      properties: { quote: "", color: "rgba(255, 229, 100, 0.55)",
+        pdf_position: { pageNumber: 2, width: 612, height: 792, boundingRect: rect, rects: [rect], area: true } } } });
+    await area(pageId, "rydberg top of page two");
     const other = await account.upload("/api/uploads", makePdf([["Other paper page one"], ["OTHER PAPER TOP LINE"]]), "other.pdf", "application/pdf");
     const otherId = (await account.api(`/api/blocks/by-doc/${other.doc_id}`, { method: "POST", body: { default_title: "Other paper", source_url: other.source_url } })).id;
-    await area(otherId, "other top of page two", "area-other");
+    await area(otherId, "other top of page two");
     const thumb = (p) => until(async () => (await p.$$eval("img.blockAreaSnap", (imgs) => imgs.map((i) => i.src)))[0] || null,
       { what: "the area thumbnail", timeout: 15000 });
     const switchTo = async (p, title, note) => {
@@ -669,6 +700,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.close();
     } finally { await c.close(); }
     await account.api(`/api/blocks/${otherId}`, { method: "DELETE" });
+  });
+
+  // A highlight's id is its block's: a link region names the highlight it
+  // lands on by `link_block_id` (docs/dev/pdf_citations.md).
+  await step("pdf: a link region opens the page it links to and lands on the highlight its link_block_id names", async () => {
+    const rect = { x1: 60, y1: 40, x2: 480, y2: 60 };
+    const at = (pageNumber) => ({ pageNumber, width: 612, height: 792, boundingRect: rect, rects: [rect] });
+    const target = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "the cited passage",
+      properties: { quote: "Page two says hello world", color: "rgba(255, 229, 100, 0.55)", pdf_position: at(2) } } });
+    const up = await account.upload("/api/uploads", makePdf([["A citing paper", "see the Rydberg paper"]]), "citing.pdf", "application/pdf");
+    const citing = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Citing paper" } });
+    const link = await account.api("/api/blocks", { method: "POST", body: { parent_id: citing.id, content: "",
+      properties: { quote: "see the Rydberg paper", color: "rgba(140, 180, 255, 0.35)", pdf_position: at(1),
+        link_url: "", link_page_id: pageId, link_block_id: target.id } } });
+    assertEq(link.kind, "link", "a link region's kind");
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${citing.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await p.click(`[data-page="1"] [data-hl-id="${link.id}"]`);
+      await p.waitForSelector(`[data-page="2"] [data-hl-id="${target.id}"].pdfHlFlash`, { timeout: 15000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${target.id}`, { method: "DELETE" });
+    await account.api(`/api/blocks/${citing.id}`, { method: "DELETE" });
   });
 
   if (ctx) await ctx.close();

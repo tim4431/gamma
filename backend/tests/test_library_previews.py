@@ -10,7 +10,7 @@ from contextlib import closing
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_folder, make_page, make_user, workspace_of
 from gamma.db import connect_pages_db
 from gamma.routers import blocks as blocks_router
 
@@ -27,7 +27,7 @@ def _window_previews(conn) -> dict:
             FROM unified_blocks c
             JOIN unified_blocks p ON p.id = c.parent_id AND p.parent_id = 'root'
             WHERE c.content != ''
-              AND json_extract(c.properties, '$.highlight_id') IS NULL
+              AND json_type(c.properties, '$.pdf_position') IS NOT 'object'
         ) WHERE rn <= {blocks_router._PREVIEW_BLOCKS}
         ORDER BY parent_id, rn
         """).fetchall()
@@ -47,12 +47,12 @@ def owner():
     c = login(USER, PASSWORD)
 
     def fill(title, blocks, folder=""):
-        page = make_page(c, title, properties={"folder": folder} if folder else None)
+        page = make_page(c, title, properties={"folders": [make_folder(c, folder)]} if folder else None)
         r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": blocks})
         assert r.status_code == 200, r.text
         return page["id"]
 
-    hl = {"highlight_id": "h"}
+    hl = {"pdf_position": {"pageNumber": 1}}
     fill("Many children", [{"content": f"note number {i}"} for i in range(9)], folder="shared/deep")
     fill("Leading highlights", [{"content": f"quoted {i}", "properties": hl} for i in range(8)]
          + [{"content": "first real note"}, {"content": "second real note"}], folder="shared")
@@ -82,7 +82,7 @@ def test_previews_equal_the_window_query(owner):
 
 
 def test_a_folder_share_lists_its_pages_with_the_same_previews(owner, anon):
-    r = owner.post("/api/share/folder", params={"name": "shared"}, json={"audience": "anyone", "role": "view"})
+    r = owner.post(f"/api/share/folder/{make_folder(owner, 'shared')}", json={"audience": "anyone", "role": "view"})
     assert r.status_code == 200, r.text
     listing = anon.get("/api/blocks/root/children", params={"share": r.json()["token"]})
     assert listing.status_code == 200, listing.text
@@ -96,7 +96,7 @@ def test_previews_seek_the_parent_index():
     with closing(connect_pages_db(workspace_of(USER))) as conn:
         plan = conn.execute(
             "EXPLAIN QUERY PLAN SELECT content FROM unified_blocks WHERE parent_id = ? AND content != '' "
-            "AND json_extract(properties, '$.highlight_id') IS NULL ORDER BY position LIMIT ?", ("x", 5)).fetchall()
+            "AND kind != 'highlight' ORDER BY position LIMIT ?", ("x", 5)).fetchall()
     assert any("idx_ub_parent" in row[-1] for row in plan)
 
 

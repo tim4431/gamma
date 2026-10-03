@@ -83,7 +83,7 @@ try {
   marks.label = mark();
   await row.click();
   const cards = page.locator('.fileRow');   // the label's list; the recents above are cards
-  await page.waitForFunction(label => new URLSearchParams(location.search).get('category') === label, LABEL, { timeout: 15000 });
+  await page.waitForFunction(() => new URLSearchParams(location.search).has('label'), null, { timeout: 15000 });   // ?label=<the label's id>
   await cards.first().waitFor({ timeout: 15000 });
   const shown = await cards.count();
   if (shown !== 2) throw new Error(`The label view shows ${shown} pages, expected the two quantum papers`);

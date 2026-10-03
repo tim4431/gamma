@@ -9,7 +9,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
-from conftest import register, verify
+from conftest import register, steps_after, verify
 from test_oidc import CALLBACK, authorize_params, pkce, request_id_from, signed_in_code
 
 from gammacloud import accounts, config, db, oidc
@@ -248,6 +248,35 @@ def test_linked_servers(client):
     assert [s["url"] for s in client.get("/api/me", headers=h).json()["servers"]] == ["https://x.example.org"]
 
 
+def test_a_server_reports_its_build_and_schema(client):
+    alice(client)
+    h = bearer(desktop_tokens(client, scope="openid"))
+    post = lambda **body: client.post("/api/me/servers", headers=h, json={"url": SERVER, "name": "Lab", **body})  # noqa: E731
+    # an older server sends neither: no build known
+    server = post().json()["server"]
+    assert server["version"] == "" and server["schema"] is None
+    assert "schema " not in client.get("/devices").text
+    # the report is stored, listed by the API, and shown on the Devices page
+    server = post(version="v1.4.0 (abc123def456)", schema=31).json()["server"]
+    assert server["version"] == "v1.4.0 (abc123def456)" and server["schema"] == 31
+    assert client.get("/api/me", headers=h).json()["servers"][0]["schema"] == 31
+    page = client.get("/devices").text
+    assert "v1.4.0 (abc123def456)" in page and "schema 31" in page
+    # a call that sends neither (or only one) keeps what the row had
+    server = post().json()["server"]
+    assert server["version"] == "v1.4.0 (abc123def456)" and server["schema"] == 31
+    server = post(schema=32).json()["server"]
+    assert server["version"] == "v1.4.0 (abc123def456)" and server["schema"] == 32
+    server = post(version="v1.5.0").json()["server"]
+    assert server["version"] == "v1.5.0" and server["schema"] == 32
+    # the label is cut like a name; a schema that is not a number is refused
+    assert len(post(version="v" * 200).json()["server"]["version"]) == 80
+    assert post(schema="new").status_code == 422 and post(schema=-1).status_code == 422
+    # the escaping of the page holds for a label a server made up
+    post(version="<b>x</b>")
+    assert "&lt;b&gt;x&lt;/b&gt;" in client.get("/devices").text and "<b>x</b>" not in client.get("/devices").text
+
+
 def test_a_server_client_registers_only_its_own_address(client):
     alice(client)
     client_id, secret = lab_client()
@@ -322,12 +351,33 @@ def test_upgrade_to_profile(client):
         conn.execute("DROP TABLE servers_linked")
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
-    assert db.ensure_current() == ["profile", "connect"]
+    assert db.ensure_current() == steps_after(3)
     assert db.ensure_current() == []
     with closing(sqlite3.connect(str(config.DB_PATH))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     h = bearer(desktop_tokens(client))
     assert client.put("/api/me/prefs/k", headers=h, json={"value": 1}).status_code == 200
+
+
+def test_upgrade_to_server_build(client):
+    alice(client)
+    h = bearer(desktop_tokens(client, scope="openid"))
+    client.post("/api/me/servers", headers=h, json={"url": SERVER, "name": "Lab"})
+    with closing(db.connect()) as conn:
+        conn.execute("ALTER TABLE servers_linked DROP COLUMN version")
+        conn.execute("ALTER TABLE servers_linked DROP COLUMN schema")
+        conn.execute("PRAGMA user_version = 7")
+        conn.commit()
+    assert steps_after(7) == ["server_build"]
+    assert db.ensure_current() == steps_after(7)
+    assert db.ensure_current() == []
+    with closing(db.connect()) as conn:
+        db._step_server_build(conn)  # re-runnable, as every step must be
+        row = conn.execute("SELECT version, schema FROM servers_linked").fetchone()
+        assert (row["version"], row["schema"]) == ("", None)
+        columns = {r[1]: r for r in conn.execute("PRAGMA table_info(servers_linked)")}
+        assert columns["version"][2:5] == ("TEXT", 1, "''") and columns["schema"][2:4] == ("INTEGER", 0)
+    assert client.post("/api/me/servers", headers=h, json={"url": SERVER, "schema": 31}).json()["server"]["schema"] == 31
 
 
 def test_the_share_host_is_named_in_me_and_discovery(client, monkeypatch):

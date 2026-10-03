@@ -74,10 +74,11 @@ export async function saveInk(host, pageId, { blockId, ink, baseUrl = "", parent
 // --- sheets --------------------------------------------------------------------------
 
 // A new notebook: a page with one sheet (notebook.js firstSheetId, the id
-// the browser gives it too). → the page's id.
-export async function createNotebook(host, { id = makeBlockId(), title = "", folder = "", paper = null } = {}) {
+// the browser gives it too), filed in `folders` (folder block ids). → the
+// page's id.
+export async function createNotebook(host, { id = makeBlockId(), title = "", folders = [], paper = null } = {}) {
   const first = newSheet(firstSheetId(id), paper);
-  const root = { parent: "root", position: "", content: title, props: folder ? { folder } : {} };
+  const root = { parent: "root", position: "", content: title, props: folders.length ? { folders } : {} };
   const snapshot = { [id]: root,
     [first.id]: { parent: id, position: generateKeyBetween(null, null), content: "", props: first.properties } };
   if (!(await host.writeEdit(id, snapshot, 0))) throw new Error(`a page ${id} exists here`);
@@ -144,9 +145,10 @@ export async function deleteBlock(host, pageId, blockId) {
   return editPage(host, pageId, [{ op: "delete", id: blockId }]);
 }
 
-// A page made here (a text page): → its id.
-export async function createPage(host, { id = makeBlockId(), title = "", folder = "" } = {}) {
-  const snapshot = { [id]: { parent: "root", position: "", content: title, props: folder ? { folder } : {} } };
+// A page made here (a text page), filed in `folders` (folder block ids):
+// → its id.
+export async function createPage(host, { id = makeBlockId(), title = "", folders = [] } = {}) {
+  const snapshot = { [id]: { parent: "root", position: "", content: title, props: folders.length ? { folders } : {} } };
   if (!(await host.writeEdit(id, snapshot, 0))) throw new Error(`a page ${id} exists here`);
   return id;
 }

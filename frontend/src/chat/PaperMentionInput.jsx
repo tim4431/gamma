@@ -2,10 +2,13 @@ import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AutoGrowTextarea } from "../shared/ui/Widgets";
 import { BookIcon, CheckIcon } from "../shared/ui/Icons";
 import { createTitleScorer } from "../library/librarySearch";
+import { firstFolderPath } from "../library/libraryUtils";
 import { insertMention, mentionAt, MAX_CHAT_REFERENCES } from "./paperMentions";
 import { t } from "../shared/i18n/i18n.js";
 
-export default function PaperMentionInput({ value, onChange, pages, openTabs, selected, onAttach, onSend, ...props }) {
+// `tree`: the library's folder and label trees (libraryUtils.libraryTree), which
+// name the folder a row shows.
+export default function PaperMentionInput({ value, onChange, pages, tree, openTabs, selected, onAttach, onSend, ...props }) {
   const input = useRef(null);
   const list = useRef(null);
   const listId = useId();
@@ -44,7 +47,8 @@ export default function PaperMentionInput({ value, onChange, pages, openTabs, se
         {results.map((page, i) => {
           const meta = page.properties?.meta || {};
           const authors = (meta.authors || []).slice(0, 2).join(", ");
-          const detail = [authors, meta.year, meta.venue, page.properties?.folder].filter(Boolean).join(" · ");
+          const detail = [authors, meta.year, meta.venue, firstFolderPath(tree, page.properties?.folders)]
+            .filter(Boolean).join(" · ");
           const disabled = !selected.includes(page.id) && selected.length >= MAX_CHAT_REFERENCES;
           return <button type="button" role="option" id={`${listId}-${i}`} key={page.id} tabIndex={-1}
             title={[page.content || t("Untitled"), detail].filter(Boolean).join("\n")}

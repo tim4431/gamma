@@ -54,7 +54,7 @@ def jwks():
 
 @router.get("/authorize")
 def authorize(request: Request):
-    ratelimit.check(f"authorize:ip:{ratelimit.client_ip(request)}", 60, 600)
+    ratelimit.check(f"authorize:ip:{ratelimit.limit_ip(request)}", 60, 600)
     if len(str(request.url)) > 8192:
         raise HTTPException(414)
     params = dict(request.query_params)
@@ -105,15 +105,15 @@ def authorize_login(body: AuthorizeLogin, request: Request):
     """Sign in on the authorize page; answers ``{redirect}`` for the page to
     follow. Also sets the portal cookie, so the next server's sign-in is one
     click."""
-    ip = ratelimit.client_ip(request)
-    who = body.login.strip().lower()[:254]
-    ratelimit.check(f"login:ip:{ip}", 10, 300)
-    ratelimit.check(f"login:who:{who}", 10, 300)
+    ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
+    who_key = f"login:who:{accounts.login_bucket(body.login)}"  # one window with /api/login
+    ratelimit.check(ip_key, 10, 300)
+    ratelimit.check(who_key, 10, 300)
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
         if not req:
             raise HTTPException(400, EXPIRED)
-        account = accounts.by_login(conn, who)
+        account = accounts.by_login(conn, body.login)
         if not accounts.password_ok(account, body.password):
             raise HTTPException(401, "Wrong e-mail, username or password.")
         token = sessions.create(conn, account["id"], request)
@@ -124,8 +124,8 @@ def authorize_login(body: AuthorizeLogin, request: Request):
             return resp
         redirect = oidc.finish(conn, req, account)
         conn.commit()
-    ratelimit.reset(f"login:ip:{ip}")
-    ratelimit.reset(f"login:who:{who}")
+    ratelimit.reset(ip_key)
+    ratelimit.reset(who_key)
     resp = JSONResponse({"redirect": redirect})
     sessions.set_cookie(resp, token)
     return resp
@@ -223,7 +223,7 @@ def _token(request: Request, form):
 
 @router.post("/token")
 async def token(request: Request):
-    ratelimit.check(f"token:ip:{ratelimit.client_ip(request)}", 120, 600)
+    ratelimit.check(f"token:ip:{ratelimit.limit_ip(request)}", 120, 600)
     if int(request.headers.get("content-length", "0") or 0) > 16384:
         raise HTTPException(413)
     form = await request.form()

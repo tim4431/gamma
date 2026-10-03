@@ -22,7 +22,7 @@ test("undo descriptions name creations, deletions, text, moves, and properties",
   assert.equal(describeTransition([N("a", "before")], [N("a", "after")]), "note text edit: “after”");
   assert.equal(describeTransition(tree(), tree().reverse()), "note move");
   assert.equal(describeTransition([N("a")], [N("a", "a", [], { properties: { color: "red" } })]), "note properties change");
-  const h = N("h", "quote", [], { properties: { highlight_id: "h", color: "red" } });
+  const h = N("h", "quote", [], { properties: { pdf_position: { pageNumber: 1 }, color: "red" } });
   assert.equal(describeTransition([h], [{ ...h, properties: { ...h.properties, color: "blue" } }]), "highlight color change");
   assert.equal(describeTransition([N("a"), N("b")], []), "deletion of 2 notes");
 });

@@ -35,7 +35,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from .. import cloud_auth, cloud_sync, config, ratelimit, server_settings
-from ..auth import require_admin, require_personal_user, require_user, set_session_cookie
+from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
 from ..logbuf import log
@@ -59,7 +59,7 @@ def cloud_start(request: Request, next: str = "/", link: str = ""):
     ratelimit.check(f"cloud-start:ip:{ratelimit.client_ip(request)}", 30, 600)
     link_user = None
     if link:
-        link_user = require_personal_user(request, "Sign in with a password first to link a Gamma Cloud account.")
+        link_user = require_personal_user_id(request, "Sign in with a password first to link a Gamma Cloud account.")
         if request.state.is_guest:
             raise HTTPException(403, "The guest account cannot be linked.")
     try:
@@ -87,13 +87,13 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
     try:
         claims, tokens, next_path = cloud_auth.exchange(request, code=code, state=state)
         refresh = claims["_refresh_token"] = tokens.get("refresh_token", "")
-        username = cloud_auth.resolve_account(claims)
+        user_id, _username = cloud_auth.resolve_account(claims)
     except CloudAuthError as e:
         log.info(f"cloud sign-in refused: {e}")
         cloud_auth.revoke_later([refresh])  # a refused sign-in leaves no device behind at the account server
         return _login_redirect(str(e))
-    cloud_sync.signed_in(request, username, claims["sub"], tokens)
-    token = new_session(username, via="cloud")
+    cloud_sync.signed_in(request, user_id, claims["sub"], tokens)
+    token = new_session(user_id, via="cloud")
     resp = RedirectResponse(next_path, status_code=302, headers={"Cache-Control": "no-store"})
     set_session_cookie(resp, token, request)
     return resp
@@ -128,11 +128,11 @@ def _back(path: str, **params) -> RedirectResponse:
 
 @router.get("/api/auth/cloud/status")
 def cloud_status(request: Request):
-    user = require_user(request)
+    user_id = require_user_id(request)
     cfg = cloud_auth.settings()
     # the issuer is the portal's address too: Settings → Account & sync opens it from here;
     # ``connected`` false: the Link button waits for an admin to connect this server
-    return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"],
+    return {"identity": cloud_auth.status_of(user_id), "enabled": cfg["enabled"], "issuer": cfg["issuer"],
             "connected": not cloud_auth.needs_connect()}
 
 
@@ -140,10 +140,10 @@ def cloud_status(request: Request):
 def cloud_sync_status(request: Request):
     """The caller's profile sync state (``cloud_sync.profile_status``) and
     whether a cloud identity is linked. A browser session only; no network."""
-    user = require_personal_user(request, "The guest account keeps its settings in the browser.")
-    identity = cloud_auth.status_of(user)
+    user_id = require_personal_user_id(request, "The guest account keeps its settings in the browser.")
+    identity = cloud_auth.status_of(user_id)
     linked = {"linked": True, "username": identity.get("username", "")} if identity else {"linked": False}
-    return {"profile": cloud_sync.profile_status(user), "identity": linked}
+    return {"profile": cloud_sync.profile_status(user_id), "identity": linked}
 
 
 class SyncRequest(BaseModel):
@@ -156,15 +156,15 @@ def cloud_sync_now(payload: SyncRequest, request: Request):
     """Sync the caller's profile with Gamma Cloud now: "sync" merges as the
     automatic sync does, "merge" / "fetch" / "push" also settle a first
     sync's choice. Answers the outcome and the new sync state."""
-    user = require_personal_user(request, "The guest account keeps its settings in the browser.")
-    if not cloud_sync.syncs(user):
+    user_id = require_personal_user_id(request, "The guest account keeps its settings in the browser.")
+    if not cloud_sync.syncs(user_id):
         raise HTTPException(400, "Link a Gamma Cloud account first.")
     resolve = "" if payload.action == "sync" else payload.action
     try:
-        outcome = cloud_sync.sync_profile(user, resolve=resolve, defaults=payload.defaults)
+        outcome = cloud_sync.sync_profile(user_id, resolve=resolve, defaults=payload.defaults)
     except cloud_sync.NothingToFetch:
         raise HTTPException(409, "Gamma Cloud holds no settings yet.")
-    status = cloud_sync.profile_status(user)
+    status = cloud_sync.profile_status(user_id)
     if not outcome:
         raise HTTPException(502, status.get("error") or cloud_sync.UNREACHABLE)
     return {"outcome": outcome, "profile": status}
@@ -175,15 +175,15 @@ def cloud_unlink(request: Request):
     """Detach the cloud identity. An account the cloud provisioned has no
     password, so unlinking would lock it out: refused until a password is
     set."""
-    user = require_personal_user(request, "unlink from a browser session")
-    subject, held = cloud_auth.grant_of(user)
+    user_id = require_personal_user_id(request, "unlink from a browser session")
+    subject, held = cloud_auth.grant_of(user_id)
     with connect_users_db() as conn:
-        row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (user,)).fetchone()
+        row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row or not row[0]:
             raise HTTPException(400, "Set a password for this account first, or it could not sign in any more.")
-        if not cloud_auth.unlink(conn, user):
+        if not cloud_auth.unlink(conn, user_id):
             raise HTTPException(404, "no Gamma Cloud account is linked")
         conn.commit()
     cloud_sync.release_later(subject, held)
-    log.info(f"cloud sign-in: {user} unlinked")
+    log.info(f"cloud sign-in: {request.state.user} unlinked")
     return {"ok": True}

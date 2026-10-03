@@ -26,6 +26,7 @@ export const SECTION_PREFS = Object.freeze({
     Theme: ["theme"],
     "PDF pages": ["pdfDarkPage"],
     Library: ["recentThumbs", "fileLabels"],
+    "Sync status": ["syncPillScope"],
     Tours: ["suggestTours"],
   }),
   reading: sections({
@@ -42,21 +43,16 @@ export const SECTION_PREFS = Object.freeze({
     Shortcuts: ["keybindings"],
     "Built in": ["enterNewNote"],
   }),
-  sync: sections({
-    "Sync status": ["syncPillScope"],
-  }),
   connections: sections({
     "Connection check": ["aiLoginCheck"],
   }),
   assistant: sections({
-    Chat: ["chatEffort", "chatImgAutoClear"],
-    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
-  }),
-  advanced: sections({
-    "Tool limits": ["toolRounds", "agentReadChars"],
+    Chat: ["chatEffort", "chatSpeed", "chatImgAutoClear"],
+    Prompts: ["chatSystem", "metaPrompt", "citePrompt", "agentSystem"],
     "Context size": ["chatContextChars", "metaContextChars", "multiContextChars"],
   }),
-  prompts: sections({
-    Prompts: ["chatSystem", "metaPrompt", "citePrompt", "agentSystem"],
+  tools: sections({
+    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
+    "Tool limits": ["toolRounds", "agentReadChars"],
   }),
 });

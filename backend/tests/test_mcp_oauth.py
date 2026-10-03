@@ -1,13 +1,12 @@
 import base64
 import hashlib
-import json
 import time
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import make_user
+from conftest import account_of, make_user
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
 
@@ -73,7 +72,7 @@ def test_discovery_and_browser_signin_roundtrip(browser):
     assert result.status_code == 200, result.text
     token = result.json()["access_token"]
     assert result.json()["expires_in"] == 90 * 86400
-    assert resolve_token(token, BASE + "/mcp") == ("oauth-reader", ws)
+    assert resolve_token(token, BASE + "/mcp") == (account_of("oauth-reader"), ws)
     assert resolve_token(token, "https://other.example/mcp") is None
     assert result.headers["cache-control"] == "no-store"
     with connect_users_db() as conn:
@@ -163,7 +162,7 @@ def test_consent_behind_https_proxy(browser, monkeypatch, configured_by, approve
             if approve_request:
                 tokens = exchange(c, client_id, query["code"][0], resource=public + "/mcp")
                 assert tokens.status_code == 200, tokens.text
-                assert resolve_token(tokens.json()["access_token"], public + "/mcp") == ("oauth-reader", ws)
+                assert resolve_token(tokens.json()["access_token"], public + "/mcp") == (account_of("oauth-reader"), ws)
             else:
                 assert query["error"] == ["access_denied"]
     finally:
@@ -317,4 +316,4 @@ def test_official_sdk_discovers_registers_and_completes_oauth(browser):
 
     asyncio.run(run())
     assert storage.tokens is not None
-    assert resolve_token(storage.tokens.access_token, BASE + "/mcp") == ("oauth-reader", ws)
+    assert resolve_token(storage.tokens.access_token, BASE + "/mcp") == (account_of("oauth-reader"), ws)

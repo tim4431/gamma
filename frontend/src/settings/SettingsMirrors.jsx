@@ -1,4 +1,4 @@
-// Settings → Account & sync → Clones: the mirrors of this account — local
+// Settings → Workspaces → Clones: the mirrors of this account — local
 // workspaces that follow a workspace on another Gamma server, in git's
 // words a clone and its origin (docs/dev/mirror.md, GUI for /api/mirrors*).
 // A row per clone, its avatar the clone's state (syncing, up to date, a

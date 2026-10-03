@@ -6,7 +6,7 @@
 // added after it takes that paper; the notebook view's side bar switches
 // to the notes view, a sheet's own switch back, remembered over a reload;
 // the export is a PDF of the sheets, and on a touch screen two fingers
-// pinch-zoom and pan the pages. Then pages in a note: "/page",
+// pinch-zoom and pan the pages. Then pages in a note: "/note",
 // written on in place, the replay of the page and of its group's card (on
 // the page too), and "Add page below". The
 // rules behind it are backend/tests/test_notebooks.py,
@@ -67,7 +67,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
       const g = (sheet?.children || []).find((c) => c.properties?.ink_url);
       return g && g.properties.ink_url.endsWith(".ink") && g.properties.ink_strokes === 1 ? g : null;
     }, { what: "an ink group under the first sheet with its upload" });
-    assert(!("pdf_page" in group.properties), "a sheet's group names no PDF page");
+    assert(!group.properties.pdf_position, "a sheet's group names no PDF page");
     const ink = await account.api(group.properties.ink_url);
     assertEq(ink.space.kind, "canvas", "the file is on the sheet's canvas");
     assertEq(Math.round(ink.space.width), 595, "the canvas is the sheet's width");
@@ -297,7 +297,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
   const noteTree = async () => (await account.api(`/api/blocks/${noteId}/subtree`)).block;
   const notePage = (i = 0) => page.locator(".noteSheet .nbSheet").nth(i);
 
-  await step("notes page: /page turns an empty block into a page drawn in place; strokes on it are a group under it", async () => {
+  await step("notes page: /note turns an empty block into a page drawn in place; strokes on it are a group under it", async () => {
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
     noteId = await newPageViaUi(page, "Notes with a page");
@@ -307,10 +307,10 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await first.hover();
     await first.locator(".addHandle").click();
     await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-    await page.keyboard.type("/page");
+    await page.keyboard.type("/note");
     await page.waitForSelector(".slashMenu");
-    assertEq(await page.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "Page to write on",
-      "/page picks the page, not a command that merely mentions pages");
+    assertEq(await page.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "Handwritten note",
+      "/note picks the sheet, not a command that merely mentions notes");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".noteSheet .nbSheet", { timeout: 5000 });
     assertEq((await page.$$(".blockEditorCm")).length, 0, "the block is the page now; its editor closed");

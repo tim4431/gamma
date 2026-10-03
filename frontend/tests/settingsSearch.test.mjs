@@ -1,11 +1,11 @@
-// Settings search (settings/settingsNavigation.js): every entry must jump to
+// Settings search (settings/settingsSearch.js): every entry must jump to
 // something its pane really renders, or the jump finds nothing.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsNavigation.js";
+import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsSearch.js";
 
 const SETTINGS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
 const source = (file) => fs.readFileSync(path.join(SETTINGS, file), "utf8");
@@ -17,12 +17,11 @@ const PANE_FILES = {
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
   ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
-  assistant: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
-  "ai-advanced": ["SettingsDialog.jsx"],
-  prompts: ["SettingsDialog.jsx"],
+  assistant: ["SettingsDialog.jsx"],
+  tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx"],
-  workspaces: ["SettingsWorkspace.jsx"],
+  workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx"],

@@ -30,7 +30,7 @@ import base64
 import hashlib
 import re
 
-from . import accounts, config
+from . import accounts, config, settings
 from .accounts import Problem
 from .db import after, audit, new_token, now, token_hash
 from .providers import NAMES, Identity
@@ -179,7 +179,7 @@ def suggest_username(conn, flow: dict) -> str:
 def create_from(conn, flow: dict, username: str, invite: str):
     """The signup form's answer: an account with the provider's verified
     address and no password, linked to the identity."""
-    if config.REGISTRATION == "closed":
+    if settings.registration() == "closed":
         raise Problem(403, "Registration is closed.")
     username = accounts.norm_username(username)
     plan = accounts.take_invite(conn, invite)

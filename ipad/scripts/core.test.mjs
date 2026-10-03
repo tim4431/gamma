@@ -124,3 +124,21 @@ test("a page among a note's blocks goes where the browser puts it", async () => 
   const last = await c.run("addSheet", host, noteId);                              // after the last page
   assert.deepEqual(c.pure("tree", pages.get(noteId).snapshot, noteId).map((n) => n.id), [a, p1, p2, last, z]);
 });
+
+test("the library names folders and labels from their trees", () => {
+  const c = core();
+  const node = (parent, content, position = "a0") => ({ parent, position, content, props: {} });
+  const trees = {
+    folders: { folders: node(null, "", "a2"), f1: node("folders", "Physics"), f2: node("f1", "QEC / codes") },
+    labels: { labels: node(null, "", "a3"), l1: node("labels", "to read") },
+  };
+  const roots = [
+    { id: "p1", content: "Surface codes", position: "a0", props: { folders: ["f2", "gone"], labels: ["l1"] } },
+    { id: "folders", content: "", position: "a2", props: {} },
+  ];
+  const rows = c.pure("libraryRows", roots, trees);
+  assert.deepEqual(rows.map((r) => r.id), ["p1"], "the trees' roots are no pages");
+  assert.deepEqual(rows[0].folders, ["Physics / QEC / codes"], "a path, never split on / or ,; a dangling id names nothing");
+  assert.deepEqual(rows[0].labels, ["to read"]);
+  assert.deepEqual(c.pure("libraryRows", roots)[0].folders, [], "before a round brings the trees");
+});

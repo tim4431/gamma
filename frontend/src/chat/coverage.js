@@ -56,7 +56,7 @@ export function selectionPlace(selection) {
   return `${pages.length > 1 ? "pp." : "p."} ${pages.join(", ")}${short ? ` · ${short}` : ""}`;
 }
 
-const SETTINGS_PATH = () => t("Settings / AI / Advanced AI settings / Context size");
+const SETTINGS_PATH = () => t("Settings / AI / Chat / Context size");
 
 // The pill for one context entry (a document the model was given), or null
 // when nothing needs saying: a paper that fit whole, a native attachment

@@ -17,7 +17,8 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
    (`/?block=<id>`).
 2. **Save the PDF you are looking at.** The tab *is* a PDF, possibly behind
    an institutional login the server can't reach: the bytes are fetched with
-   the browser's session → `POST /api/uploads` → `POST /api/clip {doc_id}`,
+   the browser's session → `POST /api/uploads` (in parts past 32 MiB:
+   `/api/uploads/parts`, [api.md](api.md)) → `POST /api/clip {doc_id}`,
    automatically — browser-first on PDF tabs, and as a fallback on any page
    whose PDF the server fails to fetch (no checkbox; see the pipeline below).
 3. **Right-click**: *Save link to Gamma* (link), *Save page to Gamma* (page),
@@ -81,12 +82,13 @@ helpers — never re-implement it in the extension.
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
-| `api.js` | settings (`chrome.storage.sync`: `server, servers, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
+| `api.js` | settings (`chrome.storage.sync`: `server, servers, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the default folder (below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). Saving remembers the folder but not the labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
-| `options.html/js` | server + host permission, account, saving defaults |
+| `options.html/js` | server + host permission, account, saving defaults (the folder picked from the signed-in library) |
+| `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`) and the folder picker (`folderPicker`, a MenuSelect: "Library root", every folder by its path, optionally "New folder…") |
 | `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
 | `icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
@@ -131,10 +133,10 @@ Popup → `save` message → `savePaper()` in the worker (so it survives the pop
 closing; progress is written to the tab state and the popup renders it):
 
 ```
-PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort)
-POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder, labels, allow_oa, save_copy }
+PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort; past 32 MiB in parts, /api/uploads/parts)
+POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder | folder_path, labels, allow_oa, save_copy }
   └─ 400 and no doc_id yet? → fetch bytes in the browser → POST /api/uploads → retry /api/clip with doc_id
-→ { block_id, doc_id, title, existed, open_url, folder, labels, note? }
+→ { block_id, doc_id, title, existed, open_url, folders, labels, note? }
    doc_id "" = no PDF: the clip became a page with properties.web_url
 ```
 
@@ -151,13 +153,32 @@ context, indistinguishable from the reader loading the PDF, relayed back
 base64 (capped at 60 MB). Raw PDF tabs have no content script, so there the
 direct fetch is the only (and working) path.
 
+**The default folder** is a folder id per server (`defaultFolders`:
+origin → id, `""` the library root), since an id means nothing on another
+server. The popup sends the folder picked; the shortcut and the context
+menu send the default (`defaultFolder`). After a successful save the
+worker makes that save's folder the default (`rememberFolder`). A folder
+named by path (a typed "New folder…") is looked up in
+`GET /api/library/folders` for its id. An id the library no longer lists
+shows as "Library root" in the pickers; a save without the popup checks
+for it (`checkedDefaultFolder`), forgets it and saves to the root.
+
+The setting `folder` is a path, the form a stored default had before
+folders had ids. While no id is set for the server, that path is the
+default: the popup shows the folder of that path (else a "New folder…"
+prefilled with it), the options page the folder of that path, and the
+next save sends it as `folder_path` once, after which `rememberFolder`
+stores the id and clears `folder`.
+
 Server side (`clip.py`, sync `def` — it downloads):
 
 1. **Dedup** — `find_page()` by DOI / arXiv id / URL against every root page:
-   `properties.meta.doi|arxiv_id` (from the metadata lookup), `source_url`,
-   `web_url`, and the proxy-cache hash `sha256(url)[:24]`. A hit returns
-   `existed: true` and still *adds* the folder/labels (soft link; an ancestor
-   folder is refined away, `foldertags.add_tag`).
+   `properties.meta.doi|arxiv_id` (from the metadata lookup), the
+   attachment's URL (`source_url`, else its stored copy's, so a tab on that
+   URL finds its page; `blocks_store.page_attachment`), `web_url`, and the
+   proxy-cache hash `sha256(url)[:24]`. A hit returns
+   `existed: true` and still *adds* the folder/labels (soft link; a folder
+   above the new one is refined away).
 2. **Resolve** — `pdf.resolve_source()` (extracted from `/api/resolve-pdf`) on
    the best identifier: `pdf_url` > `arxiv_id` > `doi` > `source_url`. arXiv
    rewrite, `citation_pdf_url` sniff, Unpaywall when `allow_oa`.
@@ -187,10 +208,17 @@ Server side (`clip.py`, sync `def` — it downloads):
    the web-page path's `find_web_page` and `/api/clip/note`'s "Web clips"
    page: a double-clicked Save, two tabs of one paper or a retry make one
    page.
-5. **Folder + labels** — `properties.folder` / `properties.category` comma
-   lists, cleaned by `foldertags`: an op batch on the page by the clipping
-   account (`_apply_tags`), fanned out to the page's open tabs like any
-   edit, also when the clip found the paper already saved.
+5. **Folder + labels** — folders and labels are blocks
+   ([home_library.md](home_library.md) "Folders and labels"); the page is
+   filed by id in `properties.folders` / `properties.labels`. The request
+   names the folder by its id (`folder`, picked from the tree; 400 when it
+   is no folder) or by its names (`folder_path`, `"a/b"`: the popup's "New
+   folder…", made where missing), and the labels by name (made when
+   missing) — resolved and made first, through the trees' ops
+   (`_filing`, `ops.ensure_filing`). Then one op batch on the page by the
+   clipping account (`_file_page`), fanned out to the page's open tabs like
+   any edit, also when the clip found the paper already saved. The answer's
+   `folders` / `labels` are the page's filing, ids.
 6. **Metadata** — `metadata.fetch_page_metadata()` (extracted from
    `/api/metadata/fetch`) in a daemon thread; the detector's `doi`/`arxiv_id`
    ride along as trusted hints (they come from the publisher page's own meta
@@ -210,10 +238,12 @@ Companions:
   `{title, authors, year, venue, doi, arxiv_id, source}` from
   `metadata.registry_record` (arXiv, then doi.org; a small in-memory cache,
   the data is public). 404 when neither registry answers.
-- `GET /api/library/folders` → `{folders, labels}` (folder paths plus their
-  ancestors). Folders rank by the account/workspace's latest `recent-views`
-  page timestamp, then latest page modification, with names breaking ties;
-  ancestors inherit their contained pages' timestamps. Labels stay alphabetical.
+- `GET /api/library/folders` → `{folders: [{id, path}], labels: [{id,
+  name}]}` — every folder (`path` its names from the top; empty folders
+  too) and every label. Folders rank by the account/workspace's latest
+  `recent-views` page timestamp, then latest page modification, with names
+  breaking ties; a folder takes the times of the pages filed in it and in
+  its subfolders. Labels stay alphabetical.
 - `POST /api/clip/note {text, source_url, title,
 page_id?}` — the explicit "clip selection INTO a page" append path (with
 `generate_key_between`; without `page_id` it uses/creates the root page
@@ -426,7 +456,15 @@ signed in to the same server works the same way.
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
   the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`, plus
-  API settings and origin guards.
+  API settings, the default folder, folder paths and origin guards. The
+  `check` workflow runs them on every PR ([github_actions.md](github_actions.md#checkyml));
+  the `.e2e.mjs` files below are run by hand.
+- `node extension/tests/folders.e2e.mjs` — full Chromium against a fake
+  server answering `/api/library/folders` and `/api/clip`: the options page
+  and the popup list folders by path, a save sends the picked folder's id,
+  a typed new folder's path and label names, the default is remembered by
+  id per server, and a path stored by an older version is sent once and
+  replaced by its id.
 - `node extension/tests/servers.e2e.mjs` — full Chromium with the unpacked
   extension and two local test servers: remembered addresses, switching,
   account/offline states, denied permission, footer keyboard navigation,

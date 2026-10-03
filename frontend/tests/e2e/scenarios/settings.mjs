@@ -140,11 +140,11 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: online search services are set up in the Chat pane, and the engine choice survives a reload", async () => {
+  await step("settings: online search services are set up in the Tool usage pane, and the engine choice survives a reload", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Chat").click();
+      await nav(page, "Tool usage").click();
       const tools = row(page, "Search papers online");
       assert((await tools.innerText()).includes("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web"));
       const engine = row(page, "Search the web with").getByRole("button", { name: "Search the web with", exact: true });
@@ -674,6 +674,12 @@ export async function settingsScenarios(env) {
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
+      // the sync pill's scope is an account preference shown under Appearance
+      await row(page, "Sync pill").getByRole("button", { name: "Every page", exact: true }).click();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.syncPillScope === "all");
+      assertEq(await sync("Theme"), "saved", "the change spins only Sync status");
+      await row(page, "Sync pill").getByRole("button", { name: "Synced pages", exact: true }).click();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.syncPillScope === "synced");
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
@@ -909,7 +915,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await search(page, "custom prompts", "Custom prompts");
+      await search(page, "custom prompts", "Prompts");
       await page.getByRole("button", { name: /Chat system prompt/ }).click();
       const input = page.locator(".promptTextarea").first();
       const original = await input.inputValue();
@@ -924,7 +930,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await openSettings(page);
-      await search(page, "custom prompts", "Custom prompts");
+      await search(page, "custom prompts", "Prompts");
       await page.getByRole("button", { name: /Chat system prompt/ }).click();
       assertEq(await page.locator(".promptTextarea").first().inputValue(), "Saved test prompt");
       await nav(page, "Connections").click();
@@ -980,8 +986,8 @@ export async function settingsScenarios(env) {
       await row(page, "Default chat model").getByRole("button").first().click();
       await page.getByText("test-model-b", { exact: true }).last().click();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The model (and reasoning effort) is the composer's chip.
-      const modelChip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+      // The model (with its reasoning effort and speed) is the composer's chip.
+      const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "test-model-a", exact: true }).click();
@@ -994,11 +1000,15 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       assert((await row(page, "Default chat model").innerText()).includes("test-model-a"));
-      await nav(page, "Chat").click();
+      await nav(page, "Tool usage").click();
       assertEq(await page.getByRole("checkbox", { name: "Assistant tools" }).isChecked(), false);
-      await nav(page, "Advanced").click();
-      assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
       await nav(page, "Chat").click();
+      // The chat's two model knobs have their defaults here (the chip edits
+      // the same preferences — docs/dev/settings.md "Chat settings are global").
+      await row(page, "Default reasoning effort").waitFor();
+      assertEq(await row(page, "Default speed").getByRole("button").first().innerText(), "Default");
+      assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
+      await nav(page, "Tool usage").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
       // The matrix and chat popover edit the same per-kind permissions.
       const pick = async (scope, name, state) => {
@@ -1019,7 +1029,7 @@ export async function settingsScenarios(env) {
       await pick(popover, "Rename pages", "Allow");
       await page.locator('[title^="Chat settings"]').click();
       await openSettings(page);
-      await nav(page, "Chat").click();
+      await nav(page, "Tool usage").click();
       assertEq(await page.getByRole("button", { name: "Rename pages — Folder chat", exact: true }).innerText(), "Allow");
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -1031,7 +1041,7 @@ export async function settingsScenarios(env) {
       try {
         await openSettings(page);
         if (viewport.width < 600) await page.getByRole("button", { name: "Back", exact: true }).click();
-        await nav(page, "Chat").click();
+        await nav(page, "Tool usage").click();
         const master = page.getByRole("checkbox", { name: "Assistant tools", exact: true });
         const matrix = page.getByRole("group", { name: "Tool permissions by chat type" });
         // Each cell is a state menu (Allow / Ask / Off) named "<tool> — <chat kind>".
@@ -1109,7 +1119,7 @@ export async function settingsScenarios(env) {
     for (const transcribe of [false, true]) {
       const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));
       try {
-        const chip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+        const chip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
         await chip.waitFor();
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 0, "no PDF in the library's context");

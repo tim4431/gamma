@@ -45,8 +45,10 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       const b = await inkBlockOnServer();
       return b && b.properties.ink_url.endsWith(".ink") && b.properties.ink_strokes === 2 ? b : null;
     }, { what: "ink block with two uploaded strokes" });
-    assertEq(inkBlock.properties.pdf_page, 1, "pdf_page");
-    assertEq(inkBlock.properties.pdf_position.pageNumber, 1, "pdf_position page");
+    assert(!("pdf_page" in inkBlock.properties), "the page is the position's alone");
+    const pos = inkBlock.properties.pdf_position;
+    assertEq(JSON.stringify([pos.pageNumber, pos.width, pos.height]), JSON.stringify([1, 612, 792]), "pdf_position page and size");
+    assertEq(JSON.stringify(Object.keys(pos.boundingRect)), JSON.stringify(["x1", "y1", "x2", "y2"]), "no size per rect");
     const ink = await account.api(inkBlock.properties.ink_url);
     assertEq(ink.format, "gamma-ink", "file format");
     assertEq(ink.strokes.length, 2, "strokes in the file");
@@ -514,7 +516,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       strokes: [{ id: "tr1", color: "#1f1f1f", size: 2, ch: "xy", pts: [10000, 60000, 3000, 400] }],
     } });
     const group = await account.api("/api/blocks", { method: "POST", body: {
-      parent_id: pageId, content: "", properties: { ink_url: up.url, pdf_page: 1, pdf_position: up.pdf_position, ink_strokes: 1 },
+      parent_id: pageId, content: "", properties: { ink_url: up.url, pdf_position: up.pdf_position, ink_strokes: 1 },
     } });
     const tctx = await account.context(browser);
     try {

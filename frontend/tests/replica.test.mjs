@@ -1,16 +1,20 @@
 // node --test tests/replica.test.mjs (from frontend/) — the iPad replica's
 // pure core (src/replica/*): the tree rules against the Python engine's
 // cases (tests/shared/synctree.json), the local merges a replica makes
-// without a server, the edit-beats-delete rule, the views. The rounds
+// without a server, the edit-beats-delete rule, the views, and the folder
+// and label trees through rounds against a remote in memory. The rounds
 // against a real server are the e2e group `replica`.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { encodeStroke, newCanvasInk, newInk } from "../src/ink/ink.js";
 import { firstSheetId, newSheet } from "../src/notebook/notebook.js";
+import { editPage } from "../src/replica/edits.js";
 import { ownEdits, reconcileRemoteOps, split, unlanded } from "../src/replica/reconcile.js";
-import { apply, applyLocal, diff, moved, snapshotFromTree, treeOf, uploadRefs } from "../src/replica/tree.js";
+import { syncRound } from "../src/replica/round.js";
+import { TREES, apply, applyLocal, childrenOf, diff, moved, snapshotFromTree, treeOf, uploadRefs } from "../src/replica/tree.js";
 import { libraryRows, pageView } from "../src/replica/views.js";
+import { MemoryHost } from "./replica/memoryHost.mjs";
 
 const SHARED = JSON.parse(readFileSync(new URL("../../tests/shared/synctree.json", import.meta.url), "utf8"));
 const P = SHARED.page;
@@ -46,7 +50,7 @@ test("applying another side's ops here merges text and drawings the way the serv
   const uHere = ink.put({ ...newInk(1, 612, 792), strokes: [stroke("a", 10), stroke("b", 50)] });
   const uThere = ink.put({ ...newInk(1, 612, 792), strokes: [stroke("a", 10), stroke("x", 90)] });
   const here = { [P]: b("root", "a0", "Page"), n1: b(P, "a0", "hello world!"),
-    g1: b(P, "a1", "", { ink_url: uHere, pdf_page: 1, ink_strokes: 2 }) };
+    g1: b(P, "a1", "", { ink_url: uHere, ink_strokes: 2 }) };
   const ops = [
     { op: "set", id: "n1", content: "hello brave world", base: "hello world" },
     { op: "set", id: "g1", props: { ink_url: uThere, ink_strokes: 2, pdf_position: null }, base_props: { ink_url: u0 } },
@@ -106,10 +110,12 @@ test("snapshots, trees and upload references", () => {
 });
 
 test("a page's view: a PDF's ink by page, a page's sheets with their ink", () => {
-  const pdf = { [P]: b("root", "a0", "Paper", { doc_id: "e".repeat(24), source_url: `/api/uploads/${"e".repeat(24)}.pdf` }),
-    g1: b(P, "a0", "", { ink_url: "/api/uploads/1.ink", pdf_page: 2 }), n1: b(P, "a1", "note") };
+  const pdf = { [P]: b("root", "a0", "Paper", { doc_id: "e".repeat(24) }),
+    g1: b(P, "a0", "", { ink_url: "/api/uploads/1.ink", pdf_position: { pageNumber: 2 } }), n1: b(P, "a1", "note") };
   const v = pageView(pdf, P);
   assert.equal(v.kind, "pdf");
+  assert.deepEqual(v.pdf, { docId: "e".repeat(24), url: `/api/uploads/${"e".repeat(24)}.pdf`, name: "" },
+    "the stored copy's URL, derived from doc_id");
   assert.deepEqual(v.pdfInk, { 2: [{ id: "g1", url: "/api/uploads/1.ink" }] });
   assert.deepEqual(v.sheets, [], "a PDF's page has its PDF to read");
   const sheet = newSheet(firstSheetId("bk"), { pattern: "grid" });
@@ -124,4 +130,138 @@ test("a page's view: a PDF's ink by page, a page's sheets with their ink", () =>
     { id: P, content: "", props: pdf[P].props, position: "a0" }]).map((r) => [r.id, r.kind, r.title]),
   [[P, "pdf", "Untitled"], ["bk", "page", "Notebook"]]);
   assert.equal(newCanvasInk(10, 20).space.kind, "canvas");
+});
+
+// A remote in memory: as much of the server's API as a round calls, over
+// snapshots (pages and the two trees), ops applied as sent, a change log
+// whose seq is each page's seq too. It refuses what the server refuses with
+// the trees: a page made under a reserved id, a tree deleted. `calls` keeps
+// every request as "METHOD path".
+function memoryRemote(pages) {
+  const store = new Map(Object.entries(pages)), changes = new Map(), calls = [];
+  let seq = 0;
+  const touch = (id, deleted = false) => changes.set(id, { seq: ++seq, deleted });
+  for (const id of store.keys()) touch(id);
+  const node = (snap, id) => ({ id, parent_id: snap[id].parent, position: snap[id].position, content: snap[id].content,
+    properties: snap[id].props, children: (childrenOf(snap).get(id) || []).map((c) => node(snap, c)) });
+  const answer = (method, path, body) => {
+    const url = new URL(path, "http://remote"), at = url.pathname;
+    let m;
+    if (at === "/api/sync/whoami") return [200, { user: "me", workspace: { id: "ws" }, role: "editor", scope: "write" }];
+    if (at === "/api/sync/changes") {
+      const since = Number(url.searchParams.get("since") || 0);
+      const listed = [...changes].filter(([, c]) => c.seq > since).sort((x, y) => x[1].seq - y[1].seq);
+      return [200, { more: false, cursor: String(seq),
+        pages: listed.filter(([, c]) => !c.deleted).map(([id, c]) => ({ id, seq: c.seq })),
+        deleted: listed.filter(([, c]) => c.deleted).map(([id]) => ({ id, deleted_at: "2026-10-02T00:00:00Z" })) }];
+    }
+    if ((m = /^\/api\/blocks\/([^/]+)\/subtree$/.exec(at))) {
+      const snap = store.get(m[1]);
+      return snap ? [200, { block: node(snap, m[1]), seq: changes.get(m[1]).seq }] : [404, { detail: "not found" }];
+    }
+    if ((m = /^\/api\/pages\/([^/]+)\/ops$/.exec(at))) {
+      if (!store.has(m[1])) return [404, { detail: "not found" }];
+      store.set(m[1], apply(store.get(m[1]), body.ops));
+      touch(m[1]);
+      return [200, {}];
+    }
+    if (at === "/api/pages") {
+      if (TREES.includes(body.id)) return [400, { detail: "reserved id" }];
+      store.set(body.id, { [body.id]: b("root", "a5", body.title, body.properties || {}) });
+      touch(body.id);
+      return [201, { id: body.id, position: "a5", content: body.title, properties: body.properties || {} }];
+    }
+    if ((m = /^\/api\/blocks\/([^/]+)$/.exec(at)) && method === "DELETE") {
+      if (TREES.includes(m[1])) return [403, { detail: "reserved" }];
+      store.delete(m[1]);
+      touch(m[1], true);
+      return [200, {}];
+    }
+    return [404, { detail: `no route ${method} ${at}` }];
+  };
+  return {
+    store, calls,
+    ops: (id, ops) => answer("POST", `/api/pages/${id}/ops`, { ops }),
+    // a tombstone in the feed for a page it still has (a tree: never, on a real server)
+    tombstone: (id) => touch(id, true),
+    request: async (method, path, body) => {
+      calls.push(`${method} ${path.split("?")[0]}`);
+      const [status, out] = answer(method, path, body);
+      return { status, body: JSON.parse(JSON.stringify(out)) };
+    },
+  };
+}
+
+// A replica host in memory (tests/replica/memoryHost.mjs) whose requests go
+// to `remote`.
+function hostOf(remote) {
+  const host = new MemoryHost({ base: "http://remote", token: "t", remoteWs: "ws" });
+  host.request = remote.request;
+  return host;
+}
+
+const roots = (host) => [...host.pages].map(([id, s]) => ({ id, content: s[id].content, props: s[id].props, position: s[id].position }));
+const treeRoot = () => b(null, "a1", "", {});
+const trees = () => ({
+  folders: { folders: treeRoot(), phys: b("folders", "a0", "Physics"), qec: b("phys", "a0", "QEC / codes, v2"),
+    math: b("folders", "a1", "Math") },
+  labels: { labels: treeRoot(), read: b("labels", "a0", "to read") },
+});
+
+test("a round reconciles the trees first and pulls each whole; the library names folders and labels from them", async () => {
+  const { folders, labels } = trees();
+  const remote = memoryRemote({
+    apage: { apage: b("root", "a0", "Filed", { folders: ["qec", "math", "gone"], labels: ["read", "gone"] }) },
+    zpage: { zpage: b("root", "a1", "Unfiled") },
+    folders, labels,
+  });
+  const host = hostOf(remote);
+  const status = await syncRound(host);
+  assert.equal(status.last_error, "");
+  assert.deepEqual(remote.calls.filter((c) => c.endsWith("/subtree")),
+    ["GET /api/blocks/folders/subtree", "GET /api/blocks/labels/subtree", "GET /api/blocks/apage/subtree",
+      "GET /api/blocks/zpage/subtree"], "the trees first: the pages are filed in them");
+  assert.deepEqual(host.pages.get("folders"), folders, "a tree pulled whole is its snapshot, its root's parent null");
+  assert.deepEqual(host.pages.get("labels"), labels);
+  assert.deepEqual(libraryRows(roots(host), { folders: host.pages.get("folders"), labels: host.pages.get("labels") }), [
+    { id: "apage", title: "Filed", kind: "page", position: "a0", folders: ["Physics / QEC / codes, v2", "Math"], labels: ["to read"] },
+    { id: "zpage", title: "Unfiled", kind: "page", position: "a1", folders: [], labels: [] },
+  ], "no rows for the trees; paths joined with ' / ', a dangling id naming nothing");
+  assert.ok(host.notes.some((n) => n.page_id === "folders" && n.title === "Folders"), "the log names the tree");
+});
+
+test("both sides' folders are kept, and a tree is never deleted, either way", async () => {
+  const remote = memoryRemote({ page: { page: b("root", "a0", "Page") }, ...trees() });
+  const host = hostOf(remote);
+  await syncRound(host);
+  await editPage(host, "folders", [{ op: "insert", id: "here", parent: "folders", position: "a5", content: "Made here", props: {} }]);
+  remote.ops("folders", [{ op: "insert", id: "there", parent: "phys", position: "a5", content: "Made there", props: {} }]);
+  await syncRound(host);
+  for (const snap of [remote.store.get("folders"), host.pages.get("folders")]) {
+    assert.deepEqual([snap.here?.content, snap.there?.content, snap.phys.content], ["Made here", "Made there", "Physics"]);
+  }
+  assert.ok(remote.calls.includes("POST /api/pages/folders/ops"), "the folder made here went over as ops");
+
+  remote.tombstone("folders");
+  remote.tombstone("labels");
+  await host.deleteHere("labels");
+  const status = await syncRound(host);
+  assert.equal(status.last_error, "");
+  assert.ok(host.pages.get("folders")?.here, "a tombstone there deletes no tree here");
+  assert.deepEqual(host.pages.get("labels"), remote.store.get("labels"), "a tree deleted here comes back from the remote");
+  assert.ok(!remote.calls.some((c) => c.startsWith("DELETE")), "nor is one deleted there");
+  assert.deepEqual(await host.localChanges(), { pages: [], deleted: [] }, "nothing left to carry");
+});
+
+test("a tree the remote lacks is left alone: never created there", async () => {
+  const remote = memoryRemote({ page: { page: b("root", "a0", "Page") }, folders: trees().folders });
+  const host = hostOf(remote);
+  const labels = { labels: treeRoot(), mine: b("labels", "a0", "kept here") };
+  await host.writeEdit("labels", labels, 0);
+  const status = await syncRound(host);
+  assert.equal(status.last_error, "");
+  assert.ok(!remote.calls.includes("POST /api/pages"), "no page made under a reserved id");
+  assert.ok(!remote.store.has("labels"));
+  assert.deepEqual(host.pages.get("labels"), labels, "the tree here stays as it is");
+  assert.ok(host.pages.has("folders") && host.pages.has("page"), "the rest of the round went on");
 });

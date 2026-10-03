@@ -4,13 +4,15 @@ A stored file (``uploads/<name>``) is in use while a block names it —
 ``/api/uploads/<name>`` in its content or properties, or a page's ``doc_id``
 (``storage.upload_refs``, the one grammar). When the last reference goes the
 file is NOT deleted: its name goes into the workspace's ``upload_orphans``
-table (pages.db: ``name``, ``since``) and the file stays on disk, served as
+table (pages.db: ``name``, ``since``) and the file stays stored, served as
 before — so an undo, a cut pasted in a later batch, an AI edit, an ink undo
 or a re-attached PDF finds it again. A reference that comes back clears the
 row. A file still unreferenced RETAIN_S after both its row's ``since`` and
 its own mtime (an upload of the same bytes re-dates it,
 ``storage._store``, under the workspace's ``guard``) is purged. Nothing here touches the quota: an
-unreferenced file counts like any stored one until it goes.
+unreferenced file counts like any stored one until it goes. Files are
+listed, dated and deleted through the store (gamma/blobs.py), so the same
+pass keeps a workspace's uploads directory and a bucket.
 
 Who notices what:
 
@@ -23,16 +25,18 @@ Who notices what:
   (what a trashed copy it replaces held is left to ``reconcile``). A batch
   that drops nothing (typing in a block that keeps its image) costs nothing.
 - ``reconcile`` is the whole picture of one workspace in one pass: one scan
-  of the blocks that mention an upload, diffed against the uploads
-  directory — a row for every unreferenced file past UPLOAD_GRACE_S (an
+  of the blocks that mention an upload, diffed against the stored files
+  (``blobs.list``) — a row for every unreferenced file past UPLOAD_GRACE_S (an
   upload is stored before the block naming it is written), the rows of
   referenced or vanished files cleared, then the purge. The thread runs it
   for every workspace FIRST_PASS_S after startup and every
   RECONCILE_EVERY_S after: the safety net for writers that bypass the op
   path (imports, a restore, a mirror).
 - The purge reads the references again under the write lock, so no batch
-  can add one while it deletes, and refuses a database that looks wrong
-  (``purge_blocker``): logged as a warning, nothing deleted.
+  can add one while it deletes, and each due file's date (``blobs.stat``:
+  one HEAD under S3, never a listing of the workspace while writers wait),
+  and refuses a database that looks wrong (``purge_blocker``): logged as a
+  warning, nothing deleted.
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -40,7 +44,8 @@ Docs: docs/dev/user_db.md "Stored files".
 import threading
 import time
 
-from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir, ws_uploads_dir
+from . import blobs
+from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .storage import upload_refs
 
@@ -49,7 +54,7 @@ UPLOAD_GRACE_S = 15 * 60      # a younger file is never recorded (upload → att
 DEBOUNCE_S = 2.0              # a check runs this long after the last batch that dropped a name
 FIRST_PASS_S = 60             # the first full pass, after startup
 RECONCILE_EVERY_S = 6 * 3600  # the full pass's cadence afterwards
-PARTIAL_MAX_AGE_S = 86400     # a temp file of storage.write_atomic older than this is a dead write
+PARTIAL_MAX_AGE_S = 86400     # a temp file (a write, a cache download) older than this is a dead one
 
 # The purge refuses to delete more than PURGE_MAX files at once, or more than
 # PURGE_SHARE of the workspace's files when that is over PURGE_FLOOR.
@@ -67,7 +72,7 @@ def referenced(conn) -> set[str]:
     names = set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
-            "OR instr(properties, '/api/uploads/') > 0 OR instr(properties, '\"doc_id\"') > 0"):
+            "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
     return names
 
@@ -89,37 +94,14 @@ def restart_clocks(conn) -> None:
 
 
 def _stored(ws: str) -> dict:
-    """``{name: stat}`` of the workspace's stored files (not ``.partial/``)."""
-    uploads = ws_uploads_dir(ws)
-    out = {}
-    if uploads.is_dir():
-        for f in uploads.iterdir():
-            if f.name.startswith(".") or not f.is_file():
-                continue
-            try:
-                out[f.name] = f.stat()
-            except OSError:
-                continue
-    return out
+    """``{name: mtime}`` of the workspace's stored files (``blobs.list``:
+    not ``.partial/``)."""
+    return {name: mtime for name, _size, mtime in blobs.list(ws)}
 
 
 def _since_s(since: str, now: float) -> float:
     t = parse_stamp(since)
     return t.timestamp() if t else now  # unreadable: the clock starts now
-
-
-def _sweep_partial(ws: str) -> None:
-    """Remove temp files a write that never finished left in ``.partial/``."""
-    partial = ws_uploads_dir(ws) / ".partial"
-    if not partial.is_dir():
-        return
-    cutoff = time.time() - PARTIAL_MAX_AGE_S
-    for f in partial.iterdir():
-        try:
-            if f.is_file() and f.stat().st_mtime < cutoff:
-                f.unlink()
-        except OSError:
-            pass
 
 
 _locks: dict[str, threading.Lock] = {}
@@ -158,7 +140,7 @@ def check(ws: str, names) -> list[str]:
             refs = referenced(conn)
             now = time.time()
             recorded = sorted(n for n in wanted
-                              if n.lower() not in refs and now - files[n].st_mtime >= UPLOAD_GRACE_S)
+                              if n.lower() not in refs and now - files[n] >= UPLOAD_GRACE_S)
             if recorded:
                 stamp = page_now()
                 conn.executemany("INSERT OR IGNORE INTO upload_orphans (name, since) VALUES (?, ?)",
@@ -176,16 +158,16 @@ def reconcile(ws: str) -> dict:
     with guard(ws):
         if not _has_pages_db(ws):
             return out
-        _sweep_partial(ws)
+        blobs.sweep_partial(ws, PARTIAL_MAX_AGE_S)  # temp files a write that never finished left
         with connect_pages_db(ws) as conn:
             refs = referenced(conn)
             files = _stored(ws)
             rows = dict(conn.execute("SELECT name, since FROM upload_orphans").fetchall())
             now = time.time()
             out["cleared"] = sorted(n for n in rows if n not in files or n.lower() in refs)
-            out["recorded"] = sorted(n for n, st in files.items()
+            out["recorded"] = sorted(n for n, mtime in files.items()
                                      if n not in rows and n.lower() not in refs
-                                     and now - st.st_mtime >= UPLOAD_GRACE_S)
+                                     and now - mtime >= UPLOAD_GRACE_S)
             if out["cleared"] or out["recorded"]:
                 stamp = page_now()
                 conn.executemany("DELETE FROM upload_orphans WHERE name = ?", [(n,) for n in out["cleared"]])
@@ -194,7 +176,7 @@ def reconcile(ws: str) -> dict:
                 conn.commit()
             cleared = set(out["cleared"])
             due = sorted(n for n, since in rows.items() if n not in cleared
-                         and now - max(_since_s(since, now), files[n].st_mtime) >= RETAIN_S)
+                         and now - max(_since_s(since, now), files[n]) >= RETAIN_S)
             if due:
                 out["purged"], out["blocked"] = _purge(ws, conn, due, len(files))
     return out
@@ -210,7 +192,7 @@ def purge_blocker(conn, due: int, stored: int) -> str:
         return "its pages.db has no root row"
     if not conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
         return "its pages.db has no pages"
-    if due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored):
+    if _too_many(due, stored):
         return f"{due} of its {stored} files at once is more than one purge may delete"
     result = conn.execute("PRAGMA quick_check").fetchone()[0]
     if result != "ok":
@@ -218,36 +200,43 @@ def purge_blocker(conn, due: int, stored: int) -> str:
     return ""
 
 
+def _too_many(due: int, stored: int) -> bool:
+    """Whether ``due`` of ``stored`` files are more than one purge may
+    delete; true for every larger ``due`` once true."""
+    return due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored)
+
+
 def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
     """Delete the ``due`` files that are still unreferenced, under the write
     lock. Returns ``(purged names, blocker)``."""
     from .blocks_store import write_lock  # local: blocks_store imports this module
 
-    uploads = ws_uploads_dir(ws)
     write_lock(conn)
     try:
         refs = referenced(conn)  # again: no batch can add a reference while we hold the lock
         now = time.time()
-        gone = []
-        for name in due:
-            try:
-                recent = now - (uploads / name).stat().st_mtime < RETAIN_S  # re-dated by an upload meanwhile
-            except FileNotFoundError:
-                continue
-            if name.lower() not in refs and not recent:
+        unreferenced = [name for name in due if name.lower() not in refs]
+        gone, count = [], 0
+        for name in unreferenced:
+            st = blobs.stat(ws, name)  # dated again, the due names alone: re-dated by an upload meanwhile
+            if st is not None and now - st[1] >= RETAIN_S:
                 gone.append(name)
-        blocker = purge_blocker(conn, len(gone), stored) if gone else ""
+                if _too_many(len(gone), stored):
+                    # refused whatever the rest's dates say (so nothing is deleted): ask
+                    # for no more of them, and count every unreferenced due file
+                    gone, count = [], len(unreferenced)
+                    break
+        count = count or len(gone)
+        blocker = purge_blocker(conn, count, stored) if count else ""
         if blocker:
             conn.rollback()
-            log.warning(f"[uploads] workspace {ws}: not purging {len(gone)} file(s) unreferenced for "
-                        f"{RETAIN_S // 86400} days — {blocker}; they stay on disk")
+            log.warning(f"[uploads] workspace {ws}: not purging {count} file(s) unreferenced for "
+                        f"{RETAIN_S // 86400} days — {blocker}; they are kept")
             return [], blocker
         purged = []
         for name in gone:
             try:
-                (uploads / name).unlink()
-            except FileNotFoundError:
-                pass
+                blobs.delete(ws, name)  # one gone already is no error
             except OSError as e:
                 log.warning(f"[uploads] workspace {ws}: could not purge {name}: {e}")
                 continue
@@ -295,9 +284,10 @@ def flush(ws: str | None = None) -> dict:
 
 
 def start() -> None:
-    """At app startup: the thread, with its first full pass over every
-    workspace FIRST_PASS_S from now — in the background, once the server
-    is up, never in the startup path."""
+    """At app startup (after ``blobs.check`` in ``app.create_app`` has
+    accepted the store the files live in): the thread, with its first full
+    pass over every workspace FIRST_PASS_S from now — in the background,
+    once the server is up, never in the startup path."""
     global _next_full
     with _cond:
         _next_full = time.monotonic() + FIRST_PASS_S

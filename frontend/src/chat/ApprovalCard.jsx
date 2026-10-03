@@ -90,7 +90,7 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
             {t("Allow in this chat")}
           </button>
           <button type="button" className="uiBtn sm" onClick={() => decide("always")}
-            title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Chat.", { permission, kind: kindLabel })}>
+            title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
             {t("Always allow")}
           </button>
           <span className="chatApprovalSpacer" />

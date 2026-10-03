@@ -5,9 +5,13 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import Protocol, as_int, attach_index, parse_tool_args
+from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name
 
 API_VERSION = "2023-06-01"
+# Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
+# models take it (the Opus line); the listing says nothing about speed, so an
+# unsupported one is refused upstream with the provider's own message.
+FAST_MODE_BETA = "fast-mode-2026-02-01"
 _CACHE = {"type": "ephemeral"}
 
 
@@ -90,9 +94,15 @@ class Anthropic(Protocol):
     label = "Anthropic Messages API"
     key_placeholder = "sk-ant-…"
     key_url = "https://console.anthropic.com/settings/keys"
+    speeds = {"fast": "fast"}  # no cheaper tier here; standard is the default
+
+    def speed_tiers(self, conf):
+        # Fast mode is Anthropic's own preview — a service speaking its API
+        # behind another host has nothing to do with it.
+        return super().speed_tiers(conf) if is_anthropic_platform(conf.get("base_url", "")) else []
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
         messages = [dict(m) for m in messages]  # attachment injection must not mutate the caller's turn list
         if pdf_b64s or images:
             last = messages[attach_index(messages)]
@@ -116,15 +126,22 @@ class Anthropic(Protocol):
             body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
         if stream:
             body["stream"] = True
-        if is_anthropic_platform(conf.get("base_url", "")):
+        platform = is_anthropic_platform(conf.get("base_url", ""))
+        speed_value = self.speed_value(speed) if platform else ""
+        if speed_value:
+            body["speed"] = speed_value
+        if platform:
             # Only Anthropic itself is known to take the markers; a service
             # speaking its API behind another host may reject the field.
             _with_breakpoints(body)
-        return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers={
+        headers = {
             "x-api-key": conf["api_key"],
             "anthropic-version": API_VERSION,
             "Content-Type": "application/json",
-        })
+        }
+        if speed_value:
+            headers["anthropic-beta"] = FAST_MODE_BETA
+        return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers=headers)
 
     def hosted_web_search(self, conf):
         # Anthropic's server tool; a service speaking this API elsewhere
@@ -151,12 +168,21 @@ class Anthropic(Protocol):
                  "cache_read": cache_read, "cache_write": cache_write}
         return usage if (usage["input"] or usage["output"]) else None
 
+    def served_speed(self, data):
+        # ``usage.speed`` ("fast" / "standard") says which speed served the
+        # turn once one was asked for; without a request it is absent.
+        return served_speed_name((data.get("usage") or {}).get("speed"))
+
     def stream_event(self, event, state):
         kind = event.get("type")
         if kind == "message_start":
             # Input counts arrive up front; the output count comes with the
-            # final message_delta (cumulative, so the last one wins).
-            state["usage"] = self.usage((event.get("message") or {}).get("usage"))
+            # final message_delta (cumulative, so the last one wins). The
+            # served speed rides on either usage object.
+            raw_usage = (event.get("message") or {}).get("usage")
+            state["usage"] = self.usage(raw_usage)
+            if isinstance(raw_usage, dict):
+                note_speed(state, raw_usage.get("speed"))
         elif kind == "content_block_start":
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
@@ -186,6 +212,8 @@ class Anthropic(Protocol):
                                 "arguments": parse_tool_args(tool["json"])})
         elif kind == "message_delta":
             state["stop"] = (event.get("delta") or {}).get("stop_reason") or state["stop"]
+            if isinstance(event.get("usage"), dict):
+                note_speed(state, event["usage"].get("speed"))
             delta_usage = self.usage(event.get("usage"))
             if delta_usage:
                 usage = state["usage"] or {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}

@@ -1,16 +1,18 @@
-"""The workspace change feed (routers/sync.py): pages changed and pages
-deleted since a cursor, paginated, workspace-scoped, and a hint a mirror can
-consume idempotently."""
+"""The workspace change feed (routers/sync.py) over the change log
+(``page_changes``): the pages whose row moved past a cursor, in seq order —
+live ones with their op-log seq, deleted ones as tombstones — paginated,
+workspace-scoped and exact: a change is listed once, and a page written
+again comes again at its new place."""
 
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_page, make_user, workspace_of, guest_name
+from conftest import account_of, guest_name, login, make_page, make_user, workspace_of
+from gamma import ops
 from gamma.db import connect_pages_db
-from gamma.routers import sync as sync_mod
 
 
 def _feed(client, since="", limit=500):
-    r = client.get(f"/api/sync/changes?since={since}&limit={limit}")
+    r = client.get("/api/sync/changes", params={"since": since, "limit": limit})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -19,71 +21,98 @@ def _ids(feed, key="pages"):
     return [p["id"] for p in feed[key]]
 
 
-def _stamp(user, page_id, at):
-    """Backdate a page (the feed reads updated_at) — a test's way to leave
-    the grace window."""
-    with connect_pages_db(workspace_of(user)) as conn:
-        conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (at, page_id))
-        conn.commit()
+def _caught_up(client):
+    """The cursor at the end of the feed now."""
+    feed = _feed(client, limit=2000)
+    while feed["more"]:
+        feed = _feed(client, feed["cursor"], limit=2000)
+    return feed["cursor"]
+
+
+def _insert(client, page_id, block_id):
+    r = client.post(f"/api/pages/{page_id}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": block_id, "parent": page_id, "position": generate_key_between(None, None),
+         "content": block_id}]})
+    assert r.status_code == 200, r.text
+    return r.json()["seq"]
 
 
 def test_feed_lists_changed_and_deleted_pages_with_their_seq(guest):
-    old = make_page(guest, "Old")
-    _stamp(guest_name(), old["id"], "2020-01-01T00:00:00.000000Z")
-    cursor = "2021-01-01T00:00:00.000000Z"
-
+    make_page(guest, "Old")
+    cursor = _caught_up(guest)
     page = make_page(guest, "Fresh")
-    before = _feed(guest, cursor)
-    assert old["id"] not in _ids(before) and page["id"] in _ids(before)
-    entry = next(p for p in before["pages"] if p["id"] == page["id"])
+    feed = _feed(guest, cursor)
+    assert _ids(feed) == [page["id"]] and feed["deleted"] == [] and feed["more"] is False
+    assert feed["since"] == cursor and int(feed["cursor"]) > int(cursor)
+    entry = feed["pages"][0]
     assert entry["seq"] == 0 and entry["created_at"] == entry["updated_at"]
 
-    r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
-        {"op": "insert", "id": "sfA", "parent": page["id"],
-         "position": generate_key_between(None, None), "content": "a"}]})
-    assert r.status_code == 200, r.text
+    seq = _insert(guest, page["id"], "sfA")
     after = _feed(guest, cursor)
-    entry = next(p for p in after["pages"] if p["id"] == page["id"])
-    assert entry["seq"] == r.json()["seq"] and entry["updated_at"] > entry["created_at"]
+    assert _ids(after) == [page["id"]]
+    assert after["pages"][0]["seq"] == seq and after["pages"][0]["updated_at"] > entry["created_at"]
 
     guest.delete(f"/api/blocks/{page['id']}").raise_for_status()
     gone = _feed(guest, cursor)
-    assert page["id"] not in _ids(gone)
-    assert [(d["id"], d["actor"]) for d in gone["deleted"] if d["id"] == page["id"]] == [(page["id"], guest_name())]
-    assert gone["more"] is False and gone["since"] == cursor
+    assert _ids(gone) == [] and [(d["id"], d["actor"]) for d in gone["deleted"]] == [
+        (page["id"], account_of(guest_name()))]
 
 
-def test_feed_paginates_with_a_strict_cursor_and_no_repeats(guest):
-    base = "2019-06-01T00:00:00.00000"
-    pages = [make_page(guest, f"P{i}") for i in range(5)]
-    # three pages share one timestamp (what an import does), two follow
-    for i, p in enumerate(pages):
-        _stamp(guest_name(), p["id"], f"{base}{0 if i < 3 else i}Z")
-    since = "2019-01-01T00:00:00.000000Z"
-    seen, cursor, rounds = [], since, 0
-    while True:
-        feed = _feed(guest, cursor, limit=2)
+def test_a_change_is_listed_once(guest):
+    a, b = make_page(guest, "Once A"), make_page(guest, "Once B")
+    cursor = _caught_up(guest)
+    assert _feed(guest, cursor) == {"since": cursor, "cursor": cursor, "more": False, "pages": [], "deleted": []}
+    _insert(guest, a["id"], "sfOnce1")
+    once = _feed(guest, cursor)
+    assert _ids(once) == [a["id"]]
+    assert _feed(guest, once["cursor"])["pages"] == []  # caught up: nothing again, ever
+    # b written, then a again: each once, in the order they were last written
+    _insert(guest, b["id"], "sfOnce2")
+    _insert(guest, a["id"], "sfOnce3")
+    assert _ids(_feed(guest, once["cursor"])) == [b["id"], a["id"]]
+    assert _ids(_feed(guest, cursor)) == [b["id"], a["id"]]
+
+
+def test_feed_paginates_in_seq_order_and_a_page_written_meanwhile_comes_again_later(guest):
+    cursor = _caught_up(guest)
+    pages = [make_page(guest, f"P{i}")["id"] for i in range(5)]
+    first = _feed(guest, cursor, limit=2)
+    assert _ids(first) == pages[:2] and first["more"] is True
+    _insert(guest, pages[0], "sfPaged")  # written while the walk goes on: its row moves past the walk
+    seen, cursors, feed = _ids(first), [int(first["cursor"])], first
+    while feed["more"]:
+        feed = _feed(guest, feed["cursor"], limit=2)
+        assert len(feed["pages"]) + len(feed["deleted"]) <= 2
         seen += _ids(feed)
-        rounds += 1
-        if not feed["more"]:
-            break
-        assert "|" in feed["cursor"]  # time + id: strict, no repeats inside one walk
-        cursor = feed["cursor"]
-    ours = [i for i in seen if i in {p["id"] for p in pages}]
-    assert ours == [p["id"] for p in sorted(pages[:3], key=lambda p: p["id"])] + [pages[3]["id"], pages[4]["id"]]
-    assert len(ours) == len(set(ours)) and rounds >= 3
+        cursors.append(int(feed["cursor"]))
+    assert seen == pages + [pages[0]]
+    assert cursors == sorted(set(cursors)) and len(cursors) == 3  # strictly forward, 2 + 2 + 2
+    assert feed["cursor"] == _caught_up(guest)
 
 
-def test_caught_up_cursor_keeps_a_grace_window(guest, monkeypatch):
-    page = make_page(guest, "Graced")
-    feed = _feed(guest, "2000-01-01T00:00:00.000000Z", limit=2000)
-    assert feed["more"] is False and "|" not in feed["cursor"]
-    # the cursor sits GRACE_SECONDS in the past: a page written just now is listed again
-    again = _feed(guest, feed["cursor"], limit=2000)
-    assert page["id"] in _ids(again)
-    # but never behind a cursor the caller already had
-    future = "2999-01-01T00:00:00.000000Z"
-    assert _feed(guest, future)["cursor"] == future
+def test_a_page_made_again_under_a_deleted_id_is_live(guest):
+    ws = workspace_of(guest_name())
+    page = make_page(guest, "Gone for good")
+    cursor = _caught_up(guest)
+    with connect_pages_db(ws) as conn:
+        ops.delete_page(ws, conn, page["id"], actor="sf_t")
+    gone = _feed(guest, cursor)
+    assert _ids(gone) == [] and _ids(gone, "deleted") == [page["id"]]
+    r = guest.post("/api/pages", json={"id": page["id"], "title": "Back again"})
+    assert r.status_code == 200, r.text
+    for since in (cursor, gone["cursor"]):  # one row per page: the newest says what it is
+        back = _feed(guest, since)
+        assert _ids(back) == [page["id"]] and back["deleted"] == []
+
+
+def test_a_cursor_this_log_never_gave_out_lists_from_the_start(guest):
+    make_page(guest, "Listed whatever")
+    everything = _feed(guest, "", limit=2000)
+    assert everything["more"] is False
+    for since in ("0", "2026-01-01T00:00:00.000000Z|abc", "-3", "x", "１２", str(int(everything["cursor"]) + 1)):
+        again = _feed(guest, since, limit=2000)
+        assert (again["pages"], again["deleted"], again["cursor"]) == (
+            everything["pages"], everything["deleted"], everything["cursor"]), since
 
 
 def test_feed_is_workspace_scoped_and_needs_a_session(client, guest, anon):
@@ -91,21 +120,19 @@ def test_feed_is_workspace_scoped_and_needs_a_session(client, guest, anon):
     other = login("feed_other", "pw")
     mine = make_page(guest, "Mine")
     theirs = make_page(other, "Theirs")
-    assert mine["id"] in _ids(_feed(guest)) and theirs["id"] not in _ids(_feed(guest))
+    assert mine["id"] in _ids(_feed(guest, limit=2000)) and theirs["id"] not in _ids(_feed(guest, limit=2000))
     assert theirs["id"] in _ids(_feed(other)) and mine["id"] not in _ids(_feed(other))
     assert anon.get("/api/sync/changes").status_code == 401
     assert guest.get("/api/sync/changes?limit=0").status_code == 200
 
 
 def test_wholesale_rewrites_reach_the_feed(guest):
-    """A subtree replace on a nested block logs a reload — and stamps the
+    """A subtree replace on a nested block logs a reload — and touches the
     page, so the feed lists it."""
     page = make_page(guest, "Rewritten")
     child = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "c"}).json()
-    _stamp(guest_name(), page["id"], "2018-01-01T00:00:00.000000Z")
-    cursor = "2018-06-01T00:00:00.000000Z"
-    assert page["id"] not in _ids(_feed(guest, cursor))
+    cursor = _caught_up(guest)
     r = guest.put(f"/api/blocks/{child['id']}/children", json={"blocks": [{"content": "grandchild"}]})
     assert r.status_code == 200, r.text
-    entry = next(p for p in _feed(guest, cursor)["pages"] if p["id"] == page["id"])
-    assert entry["seq"] >= 2
+    feed = _feed(guest, cursor)
+    assert _ids(feed) == [page["id"]] and feed["pages"][0]["seq"] >= 2

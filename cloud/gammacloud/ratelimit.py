@@ -3,6 +3,7 @@ login, reset, token). Fixed-window counters in a dict — resets on restart.
 The first line of defence is Cloudflare's rate rules in front of the
 server; this one stops trivial guessing from a single host."""
 
+import ipaddress
 import time
 from collections import defaultdict
 
@@ -19,6 +20,26 @@ def client_ip(request: Request) -> str:
     through Cloudflare alone for the header to be trusted
     (cloud/deploy/README.md)."""
     return request.headers.get("cf-connecting-ip", "").strip() or (request.client.host if request.client else "?")
+
+
+def ip_bucket(ip: str) -> str:
+    """The part of an address a rate limit counts. IPv6 is cut to its /64,
+    the smallest block a provider hands a customer, so rotating through it
+    shares one allowance. IPv4 is used whole."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip                                    # "?" — no peer address
+    if addr.version == 4:
+        return ip
+    if addr.ipv4_mapped:
+        return str(addr.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+
+
+def limit_ip(request: Request) -> str:
+    """The client's ``ip_bucket``: what every per-IP rate-limit key is built from."""
+    return ip_bucket(client_ip(request))
 
 
 def ip_of(request: Request | None) -> str:

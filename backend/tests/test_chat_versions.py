@@ -26,7 +26,7 @@ def _sessions(c, bucket):
 
 
 def test_a_save_from_an_older_copy_is_refused_with_the_stored_one(tabs):
-    c, key = tabs, "home:cv/save"
+    c, key = tabs, "cv-save"
     first = c.get(f"/api/chats/{key}").json()
     assert first == {"messages": [], "title": "", "updated_at": ""}
     # Tab A saves after reading "no conversation"; tab B read the same.
@@ -51,7 +51,7 @@ def test_a_save_from_an_older_copy_is_refused_with_the_stored_one(tabs):
 
 
 def test_every_save_moves_the_version_on(tabs):
-    c, key = tabs, "home:cv/versions"
+    c, key = tabs, "cv-versions"
     at = ""
     for i in range(5):
         r = c.put(f"/api/chats/{key}", json={"messages": _msgs(f"q{i}"), "updated_at": at})
@@ -61,7 +61,7 @@ def test_every_save_moves_the_version_on(tabs):
 
 
 def test_a_rename_changes_only_the_title(tabs):
-    c, key = tabs, "home:cv/rename"
+    c, key = tabs, "cv-rename"
     at = c.put(f"/api/chats/{key}", json={"messages": _msgs("hello"), "updated_at": ""}).json()["updated_at"]
     r = c.put(f"/api/chats/{key}", json={"title": "Named"})
     assert r.status_code == 200 and r.json()["updated_at"] == at
@@ -72,7 +72,7 @@ def test_a_rename_changes_only_the_title(tabs):
 
 
 def test_new_chat_from_an_older_copy_archives_the_newer_one_too(tabs):
-    c, key = tabs, "home:cv/archive"
+    c, key = tabs, "cv-archive"
     stale = _msgs("A: question")
     at = c.put(f"/api/chats/{key}", json={"messages": stale, "updated_at": ""}).json()["updated_at"]
     newer = stale + _msgs("B: follow-up", "B: answer", who="B")
@@ -85,7 +85,7 @@ def test_new_chat_from_an_older_copy_archives_the_newer_one_too(tabs):
     (entry,) = _sessions(c, key)
     assert entry["count"] == len(newer)
     # Two copies that each hold something the other lacks are both kept.
-    key = "home:cv/archive-both"
+    key = "cv-archive-both"
     base = _msgs("shared question")
     at = c.put(f"/api/chats/{key}", json={"messages": base, "updated_at": ""}).json()["updated_at"]
     c.put(f"/api/chats/{key}", json={"messages": base + _msgs("B only", who="B"), "updated_at": at})
@@ -93,7 +93,7 @@ def test_new_chat_from_an_older_copy_archives_the_newer_one_too(tabs):
                                                "updated_at": at})
     assert sorted(s["count"] for s in _sessions(c, key)) == [2, 2]
     # A client whose copy is current archives just its copy, as before.
-    key = "home:cv/archive-current"
+    key = "cv-archive-current"
     at = c.put(f"/api/chats/{key}", json={"messages": base, "updated_at": ""}).json()["updated_at"]
     c.post("/api/chat-history/archive", json={"bucket": key, "messages": base + _msgs("unsaved tail", who="D"),
                                                "updated_at": at})
@@ -101,7 +101,7 @@ def test_new_chat_from_an_older_copy_archives_the_newer_one_too(tabs):
 
 
 def test_opening_an_entry_from_an_older_copy_keeps_the_newer_one(tabs):
-    c, key = tabs, "home:cv/open"
+    c, key = tabs, "cv-open"
     entry = c.post("/api/chat-history/archive", json={"bucket": key, "messages": _msgs("old convo")}).json()["id"]
     at = c.put(f"/api/chats/{key}", json={"messages": _msgs("mine"), "updated_at": ""}).json()["updated_at"]
     c.put(f"/api/chats/{key}", json={"messages": _msgs("mine") + _msgs("theirs", who="T"), "updated_at": at})

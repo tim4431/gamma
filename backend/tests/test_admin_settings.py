@@ -4,36 +4,25 @@ import time
 
 import pytest
 
-from conftest import login as _login, make_user as _make_user, workspace_of
+from conftest import account_of, drop_user, login as _login, make_user as _make_user, workspace_of
 
 
 def _pdf_of_mb(mb, filler=b"x"):
     return b"%PDF-1.4 " + filler * (mb * 1024 * 1024)
 
 
-def _drop_user(username):
-    """Remove the account again — test_admin_users assumes it knows every
-    admin in the shared users.db, so this module must not leave one behind."""
-    from gamma.db import connect_users_db
-
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
-
-
 @pytest.fixture(scope="module")
 def sizeadmin(client):
     _make_user("sizeadmin", "sizeadminpw", is_admin=1)
     yield _login("sizeadmin", "sizeadminpw")
-    _drop_user("sizeadmin")
+    drop_user("sizeadmin")
 
 
 @pytest.fixture(scope="module")
 def sizeuser(client):
     _make_user("sizeuser", "sizeuserpw", is_admin=0)
     yield _login("sizeuser", "sizeuserpw")
-    _drop_user("sizeuser")
+    drop_user("sizeuser")
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +154,7 @@ def test_validation(sizeadmin):
 def test_guest_quota_settable_but_not_credentials(sizeadmin, guest_account):
     from gamma.server_settings import GUEST_DEFAULT_QUOTA_MB, user_limits
 
-    assert user_limits(guest_account)["quota_mb"] == GUEST_DEFAULT_QUOTA_MB  # bounded by is_guest, not by name
+    assert user_limits(account_of(guest_account))["quota_mb"] == GUEST_DEFAULT_QUOTA_MB  # bounded by is_guest, not by name
     r = sizeadmin.put(f"/api/admin/users/{guest_account}", json={"quota_mb": 1})
     assert r.status_code == 200, r.text
     g = next(u for u in r.json()["users"] if u["username"] == guest_account)
@@ -179,9 +168,9 @@ def test_guest_quota_settable_but_not_credentials(sizeadmin, guest_account):
 def guest_account():
     """A guest account of this test's own (gamma/guests.py), deleted after."""
     from gamma import guests, workspaces
-    name = guests.new_guest()
+    user_id, name = guests.new_guest()
     yield name
-    workspaces.delete_account(name)
+    workspaces.delete_account(user_id)
 
 
 def test_corrupt_values_fall_back_to_defaults():
@@ -191,5 +180,5 @@ def test_corrupt_values_fall_back_to_defaults():
     with connect_users_db() as conn:
         conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('max_upload_mb', 'junk', '')")
         conn.commit()
-    limits = user_limits("sizeuser")
+    limits = user_limits(account_of("sizeuser"))
     assert limits["max_upload_mb"] == 50 and limits["quota_mb"] == 0

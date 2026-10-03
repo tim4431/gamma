@@ -10,11 +10,10 @@ import time
 import urllib.error
 import urllib.request
 
-import bcrypt
 import pytest
-from fastapi.testclient import TestClient
 
 import gamma.chatgpt_oauth as co
+from conftest import account_of
 from gamma import ai_catalog
 from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
 from gamma.routers.ai import _sse_deltas
@@ -42,21 +41,10 @@ def _fake_tokens(exp=None, email="tim@example.com", account="acct-123"):
 @pytest.fixture(scope="module")
 def erin(client):
     """A non-guest user (guests may not store credentials)."""
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma import workspaces
+    from conftest import login, make_user
 
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'erin'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                ("erin", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    workspaces.ensure_personal("erin")
-    c = TestClient(app)
-    r = c.post("/api/login", json={"username": "erin", "password": "pw"})
-    assert r.status_code == 200, r.text
+    make_user("erin", "pw")
+    c = login("erin", "pw")
     return c
 
 
@@ -141,18 +129,18 @@ def test_connect_flow_creates_masked_entry_and_models(erin, monkeypatch):
 def test_expired_token_is_refreshed_lazily(erin, monkeypatch):
     from gamma.ai_settings import ai_runtime, load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10  # force expiry
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     monkeypatch.setattr(co, "_token_request", lambda form: fresh)
-    rt = ai_runtime("erin")
+    rt = ai_runtime(account_of("erin"))
     conf = rt["providers"][entry["id"]]
     assert conf["api_key"] == fresh["access_token"]
     # …and the refreshed token was persisted for the next request
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
 
 
@@ -163,11 +151,11 @@ def test_concurrent_requests_refresh_once(erin, monkeypatch):
     import threading
     from gamma.ai_settings import ai_runtime, load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10
     entry["oauth"].pop("refresh_failed_at", None)
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     calls = []
@@ -180,14 +168,14 @@ def test_concurrent_requests_refresh_once(erin, monkeypatch):
     monkeypatch.setattr(co, "_token_request", slow_refresh)
     keys = []
     threads = [threading.Thread(target=lambda: keys.append(
-        ai_runtime("erin")["providers"][entry["id"]]["api_key"])) for _ in range(5)]
+        ai_runtime(account_of("erin"))["providers"][entry["id"]]["api_key"])) for _ in range(5)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert len(calls) == 1
     assert keys == [fresh["access_token"]] * 5
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
 
 
@@ -210,11 +198,11 @@ def test_provider_test_retries_a_backed_off_refresh(erin, monkeypatch):
     import gamma.routers.ai as ai_mod
     from gamma.ai_settings import load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10
     entry["oauth"]["refresh_failed_at"] = int(time.time())  # inside the backoff window
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     monkeypatch.setattr(co, "_token_request", lambda form: fresh)
@@ -222,7 +210,7 @@ def test_provider_test_retries_a_backed_off_refresh(erin, monkeypatch):
     r = erin.post(f"/api/ai/providers/{entry['id']}/test")
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
     assert "refresh_failed_at" not in saved["oauth"]
 
@@ -244,14 +232,14 @@ class _FakeResp:
 def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
     from gamma.ai_settings import load_provider_entries
 
-    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    entry = next(e for e in load_provider_entries(account_of("erin")) if e.get("protocol") == "chatgpt")
     # A crafted settings request must not redirect an OAuth bearer token.
     edited = erin.put(f"/api/ai/providers/{entry['id']}", json={
         "base_url": "https://attacker.example/codex",
         "api_key": "stolen-on-next-call",
     })
     assert edited.status_code == 200
-    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    entry = next(e for e in load_provider_entries(account_of("erin")) if e.get("protocol") == "chatgpt")
     assert entry.get("base_url") != "https://attacker.example/codex"
     assert entry.get("api_key") != "stolen-on-next-call"
     seen = {}
@@ -474,7 +462,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     calls = []
     listing = {"models": [{"slug": model["model"], "context_window": 272_000,
                            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"},
-                                                          {"effort": "high"}, {"effort": "xhigh"}]}]}
+                                                          {"effort": "high"}, {"effort": "xhigh"}],
+                           "service_tiers": [{"id": "priority", "name": "Fast"}]}]}
     catalog = {
         "openai": {"models": {model["model"]: {
             "id": model["model"], "limit": {"context": 400_000}, "reasoning": True,
@@ -493,7 +482,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
 
     # The provider's own listing says it; asked once, then cached.
     assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider",
-                     "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider"}
+                     "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider",
+                     "speeds": ["fast"], "speeds_source": "provider"}
     assert ask()["context_window"] == 272_000
     assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
 
@@ -502,14 +492,16 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     listing = {"models": [{"slug": model["model"]}]}
     ai_catalog._listings.clear()
     assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev",
-                     "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev"}
+                     "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev",
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
 
     # Nobody knows it: null, never a guess.
     catalog = {"openai": {"models": {}}}
     ai_catalog._listings.clear()
     ai_catalog._models_dev.update(index=None, until=0.0)
     assert ask() == {"model": model["model"], "context_window": None, "source": "",
-                     "efforts": None, "efforts_source": ""}
+                     "efforts": None, "efforts_source": "",
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
 
 
 def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
@@ -569,6 +561,35 @@ def test_reasoning_efforts_from_an_anthropic_listing_then_models_dev(monkeypatch
     assert ai_catalog.reasoning_efforts("p", conf, "no-reasoning") == ([], "models.dev")
     assert ai_catalog.reasoning_efforts("p", conf, "older-entry") == (None, "")
     assert ai_catalog.context_window("p", conf, "older-entry") == (8000, "models.dev")
+
+
+def test_speed_tiers_from_the_listing_then_the_wire(monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
+    codex = {"protocol": "chatgpt", "api_key": "k", "account_id": "a",
+             "base_url": "https://chatgpt.com/backend-api/codex", "name": "ChatGPT"}
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
+        {"models": [{"slug": "fast-and-flex",
+                     "service_tiers": [{"id": "flex", "name": "Flex"}, {"id": "priority", "name": "Fast"}]},
+                    {"slug": "standard-only", "service_tiers": []},
+                    {"slug": "older-row"}]}))
+    # The backend's listing names each model's tiers, by its own ids.
+    assert ai_catalog.speed_tiers("p", codex, "fast-and-flex") == (["flex", "fast"], "provider")
+    # A model it lists with none has no speed control at all.
+    assert ai_catalog.speed_tiers("p", codex, "standard-only") == ([], "provider")
+    # A row that doesn't say falls back to what the wire itself can ask for.
+    assert ai_catalog.speed_tiers("p", codex, "older-row") == (["flex", "fast"], "protocol")
+
+    # Anthropic's listing carries no speed facts, so fast mode is the wire's
+    # answer for every model its own endpoint serves...
+    anthropic = {"protocol": "anthropic", "api_key": "k",
+                 "base_url": "https://api.anthropic.com", "name": "Anthropic"}
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp({"data": [{"id": "claude-a"}]}))
+    assert ai_catalog.speed_tiers("p", anthropic, "claude-a") == (["fast"], "protocol")
+    # ...and none for a service that merely speaks its API elsewhere.
+    kimi = {**anthropic, "base_url": "https://api.moonshot.ai/anthropic", "name": "Kimi"}
+    assert ai_catalog.speed_tiers("p", kimi, "kimi-k2") == ([], "")
 
 
 # --- The sign-in finishing without a paste ------------------------------------

@@ -6,7 +6,7 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import guest_name, login, make_page, make_user, recv, workspace_of
+from conftest import account_of, guest_name, login, make_page, make_user, recv, workspace_of
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -63,7 +63,7 @@ def test_ops_batch_insert_set_move_delete(guest):
     # the log holds every batch, per page, and catch-up reads after a seq
     log = guest.get(f"/api/pages/{page['id']}/ops", params={"since": 0}).json()
     assert log["seq"] == 4 and [b["seq"] for b in log["batches"]] == [1, 2, 3, 4]
-    assert log["batches"][0]["client"] == "t" and log["batches"][0]["actor"] == guest_name()
+    assert log["batches"][0]["client"] == "t" and log["batches"][0]["actor"] == account_of(guest_name())
     assert log["batches"][3]["ops"] == [{"op": "delete", "id": "opA"}]
     tail = guest.get(f"/api/pages/{page['id']}/ops", params={"since": 3}).json()
     assert [b["seq"] for b in tail["batches"]] == [4]
@@ -227,7 +227,7 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
     q = {"share": token}
     r = _ops(editor, page["id"], [{"op": "insert", "id": "shA", "parent": page["id"], "content": "from editor"}], params=q)
     assert r.status_code == 200, r.text
-    assert owner.get(f"/api/pages/{page["id"]}/ops").json()["batches"][-1]["actor"] == "editor_collab"
+    assert owner.get(f"/api/pages/{page["id"]}/ops").json()["batches"][-1]["actor"] == account_of("editor_collab")
     # rename yes, page properties no
     assert _ops(editor, page["id"], [{"op": "set", "id": page["id"], "content": "Renamed by editor"}], params=q).status_code == 200
     r = _ops(editor, page["id"], [{"op": "set", "id": page["id"], "props": {"doc_id": "evil"}}], params=q)
@@ -274,7 +274,7 @@ def test_socket_hello_and_fanout(guest):
             assert r.status_code == 200
             for ws in (a, b):
                 m = recv(ws, "ops")
-                assert m["seq"] == hello["seq"] + 1 and m["client"] == "aa" and m["actor"] == guest_name()
+                assert m["seq"] == hello["seq"] + 1 and m["client"] == "aa" and m["actor"] == account_of(guest_name())
                 assert m["ops"][0]["id"] == "wsA" and m["ops"][0]["position"]
         assert recv(a, "leave")["client"] == "bb"
 
@@ -470,3 +470,54 @@ def test_merged_batch_remaps_the_writers_caret(guest):
         m = recv(w, "ops")
         assert m["ops"][0]["content"] == "hello brave world!"
         assert m["cursor"] == {"block": blk["id"], "anchor": 18, "head": 18}
+
+
+def test_a_merge_runs_before_the_write_lock_and_again_if_the_block_changed(guest, monkeypatch):
+    """A batch's text merges are computed before it takes the workspace's
+    write lock (ops._premerge), and the batch under the lock takes them from
+    there; a block someone changed in between is merged again, against the
+    text it holds then, with the caret remapped into that."""
+    from gamma import ops, textmerge
+    from gamma.db import connect_pages_db
+    ws = workspace_of(guest_name())
+    page = make_page(guest, "Premerge page")["id"]
+    blk = guest.post("/api/blocks", json={"parent_id": page, "content": "hello world"}).json()["id"]
+    assert _ops(guest, page, [{"op": "set", "id": blk, "content": "hello brave world!", "base": "hello world"}]).status_code == 200
+    held, merged_into = {}, []  # the batch's connection; (under its lock?, the text merged into)
+    real_merge, real_premerge = textmerge.merge, ops._premerge
+
+    def merge(base, ours, theirs, *args):
+        merged_into.append((held["conn"].in_transaction, theirs))
+        return real_merge(base, ours, theirs, *args)
+
+    monkeypatch.setattr(textmerge, "merge", merge)
+
+    def apply(content):
+        with connect_pages_db(ws) as conn:
+            held["conn"] = conn
+            return ops.apply_ops(conn, page, [{"op": "set", "id": blk, "content": content, "base": "hello world"}],
+                                 actor="", client="b", cursor={"block": blk, "anchor": len(content), "head": len(content)})
+
+    result = apply("hello world, again")
+    expected = real_merge("hello world", "hello world, again", "hello brave world!")[0]
+    assert result["ops"][0]["content"] == expected
+    assert merged_into == [(False, "hello brave world!")], "merged once, before the lock"
+
+    first, stored = expected, f"oh {expected}"
+    someone = [{"op": "set", "id": blk, "content": stored, "base": first}]
+
+    def premerge_then_someone_types(conn, *args):
+        merges = real_premerge(conn, *args)
+        if someone:
+            ops.commit_ops(ws, page, [someone.pop()], actor="")
+        return merges
+
+    monkeypatch.setattr(ops, "_premerge", premerge_then_someone_types)
+    merged_into.clear()
+    result = apply("hello world, and again")
+    expected = real_merge("hello world", "hello world, and again", stored)[0]
+    caret = textmerge.map_offset("hello world, and again", expected, len("hello world, and again"))
+    assert result["ops"][0]["content"] == expected and expected.startswith("oh ")
+    assert result["cursor"] == {"block": blk, "anchor": caret, "head": caret}
+    assert merged_into == [(False, first), (True, stored)], "merged again under the lock"
+    assert _tree(guest, page)[0]["content"] == expected

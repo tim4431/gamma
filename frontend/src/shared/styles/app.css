@@ -4147,7 +4147,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatModelChip .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.chatModelChip .uiSelectLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The chip's label is a row: the model (with its effort), ellipsized, then
+   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
+.chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
+.chatModelChip .chatModelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatSpeedGlyph { flex-shrink: 0; vertical-align: -2px; }
+.chatMsgModel .chatSpeedGlyph { margin-left: 4px; }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
 .chatMentionInput textarea { width: 100%; min-width: 0; }
 .chatMentionPicker {
@@ -5314,12 +5319,78 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   white-space: pre;
 }
+/* The BibTeX review needs room for two panes; every other step keeps the
+   dialog's usual width. */
+.reportModal.transferModalWide { width: min(1000px, calc(100vw - 32px)); max-width: 1000px; }
+/* The picked paper's entry in the BibTeX step: taller than the share
+   popover's, and long titles wrap instead of scrolling sideways. */
+.bibtexPreview {
+  max-height: 240px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* The BibTeX step's two panes, the shape the Zotero import review uses: the
+   papers on the left, the picked one's entry on the right. The dialog widens
+   for this step only (.transferModalWide). */
+.bibColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: var(--space-5);
+  margin-bottom: 12px;
+}
+.bibColumns section {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.bibColumns h3 { font-size: var(--fs-md); margin: 12px 12px 6px; }
+.bibPaperList, .bibEntryPane { overflow: auto; height: min(34vh, 320px); padding: 0 10px 10px; }
+/* Each paper: its title, and underneath the key the file will cite it by. */
+.bibPaperRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.bibPaperRow:hover { background: var(--bg-hover); }
+.bibPaperRow[aria-pressed="true"] { background: var(--bg-selected); border-color: var(--accent); }
+.bibPaperTitle { font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.bibPaperKey {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+/* A page that cannot be cited: shown where the question is asked, not clickable. */
+.bibPaperSkipped { cursor: default; opacity: 0.6; }
+.bibPaperSkipped:hover { background: transparent; }
+.bibPaperSkipped .bibPaperKey { font-family: inherit; }
+.bibPaneEmpty { margin: 4px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
+/* One column on a phone, at the import review's breakpoint (importReview.css). */
+@media (max-width: 640px) {
+  .bibColumns { grid-template-columns: minmax(0, 1fr); }
+  .bibPaperList, .bibEntryPane { height: 180px; }
+}
 
 /* --- paper metadata popover --- */
 .metaPopover { min-width: 340px; max-width: 420px; }
 .metaTable { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px; }
 .metaRow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.45; }
-.metaKey { color: var(--text-dim); flex: 0 0 52px; }
+/* Wide enough for the longest key, "Source file", on one line. */
+.metaKey { color: var(--text-dim); flex: 0 0 64px; }
 .metaVal { color: var(--text-secondary); min-width: 0; word-break: break-word; }
 .metaVal a { color: var(--accent); text-decoration: none; }
 .metaVal a:hover { text-decoration: underline; }
@@ -5345,11 +5416,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-input);
   color: var(--text-primary);
 }
+/* A citation key is a code token, not prose. */
+.metaCiteKey { font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .metaLink { display: inline-flex; align-items: center; color: var(--accent); flex-shrink: 0; }
 /* Icon buttons inside metadata rows: negative vertical margins keep the 20px
    hit target from inflating the text row's height, so keys and values stay
    on one baseline. */
 .metaTable .metaRowBtn { width: 20px; height: 20px; margin: -4px 0; }
+/* The Source row's Verify, at the row's end: a compact uiBtn whose negative
+   margins keep the row's height, like the icon buttons above. */
+.metaTable .uiBtn.metaVerifyBtn { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-3); }
+/* The source file's path: one line, the whole path in the tooltip. */
+.metaPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- reference-link creation --- */
 .linkTipBtn {

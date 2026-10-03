@@ -11,7 +11,7 @@ preset.
 """
 
 from .anthropic import Anthropic
-from .base import Protocol
+from .base import SPEED_ORDER, Protocol
 from .chatgpt import ChatGPT
 from .openai import OpenAIChat
 from .responses import OPENAI_RESPONSES
@@ -43,4 +43,4 @@ def of(conf: dict) -> Protocol:
     return WIRES[conf["protocol"]]
 
 
-__all__ = ["PROTOCOLS", "SERVICES", "WIRES", "Protocol", "get", "of"]
+__all__ = ["PROTOCOLS", "SERVICES", "SPEED_ORDER", "WIRES", "Protocol", "get", "of"]

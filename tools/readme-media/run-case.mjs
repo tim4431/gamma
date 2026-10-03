@@ -26,7 +26,7 @@ try {
     server.manage('create-user', 'demo', 'isolated-media-only');
     const account = await new Account(server, 'demo', 'isolated-media-only').login();
     await account.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');
-    await account.api('/api/blocks/fy0-h_BqOHcH', { method: 'PUT', body: { properties: { folder: 'Quantum/Neutral atoms' } } });
+    await account.file('fy0-h_BqOHcH', { folders: ['Quantum/Neutral atoms'] });   // the folder made where missing (harness.mjs Account.file)
     state.base = server.base; state.workspace = account.ws;
     if (isolatedNotes) {
       const note = await account.api('/api/pages', { method: 'POST', body: { title: 'Rabi oscillations' } });

@@ -11,8 +11,9 @@ default. Quota 0 means unlimited.
 
 What a workspace's uploads are checked against (`workspace_quota`):
   - a PERSONAL workspace: its account's limits, and the account's usage is
-    the uploads/ of all its personal workspaces together — nothing anyone
-    puts into a shared workspace counts against a person;
+    the stored files of all its personal workspaces together (``blobs.usage``:
+    their uploads/, or their objects in a bucket) — nothing anyone puts into
+    a shared workspace counts against a person;
   - a SHARED workspace: the server-wide per-file cap and the workspace's own
     `workspaces.quota_mb` (NULL = unlimited), which admins set.
 The databases are not metered.
@@ -34,9 +35,9 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from . import config
+from . import blobs, config
 from .config import MAX_UPLOAD_BYTES
-from .db import connect_users_db, page_now, ws_uploads_dir
+from .db import account_name, connect_users_db, page_now
 
 MB = 1024 * 1024
 DEFAULT_MAX_UPLOAD_MB = MAX_UPLOAD_BYTES // MB
@@ -236,12 +237,13 @@ def set_default_quota_mb(mb: int) -> None:
     _set_raw("quota_mb", str(validate_quota_mb(mb)))
 
 
-def user_limits(username: str) -> dict:
-    """Effective limits for an account: per-user override, else server default."""
+def user_limits(user_id: str) -> dict:
+    """Effective limits for an account (its id): per-user override, else
+    server default."""
     with connect_users_db() as conn:
         default_upload, default_quota = _defaults(conn)
-        row = conn.execute("SELECT max_upload_mb, quota_mb, is_guest FROM users WHERE username = ?",
-                           (username,)).fetchone()
+        row = conn.execute("SELECT max_upload_mb, quota_mb, is_guest FROM users WHERE id = ?",
+                           (user_id,)).fetchone()
     upload_override = row[0] if row else None
     quota_override = row[1] if row else None
     # A guest account falls back to a bounded quota rather than the (often
@@ -257,32 +259,31 @@ def user_limits(username: str) -> dict:
 def workspace_bytes(ws: str) -> int:
     """Upload bytes stored in one workspace."""
     try:
-        uploads = ws_uploads_dir(ws)
+        return blobs.usage(ws)
     except ValueError:
         return 0
-    if not uploads.exists():
-        return 0
-    return sum(f.stat().st_size for f in uploads.iterdir() if f.is_file())
 
 
-def usage_bytes(username: str) -> int:
+def usage_bytes(user_id: str) -> int:
     """Upload bytes that count against an account: its personal workspaces."""
     from . import workspaces  # local: workspaces imports seed → db
 
-    return sum(workspace_bytes(ws) for ws in workspaces.personal_workspaces(username))
+    return sum(workspace_bytes(ws) for ws in workspaces.personal_workspaces(user_id))
 
 
 def workspace_quota(ws: str) -> dict:
     """The limits and usage that apply to uploads into ``ws``:
     ``{max_upload_mb, quota_mb, used_bytes, workspace_bytes, account}`` —
-    ``account`` is the person whose limits these are (a personal
-    workspace), "" for a shared workspace under its own quota."""
+    ``account`` is the username of the person whose limits these are (a
+    personal workspace), "" for a shared workspace under its own quota."""
     from . import workspaces
 
     used = workspace_bytes(ws)
     owner = workspaces.personal_owner(ws)
     if owner:
-        return {**user_limits(owner), "used_bytes": usage_bytes(owner), "workspace_bytes": used, "account": owner}
+        with connect_users_db() as conn:
+            name = account_name(conn, owner)
+        return {**user_limits(owner), "used_bytes": usage_bytes(owner), "workspace_bytes": used, "account": name}
     info = workspaces.get(ws) or {}
     with connect_users_db() as conn:
         default_upload, _default_quota = _defaults(conn)
@@ -295,7 +296,7 @@ def check_upload_allowed(ws: str, nbytes: int) -> None:
     """Hard gate for explicit uploads into a workspace: 413 over the
     per-file cap, 507 over the quota that applies (``workspace_quota``).
 
-    Callers should skip this when the content hash already exists on disk —
+    Callers should skip this when the content hash is stored already —
     re-uploading a stored file costs nothing, so it is always allowed.
     """
     limits = workspace_quota(ws)

@@ -119,9 +119,10 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 |---|---|
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
+| speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts}]` (`listed_window` / `listed_efforts` read whatever the listing carries), `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds}]` (`listed_window` / `listed_efforts` / `listed_speeds` read whatever the listing carries), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
@@ -275,7 +276,7 @@ of three endings:
 - **Pasted.** The redirect page fails to load and the user pastes its
   address; a paste that doesn't parse leaves the sign-in waiting.
 
-The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+The form (`useProviderEditor` in `settings/providerEditor.js`) asks `status` every 2.5 s
 while the server may catch the sign-in, and calls `complete` with an empty
 `callback` once it is `ready`. A paste of a callback address connects without
 the Connect button, and in Chromium the address is also picked up from the
@@ -288,7 +289,8 @@ maintenance.
 `/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
 Completions API. Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
-set — some models reject it; see "Reasoning effort" below), optional `system` override, pasted `images`
+set — some models reject it; see "Reasoning effort" below), optional `speed`
+(the provider's service tier; see "Speed" below), optional `system` override, pasted `images`
 (data URLs → native image content parts), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
 (the open page). A page's PDF attachment is derived server-side
@@ -441,8 +443,8 @@ Every request re-sends the whole conversation (no wire keeps state:
 `store` stays off on the Responses API, and there is no
 `previous_response_id` — the conversation is Gamma's to keep). What makes
 that cheap is the providers' prefix caches, which every adapter now asks
-for. The chat sends `chat_key` (the bucket: a page id, `home`,
-`home:<folder>`); `_cache_key` in `routers/ai.py` hashes it with the
+for. The chat sends `chat_key` (the bucket: a page id, a folder id,
+`home`); `_cache_key` in `routers/ai.py` hashes it with the
 account and workspace into one opaque id per conversation that
 `ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
 
@@ -503,18 +505,77 @@ token budget has none). `[]` means the model has no effort control: the
 chip's menu drops its effort section and nothing is sent. A model no source
 knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
 preference itself never changes with the model: `effortFor` in
-`chat/effort.js` sends it as it is when the model takes it, else the
+`chat/modelPrefs.js` sends it as it is when the model takes it, else the
 nearest level the model does (a tie goes to the lower), so `xhigh` becomes
 `high` on a model that stops there and comes back on the next model that
 has it. The chip shows that effective level beside the model's name. The
 server accepts `EFFORT_ORDER` (none … max) and drops anything else.
 
 Every reply names what answered it: the stream's `{"model": {id, name,
-effort}}` line (after `{context}`) is saved on the reply as `model` and
-`effort`, and the reply's foot shows "gpt-5.5 · high" before the token line.
+effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
+`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
+token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
+— a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
+tooltip names the tier, since the glyph carries no text). The line comes a
+second time, corrected, when the provider's report says the turn ran at
+another speed than the one asked for (see "Speed" below); the chat keeps
+the latest.
 `GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
 offline server; the browser suite sets it); model facts then come from the
 providers' listings alone.
+
+### Speed (service tier)
+
+Providers sell a faster route to the same model: Anthropic's fast mode,
+OpenAI's and Codex's `service_tier`. One account pref covers them all:
+`chatSpeed`, set from the composer's model chip or Settings → AI → Chat. Its
+values are `ai_protocols.SPEED_ORDER`, `flex` (slower and cheaper) and
+`fast` (the premium low-latency route, around twice the price per token), or
+"" for the provider's usual routing, which leaves the field out.
+
+Each wire maps those canonical names to its own (`Protocol.speeds`,
+`speed_value`), so nothing outside `ai_protocols/` knows a provider's
+spelling:
+
+| Wire | What goes out for `fast` |
+|---|---|
+| `anthropic` | `"speed": "fast"` in the body plus the `anthropic-beta: fast-mode-2026-02-01` header, only against Anthropic's own endpoint (a service speaking the API elsewhere gets neither). No `flex`: standard is its default |
+| `openai`, `openai-responses` | `"service_tier": "priority"` (fast mode's older, still-accepted name), only against OpenAI itself — a compatible server may reject the field. `flex` → `"flex"` |
+| `chatgpt` | the same over the Codex backend; `priority` is the tier id its own catalog names |
+
+`GET /api/ai/model-info` names a model's tiers, cheapest first
+(`ai_catalog.speed_tiers`): the entry's own listing first (the Codex
+backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
+the wire itself can ask for (`"protocol"`). `[]` means no speed control and
+the chip's menu drops its Speed section. Anthropic's listing carries no
+speed facts, so its answer is wire-wide: fast mode is offered for every
+model that endpoint serves. A model that doesn't take it (fast mode is the
+Opus line only) is refused upstream with the provider's own message; the
+alternative, a table of model names in the repository, would go stale.
+
+`speedFor` in `chat/modelPrefs.js` sends the preference only when the model
+has that tier. Unlike effort there is no nearest tier: paying for a speed
+the model doesn't offer, and silently dropping to the cheap one, are both
+decisions that are the user's to make.
+
+What a reply reports is the speed that *served* it, as far as the provider
+says. Each wire reads the tier out of its response — OpenAI's
+`service_tier` (on the completion body and on every streamed chunk, and on
+the Responses API's finished `response`), Anthropic's `usage.speed` (`fast`
+/ `standard`, present once a speed was asked for) — and
+`ai_protocols.base.served_speed_name` maps it onto `SPEED_ORDER`: `priority`
+and `fast` are `fast`, `flex` is `flex`, anything else the provider calls it
+(`default`, `standard`, `scale`) is `""`, the usual routing. The name rides on
+the turn's token report as `speed` (`Protocol.events`, `read_reply`) and the
+chat route (`_served_speed` in `routers/ai.py`) lifts it off before the
+`{usage}` line goes out — that line stays counts only — and makes it the
+reply's `speed`, re-sending the `{model}` line when it changed; over an
+agent reply's rounds the last report wins. A provider that says nothing
+leaves standing what the wire asked for, which is the requested tier only
+when the wire has it on that endpoint (`_sent_speed`, `Protocol.speed_tiers`):
+fast mode asked of an OpenAI-compatible server or of a service speaking
+Anthropic's API behind another host is never sent, so the reply says `""`
+rather than claim a tier nobody was asked for.
 
 ### Selected PDF passages
 
@@ -704,7 +765,7 @@ integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-### Permissions and knobs (Settings → AI → Chat)
+### Permissions and knobs (Settings → AI → Tool usage)
 
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat. The chat header's Tools button and settings
@@ -739,7 +800,7 @@ leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
 
-Settings → AI → Chat → Tools compares permissions in a table: named, explained
+Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
 with a column for each chat kind. Each cell is a state menu whose icon shows
 the state: a green check, the accent's question mark, a muted ban.
@@ -1282,19 +1343,17 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 
 ## Chat history buckets
 
-Focused page id in the paper view, `home` at the library root,
-`home:<folder path>` per folder — each folder keeps its own conversation, and
-switching folders re-scopes the next message. The
-`/api/chats/{block_id:path}` routes take the `:path` converter for the nested
-keys, and folder rename/move/delete calls `POST /api/folders/rename`
-(`chats.move_folder_buckets`; {src, dst}, dst "" for a delete) BEFORE rewriting the tags so the destination
-bucket exists when ChatDock reloads (a destination holding a real conversation
-stays active and the moved-in one is filed into its history; empty save-echo
-rows are overwritten) — folder conversations follow renames and moves. No
-conversation is ever dropped with a folder: a delete ("Keep pages" and
-"Delete pages too" alike) files each active one into its own bucket's
-history, which stays under the folder's key, so a page restored from
-Recently deleted brings its folder back with its chats.
+Focused page id in the paper view, `home` at the library root, the
+folder's own id per folder (folders are blocks,
+[home_library.md](home_library.md) "Folders and labels") — each folder keeps
+its own conversation, and switching folders re-scopes the next message. A
+bucket is always a block id or `home`, so a rename or a move of the folder
+changes nothing about its chat. No conversation is ever dropped with a
+folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
+pages too" alike) files the active conversation and the history of the
+folder and of every folder below it into the library chat's history
+(`home`, `chats.file_into_home`), where they stay findable. ChatDock's
+`chatKey` is the open page's id, else the open folder's id, else `home`.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1345,7 +1404,8 @@ and New chat starts over locally.
 
 ### Chat history
 
-Each bucket keeps its earlier conversations. `chats` (data.db) holds the
+Each bucket keeps its earlier conversations. `chats` (in the workspace's
+pages.db, beside the pages they are about) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
 plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
@@ -1382,8 +1442,12 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
     popover: closing it, or a search that hides a ticked row, drops them, so
     Delete never takes a row the user cannot see.
-- History follows its bucket: `POST /folders/rename` rewrites entry
-  buckets along with the active rows (a folder delete leaves them), and
-  `purge_page_data` drops the entries of a page deleted for good (a page in
-  Recently deleted keeps its chats). The gamma export/import and the account-merge path copy
-  only the active `chats` rows, not history.
+- History follows its bucket: a folder delete moves its entries into
+  `home`'s with the active rows, and `ops.delete_page` drops the active row
+  and the entries of a page deleted for good, in the deleting transaction
+  (a page in Recently deleted keeps its chats). A Gamma export carries its pages' buckets whole (the active
+  conversation and the history; on a folder export the folder views'
+  buckets too), and a backup merge or an import adds every conversation
+  the workspace lacks — a bucket's active one, an archived one by its id
+  (`db.copy_chats`); a replace restore brings the backup's chats with its
+  pages.

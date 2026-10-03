@@ -406,6 +406,20 @@ function useCopied(ms = 1500) {
   return [copied, flash, reset];
 }
 
+// A copyable text box: the rendered text (or a scrolling <pre>) with the copy
+// button pinned top-right — the share popover's slide citation and BibTeX,
+// and the export dialog's whole bibliography.
+function CopyBox({ children, copied, onCopy, title, label }) {
+  return (
+    <div className="copyBox">
+      <div className="copyBoxBody">{children}</div>
+      <button type="button" className={`uiBtn sm iconSq copyBoxBtn ${copied ? "on" : ""}`} onClick={onCopy} title={title} aria-label={label}>
+        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+      </button>
+    </div>
+  );
+}
+
 function PopoverAnchor({ name, children, className = "" }) {
   return (
     <span data-popover={name} className={`popoverAnchor ${className}`.trim()}>
@@ -716,6 +730,7 @@ function useTextScale({ enabled } = {}) {
 export {
   AutoGrowTextarea,
   ChatCiteContext,
+  CopyBox,
   GammaLinkCard,
   GammaNavContext,
   BlockDropIndicator,

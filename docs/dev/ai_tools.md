@@ -7,8 +7,9 @@ around them. The registry lives in `gamma/ai_tools.py`; the surrounding wiring
 Every tool is one `TOOLS` entry declaring its wire spec, Settings permission
 key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
-in-scope check (`_load_scoped_page`/`_scope_pages`: folder = tag prefix match
-via `foldertags.path_within`, page = id equality) is shared by every
+in-scope check (`_load_scoped_page`/`_scope_pages`: folder = the page is
+filed in the chat's folder or below it, `_reach` / `_filed_in` over
+`blocks_store.folder_subtree_ids`; page = id equality) is shared by every
 executor. A mutating entry also has a `preview`: what its approval card
 shows when the user set its permission to Ask. Each changer has three
 parts: a `_plan_*` function checks a call and works out the change, the
@@ -27,9 +28,24 @@ results; `ChatMarkdown` (`shared/ui/Widgets.jsx`) renders such same-origin
 `?page=`/`?block=` links as open-in-place (`onOpenPage` → `openBlock`,
 Ctrl/Cmd-click still opens a tab), so "find me the paper about X" ends in a
 clickable link to the page.
-Folder semantics mirror
-[frontend/src/library/libraryUtils.js](../../frontend/src/library/libraryUtils.js) via the
-shared `gamma/foldertags.py` rules; keep them in sync.
+Folders and labels are blocks ([home_library.md](home_library.md) "Folders
+and labels"). A folder chat's scope names its folder by id (`{"type":
+"folder", "folder": <id>}`, `""` at the library root; the chat request's
+`folder`, [ai.md](ai.md)), and the prompt names it by path with its id
+(`The user is viewing the folder "Physics / QEC" (id …)`). The tools take
+and show paths for the model, the names joined with ` / `
+(`blocks_store.PATH_SEP`), and the ids `list_folders` shows.
+`_resolve_folder` reads every `folder` argument: `""` is the chat's folder
+(the library root in a page chat); a folder id is taken as it is (refused
+outside the chat's folder); anything else is a path, split on ` / ` first,
+then on `/`, each name matched exactly, else ignoring case
+(`blocks_store.named`). A folder chat reads a path inside its folder: one
+that starts with the folder's own path is read from there, any other as a
+path below it. A page chat reads a path from the top. A path several sibling folders share
+is an error naming each one's id and full path, so the model can pass the
+id. A path no folder has is an error for a read (`_find_folder`) and is
+made for `move_page` and `save_paper` (`_made`, `ops.ensure_filing`, only
+when the call runs: a preview makes nothing). Labels are named by name.
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
@@ -79,21 +95,23 @@ the library (not the web and write tools, `view_ink`, `cite` or
 ### list_pages (folder only)
 
 Optional `label` / `folder` / `title_contains` filters narrow the listing, or
-`list_labels: true` returns just the label vocabulary with counts. A `folder`
-filter lists that folder's pages and its subfolders'; a relative path resolves
-inside the chat's folder (`_in_scope_folder`, the rule `list_folders`,
-`read_chats` and `move_page` share).
+`list_labels: true` returns just the label vocabulary with counts (at the
+library root every label, an unused one as 0 pages; in a folder the labels
+its pages carry). Each line shows the page's `folders=["A / B", …]` paths
+and `labels=[…]` names. A `folder` filter (a path or an id,
+`_resolve_folder`) lists that folder's pages and its subfolders'; `label`
+matches a name exactly, else ignoring case.
 
 ### list_folders (folder only)
 
 How the library is organized, before acting on it or walking it: one line per
-folder under the chat's folder (or under `folder`), as a full path indented by
-depth, with the pages filed directly in it and, when different, the pages
-anywhere below it. Parents that only exist through a deeper path (`a` for a
-page filed in `a/b`) are shown, and a page in two subfolders counts once in
-their parent. At the library root a last line counts the pages in no folder.
-The result ends by pointing at `list_pages(folder=…)` and `read_page`, which
-is how an assistant traverses the tree. Shares the "List pages" permission
+folder from the chat's folder (or from `folder`) down, `- [<id>] "a / b"`
+indented by depth, with the pages filed directly in it and, when different,
+the pages anywhere below it (`no pages` for an empty folder — folders are
+real and may be empty). A page in two subfolders counts once in their
+parent. At the library root a last line counts the pages in no folder. The
+result ends by pointing at `list_pages(folder="<path or id>")` and
+`read_page`, which is how an assistant traverses the tree. Shares the "List pages" permission
 with `list_pages`.
 
 ### read_page (both scopes)
@@ -103,7 +121,7 @@ Returns a `page_report_section`: the page's title, a properties line
 attachment's extracted text when the page carries a PDF, then the page's
 highlights and nested notes. A page without an attachment returns its notes —
 they are its content. `pdf_chars` sizes the excerpt per call, capped by the
-Settings / AI / Advanced / "Read window" preference (`gamma-ai-read-chars` →
+Settings / AI / Tool usage / "Read window" preference (`gamma-ai-read-chars` →
 request `read_char_limit`, riding in the scope dict as `read_chars`; default
 cap 20 000 — `agent_tools` formats the effective cap into the armed spec so
 the model knows what it may ask for). `pdf_page` starts the excerpt at a
@@ -117,11 +135,14 @@ An area highlight (a Ctrl+drag rectangle: a highlight block with
 `pdf_position.area` and no quote) has no text to show, so its line names
 the rectangle and its page — "Area highlight (a rectangle on PDF page 4;
 picture 1 attached)" — and the crop of that region rides on the result as
-a picture (`ai_context.area_highlight` turns the stored pixel rectangle
-into page fractions, `render_area_crops` renders it like a selection
-crop; the chip's `images`, which the loop moves onto the tool message like
-`view_pdf_page`'s page). `area_highlight` answers only for a block with
-`highlight_id`, never for a text box, which has no quote either. At most
+a picture (`ai_context.area_highlight` turns the stored rectangle, in
+the position's `width` × `height`, into page fractions,
+`render_area_crops` renders it like a selection crop; the chip's
+`images`, which the loop moves onto the tool message like
+`view_pdf_page`'s page). `area_highlight` answers only for a highlight
+(`highlights.is_highlight`: a position, no ink group), never for a text
+box, which has no quote either, nor for a highlight placed by its page
+alone. At most
 `MAX_AREA_CROPS` (4) per page per read;
 the rest say "no picture: more than the limit on this page". `read_block`
 does the same on its outline lines, and the chat context does it for the
@@ -148,15 +169,14 @@ read from the cut-short page on.
 ### search_library (both scopes)
 
 One query over both FTS indexes for the in-scope pages: the notes index
-(`gamma/block_index.py` — changed pages are rebuilt before the query for up
-to 0.2 s, so an edit made a moment ago is found; the background refresher
-does the rest) and the PDF index (`gamma/pdf_index.py`
+(`gamma/block_index.py`, in pages.db, kept current by every write — an
+edit made a moment ago is found) and the PDF index (`gamma/pdf_index.py`
 `pdf_missing`/`search_pdf` — the same indexes and query rules as
 `GET /api/search` / Ctrl+F).
 Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
 — ids `read_block` and the editors take — then PDF hits as `- PDF "title"
 p.N (page_id …): snippet`. Un-indexed PDFs are kicked to the background indexer and
-reported (as are note pages the background refresher hasn't reached) so the model knows
+reported so the model knows
 results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
 retried with only its longest words and the result labelled approximate —
 otherwise the strict query reads as "the pages are silent" and the model
@@ -183,10 +203,10 @@ context for answering; `read_block` is the editing view.)
 ### read_chats (both scopes)
 
 The AI chat kept with a page or folder, read from the rows the chat panel
-keeps (`chats` / `chat_history` in data.db, bucket keys as in
-[ai.md](ai.md) "Chat history buckets"). `page_id` names a page's chat; without
-it, `folder` names a folder's (a path resolved inside the chat's folder, the
-library root when empty). In a paper chat the page is the default and folder
+keeps (`chats` / `chat_history` in pages.db, bucket keys as in
+[ai.md](ai.md) "Chat history buckets": a folder's bucket is its id).
+`page_id` names a page's chat; without it, `folder` names a folder's (a path
+or an id, `_resolve_folder`; the library root's, `home`, when empty). In a paper chat the page is the default and folder
 chats are out of scope. Pages and folders go through the same scope checks as
 every other read.
 
@@ -282,7 +302,9 @@ result gives:
   publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
   and the paper's own title when it differs from the page's;
 - the stored BibTeX, else one built from the record the way a hand edit
-  builds it (`routers/metadata._build_bibtex`);
+  builds it (`bibtex.build_entry`), under the citation key pinned on the page
+  when there is one — so what the model cites matches the `.bib` export
+  ([import_export.md](import_export.md#bibtex-bibliography));
 - the slide citation when one was made (`ppt_cite`). None is generated,
   since that is an AI call.
 
@@ -392,7 +414,7 @@ are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
 paused searches without an API key (heavy load) — a free OpenAlex API key in
-Settings → AI → Chat → Online search avoids this.)".
+Settings → AI → Tool usage → Online search avoids this.)".
 
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
@@ -463,7 +485,7 @@ search off.
 
 #### Online search services
 
-Settings → AI → Chat → **Online search** (`settings/OnlineSearch.jsx`) holds
+Settings → AI → Tool usage → **Online search** (`settings/OnlineSearch.jsx`) holds
 **Search the web with** (the engine) and one row per service: Brave Search (API
 key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
 or Test, Edit and Remove. Test runs one small search with the stored settings.
@@ -665,7 +687,7 @@ finished reply's actions for the requests it left behind:
   for the request's owner that Gamma page goes straight on to the publisher,
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
-- **Fetch blocked papers in the background** (Settings → AI → Chat → Tools,
+- **Fetch blocked papers in the background** (Settings → AI → Tool usage → Tools,
   `fetchInBackground`, account-wide, on by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The
@@ -808,11 +830,13 @@ through a fetch handoff, the held PDF is stored first (`storage.store_pdf`)
 and the clip uses it. Journal sign-ins are bound from the chat scope like
 `fetch_paper`'s.
 
-`folder` files the paper. A folder chat resolves it inside its folder
-(`move_page`'s rule); a page chat takes it as given, else the open page's
-first folder, which is where the pill files. A paper already in the
-library is only filed. When it is in that folder already, `_plan_save_paper`
-answers that nothing changed, so there is no card and the chip is a no-op.
+`folder` files the paper (a path or an id, `_resolve_folder`; a missing
+one is made when the call runs). A folder chat reads it inside its folder;
+a page chat from the top, else the open page's first folder, which is where
+the pill files. The clip gets the folder's id (`ClipRequest.folder`). A
+paper already in the library is only filed. When it is in that folder
+already (by id), `_plan_save_paper` answers that nothing changed, so there
+is no card and the chip is a no-op.
 In a page chat the new page is outside the chat's reach, and the result
 says to read the paper with `fetch_paper`.
 
@@ -835,11 +859,16 @@ permission in every chat kind, Ask by default.
 ### rename_page / move_page (folder only)
 
 `rename_page` changes a page's title. `move_page` files a page into a
-(sub)folder — a new path creates the folder, and memberships outside the
-current folder are kept. Both are reversible with another call. Their
-actions name the change for the chat's change list: `title` (the page's
-title before the call), `from` / `to` (the old and new title; the old
-folder paths, comma-joined, and the new one, `""` for the library root).
+(sub)folder named by path or id (`_resolve_folder`). A path no folder has
+is created on the `folders` tree before the page's batch. The move is one
+`set` of the page's `folders`: ids outside the chat's folder that still
+exist are kept (`existing_in`), the in-scope ones are replaced by the
+target, and a folder above the target gives way (`blocks_store.refiled`).
+Both are reversible with another call. Their actions name the change for
+the chat's change list: `title` (the page's title before the call), `from` /
+`to` (the old and new title; the old folder paths, comma-joined, and the new
+one, `""` for the library root). The result text adds "(a new folder)" when
+the call made the folder.
 
 ### list_deleted / restore_page (folder only)
 
@@ -849,7 +878,8 @@ library root, every deleted page is. A permission either reads or changes,
 so the two tools have one each:
 
 - `list_deleted`, under **List pages**, lists such pages, the last deleted
-  first: id, title, the folders a restore puts the page back in, when and
+  first: id, title, the folders a restore puts the page back in (the trash
+  entry's `folders` ids, read as paths), when and
   by whom it was deleted, and when it goes for good (`trash.list_trash`).
   `title_contains` filters by title. Its chip is a `list` one.
 - `restore_page`, under **Restore deleted pages** (`restore`, Ask by
@@ -947,8 +977,9 @@ back the page on Rydberg blockade I deleted last week"*.
 Deliberately not offered under any permission:
 
 - Deleting anything — pages, blocks, folders, files.
-- Editing highlight anchors or flat labels (folder labels change only through
-  `move_page`).
+- Editing highlight anchors or labels, creating or renaming folders on
+  their own (a folder is made only as `move_page`'s or `save_paper`'s
+  target), and refiling except through `move_page`.
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads, share links, settings, or other users' data.

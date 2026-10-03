@@ -5,7 +5,11 @@ import { ROOT } from "../harness.mjs";
 import { newPageViaUi } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
-export async function transferScenarios({ server, browser, alice, bob, makePdf, step, assert, assertEq, assertNoProblems, openPage, flags }) {
+// Windows clipboards hand back CRLF; compare against the text as shown.
+const CRLF = String.fromCharCode(13, 10);
+const LF = String.fromCharCode(10);
+
+export async function transferScenarios({ server, browser, alice, bob, makePdf, step, assert, assertEq, assertNoProblems, openPage, until, flags }) {
   async function setup(viewport) {
     const ctx = await alice.context(browser, viewport ? { viewport } : {});
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
@@ -16,7 +20,11 @@ export async function transferScenarios({ server, browser, alice, bob, makePdf, 
     const view = page.locator('[data-popover="menu"] > button');
     await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
     await page.getByRole("button", { name: `${name}…`, exact: true }).click();
-    return page.getByRole("dialog", { name, exact: true });
+    // The dialogs are a chunk fetched on first use (docs/dev/frontend-refactor.md,
+    // "Lazy boundaries"): a click right after the menu opened can beat it.
+    const dialog = page.getByRole("dialog", { name, exact: true });
+    await dialog.waitFor();
+    return dialog;
   }
   const choice = (dialog, name) => dialog.getByRole("button", { name, exact: true });
   const toggle = (dialog, name) => dialog.getByRole("checkbox", { name, exact: true });
@@ -106,7 +114,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await page.waitForSelector(".folderNewBtn");
       let release;
       const gate = new Promise(resolve => { release = resolve; });
-      await page.route("**/api/import/review", async route => {
+      // `*`: the upload's URL carries the workspace (?ws=…).
+      await page.route("**/api/import/review*", async route => {
         const response = await route.fetch();
         await Promise.race([gate, new Promise(resolve => setTimeout(resolve, 3000))]);
         await route.fulfill({ response });
@@ -341,12 +350,13 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
 
   await step("transfer: a folder's papers export as annotated PDFs in one zip, in the background, reopened from the tray", async () => {
     const folder = "E2E annotated";
+    const folderId = await alice.folder(folder);
     for (const [title, where] of [["Folder paper one", folder], ["Folder paper two", `${folder}/Sub`]]) {
       const up = await alice.upload("/api/uploads", makePdf([[title]]), `${title}.pdf`, "application/pdf");
       const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
-      await alice.api(`/api/blocks/${created.id}`, { method: "PUT", body: { properties: { ...created.properties, folder: where } } });
+      await alice.file(created.id, { folders: [where] });
     }
-    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder note page", properties: { folder } } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder note page", properties: { folders: [folderId] } } });
     const { ctx, page } = await setup();
     try {
       // The server's job is quick: its listing is held at "running" so the
@@ -356,14 +366,14 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
         const response = await route.fetch();
         const body = await response.json();
         for (const job of body.jobs || []) {
-          if (hold && job.kind === "export" && job.params.folder === folder) {
+          if (hold && job.kind === "export" && job.params.folder === folderId) {
             Object.assign(job, { state: "running", finished_at: "", artifact: null, stoppable: true,
               progress: { done: 1, total: 3, unit: "pages", item: "Folder paper two" } });
           }
         }
         await route.fulfill({ response, json: body });
       });
-      await page.goto(`${server.base}/?folder=${encodeURIComponent(folder)}&ws=${alice.ws}`);
+      await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
       await page.waitForSelector(".folderNewBtn");
       const view = page.locator('[data-popover="menu"] > button');
       await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
@@ -379,7 +389,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await choice(dialog, "Export").click();
       const job = await (await started).json();
       assertEq(job.params.mode, "annotated-pdf");
-      assertEq(job.params.folder, folder);
+      assertEq(job.params.folder, folderId);
       await dialog.getByRole("heading", { name: "Exporting…", exact: true }).waitFor();
       await dialog.getByText("1 of 3 pages · Folder paper two", { exact: true }).waitFor();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/export-running.png` });
@@ -419,4 +429,171 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+  await step("transfer: BibTeX previews the real bibliography, copies it, and resolves clashing keys", async () => {
+    const folder = "E2E bibtex";
+    // Two papers by the same author in the same year: their generated keys
+    // collide, which is the case the bibliography has to resolve.
+    const pages = {};
+    for (const [title, where] of [["Bib paper one", folder], ["Bib paper two", `${folder}/Sub`],
+                                  ["Bib paper three", folder]]) {
+      const made = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      const meta = { title, authors: ["Ada Lovelace"], year: "1843", venue: "Notes", source: "crossref" };
+      // meta + bibtex together, the way a metadata lookup leaves a page.
+      const entry = `@article{lovelace1843,
+  title = {${title}},
+  author = {Ada Lovelace},
+  journal = {Notes},
+  year = {1843}
+}`;
+      await alice.api(`/api/blocks/${made.id}`, { method: "PUT", body: { properties: { meta, bibtex: entry } } });
+      await alice.file(made.id, { folders: [where] });
+      pages[title] = made;
+    }
+    // A page with nothing to cite: the export leaves it out and says so.
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Bib note page" } })
+      .then((made) => alice.file(made.id, { folders: [folder] }));
+    const folderId = await alice.folder(folder);
+    const ctx = await alice.context(browser, { permissions: ["clipboard-read", "clipboard-write"] });
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    try {
+      const page = await openPage(ctx, server.base);
+
+      // 1. Pin a citation key on one paper, in the metadata popover.
+      await page.goto(`${server.base}/?page=${pages["Bib paper one"].id}&ws=${alice.ws}`);
+      await page.click("button[aria-label='Paper metadata']");
+      const key = page.getByRole("textbox", { name: "Citation key", exact: true });
+      await key.waitFor();
+      assertEq(await key.getAttribute("placeholder"), "lovelace1843", "the row shows the generated key it would use");
+      assertEq(await key.inputValue(), "", "nothing is pinned yet");
+      await key.fill("lovelace:analytical");
+      if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/meta-cite-key.png` });
+      await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+      await until(async () => (await alice.api(`/api/blocks/${pages["Bib paper one"].id}`)).properties.cite_key === "lovelace:analytical",
+        "the pinned key is saved on the page");
+
+      // 2. One page's own bibliography: the same two panes, one paper, and
+      //    no Copy all to copy (its entry's own button is the way).
+      const one = await openDialog(page, "Export");
+      await choice(one, "BibTeX").click();
+      await choice(one, "Next").click();
+      await one.getByRole("region", { name: "Papers", exact: true }).waitFor();
+      assertEq(await one.locator(".bibPaperRow").count(), 1);
+      assert((await one.innerText()).includes("1 paper can be cited."));
+      assert((await one.locator(".bibtexPreview").innerText()).includes("@article{lovelace:analytical,"));
+      assertEq(await choice(one, "Copy all").count(), 0, "one entry needs no Copy all");
+      await choice(one, "Close Export").click();
+      await one.waitFor({ state: "detached" });
+
+      // 3. Export the folder as one bibliography. The folder is shared, so
+      //    the review can show the link that keeps serving its .bib.
+      const { token: bibShare } = await alice.api(`/api/share/folder/${folderId}`, { method: "POST" });
+      await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
+      await page.waitForSelector(".folderNewBtn");
+      // A folder's dialog is named after it, so openDialog's exact "Export" misses.
+      const view = page.locator('[data-popover="menu"] > button');
+      await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
+      await page.getByRole("button", { name: "Export…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
+      await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
+      if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex-cards.png` });
+      await choice(dialog, "BibTeX").click();
+      await choice(dialog, "Next").click();
+
+      // 4. The two panes: every citable paper on the left, the picked one's
+      //    entry on the right, and the page it could not cite listed too.
+      const papers = dialog.getByRole("region", { name: "Papers", exact: true });
+      await papers.waitFor();
+      const rows = papers.locator(".bibPaperRow");
+      await rows.first().waitFor();
+      assertEq((await rows.allInnerTexts()).map((row) => row.split(LF).join(" / ")).sort().join(" | "),
+        [
+          "Bib note page / page has no paper metadata",
+          "Bib paper one / lovelace:analytical",
+          "Bib paper three / lovelace1843",
+          "Bib paper two / lovelace1843a",
+        ].join(" | "),
+        "each paper shows the key the file will cite it by; the uncitable page says why");
+      assert((await dialog.innerText()).includes("3 papers can be cited."));
+      // The first entry is shown without picking anything.
+      const entry = dialog.getByRole("region", { name: "BibTeX entry", exact: true });
+      assert((await entry.innerText()).includes("@article{lovelace1843,"), "the first paper's entry is shown");
+      if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex.png` });
+
+      // 5. Picking another paper shows its entry; Copy takes just that one.
+      await papers.getByRole("button", { name: /Bib paper one/ }).click();
+      const picked = await entry.locator(".bibtexPreview").innerText();
+      assert(picked.includes("@article{lovelace:analytical,"), `the pinned key is used verbatim: ${picked}`);
+      assert(picked.includes("Bib paper one") && !picked.includes("Bib paper two"), "one entry at a time");
+      await entry.getByRole("button", { name: "Copy this entry", exact: true }).click();
+      const plain = (text) => text.split(CRLF).join(LF).trim();
+      assertEq(plain(await page.evaluate(() => navigator.clipboard.readText())), plain(picked),
+        "the clipboard holds that entry");
+      // Copy all takes the whole bibliography, suffixed keys and all.
+      await choice(dialog, "Copy all").click();
+      const everything = plain(await page.evaluate(() => navigator.clipboard.readText()));
+      for (const key of ["lovelace1843,", "lovelace1843a,", "lovelace:analytical,"]) {
+        assert(everything.includes(`@article{${key}`), `${key} is in the bibliography: ${everything}`);
+      }
+      assert(!everything.includes("Bib note page"), "a page with no metadata is not an entry");
+
+      // 5b. The shared folder's bibliography link, under "Keep this .bib up
+      //     to date": the export URL with the share token, in a CopyField
+      //     whose button copies it.
+      await dialog.getByText("Keep this .bib up to date", { exact: true }).click();
+      const link = dialog.getByRole("textbox", { name: "Bibliography link", exact: true });
+      await link.waitFor();
+      const bibUrl = new URL(await link.inputValue());
+      assertEq(bibUrl.pathname, `/api/folders/${folderId}/export`, "the folder's export endpoint");
+      assertEq(bibUrl.searchParams.get("mode"), "bibtex", "in bibtex mode");
+      assertEq(bibUrl.searchParams.get("share"), bibShare, "through the folder's share token");
+      assert((await dialog.innerText()).includes("Anyone with the link can read the folder"), "the folder wording");
+      if (flags.keep) await dialog.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex-link.png` });
+      await dialog.getByRole("button", { name: "Copy the bibliography link", exact: true }).click();
+      assertEq(await page.evaluate(() => navigator.clipboard.readText()), bibUrl.href, "the clipboard holds the link");
+      await dialog.locator(".integrationCopy.on").waitFor();
+
+      // 6. And the download is the file itself.
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
+      const download = page.waitForEvent("download");
+      await choice(dialog, "Export").click();
+      assertEq((await request).postDataJSON().mode, "bibtex");
+      const file = await download;
+      assertEq(file.suggestedFilename(), `${folder}.bib`);
+      const written = fs.readFileSync(await file.path(), "utf-8");
+      assert(written.startsWith("% 3 entries from E2E bibtex, exported from Gamma"), `the .bib names what it holds: ${written.slice(0, 80)}`);
+
+      await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+      const done = await dialog.innerText();
+      assert(done.includes("3 pages exported.") && done.includes("1 page left out") && done.includes("Bib note page"),
+        `the finished step lists the page it could not cite: ${done}`);
+      assert(done.includes("Put it beside your .tex file"), "and says what to do with the file");
+      assertEq(plain(written), everything, "the file is what Copy all copied");
+
+      // 7. The finished step's breadcrumb walks back to the review, and on
+      //    to the format cards — a second thought needs no reopening.
+      await choice(dialog, "2. Review").click();
+      await dialog.getByRole("heading", { name: "BibTeX", exact: true }).waitFor();
+      await choice(dialog, "1. Choose a format").click();
+      await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
+      // The close button is named after the dialog, and a folder's title is
+      // the folder — Escape is the same exit and shorter to say.
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+
+      // 8. A page with no paper record has no bibliography to offer.
+      const bare = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Bib bare page" } });
+      await page.goto(`${server.base}/?page=${bare.id}&ws=${alice.ws}`);
+      // openDialog decides between the View menu and the phone sheet by
+      // counting, so wait for the menu this viewport has.
+      await page.waitForSelector('[data-popover="menu"] > button');
+      const other = await openDialog(page, "Export");
+      assertEq(await choice(other, "BibTeX").count(), 0, "no record, no BibTeX card");
+      await choice(other, "Close Export").click();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/share-settings/folder/${folderId}`, { method: "DELETE" }).catch(() => {});
+    }
+  });
+
 }

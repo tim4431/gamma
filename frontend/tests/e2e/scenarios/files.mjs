@@ -29,11 +29,12 @@ export async function dropFiles(page, selector, files) {
 
 export async function fileScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   const account = alice;
-  let ctx, page, projectId, docPageId;
+  let ctx, page, projectId, docPageId, rydberg;
   const pdf = makePdf([["Supplementary material for the Rydberg paper"]]);
 
   await step("files: a drop on a block row makes file chips — a notebook and a PDF", async () => {
-    const created = await account.api("/api/pages", { method: "POST", body: { title: "Lab project", folder: "Projects/Rydberg" } });
+    rydberg = await account.folder("Projects/Rydberg");
+    const created = await account.api("/api/pages", { method: "POST", body: { title: "Lab project", folders: [rydberg] } });
     projectId = created.id;
     await account.api("/api/blocks", { method: "POST", body: { parent_id: projectId, content: "Data goes here" } });
     ctx = await account.context(browser);
@@ -92,7 +93,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assert(docPageId && docPageId !== projectId, "navigated to a new page");
     const doc = await account.api(`/api/blocks/${docPageId}`);
     assertEq(doc.parent_id, "root", "a root page");
-    assertEq(doc.properties.folder, "Projects/Rydberg", "filed with the project");
+    assertEq(JSON.stringify(doc.properties.folders), JSON.stringify([rydberg]), "filed with the project");
     assert(doc.properties.doc_id, "carries the PDF as its document");
     // the header paperclip is the document's own popover
     await page.click("button[aria-label='Document']");
@@ -122,7 +123,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
 
   await step("files: a duplicated document page shows the PDF but leaves it one page — the original", async () => {
     ctx = await account.context(browser);
-    page = await openPage(ctx, `${server.base}/?ws=${account.ws}&folder=${encodeURIComponent("Projects/Rydberg")}`);
+    page = await openPage(ctx, `${server.base}/?ws=${account.ws}&folder=${rydberg}`);
     const original = await account.api(`/api/blocks/${docPageId}`);
     await page.locator(".fileRow", { hasText: "supplement.pdf" }).first().click({ button: "right" });
     await page.locator(".ctxMenuItem", { hasText: "Duplicate" }).click();
@@ -131,7 +132,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const pages = (await account.api("/api/blocks/root/children")).children;
     const copy = pages.find((p) => p.content === "supplement.pdf (copy)");
     assert(copy && !copy.properties.doc_id, "the copy doesn't carry the PDF's doc_id");
-    assertEq(copy.properties.source_url, original.properties.source_url, "it shows the same file");
+    assertEq(copy.properties.source_url, `/api/uploads/${original.properties.doc_id}.pdf`, "it shows the same file");
     const byDoc = await account.api(`/api/blocks/by-doc/${original.properties.doc_id}`);
     assertEq(byDoc.id, docPageId, "the PDF's page is still the original");
     await copyRow.dblclick();
@@ -155,7 +156,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await until(async () => (await page.textContent(".titleText")) === "Squeezing notes", { what: "note page titled after the file" });
     const noteId = new URL(page.url()).searchParams.get("block");
     const note = await account.api(`/api/blocks/${noteId}`);
-    assertEq(note.properties.folder, "Projects/Rydberg", "filed with the project");
+    assertEq(JSON.stringify(note.properties.folders), JSON.stringify([rydberg]), "filed with the project");
     assert(!note.properties.doc_id, "a note page, not a document page");
     assert((await page.$$(".pdfViewer")).length === 0, "no viewer for a note page");
     await page.locator(".blockRow", { hasText: "first point" }).waitFor();
@@ -229,6 +230,38 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assertEq(await row.locator(".taskBar").count(), 0, "a stopped row has no bar");
     await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await sleep(500);
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
+  // A PDF past one part's size (shared/lib/uploadParts.js PART_BYTES, 32 MiB)
+  // goes up in parts — a proxy in front of the server caps a request's body —
+  // and opens like any other upload; the task row reports the whole's bytes.
+  await step("tasks: a PDF past one part's size goes up in parts and opens like any other", async () => {
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    const parts = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/uploads/parts")) parts.push(`${request.method()} ${url.pathname.replace(/\/[A-Za-z0-9_-]{20,}/, "/<token>")}`);
+      else if (url.pathname === "/api/uploads" && request.method() === "POST") parts.push("POST /api/uploads");
+    });
+    const big = makePdf([["Uploaded in parts"], ["Page two of the big one"]], { padBytes: 33 * 1024 * 1024 });
+    await page.click("button[aria-label='Add']");
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
+    await (await chooser).setFiles([{ name: "in-parts.pdf", mimeType: "application/pdf", buffer: Buffer.from(big) }]);
+    await waitForPdf(page, 1);
+    const text = await page.textContent(`[data-page="1"] .textLayer`);
+    assert(text.includes("Uploaded in parts"), `the viewer shows the assembled file: ${text.slice(0, 60)}`);
+    assertEq(parts.filter((p) => p === "POST /api/uploads").length, 0, "never one request for the whole");
+    assertEq(parts[0], "POST /api/uploads/parts", `opened first: ${parts.join(", ")}`);
+    assertEq(parts.filter((p) => p === "POST /api/uploads/parts/<token>").length, 2, `two parts of 32 MiB: ${parts.join(", ")}`);
+    assertEq(parts[parts.length - 1], "POST /api/uploads/parts/<token>/finish", `finished last: ${parts.join(", ")}`);
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow.done", { hasText: "in-parts.pdf" }); // not the metadata lookup's row
+    await until(async () => /33(\.\d+)? MB/.test(await row.innerText()), { what: "the upload's row reports the whole file's size" });
     assertNoProblems(page);
     await ctx.close();
   });

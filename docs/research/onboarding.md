@@ -65,3 +65,32 @@ Survey done September 2026 before designing Gamma's guide
   the feature was found unaided.
 - An anchor inspector overlay (Figma's inspect): not built. The registry
   describes every id, and the tests name each step whose anchor went away.
+
+## October 2026: a review of the guide as built
+
+Gamma's own tours, driven in a browser and rendered in light and dark
+themes before the "show, not tell" changes
+([docs/dev/onboarding.md](../dev/onboarding.md), "Showing, not telling").
+Findings only.
+
+- **Steps blocked on the user.** Every step that asked for an action took
+  Next away. Arrange windows needed three real gestures before it let go,
+  and its spotlight was a 60 px title with nothing showing what a
+  double-click or a drag looks like. The drop zones its copy mentioned are
+  invisible until a drag starts.
+- **Animations sat beside the thing, not on it.** The Add tour showed a
+  wireframe of the Add popover 40 px below the real one. The drawings were
+  grey-bar wireframes with loops between 4.4 and 6 s, looping for as long
+  as the card was up, and some frames of a loop were nearly empty.
+- **Layering.** A step inside a popover dimmed the popover except for the
+  anchor, so the popover looked cut in half. The demo pointer rested on
+  popover rows and on the text it typed. The note demo's card covered the
+  Notes header.
+- **Text.** About 1,900 words across the tours and hints. Cards narrated
+  what the demo was already showing, under a status chip, a step count, a
+  progress bar and two buttons.
+
+What changed: light steps, scenes played on the real controls, popovers
+undimmed as one surface, and one pointer and timing scale. Step
+definitions went from 93 to 71 and the words on step cards from 1,627 to
+828. Two drawings stayed, for the two ideas that have no place on screen.

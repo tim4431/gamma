@@ -1,14 +1,17 @@
-"""PDF / image / generic file uploads (content-hash deduped) and upload serving."""
+"""PDF / image / generic file uploads (content-hash deduped), a PDF's upload
+in parts, and upload serving."""
 
+import json
 import threading
 import time
 from collections import OrderedDict
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
-from .. import pdf_meta
+from .. import blobs, pdf_meta, upload_parts
 from ..db import connect_pages_db
 from ..ink import InkError, parse_ink
 from ..server_settings import workspace_quota
@@ -20,6 +23,7 @@ from ..storage import (
     display_filename,
     find_upload_file,
     is_pdf,
+    pdf_url,
     store_file,
     store_pdf,
     upload_extension,
@@ -29,6 +33,13 @@ from ..storage import (
 # Link visitors (anyone-with-the-link edit shares) may paste images and files
 # like any editor, within the page's workspace quota, but only so many per IP.
 LINK_UPLOADS_PER_5_MIN = 60
+# How long the bucket URL a read is redirected to stays valid (the S3 driver
+# with presigning on). The browser keeps the redirect for a minute less
+# (REDIRECT_MAX_AGE_S), so an image rendered again reuses the URL, and the
+# bytes it cached from it, without asking the node or the bucket; a URL
+# taken from that cache still has a minute to be followed.
+PRESIGN_TTL_S = 300
+REDIRECT_MAX_AGE_S = PRESIGN_TTL_S - 60
 
 router = APIRouter(prefix="/api", tags=["uploads"])
 
@@ -52,13 +63,68 @@ def upload_pdf(request: Request, file: UploadFile = File(...)):
     contents = file.file.read()
     if not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-    doc_id, source_url, already_existed = store_pdf(ws, contents)
+    doc_id, already_existed = store_pdf(ws, contents)
     return {
         "doc_id": doc_id,
-        "source_url": source_url,
+        "source_url": pdf_url(doc_id),
         "size": len(contents),
         "already_existed": already_existed,
     }
+
+
+# --- a PDF's upload in parts (gamma/upload_parts.py) -----------------------------------
+# A proxy in front of the server caps a request's body (Cloudflare at
+# 100 MB); past `PART_BYTES` the clients cut a PDF into parts and send them
+# one request each: open → the parts, in order → finish, which answers like
+# POST /uploads. Members with write access, like POST /uploads.
+
+class PartsStart(BaseModel):
+    size: int
+    name: str = ""
+
+
+@router.post("/uploads/parts")
+def start_upload_parts(request: Request, body: PartsStart):
+    """Open an upload in parts → ``{token, part_bytes, received: 0}``: the
+    size and quota checks of ``POST /uploads`` (413 / 507) run here, before
+    a byte travels; 429 past ``upload_parts.MAX_PER_WS`` open at once."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.start(ws, body.size, body.name)
+    return {"token": session.token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+
+
+@router.post("/uploads/parts/{token}")
+def put_upload_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
+    """One part, at byte ``offset`` (the bytes held so far) → ``{received}``.
+    A part at any other offset is a 409 whose body carries ``received``,
+    where the client goes on from (a part whose reply the network lost)."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.get(ws, token)
+    try:
+        received = upload_parts.append(session, offset, part.file)
+    except upload_parts.OffsetMismatch as e:
+        return JSONResponse({"detail": str(e), "received": e.received}, status_code=409)
+    return {"received": received}
+
+
+@router.post("/uploads/parts/{token}/finish")
+def finish_upload_parts(token: str, request: Request):
+    """Store the assembled PDF → ``{doc_id, source_url, size, already_existed}``
+    like ``POST /uploads``; 400 while bytes are missing or when it is no
+    PDF. The token is gone afterwards."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.get(ws, token)
+    doc_id, already_existed = upload_parts.finish(session)
+    return {"doc_id": doc_id, "source_url": pdf_url(doc_id), "size": session.size,
+            "already_existed": already_existed}
+
+
+@router.delete("/uploads/parts/{token}")
+def discard_upload_parts(token: str, request: Request):
+    """Drop an unfinished upload and its bytes (the stop button)."""
+    ws = require_ws(request, write=True)
+    upload_parts.discard(upload_parts.get(ws, token))
+    return {"ok": True}
 
 
 @router.post("/upload-image")
@@ -146,25 +212,17 @@ def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
 
 def _pages_reference(conn, pages: list[str], filename: str) -> bool:
     """Whether one of ``pages`` carries ``filename`` as its PDF or a block of
-    its subtree names it (500 pages per query)."""
+    it names it."""
     needle = f"/api/uploads/{filename}"
-    for i in range(0, len(pages), 500):
-        chunk = pages[i:i + 500]
-        marks = ",".join("?" * len(chunk))
-        if filename.endswith(".pdf") and conn.execute(
-                f"SELECT 1 FROM unified_blocks WHERE id IN ({marks}) "
-                "AND json_extract(properties, '$.doc_id') = ?", (*chunk, filename[:-4])).fetchone():
-            return True
-        if conn.execute(
-                f"""WITH RECURSIVE tree(id, content, properties) AS (
-                        SELECT id, content, properties FROM unified_blocks WHERE id IN ({marks})
-                        UNION ALL
-                        SELECT ub.id, ub.content, ub.properties
-                        FROM unified_blocks ub JOIN tree t ON ub.parent_id = t.id)
-                    SELECT 1 FROM tree WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0 LIMIT 1""",
-                (*chunk, needle, needle)).fetchone():
-            return True
-    return False
+    reach = json.dumps(pages)
+    if filename.endswith(".pdf") and conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE doc_id = ? AND id IN (SELECT value FROM json_each(?))",
+            (filename[:-4], reach)).fetchone():
+        return True
+    return conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
+        "AND (instr(content, ?) > 0 OR instr(properties, ?) > 0) LIMIT 1",
+        (reach, needle, needle)).fetchone() is not None
 
 
 @router.get("/pdf-info/{doc_id}")
@@ -191,7 +249,15 @@ def pdf_info(doc_id: str, request: Request):
 # GET and HEAD: the viewer asks HEAD for a file's size before deciding how to
 # open it (FastAPI does not add HEAD to a GET route by itself; FileResponse
 # answers a HEAD with the headers alone). Sync def: a share visitor's access
-# check reads the shared pages.
+# check reads the shared pages, and a file in a bucket is looked up there.
+# With the files in a bucket (gamma/blobs.py, presigning on), a GET that
+# passes every check is sent to the bucket by a 302 to a short-lived
+# presigned URL that answers with the same media type and disposition, so
+# the bucket serves the bytes and their Range requests; the browser keeps
+# the redirect for REDIRECT_MAX_AGE_S, within the URL's validity. A file
+# missing from the bucket is a 404 here, never a redirect to the bucket's
+# own error (a mirror's pull tells a missing file by it). A HEAD is answered
+# here, from the object's size: a URL presigned for GET does not sign a HEAD.
 @router.api_route("/uploads/{filename}", methods=["GET", "HEAD"])
 def serve_upload(filename: str, request: Request):
     # Sanitize: only allow [hex].ext pattern, no path traversal
@@ -214,9 +280,6 @@ def serve_upload(filename: str, request: Request):
     if scope is not None and not _share_can_read_upload(ws, scope, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
-    path = find_upload_file(filename, ws)
-    if not path:
-        raise HTTPException(status_code=404, detail="not found")
     # Filenames are content hashes (or URL hashes the server only writes once),
     # so a given name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
@@ -225,10 +288,26 @@ def serve_upload(filename: str, request: Request):
     # files (office, zip, …) download, and so do svg/html — scriptable in this
     # origin (stored XSS) — which are sandboxed too in case a browser renders
     # them anyway (storage.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS).
+    disposition = None
     if ext not in INLINE_EXTENSIONS:
-        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        disposition = headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     if ext in SANDBOXED_EXTENSIONS:
         headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+
+    url = blobs.url(ws, filename, media_type=media_type, disposition=disposition, ttl=PRESIGN_TTL_S)
+    if url is not None:
+        size = blobs.size(ws, filename)
+        if size is None:
+            raise HTTPException(status_code=404, detail="not found")
+        if request.method == "HEAD":
+            return Response(media_type=media_type,
+                            headers={**headers, "Content-Length": str(size), "Accept-Ranges": "bytes"})
+        return RedirectResponse(url, status_code=302,
+                                headers={"Cache-Control": f"private, max-age={REDIRECT_MAX_AGE_S}"})
+
+    path = find_upload_file(filename, ws)
+    if not path:
+        raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path, media_type=media_type, headers=headers)
 
 

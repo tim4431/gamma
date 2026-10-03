@@ -10,8 +10,9 @@
 // Citation. State is the server's share settings (docs/dev/api.md "Shares"):
 // every change saves at once; the link itself only changes on Stop.
 // `target` says what is shared — {kind: "page", title} or {kind: "folder",
-// name} — and only the words differ: a folder share reaches every page filed
-// in the folder, now and later, so its edit wording says so.
+// id, name} (`name` its path) — and only the words differ: a folder share
+// reaches every page filed in the folder, now and later, so its edit
+// wording says so.
 //
 // Nothing is shared by opening the popover: the first audience tile picked,
 // or the first person invited (as Invited only), creates the share with
@@ -42,7 +43,7 @@ import { useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
-  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
+  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
   LinkIcon, PenIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
   XIcon,
 } from "../shared/ui/Icons";
@@ -208,19 +209,6 @@ function PersonRow({ name, tag, sub, icon: Icon, active, children }) {
   );
 }
 
-// A copyable text box: the rendered text (or a scrolling <pre>) with the
-// copy button pinned top-right — the same for the slide citation and BibTeX.
-export function CopyBox({ children, copied, onCopy, title, label }) {
-  return (
-    <div className="copyBox">
-      <div className="copyBoxBody">{children}</div>
-      <button type="button" className={`uiBtn sm iconSq copyBoxBtn ${copied ? "on" : ""}`} onClick={onCopy} title={title} aria-label={label}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-      </button>
-    </div>
-  );
-}
-
 // Gamma Cloud: `state` is GET /api/pages/{id}/publish (null while loading),
 // `busy` the action running ("publish" | "update" | "unpublish" | "sync" |
 // ""), `error` the last refusal's detail (or {message, limit} when the plan's
@@ -358,7 +346,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   );
 }
 
-// Props: target ({kind: "page", title} or {kind: "folder", name}; a page
+// Props: target ({kind: "page", title} or {kind: "folder", id, name}; a page
 // when omitted), settings (null while loading; {token: null} when
 // unshared), error (the last failed save, e.g. an unknown username), me /
 // meIsGuest (your account; a guest can't search the account directory, so
@@ -390,7 +378,7 @@ export function SharePopover({
   }
 
   return (
-    <div className="popover sharePopover" role="dialog" aria-label={title}>
+    <div className="popover sharePopover" role="dialog" aria-label={title} data-guide="share.popover">
       <div className="sharePopoverHead">
         <span className="popoverTitle" title={title}>{title}</span>
         <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}><XIcon size={14} /></button>

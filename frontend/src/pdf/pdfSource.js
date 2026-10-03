@@ -44,7 +44,10 @@ export function rangeOpenOptions(url) {
     disableRange: false,
     disableStream: true,
     rangeChunkSize: RANGE_CHUNK,
-    withCredentials: true,
+    // false = same-origin credentials: the cookie reaches our server, and a
+    // 302 to a bucket's presigned URL is followed without credentials, as a
+    // plain CORS rule allows (docs/dev/debugging.md "Stored files in a bucket").
+    withCredentials: false,
   };
 }
 

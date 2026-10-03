@@ -33,6 +33,18 @@ beside the token, each a history entry). The topbar's home button, and each
 crumb of the folder path that leads the page's title, return to a folder
 listing.
 
+The library is one request, `GET /blocks/root/children`. It returns a page
+summary per page, not the page block: its title, times, `preview` and the
+few properties these surfaces read. Those are the attachment fields,
+`folders`, `labels`, `pinned`, `seeded`, and `meta`'s `title` / `authors` /
+`year` / `venue` / `volume` / `doi` / `arxiv_id`, read by quick open, the
+chat and link pickers and the DOI / arXiv matching of an opened link.
+Beside the pages come the folder and label trees, each with the op-log
+position it reflects ([api.md](api.md) "The library listing"). A surface
+that needs more of a page (BibTeX, citation, summary, full metadata) reads
+the page itself; the metadata popover, the export dialog and the page
+header all work on the open page's block.
+
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
 command, [hotkeys.md](hotkeys.md); not in a share view) opens a palette over
@@ -60,18 +72,85 @@ the library.
 
 ## Folders and labels
 
-Folders are "folder labels" — `properties.folder` on a page block is a
-comma-separated list of paths (`"readout/nondestructive, cooling"`); `/` nests,
-a page can be in several folders (drag/add is a soft link, only an ancestor tag
-gets refined away), no tags = library root. The folder tree is derived from the
-paths in use (plus localStorage-only empties); rename/delete are prefix
-rewrites across pages. Standard labels stay in `properties.category` — the two
-are distinguished by property, never by string convention.
+Folders and labels are blocks (migration step 29 converts older
+libraries, [migrations.md](migrations.md)). Two reserved parentless rows sit beside
+`root` and `trash`: `folders` and `labels` (`blocks_store.FOLDERS`,
+`LABELS`). A folder is a block under `folders` or under another folder —
+its `content` the name, its `position` its place among its siblings, its
+`properties` like any block's (`pinned`, below); a label is a block right
+under `labels`, flat. Names may hold any character, `/` and `,` included; a
+path reads as the names joined with ` / ` (`blocks_store.PATH_SEP`). Every
+block of a tree has the tree's id as its `page_id` and `kind` `folder` /
+`label` ([user_db.md](user_db.md) "pages.db").
 
-The paper view's label frontmatter edits both: typed input containing `/`
-becomes a folder label (`cs229/` → folder cs229, `cs229/hw` → subfolder;
-suggestions offer existing folder paths with a folder icon), everything else a
-flat label.
+A page is filed by id: `properties.folders` is a list of folder ids,
+`properties.labels` a list of label ids. Filing stays many-to-many — a page
+may be in several folders (drag/add is a soft link; filing into a subfolder
+refines the folder above away), no folders = library root. "Filed in F or
+below" is "carries F or a folder below it" (`blocks_store.folder_subtree_ids`,
+`pages_in_folder`, `root_pages(conn, folder_id)`), the one rule for a
+folder view, a folder share, a folder export, the search scope and a folder
+chat's agent. Folders are real rows, so an empty folder exists for everyone
+and syncs; there is no derived tree.
+
+Every change to a tree is an op on it, the trees being pseudo-pages to the
+op path ([collab.md](collab.md) "The folder and label trees"): a new folder
+is an `insert` under `folders` (or a folder), a rename one `set` of its
+content, a move or a reorder one `move`, a pin a `set` of
+`properties.pinned` — `POST /api/pages/folders/ops`, `…/labels/ops` for
+labels. None of these touches a page: no page's `updated_at`, op log or
+change-log row moves, so the "modified" sort, the change feed and the
+mirrors see no edit. Deleting is the one change
+that reaches pages: `DELETE /api/folders/{id}` deletes the folder with its
+subfolders and, in the same transaction, takes their ids off every page
+that carried them (one op batch per page); the pages stay, filed elsewhere
+or at the library root. The deleted folders' AI chats are filed into the
+library chat's history (`home`) and their share links stop.
+`DELETE /api/labels/{id}` takes a label off every page. A page that still
+names a deleted folder or label (one removed by a raw op, or on another
+copy of the workspace) passes it by on every read, and the next refiling
+of the page by any writer drops it ([collab.md](collab.md)).
+
+Everything else that names a folder names its id: a folder's AI chat bucket
+(the folder view's chat; `home` at the root), a folder share
+(`shares.folder`), the search scope (`?scope=<folder id>`), the clip
+target, an import's destination, a folder export, the home URLs
+(`?folder=<id>`, `?label=<id>`). The agent's tools keep taking and showing
+paths, resolved by name ([ai_tools.md](ai_tools.md)).
+
+In the app the trees arrive with the listing. App keeps them as `libTree`
+(`libraryTree` in [libraryUtils.js](../../frontend/src/library/libraryUtils.js):
+id → folder with its name, parent, position, pin, path and subfolders; id
+→ label), and every surface names folders and labels from it. A page
+row's `_folders` / `_labels` are the ids of its filing the trees have
+(`filedIn`: a dangling id shows nothing). `_folderChips` / `_labelChips`
+are the same as `{id, name}`, a folder named by its path. App writes the
+trees through `treeOps` (one batch on `folders` or `labels`). It files a
+page through `filePage`, a `set` of the whole `folders` / `labels` list
+from `filedIn`, so a refiling drops a dangling id. A folder or label made
+by name goes through `ensureFolders` / `makeLabel`. They reuse one of that
+name (exactly, else ignoring case, like the server's `blocks_store.named`)
+and run one after another, so a name committed twice is made once.
+
+The home view does not join the trees' rooms. It reads the listing again
+after each of its own writes and when the window comes back (focus or
+visibility, at most every 15 s); that is when another device's changes
+show. The listing's pages are not live either, so one read keeps both in
+step. A view naming a folder or label the trees lack (deleted elsewhere, a
+stale link) goes back to the library's root (a share's folder).
+
+The page header's label field (`page.labels` / `page.labelInput`) files
+the open page by both. Its suggestions are the folders (by path, a folder
+icon) and labels whose names contain what is typed, then *New label "q"*
+and *New folder "q"* (a top-level folder) when no label, or no top-level
+folder, has that name. Enter on a suggestion picks it; Enter (or leaving
+the field) with none picked takes the label of that name, else the folder
+whose path or name it is, else makes a new label. Each pick writes the
+page at once, a folder with the same refinement as dropping the page on
+it; a name may hold any character, "," and "/" included. Backspace in the
+empty field takes the last label off. The browser suite's `folders` group
+(`e2e/scenarios/folders.mjs`) covers the folder and label flows, and its
+harness files pages by path through `Account.folder` / `label` / `file`.
 
 ## Listing, sorting, filtering
 
@@ -81,23 +160,37 @@ listing (list and grid): date sorts rank a folder by its most recent contained
 page, Title A–Z intermixes by name; a KindToggle picks what the listing shows —
 folders + files, folders only, files only, or **labels**.
 
-The sort choice (updated/created/viewed/title, an iconed MenuSelect pill;
-"viewed" ranks by the account-synced view history with modified time as
-tie-break) and the kind filter are both per-VIEW — localStorage
-`gamma-home-sort-map` / `gamma-home-kinds-map`, keyed by folder path with
-`""` = root and `"#<label>"` for a label view, seeded from the older global
-`gamma-home-sort` / `gamma-home-kinds` keys; a view without an entry inherits
-from its nearest ancestor folder (a label view inherits the root).
+The sort choice (updated/created/viewed/title/custom, an iconed MenuSelect
+pill; "viewed" ranks by the account-synced view history with modified time
+as tie-break) and the kind filter are both per-VIEW — localStorage
+`gamma-home-sort-map` / `gamma-home-kinds-map`, keyed by the folder's id
+with `""` = root and `"#<label id>"` for a label view; a view without an
+entry inherits from its nearest ancestor folder (a label view inherits the
+root).
+
+**Custom order** is the folders' own order: their `position` in the folder
+tree, which every member sees alike, then the pages in the library's order
+(labels keep the label tree's). In it, a folder dropped on the leading or
+trailing edge of a listed folder (a row's top or bottom quarter, a tile's
+left or right one; `folderDropEdge`) lands beside it; a selection of
+several lands there in its listed order. That is one `move` per folder,
+in one batch, with fractional keys between the new neighbours
+(`folderPositions`, `placeFolders`), and the edge shows a line
+(`.dropBefore` / `.dropAfter`). A drop in the middle moves them in. A folder drag carries its id
+under its own type (`FOLDER_DRAG_TYPE`) beside the text payload, since a
+drag-over can read only the types.
 
 **The label view** is the flat mirror of the folder view, not a separate
-surface: the KindToggle's Labels mode lists the labels carried by the pages in
-scope (`labelMeta`, the label twin of `folderMeta` — count + latest
-modified/added/viewed, so labels sort by the same clock), as the same rows and
-cards folders use with a tag glyph. Click selects, double-click opens (on
+surface: the KindToggle's Labels mode lists the labels in scope as the same
+rows and cards folders use, with a tag glyph. At the root that is every
+label (a label is a block, carried or not), in a folder the labels its
+pages carry. `labelMeta`, the label twin of `folderMeta`, gives each a count
+and its latest modified/added/viewed time, so labels sort by the same
+clock. Click selects, double-click opens (on
 touch a tap opens, as for pages and folders: `isTap` in App.jsx), a paper
 dropped on one gets that label, right-click is the existing label
-rename/delete menu. Opening a label KEEPS the folder scope (`?folder=…` and
-`?category=…` can both be in the URL — `homeUrlFor`), so a label opened inside
+rename/delete menu. Opening a label KEEPS the folder scope (`?folder=<id>`
+and `?label=<id>` can both be in the URL — `homeUrlFor`), so a label opened inside
 a folder reads as "this folder, narrowed to that label"; its browse bar is the
 same back row + breadcrumb, ending in a label crumb, and dropping a paper on
 its back row takes the label off. Inside a label there are only papers, so the
@@ -106,8 +199,8 @@ KindToggle hides and the kind filter is ignored there.
 The labels listing ends with a **"No label"** pseudo-label (dashed tag glyph,
 pinned last regardless of sort, shown only while some page in scope carries
 no label): `labelMeta` rolls unlabelled pages up under the `NO_LABEL`
-sentinel from `library/libraryUtils.js` — a string containing a comma, which no real
-label can be since `parseFolderTags` splits on commas — and `labelTitle`
+sentinel from `library/libraryUtils.js` — `~none`, an id no block can have
+(`~` is no block-id character) — and `labelName`
 turns it into the display name. Opening it (`?unlabelled=1` in the URL,
 `homeUrlFor`) lists the pages without any label; a paper dropped on its tile
 loses all its labels (`clearPagesLabels`). It has no rename/delete menu and
@@ -150,7 +243,18 @@ attached on the page afterwards (the paperclip in the page header, or a PDF
 dropped on the open page). New folder is the same tile/row shape and turns
 into its own name input in place (Enter or blur commits, Escape cancels); it
 is hidden while the folder is filtered to files-only, to labels, or inside a
-label view. The toolbar is filter box → sort → kind → list/grid.
+label view. Committing inserts the folder block, last among its siblings:
+an empty folder is real, shared and synced like any; a name a sibling has
+already makes nothing. The toolbar is filter box → sort → kind → list/grid.
+
+**/page** in a block's editor makes a page too, as in Notion (App's
+`createLinkedPage`). The block's text gets the `[[id]]` link at once, under
+an id minted in the browser; the chip's label is cached with it, so the id
+is never looked up before the page exists. Then `POST /api/pages {id,
+folders}` files the page in the open page's folders, and it opens like a
+New page, with its title ready to type; Back returns to the link. A
+creation that fails takes the link back out of the block. A share's editor
+does not offer the command.
 
 In the compact layout (`.phoneUI`: phones and upright tablets,
 [ipad.md](ipad.md)) the toolbar wraps. At the library's root its label
@@ -160,8 +264,9 @@ takes the full width, then sort, kind and list/grid share one row. A file
 row gives the title its own wrapping line, with the folder and label chips
 on a second line (the Phone block at the end of `library.css`).
 
-Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
-folder chips match by prefix.
+Search chips (Tab autosuggest) cover both kinds, named from the trees: a
+label chip keeps the pages carrying that label, a folder chip (its path)
+the pages filed in the folder or below it.
 
 **Start your library.** A library with nothing of the user's in it yet
 shows `library/LibraryEmpty.jsx` at the root, in both views, instead of the
@@ -209,19 +314,18 @@ gated by the Folders and Labels switches of Settings → Appearance → Library
 ## Pinned
 
 The Pinned strip at the library root holds pages and folders, most recently
-pinned first. A page pin is stored on the page (`properties.pinned` = ISO
-timestamp, `setPagesPinned`). A folder has no block of its own, so folder
-pins are a synced pref: `/api/prefs/pinned-folders` holds `[{path, at}]`,
-whole-list last-write-wins like the recents queue, with
-`gamma-pinned-folders:<user>` in localStorage as the instant-paint cache
-(`updatePinnedFolders` / `setFoldersPinned`). Pin/Unpin is on the folder
-context menu (acts on the folder selection when the clicked folder is part of
-one); a tab's right-click menu offers "Pin to library" for its page next to
-"Pin tab" (the tab-strip pin, a different thing); the strip's folder card is the grid's folder card with an unpin button,
-and it is a drop target like any folder. Folder rewrites carry pins along:
-`applyFolderMap` (rename/move) and `deleteFolderByName` remap the list
-(`remapPinnedFolders`), and a pin whose path no longer exists in
-`allFolderPaths` is not shown.
+pinned first. A pin is stored on its block, the same for both:
+`properties.pinned` = ISO timestamp, on the page (`setPagesPinned`, a `set`
+on the page) or on the folder block (a `set` on the `folders` tree). A
+folder's pin is the workspace's, like a page's: every member sees it.
+Pin/Unpin is on the folder context menu (acts on the folder selection when the clicked
+folder is part of one); a tab's right-click menu offers "Pin to library" for
+its page next to "Pin tab" (the tab-strip pin, a different thing); the
+strip's folder card is the grid's folder card with an unpin button, and it
+is a drop target like any folder. A pin moves and renames with its folder
+and goes with it. `setFoldersPinned` writes the pins of the acted-on
+folders in one batch on the tree, and the strip reads `pinned` off
+`libTree`.
 
 ## Recents and snapshots
 
@@ -262,29 +366,37 @@ strip included:
   selected pages of the listing.
 - "Add label" lists every label in the library, checked when all the
   acted-on pages carry it (a click then removes it). It ends with "New
-  label…", a name typed in place.
+  label…", a name typed in place (the label of that name, else a new one:
+  `makeLabel`).
 - Share…, Export… and Ask AI act on the page itself, so they open it first
   and run once it is on screen (`openPageThen`).
 - A folder: Open | New page here · New subfolder | Rename · Pin · Share… ·
   Export… | Delete.
 
-The "Move to folder" flyout lists every folder path ordered by the *active
-home sort* (`folderMenuPaths`, via the library-wide `folderMeta` rollup) and
-checks the ones the selection already carries. It ends with the per-tag
-"remove from" rows. Adding uses the soft-link `addPagesToFolder`, the same
-as dropping a card on a folder.
+The "Move to folder" flyout lists every folder by its path, ordered by
+the *active home sort* (`folderMenuIds`, via the library-wide `folderMeta`
+rollup; the custom order keeps the tree's) and checks the ones the
+selection already carries. It ends with the "remove from" rows, one per
+folder. Adding uses the soft-link `addPagesToFolder`, the same as dropping
+a card on a folder, a folder's tile or row, or a crumb of the folder path
+above the listing (`dropOnFolder`); the back row takes the pages out of
+the open folder (`removePagesFromFolder`).
 
 A folder's menu also has **Share…**. It opens the folder, then the share
 popover under the topbar's link button, which an open folder shows as a
 page does. The popover is `sharing/SharePopover.jsx` with a folder `target`:
 the page's popover with folder wording, without the Gamma Cloud and
 Citation sections. Its one link reaches every page filed in the folder or
-below it, now and later ([api.md](api.md) "Shares"). Renaming, moving or
-deleting a folder carries its chat buckets and its shares along through
-`POST /folders/rename`, one call made before the tag rewrite. A delete drops
-the folder's shares but never its chats: each active conversation is filed
-into the folder's chat history, under the same key, whichever of "Keep
-pages" / "Delete pages too" was chosen.
+below it, now and later, and a folder moved into it brings its pages
+([api.md](api.md) "Shares"). The share and the folder's chat name the
+folder by id, so a rename or a move leaves both as they are. A delete stops
+the folder's shares (and its subfolders') but never drops a chat: each
+conversation is filed into the library chat's history (`home`), whichever
+of "Keep pages" / "Delete pages too" was chosen. The folder menu's Delete
+(`deleteFolder`) calls `DELETE /api/folders/{id}`, after trashing the pages
+for "Delete pages too"; a label's (`deleteLabel`) calls
+`DELETE /api/labels/{id}`. A rename is one `set` on the tree and asks
+nothing: no page changes.
 
 ## Recently deleted
 
@@ -296,20 +408,26 @@ confirmations say where it goes and for how long.
 
 On the server, the trash is a reserved block `trash` beside `root`
 (`blocks_store.TRASH`). A trashed page is moved under it, and `deleted_at`
-and `deleted_by` are stamped in its properties. Its blocks, files, chats,
-op log and folder labels stay as they were. Everything that finds pages asks
-for `parent_id = 'root'` or walks up to a page (`page_root_id`). So a
+and `deleted_by` (the actor: an account's id, shown by its username —
+`trash.named`) are stamped in its properties. Its blocks, files, chats,
+op log and filing (`folders`, `labels`) stay as they were, and every row keeps its
+`page_id`. Everything that finds pages asks for `parent_id = 'root'` or for
+a block's page in the library (`page_root_id`: its `page_id`, if that page
+is under `root`). So a
 trashed page drops out of the library, folder counts, searches, backlinks,
-`[[ref]]` resolution, shares, the agent's and MCP's tools, exports and the
-change feed without code of its own. Its blocks read as not found, and ops
+`[[ref]]` resolution, shares, the agent's and MCP's tools and exports
+without code of its own. Its blocks read as not found, and ops
 to it are refused. The block readers that scan across pages (block search,
-backlinks) skip `blocks_store.trashed_ids`. To a copy of the workspace the
-page is deleted: trashing writes the `deleted_pages` tombstone a hard delete
-leaves.
+backlinks) keep to `blocks_store.IN_LIBRARY` (a row whose page is under
+`root`). To a copy of the workspace the
+page is deleted: trashing turns its row of the change log (`page_changes`)
+`deleted`, as a hard delete does, and the change feed lists it as a
+tombstone ([collab.md](collab.md) "The change feed"). Deleting it for good
+later keeps that row.
 
 Restoring (`ops.restore_page`) puts the page back under `root`, last in the
-library, with its folder labels. It stamps the root and clears the
-tombstone, so the change feed shows the page as created again. A mirror
+library, filed where it was (a folder deleted meanwhile is passed by). It touches the page `live` again, so the
+change feed shows the page as created again. A mirror
 that brings the page back under its id (`blocks_store.create_page`)
 replaces the trashed copy. So does a merge restore of a backup that has the
 page (`ws_backup._merge`): the trashed copy's rows go, and the backup's
@@ -335,7 +453,8 @@ is a `SubDialog` opened from the trash button at the right end of the home
 toolbar (at the library root, where `lib.organize`) or from the
 `app.recentlyDeleted` command. It lists each page with its title, who
 deleted it and when, the days it has left and its folder, as `aiProvRow`
-rows. Each row has Restore and a trash button that deletes for good after
+rows (a row's folder: the first of its entry's `folders` ids the folder
+tree has, by its path). Each row has Restore and a trash button that deletes for good after
 App's confirm box, and the dialog's footer has Empty. A link to a trashed
 page gets a 404 whose body carries `trashed` (the page's trash entry). The
 missing-page notice then names the page and offers Restore, which restores

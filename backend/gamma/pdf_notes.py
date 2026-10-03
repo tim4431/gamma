@@ -349,14 +349,14 @@ def _frame(crop, rotation):
 
 
 def _anchor_rect(pos, disp_w, disp_h):
-    """Stored viewer rects → one display-space bounding box."""
-    rects = pos.get("rects") or ([pos["boundingRect"]] if pos.get("boundingRect") else [])
+    """Stored viewer rects (in the position's width × height frame) → one
+    display-space bounding box."""
+    rw = float(pos.get("width") or 0) or disp_w
+    rh = float(pos.get("height") or 0) or disp_h
     xs, ys = [], []
-    for r in rects:
+    for r in pos.get("rects") or []:
         if not r or r.get("x1") is None:
             continue
-        rw = float(r.get("width") or 0) or disp_w
-        rh = float(r.get("height") or 0) or disp_h
         for vx, vy in ((r["x1"], r["y1"]), (r["x2"], r["y2"])):
             xs.append(float(vx) / rw * disp_w)
             ys.append(float(vy) / rh * disp_h)
@@ -413,7 +413,7 @@ def render_notes(pdf_bytes: bytes, notes, uploads_dir=None) -> tuple[bytes, int]
     for n in notes:
         text = (n.get("note") or "").strip()
         pos = n.get("position") or {}
-        page_num = pos.get("pageNumber") or (pos.get("boundingRect") or {}).get("pageNumber")
+        page_num = pos.get("pageNumber")
         if not text or not page_num or page_num < 1 or page_num > len(writer.pages):
             continue
         items = parse_note(text)

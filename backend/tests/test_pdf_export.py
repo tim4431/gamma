@@ -33,10 +33,10 @@ def _blank_png(width, height):
 
 
 def _position(page=1, x1=100, y1=72, x2=300, y2=92, w=PAGE_W, h=PAGE_H, extra_rects=None):
-    """Viewer-space position: top-left origin, rects carry the render size."""
-    rects = [{"x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": w, "height": h, "pageNumber": page}]
-    rects += extra_rects or []
-    return {"pageNumber": page, "boundingRect": dict(rects[0]), "rects": rects}
+    """Viewer-space position: top-left origin, the rects in the render size
+    the position carries once (gamma/highlights.py)."""
+    rects = [{"x1": x1, "y1": y1, "x2": x2, "y2": y2}, *(extra_rects or [])]
+    return {"pageNumber": page, "width": w, "height": h, "boundingRect": dict(rects[0]), "rects": rects}
 
 
 def test_annotate_roundtrips_through_import_extractor():
@@ -57,7 +57,7 @@ def test_annotate_roundtrips_through_import_extractor():
     found = _extract_pdf_annotations(PdfReader(io.BytesIO(out)))
     assert len(found) == 1
     a = found[0]
-    assert a["page"] == 1
+    assert a["position"]["pageNumber"] == 1
     assert a["content"] == "my note"
     br = a["position"]["boundingRect"]
     # Importer reports top-left-origin PDF points: 200/2=100 … 184/2=92.
@@ -122,7 +122,7 @@ def test_annotate_multiline_and_skips_unusable():
     from PyPDF2 import PdfReader
 
     multiline = _position(extra_rects=[
-        {"x1": 50, "y1": 100, "x2": 500, "y2": 120, "width": PAGE_W, "height": PAGE_H, "pageNumber": 1},
+        {"x1": 50, "y1": 100, "x2": 500, "y2": 120},
     ])
     out, written = annotate_pdf(_blank_pdf(pages=2), [
         {"position": multiline, "color": None, "note": ""},
@@ -215,10 +215,8 @@ def test_annotate_rotated_page():
     from PyPDF2 import PdfReader
 
     # Rendered size is swapped (H x W); a rect near the view's top-left.
-    pos = {"pageNumber": 1, "boundingRect": None, "rects": [
-        {"x1": 79.2, "y1": 61.2, "x2": 158.4, "y2": 122.4,
-         "width": PAGE_H, "height": PAGE_W, "pageNumber": 1},
-    ]}
+    pos = {"pageNumber": 1, "width": PAGE_H, "height": PAGE_W,
+           "rects": [{"x1": 79.2, "y1": 61.2, "x2": 158.4, "y2": 122.4}]}
     out, written = annotate_pdf(_blank_pdf(rotate=90), [{"position": pos, "note": ""}])
     assert written == 1
     rect = [float(v) for v in PdfReader(io.BytesIO(out)).pages[0]["/Annots"][0].get_object()["/Rect"]]
@@ -242,14 +240,14 @@ def test_export_pdf_endpoint(guest):
                      properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "hl1", "content": "top comment", "properties": {
-            "highlight_id": "hl1", "quote": "quoted text", "pdf_page": 1,
+            "quote": "quoted text",
             "color": "rgba(155, 205, 255, 0.65)", "pdf_position": _position(),
         }, "children": [
             {"id": "note1", "content": "nested note", "properties": {}, "children": []},
         ]},
         {"id": "free1", "content": "a free note (no highlight)", "properties": {}, "children": []},
         {"id": "link1", "content": "", "properties": {
-            "highlight_id": "link1", "link_url": "https://example.com",
+            "link_url": "https://example.com",
             "pdf_position": _position(y1=300, y2=320),
         }, "children": []},
     ]})
@@ -301,7 +299,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     # …but the imported blocks exist: the highlight with its exact color, the
     # square as an area highlight, both marked annot_stripped.
     kids = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
-    hl = [b for b in kids if b["properties"].get("highlight_id")]
+    hl = [b for b in kids if b["kind"] == "highlight"]
     assert len(hl) == 2
     assert all(b["properties"].get("annot_stripped") for b in hl)
     colors = {b["properties"]["color"] for b in hl}
@@ -385,10 +383,8 @@ def test_render_notes_on_rotated_page():
     (which is 792 wide × 612 tall once the viewer applies the rotation)."""
     from gamma.pdf_notes import render_notes
 
-    pos = {"pageNumber": 1, "rects": [
-        {"x1": 200, "y1": 100, "x2": 500, "y2": 130,
-         "width": PAGE_H, "height": PAGE_W, "pageNumber": 1},
-    ]}
+    pos = {"pageNumber": 1, "width": PAGE_H, "height": PAGE_W,
+           "rects": [{"x1": 200, "y1": 100, "x2": 500, "y2": 130}]}
     out, drawn = render_notes(_blank_pdf(rotate=90), [{"position": pos, "note": "rotated note"}])
     assert drawn == 1
     assert "rotated note" in _page_text(out)
@@ -402,13 +398,12 @@ def test_export_pdf_notes_mode(guest):
                      properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "nhl1", "content": "top comment", "properties": {
-            "highlight_id": "nhl1", "quote": "quoted text", "pdf_page": 1,
-            "pdf_position": _position(),
+            "quote": "quoted text", "pdf_position": _position(),
         }, "children": [
             {"id": "nnote1", "content": "nested note", "properties": {}, "children": []},
         ]},
         {"id": "nhl2", "content": "", "properties": {   # highlight with no note
-            "highlight_id": "nhl2", "pdf_position": _position(y1=400, y2=420),
+            "pdf_position": _position(y1=400, y2=420),
         }, "children": []},
     ]})
     assert r.status_code == 200, r.text
@@ -437,8 +432,7 @@ def test_export_pdf_highlights_switch(guest):
                      properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "shl1", "content": "only the note", "properties": {
-            "highlight_id": "shl1", "quote": "quoted text", "pdf_page": 1,
-            "pdf_position": _position(),
+            "quote": "quoted text", "pdf_position": _position(),
         }, "children": []},
     ]})
     assert r.status_code == 200, r.text

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 
 
 @pytest.fixture(autouse=True)
@@ -42,8 +42,8 @@ def _pdf_text(data):
 
 def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     from gamma import seed
-    from gamma.db import connect_pages_db, pdf_upload_path
-    from gamma.storage import is_pdf
+    from gamma.db import connect_pages_db
+    from gamma.storage import find_upload_file, is_pdf
 
     ws = seed.create_account("wl_alice", "wl_alice_pw")
     [page] = _pages(ws)
@@ -51,8 +51,8 @@ def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     assert page["content"] == "Welcome" and props["seeded"] == "welcome"
     # the sample PDF, stored by content hash like any upload
     doc_id = props["doc_id"]
-    assert props["source_url"] == f"/api/uploads/{doc_id}.pdf"
-    data = pdf_upload_path(ws, doc_id).read_bytes()
+    assert "source_url" not in props  # seeded in the current shape: the URL is derived
+    data = find_upload_file(f"{doc_id}.pdf", ws).read_bytes()
     assert is_pdf(data)
     text = _pdf_text(data)
     assert "Welcome to Gamma" in text and "Your first five minutes" in text
@@ -66,7 +66,7 @@ def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     assert not any("Guest workspace" in n for n in notes)
     with connect_pages_db(ws) as conn:
         batches = conn.execute("SELECT actor, ops FROM page_ops WHERE page_id = ?", (page["id"],)).fetchall()
-    assert len(batches) == 1 and batches[0][0] == "wl_alice"
+    assert len(batches) == 1 and batches[0][0] == account_of("wl_alice")
     ops = json.loads(batches[0][1])
     assert {o["op"] for o in ops} == {"insert"} and len(ops) == len(notes)
 
@@ -79,7 +79,7 @@ def test_the_account_sees_it_in_its_library():
     assert [b["content"] for b in children] == ["Welcome"]
     welcome = children[0]
     assert welcome["properties"]["seeded"] == "welcome"
-    pdf = c.get(welcome["properties"]["source_url"])
+    pdf = c.get(f"/api/uploads/{welcome['properties']['doc_id']}.pdf")
     assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
 
 
@@ -102,15 +102,15 @@ def test_existing_shared_and_filled_workspaces_are_never_seeded():
     # an account that already has its workspace (manage.py setup, sign-in)
     ws = make_user("wl_old", "wl_old_pw")
     assert _pages(ws) == []
-    assert workspaces.ensure_personal("wl_old", welcome=True) == ws
+    assert workspaces.ensure_personal(account_of("wl_old"), welcome=True) == ws
     assert _pages(ws) == []
     # a shared workspace (and an offline copy: workspaces.create without welcome)
-    shared = workspaces.create("Lab", "wl_old", kind="shared")
+    shared = workspaces.create("Lab", account_of("wl_old"), kind="shared")
     assert _pages(shared["id"]) == []
     # a workspace with a page of its own: seeding is a no-op, twice
     c = login("wl_old", "wl_old_pw")
     c.post("/api/pages", json={"title": "Mine"})
-    assert seed.seed_welcome(ws, actor="wl_old") is None
+    assert seed.seed_welcome(ws, actor=account_of("wl_old")) is None
     assert [p["content"] for p in _pages(ws)] == ["Mine"]
 
 

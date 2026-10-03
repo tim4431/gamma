@@ -17,7 +17,7 @@ applied (the same box pdf.js measures its scale-1 viewport from, so a layout
 built from it is exact). It is derived data next to the PDF text index, so it
 is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
 backups harmlessly, and is purged with the index when no page carries the
-document any more (`block_index.purge_page_data`).
+document any more (`pdf_index.purge_unused`).
 
 Who writes it: `storage.store_pdf` (uploads, imports, file chips), the
 `/api/pdf` proxy's save path and `/api/clip` schedule it on a background
@@ -45,6 +45,12 @@ Access is the file's own rule: a workspace member, or a share token confined
 to the shared page's document (`_share_can_read_upload`). The check reads the
 shared pages only and remembers a yes for a few minutes, so a PDF opened by
 range requests asks once, not per chunk.
+
+With the stored files in a bucket ([debugging.md](debugging.md) "Stored
+files in a bucket"), the route answers an allowed GET with a 302 to a
+presigned URL instead of the bytes. The whole-file fetch and pdf.js's
+range requests follow it to the bucket, whose CORS rule must allow the
+workspace header. The server answers a HEAD itself.
 
 ## The client (`src/pdf/PdfViewer.jsx`, `src/pdf/pdfSource.js`)
 
@@ -106,14 +112,33 @@ document). The viewer's load effect composes them:
 **The worker.** pdf.js does its parsing in a Web Worker whose script is 1.3 MB.
 It is imported as a Vite asset (`pdf.worker.min.mjs?url`), so it is always the
 installed `pdfjs-dist` legacy build and is served content-hashed and immutable
-like the bundle; one `PDFWorker` is created at module scope and shared by every
+like the bundle; one `PDFWorker` is created with the engine and shared by every
 document (pdf.js would otherwise start a fresh worker per `getDocument`, and it
 destroys only workers it created itself, so a shared one survives cache
-evictions). A copy under `public/` sent `no-cache` would be re-downloaded on
+evictions). The engine, pdf.js itself (0.38 MB, 0.1 MB as Brotli), is a chunk
+of its own: `loadPdfEngine()` fetches it and starts the worker, App calls it
+at startup when the address names a page, a share or a PDF and otherwise once
+the library has been up for a moment, and an opening document awaits it just
+before `getDocument` (the `parsing` phase), so a cold open fetches it beside
+the manifest when nothing loaded it earlier ([frontend-refactor.md](frontend-refactor.md#lazy-boundaries)).
+A copy under `public/` sent `no-cache` would be re-downloaded on
 every page load, because Starlette's `FileResponse` sets an ETag but never
 compares one (at 20 Mbps, 0.6 to 0.85 s of every open — the research note has
 the measurement). The static route in `gamma/app.py` compares the ETag
 itself, so the unhashed files (`index.html`, favicons) get a real 304.
+
+The build writes a Brotli (quality 11) and a gzip (level 9) copy beside every
+emitted js, mjs, css, html and svg file of 1 KB or more, where the copy is
+smaller. That is the `precompress` plugin in `frontend/vite.config.js`, about
+5 s of the build. The static route sends the `.br` copy when the request's
+`Accept-Encoding` allows `br`, else the `.gz` one for `gzip`, else the file
+itself. Each goes out with the file's own media type and cache rule. A file
+with a copy answers `Vary: Accept-Encoding`, and each encoding has its own
+ETag, so the 304 above holds per encoding. The worker goes out as 0.3 MB
+instead of 1.3 MB, the main chunk as 0.49 MB instead of 1.9 MB. The route
+answers HEAD as well. An `/api` path without a HEAD route of its own gets a
+405. A reverse proxy that serves `dist` itself can send the same copies
+([debugging.md](debugging.md#serving-the-build)).
 
 The backend pins `.mjs` and `.js` to `text/javascript`, independently of OS
 MIME mappings (Windows registry entries can otherwise make the worker plain
@@ -196,7 +221,7 @@ share token rides on the ranges, the manifest and the HEAD).
 
 | Open | Before | After (four runs) | On the wire |
 |---|---|---|---|
-| Cold (nothing cached, first visit) | 9.73 s | 0.68 to 0.79 s; page boxes at 65 to 78 ms | 0.3 MB in 2 range requests, plus the 1.3 MB worker script (0.6 s of the total, once per browser) |
+| Cold (nothing cached, first visit) | 9.73 s | 0.68 to 0.79 s; page boxes at 65 to 78 ms; 0.46 s with the worker precompressed (one run); 0.50 to 0.54 s with pdf.js a chunk of its own (four runs, page boxes at 65 to 71 ms) | 0.3 MB in 2 range requests, plus the worker script once per browser: 1.3 MB (0.6 s of the total) as it is, 0.3 MB (0.16 s) as its Brotli copy; pdf.js itself, 0.1 MB, comes with the app's startup requests |
 | Warm (new tab: IndexedDB + HTTP cache) | 1.01 s | 0.13 to 0.14 s | nothing |
 | Same tab, back from the library (`DOC_CACHE`) | not measured before | 0.04 s (pages in the DOM at 8 ms) | nothing |
 
