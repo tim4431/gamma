@@ -111,17 +111,17 @@ SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         PRIMARY KEY (account_id, url)
     )"""
 
-# A server connection a person approved (``connect.py``), waiting for the
-# server to fetch its client with the code (expires quickly).
 # Server settings an admin edits at runtime (``settings.py``). Only the keys
-# in ``settings.SPECS`` mean anything; a row for anything else is ignored, so
-# a rolled-back build leaves nothing behind.
+# in ``settings.DEFAULTS`` mean anything; a row for any other key is ignored,
+# so a rolled-back build leaves nothing behind.
 SETTINGS = """CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
     )"""
 
+# A server connection a person approved (``connect.py``), waiting for the
+# server to fetch its client with the code (expires quickly).
 SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
         code_hash TEXT PRIMARY KEY,
         account_id TEXT NOT NULL,

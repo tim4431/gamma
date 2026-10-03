@@ -198,7 +198,7 @@ and integration tokens get an empty list. The sources:
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
-| `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
+| `mirror-conflicts` | everyone | Workspaces | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
@@ -248,28 +248,14 @@ The account card:
 
 - **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
   account's row, storage meter and Gamma Cloud link row.
-  Under it, the sync sections
+  Under it, the sync section
   ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
   **Publishing** lists the workspaces that publish pages to Gamma Cloud
   (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
   state, Conflicts when any wait, a "more" menu with Sync now and Stop
   publishing all; an empty state for the signed-in with nothing published).
-  **Clones** (`MirrorsSection` in
-  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx))
-  lists the account's mirrors of remote workspaces in git's words (each row:
-  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
-  resolved there or opened on its block — and a "more" `ActionMenu` with
-  Force pull / Force push, Detach, Remove origin) and offers "Clone a remote
-  workspace" (a `SubDialog`: origin server, write token, into a new or an
-  existing workspace, name, direction) — [mirror.md](mirror.md). Both
-  sections are hidden for the guest. The same state sits in the header as
-  the sync pill (`collaboration/MirrorPopover.jsx`) while a clone is open;
-  the clone's own settings (cadence, direction, force pull / push, detach /
-  reattach, remove origin) live in that pill's gear view, stored on the
-  server per mirror (`mirrors.poll_s`, `on_change`, `mode`). Last comes
-  **Sync status**, the sync pill's scope (a `Segmented`: synced pages only,
-  or every page of a workspace that syncs some — `syncPillScope`,
-  [mirror.md](mirror.md) "Publishing").
+  It is hidden for the guest. Clones are listed under Workspaces, and the
+  sync pill's scope is under Appearance.
 
 Preferences:
 
@@ -281,10 +267,12 @@ Preferences:
   dark-page switch with its live PDF sample, **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
-  interface size and the status bar, and last **Suggest tours**
-  (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)). The old `library` pane id is an alias of
-  this pane.
+  interface size and the status bar, **Sync status** (the header's sync
+  pill: a `Segmented` of synced pages only, or every page of a workspace
+  that syncs some — `syncPillScope`, [mirror.md](mirror.md) "Publishing"),
+  and last **Suggest tours** (`suggestTours`: off, no tour or hint is
+  offered by itself, [onboarding.md](onboarding.md)). The old `library`
+  pane id is an alias of this pane.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
@@ -348,7 +336,12 @@ AI:
   each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
   the default speed, which only reaches models whose provider offers that
   service tier ([ai.md](ai.md#speed-service-tier)),
-  and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
+  and the snapshot-clearing switch), **Prompts** (the accordion with one
+  Cancel / Save pair as the section's action) and **Context size** (the
+  three budgets; the section's action is the Standard / Larger / Custom
+  preset). The old `ai-advanced`, `context` and `prompts` pane ids are
+  aliases of this pane, each jumping to its section.
+- **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
@@ -361,10 +354,8 @@ AI:
   **Online search** (`OnlineSearch.jsx`): which service general web search
   goes through (Automatic, your AI connection, Brave Search, SearXNG or Off)
   and the Brave, SearXNG and optional OpenAlex settings, stored on the server
-  like the translation keys ([ai_tools.md](ai_tools.md) "search_web").
-- **Advanced**: tool limits and the context budgets (the section's action
-  is the Standard / Larger / Custom preset).
-- **Prompts**: the accordion with one Cancel / Save pair.
+  like the translation keys ([ai_tools.md](ai_tools.md) "search_web"). Last,
+  **Tool limits**: tool rounds per message and the read window.
 - **Integrations** ([SettingsIntegrations.jsx](../../frontend/src/settings/SettingsIntegrations.jsx)):
   the workspace's assistant connections, the MCP URL, Claude Code connection,
   plugin setup and address-change commands, the Codex setup
@@ -386,8 +377,21 @@ Library:
   Rename and invite are small editor dialogs. A row's on-disk folder
   (`workspaces/<id>`) shows to admins only. The empty Shared section offers
   admins "New shared workspace" (a jump to Server). The account popover's
-  "Workspaces…" opens this pane. Clones are listed under Account & sync,
-  not here.
+  "Workspaces…" opens this pane. Last, for everyone but the guest, come
+  **Clones** (`MirrorsSection` in
+  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx)),
+  the account's mirrors of remote workspaces in git's words, kept out of
+  the Personal list. Each row has a status line, Open, Sync or Reattach,
+  Conflicts (the conflict cards, each resolved there or opened on its block)
+  and a "more" `ActionMenu` with Force pull / Force push, Detach and Remove
+  origin. The section's action is "Clone a remote workspace" (a
+  `SubDialog`: origin server, write token, into a new or an existing
+  workspace, name, direction) — [mirror.md](mirror.md). The same state sits
+  in the header as the sync pill (`collaboration/MirrorPopover.jsx`) while a
+  clone is open, and the pill's "All clones in Settings" opens this pane.
+  The clone's own settings (cadence, direction, force pull / push, detach /
+  reattach, remove origin) live in that pill's gear view, stored on the
+  server per mirror (`mirrors.poll_s`, `on_change`, `mode`).
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and

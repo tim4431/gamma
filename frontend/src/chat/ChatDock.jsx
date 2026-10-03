@@ -417,7 +417,7 @@ export default function ChatDock({
   }, [focusSignal, aiOff, aiInfo]);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
-  // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
+  // map in Settings → AI → Tool usage (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
   const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
   const chatKindLabel = chatKindName(chatKind);
@@ -555,7 +555,7 @@ export default function ChatDock({
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
   const canDictate = !aiOff && !!aiInfo?.transcribe;
   const nativePdfNote = nativePdf ? "" :
-    t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
+    t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Chat / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
   const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
   useEffect(() => {
     // A provider without native PDF input: drop the automatic "send the file
@@ -1533,7 +1533,7 @@ export default function ChatDock({
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
-                    {t("Extracted PDF text sent with each message. The multi-page total and the agent's read window are in Settings / AI / Advanced AI settings.")}
+                    {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
                   </div>
                   <div className="popoverSection">{t("Tools")}</div>
                   <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>

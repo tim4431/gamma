@@ -42,7 +42,7 @@ a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline
 .btn--danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line-2))}.btn--danger:hover{background:var(--danger-soft)}
 .btn--sm{padding:4px 9px;font-size:13px}.btn--block{width:100%;padding:9px 12px}
 label{display:block;font-size:12.5px;font-weight:500;color:var(--text-2);margin:12px 0 5px}label small{font-weight:400;color:var(--muted)}
-input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:inherit;font:inherit;font-size:14px}textarea{min-height:110px;resize:vertical;font-family:var(--mono);font-size:12.5px;line-height:1.5}input:focus,select:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0;border-color:var(--accent)}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:inherit;font:inherit;font-size:14px}textarea{min-height:110px;resize:vertical;font-family:var(--mono);font-size:12.5px;line-height:1.5}input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0;border-color:var(--accent)}
 form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;font-size:13px;margin-top:8px;color:var(--danger)}.msg.ok{color:var(--ok)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:2px 8px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);white-space:nowrap}
 .pill--ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}.pill--warn{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
@@ -625,39 +625,38 @@ def formfoot(label: str, cls: str = "") -> str:
 
 
 def settings_page(account: dict, linked: list[dict] | None = None, enabled: list[str] | None = None) -> str:
-    row, foot = srow, formfoot
     # the password a change needs appears once the field above it is edited
     # (``data-gated``); an account without one confirms with its session
     has_pw = account["has_password"]
     pw = ("<label>Password <small>to confirm it is you</small>"
           "<input name=password type=password autocomplete=current-password required></label>") if has_pw else ""
     profile = (
-        row("Display name", "Shown on Gamma servers next to your username.",
-            f"<form id=name><label><span class=sr>Display name</span><input name=display_name value='{esc(account['display_name'])}' maxlength=100 "
-            f"placeholder='{esc(account['username'])}'></label>{foot('Save')}</form>")
-        + row("Username", "Your name on every Gamma server: lowercase letters, digits and hyphens.",
-              f"<form id=user data-gated><label><span class=sr>Username</span><input name=username value='{esc(account['username'])}' "
-              f"pattern='{USERNAME_PATTERN}' required></label><div class=reveal hidden>{pw}</div>"
-              f"{foot('Change username')}</form>"))
-    email = row("E-mail address", "A confirmation link goes to the new address; the current one stays until you open it.",
-                f"<div class=current>{esc(account['email'])} {_email_pill(account)}</div>"
-                "<form id=em data-gated><label>New address<input name=new_email type=email placeholder='name@example.org' required></label>"
-                f"<div class=reveal hidden>{pw}</div>{foot('Send confirmation')}</form>")
+        srow("Display name", "Shown on Gamma servers next to your username.",
+             f"<form id=name><label><span class=sr>Display name</span><input name=display_name value='{esc(account['display_name'])}' maxlength=100 "
+             f"placeholder='{esc(account['username'])}'></label>{formfoot('Save')}</form>")
+        + srow("Username", "Your name on every Gamma server: lowercase letters, digits and hyphens.",
+               f"<form id=user data-gated><label><span class=sr>Username</span><input name=username value='{esc(account['username'])}' "
+               f"pattern='{USERNAME_PATTERN}' required></label><div class=reveal hidden>{pw}</div>"
+               f"{formfoot('Change username')}</form>"))
+    email = srow("E-mail address", "A confirmation link goes to the new address; the current one stays until you open it.",
+                 f"<div class=current>{esc(account['email'])} {_email_pill(account)}</div>"
+                 "<form id=em data-gated><label>New address<input name=new_email type=email placeholder='name@example.org' required></label>"
+                 f"<div class=reveal hidden>{pw}</div>{formfoot('Send confirmation')}</form>")
     new_pw = ("<label>New password <small>8+ characters</small>"
               "<input name=new type=password autocomplete=new-password minlength=8 required></label>")
     if has_pw:
-        password = row("Password", "Changing it signs out every other browser and device.",
-                       "<form id=pw><div class=fields><label>Current password<input name=current type=password "
-                       f"autocomplete=current-password required></label>{new_pw}</div>{foot('Change password')}</form>")
+        password = srow("Password", "Changing it signs out every other browser and device.",
+                        "<form id=pw><div class=fields><label>Current password<input name=current type=password "
+                        f"autocomplete=current-password required></label>{new_pw}</div>{formfoot('Change password')}</form>")
     else:
-        password = row("Password", "You sign in with a connected account. A password lets you sign in with your "
-                       "e-mail or username too.", f"<form id=pw><div class=fields>{new_pw}</div>{foot('Set password')}</form>")
+        password = srow("Password", "You sign in with a connected account. A password lets you sign in with your "
+                        "e-mail or username too.", f"<form id=pw><div class=fields>{new_pw}</div>{formfoot('Set password')}</form>")
     conns = _connections(linked or [], enabled or [])
-    connected = row("Connected accounts", "Sign in with one click instead of a password.",
-                    f"{conns}<div class=msg id=smsg></div>") if conns else ""
-    delete = row("Delete account", "Signs everything out and removes the account after a grace period. Gamma servers keep their data.",
-                 "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
-                 f"<form id=del class=reveal hidden>{pw}{foot('Delete my account', 'btn--danger')}</form>")
+    connected = srow("Connected accounts", "Sign in with one click instead of a password.",
+                     f"{conns}<div class=msg id=smsg></div>") if conns else ""
+    delete = srow("Delete account", "Signs everything out and removes the account after a grace period. Gamma servers keep their data.",
+                  "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
+                  f"<form id=del class=reveal hidden>{pw}{formfoot('Delete my account', 'btn--danger')}</form>")
     inner = (_notice(account)
              + f"<section class=section><h2>Profile</h2>{profile}</section>"
              + f"<section class=section><h2>Sign-in</h2>{email}{connected}{password}</section>"
@@ -683,54 +682,33 @@ bind('del', async d => { if (!confirm('Delete this account? This cannot be undon
 
 
 def _settings_tab() -> str:
-    """The server settings an admin edits (``settings.py``), server-rendered
-    so the page always shows what the table holds; every save reloads."""
-    rows = {r["key"]: r for r in settings.listing()}
-
-    def field(key, **attrs):
-        spec = rows[key]
-        shown = " ".join(f"{k.replace('_', '-')}='{esc(str(v))}'" for k, v in attrs.items())
-        return (f"<label>{esc(spec['label'])}"
-                f"<input name={key} value='{esc(spec['value'])}' {shown}></label>")
-
-    reg = rows["registration"]
-    modes = "".join(f"<option value={m}{' selected' if m == reg['value'] else ''}>{m}</option>"
-                    for m in settings.REGISTRATION_MODES)
+    """The sign-up gate (``settings.py``). The forms are filled in by the
+    script from ``/api/admin/settings`` like the other tabs, and refilled
+    from each save's answer."""
     registration = srow(
-        esc(reg["label"]), esc(reg["help"]),
-        f"<form id=setreg><label><span class=sr>Registration</span><select name=registration>{modes}</select></label>"
-        f"{formfoot('Save')}</form>")
-
-    secret = rows["turnstile_secret"]
-    stored = ("<span class='pill pill--ok'>secret stored</span>" if secret["set"]
-              else "<span class='pill pill--warn'>no secret</span>")
-    clear = ("<button type=button class='btn btn--sm' id=clearsecret>Clear secret</button>"
-             if secret["set"] else "")
+        "Registration", "Who can create an account. An invite code works in open mode too and still grants its plan.",
+        "<form id=setreg><label><span class=sr>Registration</span><select name=registration>"
+        + "".join(f"<option value={m}>{m}</option>" for m in settings.REGISTRATION_MODES)
+        + f"</select></label>{formfoot('Save')}</form>")
     turnstile = srow(
-        "Anti-bot check", esc(rows["turnstile_sitekey"]["help"]),
-        f"<div class=current>{stored}</div><form id=setts><div class=fields>"
-        + field("turnstile_sitekey", placeholder="0x4AAA…", autocomplete="off")
-        + "<label>Turnstile secret<input name=turnstile_secret type=password autocomplete=off "
-          "placeholder='leave blank to keep'></label></div>"
-        + f"<div class=formfoot><button type=submit class='btn btn--sm'>Save</button>{clear}<div class=msg></div></div></form>")
-
-    domains = rows["blocked_email_domains"]
+        "Anti-bot check", "Cloudflare Turnstile on the sign-up and reset forms. It runs once both keys are stored.",
+        "<div class=current id=tsstate></div><form id=setts><div class=fields>"
+        "<label>Site key<input name=turnstile_sitekey placeholder='0x4AAA…' autocomplete=off></label>"
+        "<label>Secret key<input name=turnstile_secret type=password autocomplete=off></label></div>"
+        "<div class=formfoot><button type=submit class='btn btn--sm'>Save</button>"
+        "<button type=button class='btn btn--sm' id=clearsecret hidden>Clear secret</button><div class=msg></div></div></form>")
     blocked = srow(
-        esc(domains["label"]), esc(domains["help"]),
-        f"<form id=setdom><label><span class=sr>Blocked domains</span>"
-        f"<textarea name=blocked_email_domains placeholder='spam.example'>{esc(domains['value'])}</textarea></label>"
-        f"{formfoot('Save')}</form>")
-
-    warning = ("<div class=notice><span>Registration is open with no Turnstile secret: a script can create "
-               "accounts as fast as the rate limits allow. Accounts stay unverified until someone reads the "
-               "mail, so they cannot sign in to a Gamma server.</span></div>"
-               if settings.unguarded_registration() else "")
-    return ("<div id=tab-settings hidden>" + warning
-            + "<div class=section><h2>Sign-up<span>who may register, and what a sign-up has to get past</span></h2>"
+        "Blocked e-mail domains", "Refused at registration, on top of the built-in list of throwaway-mail services. "
+        "A domain covers its subdomains. One per line.",
+        "<form id=setdom><label><span class=sr>Blocked e-mail domains</span>"
+        f"<textarea name=blocked_email_domains placeholder='spam.example'></textarea></label>{formfoot('Save')}</form>")
+    return ("<div id=tab-settings hidden>"
+            "<div class=notice id=unguarded hidden><span>Registration is open and the anti-bot check is off, so only "
+            "the rate limits stop a script. Its accounts stay unverified and cannot sign in to a Gamma server.</span></div>"
+            "<div class=section><h2>Sign-up<span>who may register, and what a sign-up has to pass</span></h2>"
             + registration + turnstile + blocked + "</div>"
-            + "<p class=empty>The data directory, the public URL, mail and the Google/GitHub clients stay in the "
-              "container's environment — they are set once with the DNS and provider configuration they belong to.</p>"
-              "</div>")
+            "<p class=empty>The public URL, mail and the Google/GitHub clients are set in the container's environment.</p>"
+            "</div>")
 
 
 def admin_page(account: dict) -> str:
@@ -795,6 +773,7 @@ function wire(){
 async function load(tab){
   if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
+  if (tab === 'settings') showSettings(await api('/api/admin/settings', undefined, 'GET'));
   if (tab === 'audit') { const d = await api('/api/admin/audit?limit=300', undefined, 'GET'); document.getElementById('audit').innerHTML = d.audit.map(a => '<tr><td class=mono>' + esc(a.at.slice(0,19).replace('T',' ')) + '</td><td>' + esc(a.event) + '</td><td class=mono>' + esc(a.account_id) + '</td><td class=mono>' + esc(a.actor) + '</td><td>' + esc(a.detail) + '</td></tr>').join(''); }
   wire();
 }
@@ -803,18 +782,24 @@ document.getElementById('more').onclick = () => loadAccounts(false);
 bind('inv', async (d, msg) => { const r = await api('/api/admin/invites', {uses: Number(d.uses), plan: d.plan, note: d.note}); say(msg, 'Invite ' + r.invite.code + ' created.'); load('invites'); });
 bind('cli', async (d, msg) => { const r = await api('/api/admin/clients', {name: d.name, kind: d.kind, redirect_uris: [d.redirect]}); const box = document.getElementById('secret'); box.hidden = false;
   box.textContent = 'GAMMA_CLOUD_CLIENT_ID=' + r.client_id + '\\nGAMMA_CLOUD_CLIENT_SECRET=' + r.client_secret + '   (shown once)'; say(msg, 'Client created.'); load('clients'); });
-// Settings: each row saves its own keys and reloads, so what the page shows
-// is always what the table holds (a blank secret field means "keep").
-async function saveSettings(d, msg, keys){
-  const body = {}; for (const k of keys) body[k] = d[k];
-  await api('/api/admin/settings', body, 'PATCH'); say(msg, 'Saved.'); setTimeout(() => location.reload(), 700);
+function showSettings(s){
+  const reg = document.getElementById('setreg').elements, ts = document.getElementById('setts').elements;
+  reg.registration.value = s.registration;
+  ts.turnstile_sitekey.value = s.turnstile_sitekey;
+  ts.turnstile_secret.value = ''; ts.turnstile_secret.placeholder = s.turnstile_secret_set ? 'stored · leave blank to keep' : '';
+  document.getElementById('setdom').elements.blocked_email_domains.value = s.blocked_email_domains;
+  document.getElementById('tsstate').innerHTML = s.turnstile_on ? '<span class="pill pill--ok">on</span>'
+    : '<span class="pill pill--warn">off</span><span class=empty>' + (s.turnstile_secret_set || s.turnstile_sitekey ? 'needs both keys' : 'no keys stored') + '</span>';
+  document.getElementById('clearsecret').hidden = !s.turnstile_secret_set;
+  document.getElementById('unguarded').hidden = !s.unguarded;
 }
-bind('setreg', (d, msg) => saveSettings(d, msg, ['registration']));
-bind('setts', (d, msg) => saveSettings(d, msg, ['turnstile_sitekey', 'turnstile_secret']));
-bind('setdom', (d, msg) => saveSettings(d, msg, ['blocked_email_domains']));
-const cs = document.getElementById('clearsecret');
-if (cs) cs.onclick = () => { if (!confirm('Clear the Turnstile secret? The anti-bot check stops running.')) return;
-  act(cs, async () => { await api('/api/admin/settings', {turnstile_secret: null}, 'PATCH'); location.reload(); }); };
+const saveSettings = async (body, msg) => { showSettings(await api('/api/admin/settings', body, 'PATCH')); if (msg) say(msg, 'Saved.'); };
+bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
+bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, turnstile_secret: d.turnstile_secret}, msg));
+bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
+const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySelector('.msg');
+cs.onclick = () => { if (!confirm('Clear the Turnstile secret? The anti-bot check stops running.')) return;
+  act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
 loadAccounts(true);
 """ % json.dumps(list(config.PLANS))
     return app("Admin", "Accounts, invites, the clients of hosted servers, the sign-up settings, and what "

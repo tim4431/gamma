@@ -105,9 +105,9 @@ def authorize_login(body: AuthorizeLogin, request: Request):
     """Sign in on the authorize page; answers ``{redirect}`` for the page to
     follow. Also sets the portal cookie, so the next server's sign-in is one
     click."""
-    ip = ratelimit.client_ip(request)
     who = body.login.strip().lower()[:254]
-    ratelimit.check(f"login:ip:{ratelimit.ip_bucket(ip)}", 10, 300)
+    ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
+    ratelimit.check(ip_key, 10, 300)
     ratelimit.check(f"login:who:{who}", 10, 300)
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
@@ -124,7 +124,7 @@ def authorize_login(body: AuthorizeLogin, request: Request):
             return resp
         redirect = oidc.finish(conn, req, account)
         conn.commit()
-    ratelimit.reset(f"login:ip:{ratelimit.ip_bucket(ip)}")
+    ratelimit.reset(ip_key)
     ratelimit.reset(f"login:who:{who}")
     resp = JSONResponse({"redirect": redirect})
     sessions.set_cookie(resp, token)

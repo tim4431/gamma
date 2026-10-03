@@ -439,7 +439,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   // A clone syncs the whole workspace, so its pill is on every page; a
   // publication syncs the pages in its filter, so its pill is on those
   // pages only (and nowhere until the filter is known) — unless Settings →
-  // Account & sync → Sync pill says every page.
+  // Appearance → Sync pill says every page.
   const shown = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
   const shownRef = React.useRef(shown);
   shownRef.current = shown;

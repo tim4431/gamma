@@ -16,7 +16,7 @@ Code: `gamma/sync_engine.py` (the engine and the mirror registry),
 on the remote), `gamma/routers/mirrors.py` (the mirror API on the server
 that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
 (publishing a page to the share host, below), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
-Account & sync → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
+Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
 row), `desktop/main.js` `keepOffline` (the shell's one-click flow). Why the
@@ -519,7 +519,7 @@ the pill's poll raises the latter); a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
-### Settings → Account & sync → Clones (`SettingsMirrors.jsx`)
+### Settings → Workspaces → Clones (`SettingsMirrors.jsx`)
 
 - One row per clone. Its avatar is its state (the same reading as the pill:
   a spinning refresh while a round runs, a check when up to date, a warning
@@ -592,7 +592,7 @@ mirror's own answer apart.
 - **The header's sync pill** shows for a publication only on a published
   page. A clone syncs the whole workspace, so its pill is on every page; a
   publication syncs the pages in its filter, so its pill is on those.
-  Settings → Account & sync → Sync pill (*Synced pages* / *Every page*)
+  Settings → Appearance → Sync pill (*Synced pages* / *Every page*)
   can put it on every page instead. Its tooltip and name line say
   *Published to Gamma Cloud* with the count of pages and the host. Its gear
   keeps *Automatic sync* and *Sync after an edit* and hides *Direction*,
@@ -600,10 +600,10 @@ mirror's own answer apart.
   detached publication still offers *Reattach*). The first publication in
   a workspace sets `publishing` on the open workspace, so the pill appears
   without a reload.
-- **Settings → Account & sync** (the sync sections in `SettingsSync.jsx`,
-  `PublishingSection` in `SettingsMirrors.jsx`) lists publications under
-  *Publishing*, above *Clones*; the pill's gear link opens this pane for
-  both. A row has the state avatar, the workspace's name with its tags,
+- **Settings → Account & sync** (`SettingsSync.jsx`, `PublishingSection`
+  in `SettingsMirrors.jsx`) lists publications under *Publishing*; the
+  pill's gear link opens this pane for a publication and Workspaces for
+  a clone. A row has the state avatar, the workspace's name with its tags,
   *N published pages · host*, the status line, a *Conflicts* button when
   any wait, and a "more" menu with *Sync now* and a danger *Stop
   publishing all* (confirmed, then `DELETE /api/pages/{id}/publish?ws=`
@@ -640,7 +640,7 @@ log under that account with client `sync`.
   the page's session, starts (or makes) a local server, signs into it with
   the seeded admin credentials, creates the mirror there and moves the
   window to it ([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
-- **Any Gamma**: Settings → Account & sync → Clones → *Clone a remote
+- **Any Gamma**: Settings → Workspaces → Clones → *Clone a remote
   workspace*: the server address and a write token made there.
 
 **Detach and reattach.** *Detach* (`POST /api/mirrors/{ws}/detach`) sets

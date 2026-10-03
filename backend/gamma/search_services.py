@@ -1,4 +1,4 @@
-"""The services behind the agent's online search (Settings → AI → Chat →
+"""The services behind the agent's online search (Settings → AI → Tool usage →
 Online search).
 
 General web search (the ``search_web`` tool) goes through one engine:

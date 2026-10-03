@@ -162,7 +162,7 @@ class AIChatRequest(BaseModel):
     # focused page — read tools + note editors). "" = plain chat (page_id
     # still names the context page). Every tool call comes back as an
     # {"action": …} NDJSON line alongside the text deltas.
-    # `permissions` is the Settings → AI → Chat → Tools map, one state per
+    # `permissions` is the Settings → AI → Tool usage → Tools map, one state per
     # permission ({list, read, …, rename, move, block_edit} → "allow" /
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
@@ -190,7 +190,7 @@ class AIChatRequest(BaseModel):
     paper_wait: bool = True
     # Whether read_paper is offered: a long document is read by a helper on
     # the same connection, and the chat carries its answer instead of the
-    # document (Settings → AI → Chat → "Read long papers with a helper").
+    # document (Settings → AI → Tool usage → "Read long papers with a helper").
     delegate_reads: bool = True
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
@@ -1171,7 +1171,7 @@ def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, requ
     return {"ok": True, "text": text}
 
 
-# --- Online search services (Settings → AI → Chat → Online search) -----------
+# --- Online search services (Settings → AI → Tool usage → Online search) -----
 # Which service searches the general web, and the keys (write-only like the
 # AI keys: GET masks them) — gamma/search_services.py.
 

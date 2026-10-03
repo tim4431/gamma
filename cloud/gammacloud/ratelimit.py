@@ -23,10 +23,9 @@ def client_ip(request: Request) -> str:
 
 
 def ip_bucket(ip: str) -> str:
-    """The address a rate-limit key is built from. An IPv6 address is cut to
-    its /64, because the smallest block a provider hands a customer is a /64
-    and every address in it would otherwise get its own allowance; an IPv4
-    address, where one address is one customer, is used whole."""
+    """The part of an address a rate limit counts. IPv6 is cut to its /64,
+    the smallest block a provider hands a customer, so rotating through it
+    shares one allowance. IPv4 is used whole."""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
@@ -39,7 +38,7 @@ def ip_bucket(ip: str) -> str:
 
 
 def limit_ip(request: Request) -> str:
-    """``ip_bucket`` of the request's client address — the usual rate-limit key."""
+    """The client's ``ip_bucket``: what every per-IP rate-limit key is built from."""
     return ip_bucket(client_ip(request))
 
 

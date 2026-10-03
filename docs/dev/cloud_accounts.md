@@ -43,11 +43,10 @@ uvicorn app:app --port 9002 --reload                       # http://127.0.0.1:90
 python -m pytest tests -q
 ```
 
-Configuration comes from two places that do not overlap, so every value
-has one home.
+Configuration comes from two places, and no value is in both.
 
 **The environment**, `GAMMA_CLOUD_*` (`cloud/gammacloud/config.py` lists
-every variable) — fixed for the life of the container:
+every variable), fixed for the life of the container:
 
 - the data directory;
 - the public URL — the OIDC issuer; the request's Host is never trusted;
@@ -58,31 +57,26 @@ every variable) — fixed for the life of the container:
 - the free share host's address (`GAMMA_CLOUD_SHARE_HOST_URL`, empty = none),
   which Gamma servers read to know where pages are published (below).
 
-**`cloud.db`**, edited by an admin on the Admin page's Settings tab and in
-effect immediately (`cloud/gammacloud/settings.py`) — the sign-up gate, the
-part an operator changes while the service runs:
+**`cloud.db`** (`cloud/gammacloud/settings.py`), the sign-up gate. An admin
+edits it on the Admin page's Settings tab and a change takes effect at once:
 
 - the registration mode: `open` / `invite` / `closed`, default `invite`;
-- the Turnstile site key and secret, the check off until the secret is set —
-  with `open` registration it is the main thing standing in a script's way,
-  so the tab warns while it is missing (`settings.unguarded_registration`);
-- extra blocked mail domains, added to the throwaway-mail list in
-  `accounts.DISPOSABLE_DOMAINS`.
+- the Turnstile site key and secret. The check runs only when both are
+  stored, since a secret without the widget would refuse every sign-up.
+  The tab warns while registration is open and the check is off
+  (`settings.unguarded_registration`);
+- extra blocked mail domains, added to `accounts.DISPOSABLE_DOMAINS`.
 
-Each is read through an accessor (`settings.registration()` and friends)
-over a process-wide cache, so a page render needs no connection; a write
-goes through `settings.set` and the admin router drops the cache *after*
-the commit, so no reader can take a value that then rolls back. The image
-runs one uvicorn worker, which is what makes the cache safe. A corrupt
-`registration` row reads as `invite`: a bad value must never be the thing
-that opens registration.
+Reads go through accessors (`settings.registration()` and the rest) over a
+process-wide cache, which is safe because the image runs one uvicorn
+worker. A write goes through `settings.update`, and the admin router drops
+the cache after the commit, so no reader caches a value that rolls back. A
+`registration` row with a bad value reads as `invite`.
 
-These three used to be environment variables. They are no longer read:
-`db._step_settings` imports them once during the upgrade, so a running
-deployment keeps the mode it had, and `app.py` warns at startup about any
-still set (`config.RETIRED_ENV`). A **fresh** database takes the defaults
-and imports nothing, so a stray variable on a first install cannot quietly
-open registration.
+The upgrade step `db._step_settings` imported the environment variables
+these replaced, once. They are not read otherwise, and `app.py` warns at
+startup about any still set (`config.RETIRED_ENV`). A fresh database takes
+the defaults.
 
 The Docker image (`cloud/Dockerfile`) runs uvicorn on 9002. The client
 address (rate limits, the address on a device or browser row) is
@@ -90,10 +84,10 @@ Cloudflare's `CF-Connecting-IP`, else the connection's peer
 (`ratelimit.client_ip`); `X-Forwarded-For` is never read, since its first
 hop is whatever the client wrote and behind Caddy it only names
 Cloudflare. The header is only as good as the rule that the origin answers
-Cloudflare alone (the deploy README's origin lock-down). A rate-limit key
-is built from `ratelimit.ip_bucket` of that address, which cuts an IPv6
-address to its /64: the smallest block a provider hands a customer, so a
-prefix rotation cannot walk out of its own allowance. IPv4 is used whole.
+Cloudflare alone (the deploy README's origin lock-down). Per-IP rate-limit
+keys use `ratelimit.limit_ip`, which cuts an IPv6 address to its /64
+(`ip_bucket`). A /64 is the smallest block a provider hands a customer, so
+rotating addresses inside it shares one allowance. IPv4 is used whole.
 
 ## Data
 
@@ -114,7 +108,7 @@ the signing keys and every token hash.
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
 | `invites` | codes with uses left and the plan they grant |
-| `settings` | the sign-up gate an admin edits (`settings.SPECS`): registration mode, the Turnstile pair, blocked mail domains. A row for any other key is ignored, so a rollback leaves nothing behind |
+| `settings` | the sign-up gate an admin edits (`settings.DEFAULTS`): registration mode, the Turnstile pair, blocked mail domains. A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
@@ -137,8 +131,9 @@ fixed-width UTC strings with a `Z`, so they compare as strings.
 image on a VPS, `compose.yml` running it with Caddy for TLS behind
 Cloudflare DNS; `compose.tunnel.yml` swaps Caddy for a Cloudflare Tunnel on
 a host without a public address. The state is the `data/` folder. The
-README covers `.env.example` (public URL, SMTP, Turnstile, hostname), the
-first admin and invites, the Cloudflare rate rules, updating and rollback.
+README covers `.env.example` (public URL, SMTP, hostname), the first admin
+and invites, the sign-up settings, the Cloudflare rate rules, updating and
+rollback.
 The website links here: the
 header's **Sign in** and the `/login`, `/account`, `/signup` short links
 ([sites/README.md](../../sites/README.md)).
@@ -227,13 +222,12 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
-  - **Settings**: the sign-up gate above — registration mode, the
-    Turnstile pair, the blocked mail domains. Each row saves its own keys
-    and reloads the page, so what is shown is what the table holds. A
-    secret's value never leaves the server: the listing says only whether
-    one is stored, a blank field on save means "keep it", and `null` clears
-    it. `settings.set` audits the change and writes `set`/`cleared` for a
-    secret rather than its value.
+  - **Settings**: the sign-up gate above. Each row saves its own keys and
+    the tab redraws from the answer (`settings.admin_view`). The Turnstile
+    secret never leaves the server: the tab learns only whether one is
+    stored, a blank field on save keeps it, and `null` clears it.
+    `settings.update` audits each changed key, with `set`/`cleared` in
+    place of a secret.
   - The audit log.
 
   All of it is the `/api/admin/*` API below; `manage.py` does the same
@@ -241,10 +235,10 @@ page) and the **app** shell (a sidebar and a content column):
 
 - **Register** (`POST /api/register`): e-mail, username, password, an invite
   code in `invite` mode, a Turnstile token when configured. Rejected
-  attempts count toward the per-IP limit. Five an hour per address bucket.
-  A throwaway-mail domain is refused (`accounts.check_email_domain`, which
-  also covers subdomains) — only here, so an address already in use keeps
-  working if its domain lands on the list later. The account starts unverified,
+  attempts count toward the limit of five an hour per IP (per /64 for
+  IPv6). A throwaway-mail domain or a subdomain of one is refused
+  (`accounts.check_email_domain`). Only register checks this, so an address
+  already in use keeps working if its domain is listed later. The account starts unverified,
   the verify mail goes out, and the browser is signed in so the account page
   can resend the mail. Taken e-mail or username answers 409 with a message —
   a deleted account keeps both through the grace period. Every mail goes
@@ -255,16 +249,14 @@ page) and the **app** shell (a sidebar and a content column):
 - **Verified e-mail is the gate.** An unverified account can use the
   portal but the authorize page refuses to sign it in to any Gamma server
   and shows the verify notice instead. That is the one abuse control a
-  hosted Gamma relies on: an account a script registered is an inert row
-  until someone reads the mail. The rest of what bounds `open`
-  registration: Turnstile, the per-bucket limits, one account per inbox
-  (`email_canon`), the throwaway-domain list, and Cloudflare's own rate
-  rules in front (deploy README).
+  hosted Gamma relies on: an account a script registered does nothing
+  until someone reads the mail. `open` registration is further bounded by
+  Turnstile, the per-IP limits, one account per inbox (`email_canon`), the
+  throwaway-domain list, and Cloudflare's rate rules (deploy README).
 - **Sign in** (`POST /api/login`): e-mail or username plus password; limits
   per IP and per name, reset on success. Any alias of the account's inbox
-  names it (`accounts.by_email`), since uniqueness already treats them as
-  one address; a reset mail still goes only to the address stored. An account without a password is
-  refused like a wrong password.
+  names it (`accounts.by_email`), and a reset mail goes only to the stored
+  address. An account without a password is refused like a wrong password.
 - **Reset** (`/api/reset/request` → mail → `/api/reset/confirm`): the
   request answers the same whether the address exists. Confirming sets the
   password, marks the e-mail verified (the mail reached them), signs every
@@ -571,16 +563,15 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
 
 - `test_accounts.py`: the registration, verify, reset, e-mail change,
   deletion and rate-limit flows, the pages.
-- `test_settings.py`: the defaults and the validation of each setting, a
-  corrupt row reading as `invite`, admin-only access, that a secret never
-  reaches the browser or the audit log, a blank save keeping it and `null`
-  clearing it, a rejected write changing nothing, the sign-up forms
-  following a mode change, and the upgrade importing the retired variables
-  once while a fresh database takes the defaults.
+- `test_settings.py`: the defaults and validation, a bad row reading as
+  `invite`, admin-only access, the secret kept out of the browser and the
+  audit log, blank keeping it and `null` clearing it, Turnstile needing
+  both keys, a rejected write changing nothing, the sign-up forms following
+  a mode change, and the upgrade importing the old variables once.
 - `test_signup_abuse.py`: what bounds open registration — the canonical
   form of an address and the aliases it folds, one Gmail inbox refused a
   second account, an unlisted domain keeping its tagged addresses apart,
-  the throwaway-domain list and its env extension, the IPv6 /64 bucket,
+  the throwaway-domain list and the admin's additions, the IPv6 /64 bucket,
   and the upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
   decoded ID token, refresh rotation, code replay, redirect and PKCE

@@ -130,7 +130,7 @@ def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
     assert _only(nuser, "mirror-conflicts") is None
     marks["ws-clone"] = (3, 7)
     notice = _only(nuser, "mirror-conflicts")
-    assert notice["pane"] == "account" and notice["tone"] == "warn" and notice["title"].startswith("3 sync conflicts")
+    assert notice["pane"] == "workspaces" and notice["tone"] == "warn" and notice["title"].startswith("3 sync conflicts")
     nuser.post("/api/notices/mirror-conflicts/seen", json={"fingerprint": notice["fingerprint"]})
     marks["ws-clone"] = (3, 7)
     assert _only(nuser, "mirror-conflicts") is None

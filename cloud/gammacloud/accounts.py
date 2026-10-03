@@ -2,9 +2,8 @@
 invite, the e-mail links (verify, reset, change-email), plans, deletion.
 
 An address is stored as it was typed but is unique by the inbox it reaches
-(``email_canon``), and register refuses throwaway-mail domains: with open
-registration one inbox must not become an unlimited supply of verifiable
-accounts.
+(``email_canon``), and register refuses throwaway-mail domains, so one inbox
+cannot become any number of verified accounts.
 
 Everything takes an open connection and commits nothing: the router owns
 the transaction so one request is one commit. The ``Problem`` exception
@@ -104,12 +103,11 @@ def check_email_domain(email: str) -> None:
     """Refuse a throwaway-mail domain at registration. Not applied to a
     reset or to an account an operator creates: an address already in use
     must keep working even once its domain lands on the list."""
+    blocked = DISPOSABLE_DOMAINS | settings.blocked_email_domains()
     parts = email.rpartition("@")[2].split(".")
     # A listed name covers its subdomains, so try the domain and each parent.
-    for i in range(len(parts) - 1):
-        candidate = ".".join(parts[i:])
-        if candidate in DISPOSABLE_DOMAINS or candidate in settings.blocked_email_domains():
-            raise Problem(400, "That mail provider is not accepted. Use a personal or work address.")
+    if any(".".join(parts[i:]) in blocked for i in range(len(parts) - 1)):
+        raise Problem(400, "That mail provider is not accepted. Use a personal or work address.")
 
 
 def norm_username(raw: str) -> str:

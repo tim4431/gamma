@@ -12,7 +12,7 @@ Every chat has a *scope* deciding what its tools can touch:
 ``context_pages`` extends either scope for reads; mutations keep the base scope.
 
 Each TOOLS entry declares its wire spec, the Settings permission key
-(Settings → AI → Chat → Tools), the scopes it exists in, whether it
+(Settings → AI → Tool usage → Tools), the scopes it exists in, whether it
 mutates, its executor and, for a changing tool, the preview of its approval
 card — so arming a chat is one filter (:func:`agent_tools`) and dispatch is
 one lookup (:func:`run_agent_tool`), with the in-scope check shared by every
@@ -86,7 +86,7 @@ _LIST_CAP = 400         # pages listed per list_pages call
 _TITLE_MAX = 300
 # read_page's document-text window: what one call returns when the model
 # doesn't ask (default) and the most it may ask for (cap). The cap is the
-# Settings → AI → Chat "Read window" preference — requests carry it as
+# Settings → AI → Tool usage "Read window" preference — requests carry it as
 # read_char_limit and it rides in the scope dict; these are the fallbacks.
 READ_CHARS_DEFAULT = 6000
 READ_CHARS_CAP = 20000
@@ -1606,7 +1606,7 @@ def _run_search_web(conn, ws: str, scope: dict, args: dict):
         return "error: empty query", None
     engine = scope.get("web_engine") or ""
     if not engine:
-        return "error: general web search is not set up (Settings → AI → Chat → Online search)", None
+        return "error: general web search is not set up (Settings → AI → Tool usage → Online search)", None
     if not ensure_tally(scope).take("web_searches", MAX_WEB_SEARCHES):
         return (f"error: {MAX_WEB_SEARCHES} web searches is the limit for one message — work with "
                 "the results you have", None)
@@ -3003,7 +3003,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             if "search_web" not in names:
                 text += (" General web search (lab pages, repositories) is not set up for this "
                          "chat; if it would have helped, say that it can be turned on in "
-                         "Settings → AI → Chat → Online search.")
+                         "Settings → AI → Tool usage → Online search.")
         if "fetch_paper" in names:
             text += (
                 " Pass fetch_paper the paper's title whenever you know it; if it reports that "

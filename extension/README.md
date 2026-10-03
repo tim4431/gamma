@@ -66,7 +66,7 @@ a green check confirms the connection.
 
 This explicitly transfers the publisher cookies to Gamma for later backend
 PDF downloads, including the AI chat's **Fetch documents** tool. The AI receives
-the fetched text, never the cookie values. Settings → AI → Chat → Tools controls
+the fetched text, never the cookie values. Settings → AI → Tool usage → Tools controls
 **Use journal sign-ins** separately for folder, PDF and notes chats. Normal Save
 actions still transfer only the PDF. Connected
 journals are **refreshed automatically**: when you visit one and Gamma's copy

@@ -7,7 +7,7 @@ abstracts, citation counts, open-access locations and reference lists. It
 answers without an account on a small daily budget (a search costs a tenth
 of a cent of it, a lookup by id nothing) and pauses keyless searches when
 its cluster is loaded; a free API key gives ten times the budget and
-uninterrupted search. The key is the account's (Settings → AI → Chat →
+uninterrupted search. The key is the account's (Settings → AI → Tool usage →
 Online search, gamma/search_services.py), else the server's
 ``GAMMA_OPENALEX_API_KEY``, and travels in the Authorization header, never
 in a URL. Records come back in the shape the other registries use
@@ -60,7 +60,7 @@ def _get(path: str, params: dict, key: str = "") -> dict:
     try:
         return json.loads(_http_get(f"{API}{path}?{query}", accept="application/json", headers=headers))
     except HTTPError as e:
-        remedy = "" if key else " — a free OpenAlex API key in Settings → AI → Chat → Online search avoids this"
+        remedy = "" if key else " — a free OpenAlex API key in Settings → AI → Tool usage → Online search avoids this"
         if e.code == 429:
             raise OpenAlexError("OpenAlex's daily budget is used up" + remedy, 429) from None
         if e.code == 503 and not key:

@@ -16,10 +16,10 @@ uvicorn app:app --port 9002 --reload      # portal at http://127.0.0.1:9002
 python -m pytest tests -q
 ```
 
-Configuration lives in two places that do not overlap: the `GAMMA_CLOUD_*`
-env variables documented at the top of [gammacloud/config.py](gammacloud/config.py),
-and the sign-up gate an admin edits on the Admin page's Settings tab
-([gammacloud/settings.py](gammacloud/settings.py)) — registration mode,
-Turnstile, blocked mail domains. With the defaults (registration by invite,
+Configuration is the `GAMMA_CLOUD_*` env variables documented at the top of
+[gammacloud/config.py](gammacloud/config.py), except the sign-up gate
+(registration mode, Turnstile, blocked mail domains), which an admin edits
+on the Admin page's Settings tab ([gammacloud/settings.py](gammacloud/settings.py)).
+With the defaults (registration by invite,
 mail to the console) `python manage.py invite` prints a code and the verify
 link appears in the server log.

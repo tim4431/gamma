@@ -3,8 +3,9 @@
 // shared ones you belong to (admin-made), each row with Open, Export,
 // Import and Manage — a dialog with rename, storage, members and roles
 // (shared), Make default (personal), Leave, Delete. Plus your account's
-// storage meter, New workspace (a personal one) and Export all. GUI for
-// /api/workspaces* (docs/dev/workspaces.md).
+// storage meter, New workspace (a personal one), Export all and, last, the
+// clones of workspaces on other Gamma servers (MirrorsSection in
+// SettingsMirrors.jsx). GUI for /api/workspaces* (docs/dev/workspaces.md).
 //
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
@@ -17,6 +18,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
+import { MirrorsSection, useMirrors } from "./SettingsMirrors";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -593,14 +595,18 @@ export function WorkspacesSettings({ value, onServer }) {
   const [busy, setBusy] = React.useState(false);
   const accounts = useAccounts();
   const currentId = workspace?.id;
+  const signedIn = !!me && me !== "guest";
+  const [mirrors, refreshMirrors] = useMirrors(signedIn);
 
   const refresh = React.useCallback(() => {
     apiJson(`${API}/workspaces/mine`).then(setData).catch((err) => setError(err.message));
   }, []);
   React.useEffect(() => { refresh(); }, [refresh]);
+  // A new clone is also a new workspace: read both lists again.
+  const refreshClones = React.useCallback(() => { refreshMirrors(); refresh(); }, [refreshMirrors, refresh]);
 
   const all = data?.workspaces || [];
-  const personal = all.filter((w) => w.personal && !w.mirror_of);  // clones are listed in Settings → Account & sync
+  const personal = all.filter((w) => w.personal && !w.mirror_of);  // clones have their own section, last
   const shared = all.filter((w) => !w.personal);
 
   async function submitCreate(name) {
@@ -717,6 +723,10 @@ export function WorkspacesSettings({ value, onServer }) {
               </Empty>
             )}
           </Section>
+          {signedIn ? (
+            <MirrorsSection mirrors={mirrors} refresh={refreshClones} workspaces={all} currentId={currentId}
+              switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} />
+          ) : null}
         </>
       ) : null}
 

@@ -1,14 +1,9 @@
 """Environment configuration of the account server. Everything is an env
 variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
 
-What is here is fixed for the life of the container: where the data lives,
-the issuer every Gamma server verifies, and credentials whose other half is
-configured somewhere else (the mail provider, Google, GitHub). The sign-up
-gate — registration mode, Turnstile, blocked mail domains — is **not** here;
-an admin edits it on the Admin page and it lives in cloud.db
-(``settings.py``). The two sets do not overlap, so each value has one home;
-``app.py`` warns at startup if a variable retired to ``settings.py`` is
-still set.
+What is here is fixed for the life of the container. The sign-up gate
+(registration mode, Turnstile, blocked mail domains) is not: an admin edits
+it on the Admin page and it lives in cloud.db (``settings.py``).
 
 - ``GAMMA_CLOUD_DATA_DIR`` — where ``cloud.db`` lives (default ``cloud/data``).
   The directory is the secret: it holds the signing keys and every hashed
@@ -56,8 +51,8 @@ SMTP_USER = os.environ.get("GAMMA_CLOUD_SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("GAMMA_CLOUD_SMTP_PASSWORD", "")
 SMTP_STARTTLS = os.environ.get("GAMMA_CLOUD_SMTP_STARTTLS", "1") not in ("0", "false", "no")
 
-# Retired to settings.py (cloud.db, the Admin page). Named here only so the
-# startup check can tell a deployment that still sets one that it does nothing.
+# Moved to settings.py. Listed only so app.py can warn a deployment that
+# still sets one.
 RETIRED_ENV = ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
                "GAMMA_CLOUD_TURNSTILE_SECRET", "GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS")
 

@@ -147,14 +147,14 @@ def _conflict_marks(user_id, publications):
 
 @source()
 def mirror_conflicts(user_id):
-    """Open conflicts in the clones the account owns (Settings → Account & sync →
+    """Open conflicts in the clones the account owns (Settings → Workspaces →
     Clones). Fingerprint: per clone, the count and the newest
     conflict — a new one brings the notice back, resolving old ones does
     not."""
     mark, total = _conflict_marks(user_id, publications=False)
     if not total:
         return None
-    return notice("mirror-conflicts", mark, "warn", "account",
+    return notice("mirror-conflicts", mark, "warn", "workspaces",
                   "{n} sync conflict to look at in your clones" if total == 1
                   else "{n} sync conflicts to look at in your clones", n=total)
 

@@ -47,7 +47,7 @@ def set_setting(key, value):
     """Change a server setting the way the Admin page does."""
     from contextlib import closing
     with closing(db.connect()) as conn:
-        settings.set(conn, key, value, actor="test")
+        settings.update(conn, {key: value}, actor="test")
         conn.commit()
     settings.invalidate()
 

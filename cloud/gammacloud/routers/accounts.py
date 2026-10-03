@@ -91,7 +91,7 @@ def register(body: RegisterBody, request: Request):
     if settings.registration() == "closed":
         raise HTTPException(403, "Registration is closed.")
     ip = ratelimit.client_ip(request)
-    ratelimit.check(f"register:ip:{ratelimit.ip_bucket(ip)}", 5, 3600)
+    ratelimit.check(f"register:ip:{ratelimit.limit_ip(request)}", 5, 3600)
     if not captcha.verify(body.turnstile, ip):
         raise HTTPException(400, "The anti-bot check failed. Reload and try again.")
     email = accounts.norm_email(body.email)
@@ -126,7 +126,8 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, request: Request):
     ip = ratelimit.client_ip(request)
     who = body.login.strip().lower()[:254]
-    ratelimit.check(f"login:ip:{ratelimit.ip_bucket(ip)}", 10, 300)
+    ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
+    ratelimit.check(ip_key, 10, 300)
     ratelimit.check(f"login:who:{who}", 10, 300)
     with closing(db.connect()) as conn:
         account = accounts.by_login(conn, who)
@@ -135,7 +136,7 @@ def login(body: LoginBody, request: Request):
         token = sessions.create(conn, account["id"], request)
         db.audit(conn, "account.login", account["id"], account["id"], ip)
         conn.commit()
-    ratelimit.reset(f"login:ip:{ratelimit.ip_bucket(ip)}")
+    ratelimit.reset(ip_key)
     ratelimit.reset(f"login:who:{who}")
     resp = JSONResponse({"account": accounts.public(account)})
     sessions.set_cookie(resp, token)
@@ -281,7 +282,7 @@ class ResetRequestBody(BaseModel):
 @router.post("/reset/request")
 def reset_request(body: ResetRequestBody, request: Request):
     ip = ratelimit.client_ip(request)
-    ratelimit.check(f"reset:ip:{ratelimit.ip_bucket(ip)}", 5, 3600)
+    ratelimit.check(f"reset:ip:{ratelimit.limit_ip(request)}", 5, 3600)
     if not captcha.verify(body.turnstile, ip):
         raise HTTPException(400, "The anti-bot check failed. Reload and try again.")
     email = accounts.norm_email(body.email)

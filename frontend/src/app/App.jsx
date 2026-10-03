@@ -320,9 +320,10 @@ const RECENTS_CAP = 24;
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
-// The Settings panes of the AI group ("context" is an old name of
-// ai-advanced): entering one loads the masked key list and the prompt drafts.
-const AI_SETTINGS_PANES = ["ai", "assistant", "ai-advanced", "context", "prompts"];
+// The Settings panes of the AI group ("context", "ai-advanced" and "prompts"
+// are old names of the Chat pane): entering one loads the masked key list and
+// the prompt drafts.
+const AI_SETTINGS_PANES = ["ai", "assistant", "tools", "ai-advanced", "context", "prompts"];
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
 const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
@@ -9379,7 +9380,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => openSettingsPane("account")}
+          onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
         />
       ) : null}
       {authUser?.user && (

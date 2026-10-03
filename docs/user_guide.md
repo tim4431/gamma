@@ -142,9 +142,9 @@ In a paper or a notes page it can also edit your notes when you ask: rewrite a b
 
 So you can ask it to read a folder of papers and write what it finds into your notes. You approve the edits one by one, or once for the whole conversation. A card left unanswered for ten minutes, or a reply you stop, makes no change.
 
-**Settings → AI → Chat → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
+**Settings → AI → Tool usage → Tools** compares permissions for folder, PDF and notes chats. Each permission is **Allow** (no questions), **Ask** (a card before each use) or **Off** (never offered). Start with **Read library**, **Read & search**, **Ask before changes** (the default) or **Allow all**, then adjust single permissions. Online paper search, document fetching and **Use journal sign-ins** are separate choices; set fetching to Ask if you want to approve each document it reads from the web. Turning journal sign-ins off makes that kind of chat fetch without your connected publisher cookies; the connections remain saved for other chats and PDF downloads. The chat header's settings popover edits the same preferences, which follow your account.
 
-While it works, a pill under your question says what it is doing ("Searching library for …", or "Fetching 4 documents…" when it reads several at once). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. Each note change has an undo button that reverts just that change, and **Revert all** takes back the whole list. A reverted change has a redo button that puts it back. A revert or redo keeps what you typed since. If you changed the AI's own words, it asks first and shows what reverting anyway would remove. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
+While it works, a pill under your question says what it is doing ("Searching library for …", or "Fetching 4 documents…" when it reads several at once). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed, saved or restored) and **Changed in your notes** — each a link to the page or note. Each note change has an undo button that reverts just that change, and **Revert all** takes back the whole list. A reverted change has a redo button that puts it back. A revert or redo keeps what you typed since. If you changed the AI's own words, it asks first and shows what reverting anyway would remove. A change you declined counts as "1 not allowed". Permissions are per tool in Settings → AI → Tool usage, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ### When a publisher blocks a paper
 
@@ -152,7 +152,7 @@ A journal that wants a sign-in or a CAPTCHA can stop the server but not your bro
 
 ### Longer work
 
-Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Chat → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
+Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Tool usage → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
 
 ## Library and organization
 
@@ -224,9 +224,9 @@ Your library lives on your server and opens from any browser — the office desk
 **Making one**
 
 - **Desktop app** (the easy way): open the remote server, open the workspace switcher, and click the **clone** chip on the workspace's row. The app creates a local server if needed, sets up the copy and opens it; from then on it syncs in the background whichever server the window shows, and the row's chip reads *open clone*.
-- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Account & sync → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
+- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
 
-A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Account & sync → Clones lists every copy with its state, conflicts and these actions.
+A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Workspaces → Clones lists every copy with its state, conflicts and these actions.
 
 ## Gamma Connector
 
@@ -319,17 +319,16 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 
 | Group | Pane | What's there |
 |---|---|---|
-| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
-| Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
+| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
+| Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
 | | Translation | The viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |
 | | Keyboard | Every shortcut, rebindable; what Enter makes (a new note or a new line) |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
-| | Chat | Default reasoning effort, default speed, snapshot clearing, which tools the agent may use per chat kind |
-| | Advanced | Tool limits, context budgets |
-| | Prompts | The system prompts |
+| | Chat | Default reasoning effort, default speed, snapshot clearing, the system prompts, context budgets |
+| | Tool usage | Which tools the agent may use per chat kind, background fetching, the reading helper, online search services, tool limits |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
-| Library | Workspaces | Personal and shared workspaces, export / import |
+| Library | Workspaces | Personal and shared workspaces, export / import, **Clones** (offline copies) |
 | | Backups | Scheduled backup tasks and server-side snapshots |
 | | Maintenance | Storage, search-index rebuild, metadata health table |
 | Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, the database check, server backups, the log |

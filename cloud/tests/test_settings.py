@@ -1,6 +1,5 @@
-"""The server settings an admin edits at runtime: the table behind them, the
-admin API, and that the sign-up gate really reads them instead of the
-environment it used to read."""
+"""The sign-up settings an admin edits at runtime: the table behind them, the
+admin API, and that the sign-up gate reads them rather than the environment."""
 
 import os
 from contextlib import closing
@@ -46,24 +45,25 @@ def test_a_value_the_table_should_not_hold_reads_as_invite(client):
     ("", ""),
 ])
 def test_domain_lists_are_cleaned(raw, expected):
-    assert settings.BY_KEY["blocked_email_domains"].clean(raw) == expected
+    assert settings.clean("blocked_email_domains", raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["not a domain!", "nodot", "-bad.example", "a..example"])
 def test_a_domain_list_refuses_nonsense(raw):
     with pytest.raises(ValueError):
-        settings.BY_KEY["blocked_email_domains"].clean(raw)
+        settings.clean("blocked_email_domains", raw)
 
 
-def test_registration_refuses_an_unknown_mode():
+@pytest.mark.parametrize("raw", ["wide-open", "", None])
+def test_registration_refuses_anything_but_a_mode(raw):
     with pytest.raises(ValueError):
-        settings.BY_KEY["registration"].clean("wide-open")
+        settings.clean("registration", raw)
 
 
 def test_too_many_domains():
     with pytest.raises(ValueError):
-        settings.BY_KEY["blocked_email_domains"].clean(
-            "\n".join(f"d{i}.example" for i in range(settings.MAX_BLOCKED_DOMAINS + 1)))
+        settings.clean("blocked_email_domains",
+                       "\n".join(f"d{i}.example" for i in range(settings.MAX_BLOCKED_DOMAINS + 1)))
 
 
 # --- the admin API ------------------------------------------------------------
@@ -83,13 +83,12 @@ def test_only_an_admin_reads_or_writes_settings(client):
     assert settings.registration() == "invite"
 
 
-def test_the_listing_never_carries_the_secret(client):
+def test_the_view_never_carries_the_secret(client):
     admin_client(client)
     set_setting("turnstile_secret", "a-real-secret")
-    body = client.get("/api/admin/settings").json()
-    rows = {r["key"]: r for r in body["settings"]}
-    assert rows["turnstile_secret"]["value"] == "" and rows["turnstile_secret"]["set"] is True
-    assert "a-real-secret" not in client.get("/api/admin/settings").text
+    r = client.get("/api/admin/settings")
+    assert r.json()["turnstile_secret_set"] is True and "turnstile_secret" not in r.json()
+    assert "a-real-secret" not in r.text
 
 
 def test_an_admin_switches_registration_and_the_form_follows(client):
@@ -117,8 +116,9 @@ def test_a_rejected_write_changes_nothing(client):
     r = client.patch("/api/admin/settings", json={"blocked_email_domains": "fine.example, not a domain!"})
     assert r.status_code == 400
     assert settings.blocked_email_domains() == frozenset()
-    r = client.patch("/api/admin/settings", json={"nonsense": "1"})
-    assert r.status_code == 400 and "unknown setting" in r.json()["detail"]
+    r = client.patch("/api/admin/settings", json={"registration": "open", "nonsense": "1"})
+    assert r.status_code == 400 and "Unknown setting" in r.json()["detail"]
+    assert settings.registration() == "invite"
 
 
 def test_a_change_is_audited_without_the_secret(client):
@@ -131,22 +131,33 @@ def test_a_change_is_audited_without_the_secret(client):
     assert not any("hunter2" in a["detail"] for a in events)
 
 
+def test_an_unchanged_save_is_not_audited(client):
+    admin_client(client)
+    for _ in range(3):
+        client.patch("/api/admin/settings", json={"registration": "open"})
+    audit = client.get("/api/admin/audit?limit=50").json()["audit"]
+    assert [a["detail"] for a in audit if a["event"] == "settings.set"] == ["registration=open"]
+
+
 def test_the_unguarded_flag_is_what_the_page_warns_on(client):
     admin_client(client)
     assert client.get("/api/admin/settings").json()["unguarded"] is False
-    set_setting("registration", "open")
-    assert settings.unguarded_registration() is True
-    assert "no Turnstile secret" in client.get("/admin").text
-    set_setting("turnstile_secret", "a-secret")
-    assert settings.unguarded_registration() is False
-    assert "no Turnstile secret" not in client.get("/admin").text
+    r = client.patch("/api/admin/settings", json={"registration": "open"})
+    assert r.json()["unguarded"] is True and r.json()["turnstile_on"] is False
+    r = client.patch("/api/admin/settings", json={"turnstile_sitekey": "0xSITE", "turnstile_secret": "a-secret"})
+    assert r.json()["unguarded"] is False and r.json()["turnstile_on"] is True
 
 
 # --- the gate reads the table, not the environment ---------------------------
 
-def test_turnstile_is_enforced_once_a_secret_is_stored(client, monkeypatch):
-    assert captcha.verify(None, "203.0.113.9") is True          # no secret: passes
+def test_turnstile_runs_once_both_keys_are_stored(client, monkeypatch):
+    assert captcha.verify(None, "203.0.113.9") is True          # no keys: passes
     set_setting("turnstile_secret", "a-secret")
+    # A secret alone would refuse every sign-up, since the forms show no widget.
+    assert captcha.verify(None, "203.0.113.9") is True
+    assert "data-sitekey" not in client.get("/register").text
+    set_setting("turnstile_sitekey", "0xSITE")
+    assert "data-sitekey=\"0xSITE\"" in client.get("/register").text
     assert captcha.verify(None, "203.0.113.9") is False         # a token is now required
     monkeypatch.setattr(captcha, "VERIFY_URL", "http://127.0.0.1:9/never")
     assert captcha.verify("a-token", "203.0.113.9") is False    # Cloudflare unreachable: refuse

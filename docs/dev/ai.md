@@ -747,7 +747,7 @@ integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-### Permissions and knobs (Settings → AI → Chat)
+### Permissions and knobs (Settings → AI → Tool usage)
 
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat. The chat header's Tools button and settings
@@ -782,7 +782,7 @@ leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
 
-Settings → AI → Chat → Tools compares permissions in a table: named, explained
+Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
 with a column for each chat kind. Each cell is a state menu whose icon shows
 the state: a green check, the accent's question mark, a muted ban.

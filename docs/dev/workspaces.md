@@ -400,7 +400,7 @@ server — a *clone* of its *origin* in the UI's git vocabulary: it holds a
 copy, edits made in it are pushed to the origin when it is reachable, and
 edits made there are pulled. The desktop app makes one from the switcher
 (the *clone* chip on a remote workspace's row); any Gamma makes one from
-Settings → Account & sync → Clones with the server's address and a write-scope
+Settings → Workspaces → Clones with the server's address and a write-scope
 integration token made there. `GET /workspaces/mine` marks such a workspace
 with `mirror_of`; a workspace that publishes pages to Gamma Cloud (a
 filtered mirror of the share host) is not a clone and is marked

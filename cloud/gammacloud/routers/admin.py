@@ -181,34 +181,23 @@ def delete_invite(code: str, request: Request):
 
 @router.get("/settings")
 def get_settings(request: Request):
-    """Every setting with its value, except a secret's — only whether one is
-    stored (``settings.listing``)."""
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-    return {"settings": settings.listing(), "unguarded": settings.unguarded_registration()}
+    return settings.admin_view()
 
 
 @router.patch("/settings")
 def patch_settings(body: dict, request: Request):
-    """Write the keys given, leaving the rest alone. A secret sent empty is
-    left as it is — the form cannot show it, so a blank field means "keep";
-    ``null`` clears it. The cache is dropped after the commit, so no reader
-    can take a value that then rolls back."""
-    unknown = [k for k in body if k not in settings.BY_KEY]
-    if unknown:
-        raise HTTPException(400, f"unknown setting: {', '.join(sorted(unknown))}")
+    """Write the keys given and leave the rest (``settings.update``)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
         try:
-            for key, value in body.items():
-                if settings.BY_KEY[key].kind == "secret" and value == "":
-                    continue
-                settings.set(conn, key, value, actor=admin["id"])
+            settings.update(conn, body, actor=admin["id"])
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         conn.commit()
     settings.invalidate()
-    return {"settings": settings.listing(), "unguarded": settings.unguarded_registration()}
+    return settings.admin_view()
 
 
 # --- OIDC clients -------------------------------------------------------------

@@ -53,16 +53,12 @@ async def lifespan(app: FastAPI):
     log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, settings.registration(),
              config.MAIL_BACKEND)
     if settings.unguarded_registration():
-        # captcha.verify passes everything without a secret, so the rate
-        # limits are all that is left. Said loudly rather than refused, so a
-        # local run and the tests need no widget (cloud/deploy/README.md).
-        log.warning("registration is open with no Turnstile secret: set one under Admin → Settings, or "
-                    "scripted sign-ups are held back only by the rate limits")
+        # A warning, not a refusal, so a local run and the tests need no widget.
+        log.warning("registration is open and Turnstile is off (Admin > Settings): only the rate limits "
+                    "stop scripted sign-ups")
     stale = [name for name in config.RETIRED_ENV if os.environ.get(name)]
     if stale:
-        # Not read any more: an existing cloud.db imported them once in the
-        # upgrade (db._step_settings), and a fresh one took the defaults.
-        log.warning("%s set but no longer read - these live in cloud.db now, under Admin > Settings; "
+        log.warning("%s set but not read: the sign-up settings live in cloud.db (Admin > Settings); "
                     "remove them from the environment", ", ".join(stale))
     try:
         yield

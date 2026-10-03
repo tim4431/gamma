@@ -121,7 +121,7 @@ Returns a `page_report_section`: the page's title, a properties line
 attachment's extracted text when the page carries a PDF, then the page's
 highlights and nested notes. A page without an attachment returns its notes —
 they are its content. `pdf_chars` sizes the excerpt per call, capped by the
-Settings / AI / Advanced / "Read window" preference (`gamma-ai-read-chars` →
+Settings / AI / Tool usage / "Read window" preference (`gamma-ai-read-chars` →
 request `read_char_limit`, riding in the scope dict as `read_chars`; default
 cap 20 000 — `agent_tools` formats the effective cap into the armed spec so
 the model knows what it may ask for). `pdf_page` starts the excerpt at a
@@ -414,7 +414,7 @@ are registry records, not the user's pages, and that an abstract says what a
 paper is about, not what it found. A registry that did not answer is named at
 the end (`search_papers(notes=…)` collects them): "(Not searched: OpenAlex
 paused searches without an API key (heavy load) — a free OpenAlex API key in
-Settings → AI → Chat → Online search avoids this.)".
+Settings → AI → Tool usage → Online search avoids this.)".
 
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
@@ -485,7 +485,7 @@ search off.
 
 #### Online search services
 
-Settings → AI → Chat → **Online search** (`settings/OnlineSearch.jsx`) holds
+Settings → AI → Tool usage → **Online search** (`settings/OnlineSearch.jsx`) holds
 **Search the web with** (the engine) and one row per service: Brave Search (API
 key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
 or Test, Edit and Remove. Test runs one small search with the stored settings.
@@ -687,7 +687,7 @@ finished reply's actions for the requests it left behind:
   for the request's owner that Gamma page goes straight on to the publisher,
   anyone else holding the link gets a "Continue to host?" button, so it is no
   open redirect; the Connector knows the tab by that address.
-- **Fetch blocked papers in the background** (Settings → AI → Chat → Tools,
+- **Fetch blocked papers in the background** (Settings → AI → Tool usage → Tools,
   `fetchInBackground`, account-wide, on by default): a card in the
   conversation's last reply hands its request to the Connector without a
   click (`autoOpens`), once, and not again after its tab was closed. The

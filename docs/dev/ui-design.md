@@ -504,7 +504,7 @@ the ordinary row editor. The card footer navigates to the source.
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)) |
-| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, Settings → Account & sync → Clones ([mirror.md](mirror.md)) |
+| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |

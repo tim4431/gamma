@@ -175,7 +175,7 @@ class AgentLoop:
                 return                                  # the model answered
             if round_no == self.max_rounds - 1:
                 yield ("delta", "\n\n*(stopped: tool-round limit reached — "
-                                "raise it in Settings → AI → Advanced → Tool limits)*")
+                                "raise it in Settings → AI → Tool usage → Tool limits)*")
                 return
             resp = self._reopen()
 
