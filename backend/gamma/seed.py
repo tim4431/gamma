@@ -249,12 +249,7 @@ def create_cloud_account(username: str, is_admin: bool = False) -> str:
     row with an EMPTY password hash — the password login refuses those —
     plus its personal workspace (gamma/cloud_auth.py ``provision``). Returns
     the workspace id."""
-    from . import workspaces
-
-    with connect_users_db() as conn:
-        user_id = insert_account(conn, username, "", is_admin=is_admin)
-        conn.commit()
-    return workspaces.ensure_personal(user_id, welcome=True)
+    return create_account(username, None, is_admin)
 
 
 def create_account(username: str, password: str | None, is_admin: bool = False) -> str:

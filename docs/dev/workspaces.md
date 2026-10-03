@@ -316,6 +316,9 @@ its rows (it may have been built under other normalization rules).
   into a page nobody restored. In the same transaction it adds every
   conversation the workspace lacks (a bucket's active one, an archived one
   by its id; `chats_added` counts them). The backup's data.db is not read.
+  The backup's folders and labels join the workspace's trees first
+  (`_merge_trees`), and an added page is filed under the workspace's ids
+  for them ([import_export.md](import_export.md) "Gamma-to-Gamma export").
 - **Pages in Recently deleted** count as lacking. A merge (and the reviewed
   Gamma import, which plans such a page as "create") removes the trashed
   copy's rows and brings the backup's version back live under the same ids.
@@ -334,11 +337,11 @@ the change feed honest ([collab.md](collab.md)):
   change log; a replace copies pages.db in and writes these in the same
   write transaction that read the live seqs, so a batch committed meanwhile
   waits and lands above them;
-- the change log is never replaced: a replace copies every table but
-  `page_changes`, so the cursors copies hold into it stay good, and turns
-  `deleted` every page that is no page of the library afterwards (removed,
-  in the restored Recently deleted, or deleted in the backup's own log)
-  unless it is already; pages a merge brought back turn `live`;
+- the change log is never replaced, so the cursors that copies hold into
+  it stay good. A replace copies every table but `page_changes`, then
+  turns `deleted` every page that is no page of the library afterwards
+  (removed, in the restored Recently deleted, or deleted in the backup's
+  own log) unless it already is. Pages a merge brought back turn `live`;
 - every open room of the workspace (a replace) or of the added pages (a
   merge) is told to reload, and the commit listeners hear of it.
 

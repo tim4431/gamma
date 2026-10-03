@@ -366,12 +366,12 @@ _HOT_COLUMNS_SQL = ",\n        ".join(BLOCK_HOT_COLUMNS.values())
 # The notes index (docs/dev/user_db.md "pages.db"): ``block_fts``, an FTS5
 # table whose content is the view ``block_fts_src`` — every block inside a
 # page, highlights included (not a page's own row, nor the reserved rows;
-# folder and label names are rows of their pseudo-pages, which no search
-# reaches — gamma/block_index.py keeps to the pages it is given), keyed by the block's rowid, its text in the search form (``textnorm``, the
-# function ``register_functions`` gives a pages.db connection) cut at
+# folder and label names are rows of their pseudo-pages), keyed by the
+# block's rowid, its text in the search form (``textnorm``, the function
+# ``register_functions`` gives a pages.db connection) cut at
 # NOTES_INDEX_CHARS. A page in Recently deleted keeps its rows (its blocks
-# keep their ``page_id``; a search keeps to the pages it reaches,
-# gamma/block_index.py), so trashing and restoring a page, which move only
+# keep their ``page_id``), and a search keeps to the pages it reaches
+# (gamma/block_index.py), so trashing and restoring a page, which move only
 # its own row, change nothing here. The triggers keep the index current
 # inside each write's own transaction, for the rows the write touched. The
 # index holds no text of its own: snippets and the UNINDEXED columns are

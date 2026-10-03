@@ -1,6 +1,7 @@
 // Logseq-style block model: each block has id, content, properties, children.
 // Highlights (link regions too) are blocks with a properties.pdf_position
-// that are no ink group; the block id is the highlight's id. Free notes are
+// that are no ink group, text box or sheet; the block id is the highlight's
+// id. Free notes are
 // the blocks without one. A pdf_position (gamma/highlights.py) is
 // {pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [{x1,
 // y1, x2, y2}, …]} (area: true on an area highlight): the 1-based page,

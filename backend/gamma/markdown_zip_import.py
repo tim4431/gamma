@@ -48,7 +48,6 @@ import io
 import json
 import posixpath
 import re
-import secrets
 import unicodedata
 import zipfile
 from urllib.parse import unquote
@@ -311,7 +310,7 @@ def _prepare_tree(nodes, anchors, headings):
         if alone and kept and not node.get("children"):
             anchors.setdefault(alone.group(1).lower(), kept[-1]["id"])
             continue
-        node["id"] = secrets.token_urlsafe(9)
+        node["id"] = new_block_id()
         lines = content.split("\n")
         if len(lines) > 1 and _ANCHOR_LINE_RE.match(lines[-1].strip()):
             anchors.setdefault(lines[-1].strip()[1:].lower(), node["id"])
@@ -403,7 +402,7 @@ def insert_note_page(conn, page_id, title, props, tree, actor) -> int:
             continue
         positions = generate_n_keys_between(None, None, n=len(nodes))
         for node, child_pos in zip(nodes, positions):
-            child_id = node.get("id") or secrets.token_urlsafe(9)
+            child_id = node.get("id") or new_block_id()
             conn.execute(
                 f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
                 (child_id, parent_id, child_pos, node.get("content", ""), "{}", now, now, page_id),
@@ -421,7 +420,7 @@ class _Plan:
 
     def __init__(self, entry):
         self.entry = entry
-        self.page_id = secrets.token_urlsafe(9)
+        self.page_id = new_block_id()
         self.title = ""
         self.path = []      # the folder path below the destination (names)
         self.labels = []    # label names

@@ -48,17 +48,17 @@ the frontend changes: editing a mirror is editing a workspace.
   the library too (its root's key, when no page here holds it).
 - **Folders and labels**: the two trees are pseudo-pages, `folders` and
   `labels` ([collab.md](collab.md) "The folder and label trees"), and travel
-  as pages do. Both feeds list them, and a round reconciles each three ways
+  as pages do. Both feeds list them. A round reconciles each three ways
   like a page's tree, before the pages (`_round`'s order), so a page filed
-  in a new folder never arrives before its folder: a rename, a move, a pin
-  or a new folder on either side goes over, a folder deleted on one side
-  goes on the other (the delete's refiling of the pages travels with the
-  pages), an edit there beats a delete here as for any block. A tree is
-  never created or deleted (both sides always have it, a side without one
-  is left as it is) and never taken whole from one side: a link's or a
-  force's policy (`adopt`, `prune`) does not apply to it, since the pages
-  on each side are filed in that side's folders — a first round keeps both
-  sides' folders. Two copies converted apart by migration step 29 name the
+  in a new folder never arrives before its folder. A rename, a move, a pin
+  or a new folder on either side goes over. A folder deleted on one side
+  goes on the other, and the delete's refiling of the pages travels with
+  the pages. An edit there beats a delete here, as for any block. A round
+  never creates or deletes a tree (a side without one is left as it is)
+  and never takes one whole from one side: a link's or a force's policy
+  (`adopt`, `prune`) does not apply to it, since each side's pages are
+  filed in that side's folders. A first round keeps both sides' folders.
+  Two copies converted apart by migration step 29 name the
   same folder alike (`normalize.tree_block_id`, derived from the path), so
   a mirror and its remote upgraded separately find the same tree.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
@@ -923,10 +923,9 @@ until it follows.
   (or push) after such a restore puts the copies right.
 - A mirror of a mirror works but doubles the delay; a workspace mirrored
   from two servers into one copy is refused (one remote per copy).
-- The AI chats do not travel. Since they moved into pages.db (schema
-  version 28) they are rows beside the pages, keyed by a block id (a page's
-  or a folder's) or `home`, so syncing them is a follow-up the move
-  enables: a conversation per bucket, last writer wins by its `updated_at`
+- The AI chats do not travel. They are rows in pages.db beside the pages
+  (schema version 28), keyed by a block id (a page's or a folder's) or
+  `home`. Syncing them is a follow-up: a conversation per bucket, last writer wins by its `updated_at`
   version (what `routers/chats.py` already compares), the history entries
   by id. Nothing in the change feed names them yet.
 - Every automated test runs both sides in one process (the backend suite's

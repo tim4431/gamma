@@ -14,7 +14,7 @@ workspaces.py      workspaces + memberships (roles, billing, personal workspace)
 auth.py            session middleware → request.state.user_id / user (read in a worker thread); request → workspace / share
 seed.py            workspace file creation, the Welcome page new accounts start with, first admin
 onboarding/        welcome.md, the seeded Welcome page (docs/dev/onboarding.md)
-blocks_store.py    recursive-CTE tree helpers
+blocks_store.py    block tree helpers: subtrees, the change log (touch_page), the folder and label trees
 highlights.py      a block's place on a PDF page: the pdf_position shape (highlights, link regions, ink)
 storage.py         uploads (content-addressed, written atomically) + the upload-reference grammar
 upload_gc.py       unreferenced uploads: recorded, kept 30 days, then purged (background thread)
@@ -68,9 +68,9 @@ Key columns: `id, parent_id, position, content, properties (JSON), created_at, u
 
 Invariants:
 - Positions come from `generate_key_between` — never hand-write them. The one
-  exception is the reserved parentless rows `root`, `trash`, `folders` and
-  `labels`, which `ensure_reserved` writes with a fixed position (`'a1'`):
-  nothing orders them.
+  exception is the reserved parentless rows, written with fixed positions
+  because nothing orders them: `root` (`'a0'`, `seed.create_workspace_files`)
+  and `trash`, `folders`, `labels` (`'a1'`, `ensure_reserved`).
 - `PUT /blocks/{id}/children` replaces the whole subtree (delete + reinsert, one
   transaction; never `root`'s); the upload names it drops go to the orphan check.
 - A file nothing references is kept 30 days, then purged

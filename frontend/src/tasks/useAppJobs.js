@@ -90,8 +90,7 @@ export function useAppJobs({
       exportStartingRef.current = false;
     }
   }
-  // Closing the export dialog: a job still running goes on in Background
-  // tasks, and its file is offered once ready instead of downloaded.
+  // Closing the export dialog leaves its job first (leaveExportJob).
   function closeExport() {
     leaveExportJob();
     setExportOpen(false);

@@ -4,11 +4,13 @@ One place for everything about the `@article{key, …}` text: building an entry
 from a stored metadata record, reading and rewriting its citation key, and
 assembling many entries into one `.bib` file whose keys are unique.
 
-Two callers. `routers/metadata.py` builds the single entry cached on a page
-block (`properties.bibtex`) and shown by the Share popover's Copy BibTeX.
+`routers/metadata.py` builds the single entry cached on a page block
+(`properties.bibtex`) and shown by the Share popover's Copy BibTeX.
 `routers/export.py` (`_BibtexBuilder`, `?mode=bibtex`) concatenates the
 cached entries of a page or a folder into the bibliography a LaTeX document
 cites — see [import_export.md](../../docs/dev/import_export.md).
+`ai_tools.py` (`cite`) and the Zotero import (`routers/imports.py`) build
+entries the same way.
 
 A citation key is normally generated (first author's surname + year), which
 means two papers by the same author in the same year would collide in one
@@ -19,9 +21,9 @@ bibliography. `unique_keys` resolves that at export time by suffixing `a`,
 
 import re
 
-# What a citation key may contain. BibTeX breaks on whitespace, commas,
-# braces and `=`; the rest of printable ASCII is safe and in wide use
-# (`smith:2020-attention`, `10.1234/foo`).
+# What a citation key may not contain: BibTeX breaks on whitespace, commas,
+# braces and `=`, and `( ) \ " # % ~` trip up BibTeX or LaTeX. The rest of
+# printable ASCII is in wide use (`smith:2020-attention`, `10.1234/foo`).
 _KEY_BAD = re.compile(r"[\s,{}()=\\\"#%~]")
 KEY_MAX = 120
 
@@ -125,7 +127,7 @@ def unique_keys(records: list[dict]) -> list[dict]:
                         break
             taken.add(key)
             out[i] = {**record, "key": key, "text": with_key(record.get("text", ""), key)}
-    return [r for r in out if r is not None]
+    return out
 
 
 def bibliography(records: list[dict], source: str = "") -> str:

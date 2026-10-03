@@ -34,7 +34,7 @@ from urllib.parse import unquote, urlsplit
 from . import cloud_auth, config, integrations, ratelimit, sync_engine, workspaces
 from .auth import SHARE_AUDIENCES, SHARE_ROLES
 from .cloud_auth import CloudAuthError
-from .db import account_name, connect_pages_db, connect_users_db
+from .db import connect_pages_db, connect_users_db
 from .logbuf import log
 from .sync_engine import Remote, RemoteError
 
@@ -282,8 +282,7 @@ def _check_owner(mirror: dict, user_id: str) -> None:
     """A publication's mirror is published through its owner's account: 409
     for anyone else (``user_id``, an account id)."""
     if mirror["owner"] != user_id:
-        with connect_users_db() as conn:
-            owner = account_name(conn, mirror["owner"]) or "another account"
+        owner = cloud_auth.name_of(mirror["owner"]) or "another account"
         raise PublishError(409, f"This workspace publishes through {owner}'s Gamma Cloud account.")
 
 

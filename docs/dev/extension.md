@@ -156,12 +156,11 @@ direct fetch is the only (and working) path.
 origin → id, `""` the library root), since an id means nothing on another
 server. The popup sends the folder picked; the shortcut and the context
 menu send the default (`defaultFolder`). After a successful save the
-worker makes that save's folder the default (`rememberFolder`): one named
-by path (a typed "New folder…") is looked up by its names in
-`GET /api/library/folders` for the id the save made or found. An id the
-library no longer lists shows as "Library root" in the pickers, and a
-save without the popup checks it first (`checkedDefaultFolder`): a folder
-the library no longer has is forgotten and the save goes to the root.
+worker makes that save's folder the default (`rememberFolder`). A folder
+named by path (a typed "New folder…") is looked up in
+`GET /api/library/folders` for its id. An id the library no longer lists
+shows as "Library root" in the pickers; a save without the popup checks
+for it (`checkedDefaultFolder`), forgets it and saves to the root.
 
 The setting `folder` is a path, the form a stored default had before
 folders had ids. While no id is set for the server, that path is the
@@ -244,12 +243,6 @@ Companions:
   `recent-views` page timestamp, then latest page modification, with names
   breaking ties; a folder takes the times of the pages filed in it and in
   its subfolders. Labels stay alphabetical.
-
-  The popup's and the options page's folder picker (`ui.js`
-  `folderPicker`) shows each folder as `path.join(" / ")` and keeps its
-  `id`; a save sends that id as `folder`, or a typed "New folder…" as
-  `folder_path`. The label input suggests the labels' `name`s, and a save
-  sends names.
 - `POST /api/clip/note {text, source_url, title,
 page_id?}` — the explicit "clip selection INTO a page" append path (with
 `generate_key_between`; without `page_id` it uses/creates the root page

@@ -39,9 +39,9 @@ and show paths for the model, the names joined with ` / `
 (the library root in a page chat); a folder id is taken as it is (refused
 outside the chat's folder); anything else is a path, split on ` / ` first,
 then on `/`, each name matched exactly, else ignoring case
-(`blocks_store.named`). A folder chat reads a path inside its folder — one
-that starts with the folder's own path from there, any other as a path
-below it —, a page chat from the top. A path several sibling folders share
+(`blocks_store.named`). A folder chat reads a path inside its folder: one
+that starts with the folder's own path is read from there, any other as a
+path below it. A page chat reads a path from the top. A path several sibling folders share
 is an error naming each one's id and full path, so the model can pass the
 id. A path no folder has is an error for a read (`_find_folder`) and is
 made for `move_page` and `save_paper` (`_made`, `ops.ensure_filing`, only
@@ -859,15 +859,16 @@ permission in every chat kind, Ask by default.
 ### rename_page / move_page (folder only)
 
 `rename_page` changes a page's title. `move_page` files a page into a
-(sub)folder — a path or an id (`_resolve_folder`); a path no folder has
-creates it (on the `folders` tree, before the page's batch) — as one `set`
-of the page's `folders`: the ids outside the chat's folder that still exist
-are kept (`existing_in`), the in-scope ones replaced by the target, a folder
-above the target refined away (`folder_chain`). Both are reversible with
-another call. Their actions name the change for the chat's change list:
-`title` (the page's title before the call), `from` / `to` (the old and new
-title; the old folder paths, comma-joined, and the new one, `""` for the
-library root; "(a new folder)" when the call made it).
+(sub)folder named by path or id (`_resolve_folder`). A path no folder has
+is created on the `folders` tree before the page's batch. The move is one
+`set` of the page's `folders`: ids outside the chat's folder that still
+exist are kept (`existing_in`), the in-scope ones are replaced by the
+target, and a folder above the target gives way (`blocks_store.refiled`).
+Both are reversible with another call. Their actions name the change for
+the chat's change list: `title` (the page's title before the call), `from` /
+`to` (the old and new title; the old folder paths, comma-joined, and the new
+one, `""` for the library root). The result text adds "(a new folder)" when
+the call made the folder.
 
 ### list_deleted / restore_page (folder only)
 

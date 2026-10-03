@@ -33,17 +33,17 @@ beside the token, each a history entry). The topbar's home button, and each
 crumb of the folder path that leads the page's title, return to a folder
 listing.
 
-The library is one request, `GET /blocks/root/children`: a page summary
-per page, not the page block — its title, times, `preview` and the few
-properties these surfaces read (the attachment fields, `folders`,
-`labels`, `pinned`, `seeded`, and `meta`'s `title` / `authors` / `year` /
-`venue` / `volume` / `doi` / `arxiv_id`, which quick open, the chat and link
-pickers and the DOI / arXiv matching of an opened link use) — and, beside
-the pages, the folder and label trees with the op-log position each
-reflects (the shapes are in [api.md](api.md) "The library listing"). A surface that needs more of
-a page — its BibTeX, citation, summary or full metadata — reads the page
-itself; the metadata popover, the export dialog and the page header all
-work on the open page's block.
+The library is one request, `GET /blocks/root/children`. It returns a page
+summary per page, not the page block: its title, times, `preview` and the
+few properties these surfaces read. Those are the attachment fields,
+`folders`, `labels`, `pinned`, `seeded`, and `meta`'s `title` / `authors` /
+`year` / `venue` / `volume` / `doi` / `arxiv_id`, read by quick open, the
+chat and link pickers and the DOI / arXiv matching of an opened link.
+Beside the pages come the folder and label trees, each with the op-log
+position it reflects ([api.md](api.md) "The library listing"). A surface
+that needs more of a page (BibTeX, citation, summary, full metadata) reads
+the page itself; the metadata popover, the export dialog and the page
+header all work on the open page's block.
 
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
@@ -118,26 +118,26 @@ target, an import's destination, a folder export, the home URLs
 (`?folder=<id>`, `?label=<id>`). The agent's tools keep taking and showing
 paths, resolved by name ([ai_tools.md](ai_tools.md)).
 
-In the app the trees arrive with the listing: App keeps them as
-`libTree` (`libraryTree` in [libraryUtils.js](../../frontend/src/library/libraryUtils.js):
+In the app the trees arrive with the listing. App keeps them as `libTree`
+(`libraryTree` in [libraryUtils.js](../../frontend/src/library/libraryUtils.js):
 id → folder with its name, parent, position, pin, path and subfolders; id
 → label), and every surface names folders and labels from it. A page
 row's `_folders` / `_labels` are the ids of its filing the trees have
-(`filedIn`: a dangling id shows nothing) and `_folderChips` /
-`_labelChips` the same as `{id, name}`, a folder named by its path. App
-writes the trees through `treeOps` (one batch on `folders` or `labels`)
-and files a page through `filePage` (a `set` of its `folders` / `labels`,
-the whole list, from `filedIn` — so a refiling drops a dangling id); a
-folder or label made by name goes through `ensureFolders` / `makeLabel`,
-which reuse one of that name (exactly, else ignoring case, like the
-server's `blocks_store.named`) and run one after another, so a name
-committed twice is made once. The home view does not join the trees'
-rooms: after each of its own writes it reads the listing again, and it
-does so when the window comes back (focus or visibility, at most every
-15 s), which is when another device's changes show — the pages of the
-listing are not live either, and one read keeps both in step. A view
-naming a folder or label the trees lack (deleted elsewhere, a stale link)
-goes back to the library's root (a share's folder).
+(`filedIn`: a dangling id shows nothing). `_folderChips` / `_labelChips`
+are the same as `{id, name}`, a folder named by its path. App writes the
+trees through `treeOps` (one batch on `folders` or `labels`). It files a
+page through `filePage`, a `set` of the whole `folders` / `labels` list
+from `filedIn`, so a refiling drops a dangling id. A folder or label made
+by name goes through `ensureFolders` / `makeLabel`. They reuse one of that
+name (exactly, else ignoring case, like the server's `blocks_store.named`)
+and run one after another, so a name committed twice is made once.
+
+The home view does not join the trees' rooms. It reads the listing again
+after each of its own writes and when the window comes back (focus or
+visibility, at most every 15 s); that is when another device's changes
+show. The listing's pages are not live either, so one read keeps both in
+step. A view naming a folder or label the trees lack (deleted elsewhere, a
+stale link) goes back to the library's root (a share's folder).
 
 The page header's label field (`page.labels` / `page.labelInput`) files
 the open page by both. Its suggestions are the folders (by path, a folder
@@ -170,21 +170,22 @@ root).
 
 **Custom order** is the folders' own order: their `position` in the folder
 tree, which every member sees alike, then the pages in the library's order
-(labels keep the label tree's). In it, a folder dragged to the leading or
-trailing edge of a folder of the listing (a row's top or bottom quarter, a
-tile's left or right one; `folderDropEdge`) lands beside it — one `move`
+(labels keep the label tree's). In it, a folder dropped on the leading or
+trailing edge of a listed folder (a row's top or bottom quarter, a tile's
+left or right one; `folderDropEdge`) lands beside it. That is one `move`
 with a fractional key between its new neighbours (`folderPosition`,
-`placeFolder`), the edge showing a line (`.dropBefore` / `.dropAfter`) —
-while a drop in the middle still moves it in. A folder drag carries its id
+`placeFolder`), and the edge shows a line (`.dropBefore` / `.dropAfter`).
+A drop in the middle moves it in. A folder drag carries its id
 under its own type (`FOLDER_DRAG_TYPE`) beside the text payload, since a
 drag-over can read only the types.
 
 **The label view** is the flat mirror of the folder view, not a separate
-surface: the KindToggle's Labels mode lists the labels carried by the pages in
-scope — at the root every label, carried or not, since a label is a block
-— (`labelMeta`, the label twin of `folderMeta` — count + latest
-modified/added/viewed, so labels sort by the same clock), as the same rows and
-cards folders use with a tag glyph. Click selects, double-click opens (on
+surface: the KindToggle's Labels mode lists the labels in scope as the same
+rows and cards folders use, with a tag glyph. At the root that is every
+label (a label is a block, carried or not), in a folder the labels its
+pages carry. `labelMeta`, the label twin of `folderMeta`, gives each a count
+and its latest modified/added/viewed time, so labels sort by the same
+clock. Click selects, double-click opens (on
 touch a tap opens, as for pages and folders: `isTap` in App.jsx), a paper
 dropped on one gets that label, right-click is the existing label
 rename/delete menu. Opening a label KEEPS the folder scope (`?folder=<id>`

@@ -68,8 +68,8 @@ def _load_page(conn, page_id: str):
 def create_page_endpoint(payload: PageCreate, request: Request):
     """A new text-only page: ``{title?, folders?, id?, properties?}`` → the
     page's block dict. Title defaults to "Untitled"; ``folders`` (folder
-    ids) becomes ``properties.folders``, ids that are no folder left out
-    (``create_page``). On a share host, 402 with ``{detail, limit, used,
+    ids) becomes ``properties.folders`` as given when it is a list of block
+    ids (``create_page``). On a share host, 402 with ``{detail, limit, used,
     plan}`` when the owner's plan allows no more pages in the workspace (the
     path a publishing mirror creates its pages by; gamma/publish.py
     page_cap)."""

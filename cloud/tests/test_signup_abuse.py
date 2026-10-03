@@ -145,3 +145,16 @@ def test_a_prefix_rotation_shares_the_register_allowance(client):
     r = client.post("/api/register", json={"email": "q@example.org", "username": "quentin", **body},
                     headers={"cf-connecting-ip": "2001:db8:aa:cc::1"})
     assert r.status_code == 201
+
+
+def test_the_password_form_and_provider_sign_up_count_separately(client):
+    """Five an hour on the form, twenty through Google/GitHub: neither eats the other's allowance."""
+    set_setting("registration", "open")
+    ip = {"cf-connecting-ip": "203.0.113.50"}
+    for _ in range(5):  # refused for want of a provider flow, but counted
+        assert client.post("/api/oauth/signup", json={"username": "someone"}, headers=ip).status_code != 429
+    body = {"password": "correct horse battery"}
+    codes = [client.post("/api/register", json={"email": f"s{i}@example.org", "username": f"sep{i}", **body},
+                         headers=ip).status_code for i in range(6)]
+    assert codes == [201] * 5 + [429]
+    assert client.post("/api/oauth/signup", json={"username": "someone"}, headers=ip).status_code != 429

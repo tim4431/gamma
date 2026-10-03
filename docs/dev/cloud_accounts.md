@@ -397,6 +397,8 @@ other page keeps `no-referrer`.
   valid and free), the invite code in `invite` mode; `POST
   /api/oauth/signup` creates the account with that address confirmed, no
   password, and the identity linked. `closed` registration refuses instead.
+  Its limit is twenty an hour per IP, counted apart from the password form's
+  five, since each sign-up here costs a real Google or GitHub account.
 - **A Gamma server's sign-in** that started on the authorize page finishes
   right after: the code goes to the server without another click (the flow
   was started by this browser's own JSON call). When it cannot — the request

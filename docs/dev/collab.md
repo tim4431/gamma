@@ -46,9 +46,9 @@ operation batches are broadcast but never written to the operation log.
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
 
 Rules: every touched block and every insert parent must be inside the page
-(403 otherwise, 404 unknown) — its stored `page_id`, which an insert writes
-as the batch's page; the ops carry no `page_id` or `kind`, the server keeps
-both ([user_db.md](user_db.md) "pages.db"). The page root may only be `set` (a share
+(403 otherwise, 404 unknown), judged by its stored `page_id`. An insert
+writes the batch's page there; ops carry no `page_id` or `kind`, since the
+server keeps both ([user_db.md](user_db.md) "pages.db"). The page root may only be `set` (a share
 editor: its content, never its properties) and is never moved, deleted or
 inserted. `parent: "root"` is refused: ops never create pages. A bad op
 fails the whole batch and nothing is written. A page root's filing
@@ -71,16 +71,18 @@ nest"). The reserved row itself is never set, moved or deleted (403), and a
 block of a tree never moves into a page or a page's block into a tree (403
 "outside this page"). None of it touches a page: a rename is one row of the
 tree, not a rewrite of every page filed below the folder. Deleting a folder
-or a label is the one change that reaches pages, so it has its endpoint,
-`DELETE /folders/{id}` / `DELETE /labels/{id}` (`routers/folders.py`,
-[api.md](api.md) "Folders and labels"): the subtree's `delete` on the tree
-and one `set` per page that carried an id of it, in one transaction
-(`ops.apply_batches`), then the folder chats and shares. A tree has
-everything a page has: its op log (`GET /pages/folders/ops?since=`), its row
-of the change log (touched `live` by every batch), its room
-(`/ws/page/folders`), a subtree read with `seq`
-(`GET /blocks/folders/subtree`) — members only: no share link reaches a
-tree, and the share view reads its folder in the listing instead.
+or a label is the one change that reaches pages, so it has its own
+endpoint: `DELETE /folders/{id}` / `DELETE /labels/{id}`
+(`routers/folders.py`, [api.md](api.md) "Folders and labels"). One
+transaction runs the subtree's `delete` on the tree and one `set` per page
+that carried an id of it (`ops.apply_batches`), and files the folder chats
+into the library chat's history. The folder's shares stop after the
+commit. A tree has everything a page has: its op log
+(`GET /pages/folders/ops?since=`), its row of the change log (touched
+`live` by every batch), its room (`/ws/page/folders`) and a subtree read
+with `seq` (`GET /blocks/folders/subtree`). Only members reach a tree: no
+share link does, and the share view reads its folder in the listing
+instead.
 
 A page's `folders` / `labels` may name an id with no block (a dangling id:
 its folder deleted by a raw op or on another copy, or not brought by a
@@ -137,8 +139,10 @@ connection; `apply_batches(conn, [(page_id, ops), …], actor=)` applies
 several pages' batches in the caller's transaction, each logged on its page
 (the caller commits, then `after_commit`s each); `ensure_filing(ws, conn,
 paths=, labels=, under=, actor=)` makes the folders and labels a writer
-files by name where they are missing (one committed batch per tree) — `ws` the workspace id, `actor` who makes the change (`auth.actor_of`: the account's id, or
-a label for a writer that is no account). Every server-side writer
+files by name where they are missing (one committed batch per tree). In all
+of them `ws` is the workspace id and `actor` who makes the change
+(`auth.actor_of`: the account's id, or a label for a writer that is no
+account). Every server-side writer
 goes through them — the single-block endpoints in `routers/blocks.py` are thin
 wrappers, page attach/detach, the metadata write, the clip endpoints, the
 attachment-marker backfill of `get_or_create_doc_page`, the `annot_stripped`
@@ -267,7 +271,7 @@ actually changed on a page is still its op log (`seq`,
 is refetched whole.
 
 The feed is exact. A change is listed once to any cursor below it: a page
-has one row, so a page written again moves to its new seq and comes again
+has one row, so a page written again moves to its new seq and is listed
 there again. Nothing slips behind a cursor: a reader never
 sees a seq before every seq below it has committed. A consumer walks the
 feed to the end and keeps the cursor; a page listed twice in one walk

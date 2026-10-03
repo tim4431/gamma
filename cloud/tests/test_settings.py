@@ -213,3 +213,9 @@ def test_a_fresh_database_takes_the_defaults(client, monkeypatch):
         assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 0
     settings.invalidate()
     assert settings.registration() == "invite"
+
+
+def test_a_domain_list_names_every_bad_entry():
+    with pytest.raises(ValueError) as e:
+        settings.clean("blocked_email_domains", "fine.example, not a domain!, nodot, nodot")
+    assert str(e.value) == "Not domain names: not, a, domain!, nodot."

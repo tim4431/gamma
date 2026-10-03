@@ -5,8 +5,8 @@ Deleting a page moves it here (``ops.trash_page``): its root goes under the
 reserved ``trash`` block (``blocks_store.TRASH``) with ``deleted_at`` /
 ``deleted_by`` in its properties, and its blocks, files, chats and op log
 stay. Nothing that lists or reads pages reaches it — they ask for
-``parent_id = 'root'`` or walk up to a page, and a walk from a trashed block
-finds none — and a copy of the workspace sees it deleted, as after a hard
+``parent_id = 'root'`` or for a block's page in the library
+(``blocks_store.page_root_id``), which a trashed block has none of — and a copy of the workspace sees it deleted, as after a hard
 delete (its row of the change log, ``page_changes``). ``ops.restore_page``
 puts it back. ``KEEP_DAYS`` after it went, the sweeper here deletes it for
 good through ``ops.delete_page``, the one path that drops a page's chats and

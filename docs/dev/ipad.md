@@ -243,7 +243,7 @@ the app ships the core built from the current `replica/`
 - **The library** (`Replica.libraryRows`, `LibraryView.swift`) passes the
   stored page roots and the two tree snapshots (`store.snapshot("folders")`
   / `("labels")`) to `libraryRows` above. The view groups by a row's first
-  folder path as it is, never splitting a name on `,` or `/`, and its
+  folder path as it is, and its
   search box matches titles, paths and labels. A page the app makes
   (`createPage`, `createNotebook`) is filed nowhere; filing is the web
   app's.

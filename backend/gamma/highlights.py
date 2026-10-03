@@ -17,8 +17,8 @@ union, and ``rects`` is never empty beside it. An area highlight adds
 Logseq import without positions) carries ``pageNumber`` alone. A text box
 has none: its place is its ``text_box`` (gamma/text_box.py). The block id
 is the highlight's id. The frontend's twin is
-frontend/src/shared/model/blockModel.js; docs/dev/api.md "Block
-properties" lists the keys.
+frontend/src/shared/model/blockModel.js; docs/dev/api.md "The highlight
+shape" describes it.
 """
 
 COORDS = ("x1", "y1", "x2", "y2")
@@ -53,6 +53,10 @@ def _placed(rect) -> bool:
     return isinstance(rect, dict) and all(_number(rect.get(k)) for k in COORDS)
 
 
+def _is_page(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def from_scaled(pos: dict, page=None) -> dict | None:
     """The stored shape of a position in react-pdf-highlighter's "scaled"
     form — every rect, the bounding one included, with the ``width`` and
@@ -66,7 +70,7 @@ def from_scaled(pos: dict, page=None) -> dict | None:
     rects = [r for r in pos.get("rects") or () if _placed(r)]
     page = pos.get("pageNumber") or old.get("pageNumber") or next(
         (r["pageNumber"] for r in rects if r.get("pageNumber")), None) or page
-    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+    if not _is_page(page):
         return None
     frame = _size(pos) or next(filter(None, (_size(r) for r in (old, *rects))), None)
 
@@ -93,7 +97,7 @@ def page_of(props: dict | None) -> int | None:
     (``pdf_position.pageNumber``), None for a block placed on none."""
     pos = (props or {}).get("pdf_position")
     page = pos.get("pageNumber") if isinstance(pos, dict) else None
-    return page if isinstance(page, int) and not isinstance(page, bool) and page > 0 else None
+    return page if _is_page(page) else None
 
 
 def is_highlight(props: dict | None) -> bool:

@@ -27,8 +27,9 @@ router = APIRouter(prefix="/api", tags=["folders"])
 
 def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str) -> dict:
     """Delete the folder or label ``block_id`` of ``tree`` with everything
-    below it, and take the ids off the pages that carry them, in one
-    transaction; then the folder chats and shares. Returns ``{ids, pages,
+    below it, take the ids off the pages that carry them and file the folder
+    chats into the library's history, in one transaction; then stop the
+    folder's shares. Returns ``{ids, pages,
     chats, shares}`` — the blocks deleted, the pages refiled, the
     conversations filed into the library's history, the share links
     stopped. 404 unless it is a block of the tree (the reserved row is

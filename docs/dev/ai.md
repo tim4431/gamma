@@ -524,12 +524,11 @@ providers' listings alone.
 ### Speed (service tier)
 
 Providers sell a faster route to the same model: Anthropic's fast mode,
-OpenAI's and Codex's `service_tier`. One chat preference covers them all —
-the account pref `chatSpeed`, set from the composer's model chip or
-Settings → AI → Chat, as one of `ai_protocols.SPEED_ORDER`: `flex` (slower
-and cheaper), `fast` (the premium low-latency route, around twice the price
-per token), or "" for the provider's usual routing, which leaves the field
-out.
+OpenAI's and Codex's `service_tier`. One account pref covers them all:
+`chatSpeed`, set from the composer's model chip or Settings → AI → Chat. Its
+values are `ai_protocols.SPEED_ORDER`, `flex` (slower and cheaper) and
+`fast` (the premium low-latency route, around twice the price per token), or
+"" for the provider's usual routing, which leaves the field out.
 
 Each wire maps those canonical names to its own (`Protocol.speeds`,
 `speed_value`), so nothing outside `ai_protocols/` knows a provider's
@@ -537,7 +536,7 @@ spelling:
 
 | Wire | What goes out for `fast` |
 |---|---|
-| `anthropic` | `"speed": "fast"` in the body plus the `anthropic-beta: fast-mode-2026-02-01` header, and only against Anthropic's own endpoint — the preview is theirs, a service merely speaking the API elsewhere gets neither. No `flex`: standard is its default |
+| `anthropic` | `"speed": "fast"` in the body plus the `anthropic-beta: fast-mode-2026-02-01` header, only against Anthropic's own endpoint (a service speaking the API elsewhere gets neither). No `flex`: standard is its default |
 | `openai`, `openai-responses` | `"service_tier": "priority"` (fast mode's older, still-accepted name), only against OpenAI itself — a compatible server may reject the field. `flex` → `"flex"` |
 | `chatgpt` | the same over the Codex backend; `priority` is the tier id its own catalog names |
 
@@ -547,9 +546,9 @@ backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
 the wire itself can ask for (`"protocol"`). `[]` means no speed control and
 the chip's menu drops its Speed section. Anthropic's listing carries no
 speed facts, so its answer is wire-wide: fast mode is offered for every
-model that endpoint serves, and one that doesn't take it (fast mode is the
-Opus line only) is refused upstream with the provider's own message — the
-alternative would be a table of model names going stale in the repository.
+model that endpoint serves. A model that doesn't take it (fast mode is the
+Opus line only) is refused upstream with the provider's own message; the
+alternative, a table of model names in the repository, would go stale.
 
 `speedFor` in `chat/modelPrefs.js` sends the preference only when the model
 has that tier. Unlike effort there is no nearest tier: paying for a speed
@@ -557,7 +556,7 @@ the model doesn't offer, and silently dropping to the cheap one, are both
 decisions that are the user's to make. What a reply reports is what was
 *asked for* — a provider may serve the request at standard speed anyway
 (OpenAI says so in the response's own `service_tier`), which Gamma does not
-read today.
+read.
 
 ### Selected PDF passages
 

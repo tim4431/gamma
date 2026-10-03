@@ -35,7 +35,7 @@ and state owners in this table are proposals.
 | `pages/usePageSession.js` | Active page identity, tree, load state, and metadata updates | Page fields, `loadBlocksForBlock`, the data-loading portion of `openBlock` |
 | `collaboration/` (existing: `usePageCollab.js`) | Queued writes, debounce, retries, explicit flush, unload handling — the live session hook `usePageCollab` ([collab.md](collab.md)); App keeps the transition effect and the remote-apply glue | `commit`, `flush`, `onRemoteOps` |
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
-| `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeEntries`, click handlers, filing, rename/move/delete, carousels |
+| `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
 | `workspace/` | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |

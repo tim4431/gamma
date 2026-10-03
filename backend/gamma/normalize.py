@@ -14,17 +14,13 @@ point. Steps are never removed while ``/api/import-data`` accepts backups
 that may still carry the shape.
 
 The table shapes are the migration steps' business, except where a restored
-backup needs them as well: ``block_columns`` (the block table's typed hot
-fields, step 26), ``page_changes`` (the workspace change log, step 27) and
-``pages_db_chats`` (the chats moving from data.db, step 28) run in their
-step and on every restore, before the schema statements and the content
-steps; ``block_fts`` (the notes index, step 28) after the schema
-statements, then ``folder_blocks`` (the folder and label trees, step 29),
-both before the content steps, whose rewrites the index's triggers
-follow; ``highlight_shape`` (the highlight shape, step 30) after the
-content steps, whose oldest still names a page's PDF by the URL step 30
-derives — nothing adds a column or fills a table on connect. The pages.db
-connections given to these steps have ``db.register_functions``.
+backup needs them as well: ``block_columns`` (step 26), ``page_changes``
+(step 27), ``pages_db_chats`` and ``block_fts`` (step 28),
+``folder_blocks`` (step 29) and ``highlight_shape`` (step 30) run in their
+step and on every restore, in the order ``ws_backup._normalize_copies``
+gives (docs/dev/migrations.md "Writing a step"). Nothing adds a column or
+fills a table on connect. The pages.db connections given to these steps
+have ``db.register_functions``.
 """
 
 import base64

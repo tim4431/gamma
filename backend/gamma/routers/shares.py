@@ -302,14 +302,14 @@ def delete_share(page_id: str, request: Request):
 
 @router.get("/share/{token}")
 def get_share(token: str, request: Request):
-    """Resolve a link for the viewer: 404 unknown, 401 when signing in could
-    grant access, 403 when this signed-in account isn't allowed. Otherwise
-    what the link shares plus what this viewer may do (``can_edit``): a page
+    """Resolve a link for the viewer: 404 unknown (or its page deleted or in
+    Recently deleted, or its folder gone), 401 when signing in could grant
+    access, 403 when this signed-in account isn't allowed. Otherwise what
+    the link shares plus what this viewer may do (``can_edit``): a page
     share carries ``page_id`` and ``doc_id`` (the page's PDF attachment id,
     "" without one); a folder share carries ``folder`` (its id) and
     ``folder_name`` — the share view then lists it through
-    ``GET /blocks/root/children`` like the home library (404 once the
-    folder is gone).
+    ``GET /blocks/root/children`` like the home library.
     ``username`` is who shared it; ``workspace_id`` the workspace.
     ``viewer`` / ``viewer_is_guest``
     tell the share view whether to offer "Open in my library" (a member) or

@@ -11,7 +11,6 @@ import io
 import json
 import os
 import re
-import secrets
 import shutil
 import tempfile
 import zipfile
@@ -24,11 +23,11 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
-from ..auth import actor_of, require_user, require_user_id, require_ws
+from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
-                            last_child_position, page_for_doc, page_root_id, refiled, refiled_paths, touch_page,
-                            write_lock)
+                            last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
+                            touch_page, write_lock)
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
@@ -116,7 +115,7 @@ def start_import_job(payload: ImportJob, request: Request):
     (kind ``import``, docs/dev/tasks.md); its result is the import's report.
     Asking again for the same review answers the job already started — 409
     when it was started with another selection."""
-    user = require_user_id(request)
+    user_id = require_user_id(request)
     ws = require_ws(request, write=True)
     token, digest = payload.review_id, _selection_digest(payload.selected)
 
@@ -125,10 +124,10 @@ def start_import_job(payload: ImportJob, request: Request):
             raise HTTPException(status_code=409, detail="this review was already imported with a different selection")
         return job
 
-    prior = jobs.latest(user, "import", token)
+    prior = jobs.latest(user_id, "import", token)
     if prior is not None and prior["state"] in ("queued", "running", "done"):
         return same_review(prior)
-    path, metadata = import_staging.get(token, user, ws)
+    path, metadata = import_staging.get(token, user_id, ws)
     upload = path / "upload"
     if not upload.exists():
         raise HTTPException(status_code=410, detail="this review was already imported; choose the file again")
@@ -137,17 +136,17 @@ def start_import_job(payload: ImportJob, request: Request):
 
     def run(job):
         try:
-            with import_staging.claim(token, user, ws) as (staged, meta):
+            with import_staging.claim(token, user_id, ws) as (staged, meta):
                 with (staged / "upload").open("rb") as data:
                     return commit(ws, actor, data, meta, selection, job.progress)
         finally:  # done, failed or stopped, the review is over: its upload goes
             try:
-                import_staging.discard(token, user, ws)
+                import_staging.discard(token, user_id, ws)
             except HTTPException:
                 pass  # already gone (expired)
 
     try:
-        return jobs.start("import", owner=user, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
+        return jobs.start("import", owner=user_id, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
                           params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
                                   "folder": metadata["folder"], "size": upload.stat().st_size,
                                   "selected": len(selection), "digest": digest})
@@ -409,7 +408,7 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
     editor's "paste as blocks" helper, same parser as the .md file import.
     Nothing is stored; the client inserts the tree through its normal
     tree-edit/autosave path."""
-    require_user(request)
+    require_user_id(request)
     if len(payload.text.encode("utf-8", errors="ignore")) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="text exceeds 5 MB")
     return {"blocks": md_to_blocks(payload.text)}
@@ -843,7 +842,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
 
         def insert(record, parent, position, props):
             nonlocal inserted
-            bid = secrets.token_urlsafe(9)
+            bid = new_block_id()
             conn.execute(
                 f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
                 (bid, parent, position, record["content"], json.dumps(props), now, now, page_id),
@@ -973,7 +972,7 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
 
     created = row is None
     if created:
-        block_id, old = secrets.token_urlsafe(9), {}
+        block_id, old = new_block_id(), {}
     else:
         block_id, old = row[0], json.loads(row[1] or "{}")
     props = dict(old)
@@ -1047,7 +1046,7 @@ def _zotero_merge(conn, ws, prep, report, uploads, actor):
     block_id = prep["block_id"]
     patch = props_patch(prep["old"], prep["props"])
     batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + [
-        {"op": "insert", "id": secrets.token_urlsafe(9), "parent": block_id,
+        {"op": "insert", "id": new_block_id(), "parent": block_id,
          "content": note["text"], "props": {"zotero_note": note["key"]}} for note in prep["todo"]]
     for i in range(0, len(batch), MAX_OPS):
         after_commit(ws, conn, apply_ops(conn, block_id, batch[i:i + MAX_OPS], actor=actor))
@@ -1080,7 +1079,7 @@ def _zotero_write_new(conn, staged, report, uploads, actor):
             for note, note_pos in zip(todo, positions):
                 conn.execute(
                     f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
-                    (secrets.token_urlsafe(9), prep["block_id"], note_pos, note["text"],
+                    (new_block_id(), prep["block_id"], note_pos, note["text"],
                      json.dumps({"zotero_note": note["key"]}), now, now, prep["block_id"]))
             touch_page(conn, prep["block_id"], actor, now=now)
             written.append(prep)

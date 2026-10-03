@@ -2,8 +2,9 @@
 operations to them.
 
 One room per ``(workspace, page_id)``, in memory: a page, or one of the
-pseudo-pages ``folders`` / ``labels`` (the folder and label trees, which the
-home view follows). Gamma runs as one uvicorn process everywhere (Docker,
+pseudo-pages ``folders`` / ``labels`` (the folder and label trees, for a
+client that follows them live; the web app's home view re-reads them
+instead). Gamma runs as one uvicorn process everywhere (Docker,
 the desktop sidecar), so nothing needs to be shared across workers. A room
 holds the websocket peers
 (``routers/collab.py`` accepts them) with their identity, colour and last

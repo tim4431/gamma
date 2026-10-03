@@ -95,7 +95,7 @@ router = APIRouter(prefix="/api", tags=["ai"])
 
 # Reasoning-depth values the wire protocols take (Anthropic
 # output_config.effort / OpenAI reasoning_effort), lowest first — the order
-# chat/effort.js mirrors. Only sent when the user picks one, and the chat
+# chat/modelPrefs.js mirrors. Only sent when the user picks one, and the chat
 # offers each model just the levels it takes (GET /ai/model-info).
 EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 EFFORT_LEVELS = set(EFFORT_ORDER)

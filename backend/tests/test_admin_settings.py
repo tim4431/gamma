@@ -4,37 +4,25 @@ import time
 
 import pytest
 
-from conftest import account_of, login as _login, make_user as _make_user, workspace_of
+from conftest import account_of, drop_user, login as _login, make_user as _make_user, workspace_of
 
 
 def _pdf_of_mb(mb, filler=b"x"):
     return b"%PDF-1.4 " + filler * (mb * 1024 * 1024)
 
 
-def _drop_user(username):
-    """Remove the account again — test_admin_users assumes it knows every
-    admin in the shared users.db, so this module must not leave one behind."""
-    from gamma.db import connect_users_db
-
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
-                     (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
-
-
 @pytest.fixture(scope="module")
 def sizeadmin(client):
     _make_user("sizeadmin", "sizeadminpw", is_admin=1)
     yield _login("sizeadmin", "sizeadminpw")
-    _drop_user("sizeadmin")
+    drop_user("sizeadmin")
 
 
 @pytest.fixture(scope="module")
 def sizeuser(client):
     _make_user("sizeuser", "sizeuserpw", is_admin=0)
     yield _login("sizeuser", "sizeuserpw")
-    _drop_user("sizeuser")
+    drop_user("sizeuser")
 
 
 @pytest.fixture(autouse=True)

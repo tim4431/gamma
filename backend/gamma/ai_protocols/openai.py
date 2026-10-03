@@ -27,9 +27,9 @@ class OpenAIChat(Protocol):
     label = "OpenAI Chat Completions API"
     key_placeholder = "sk-proj-…"
     key_url = "https://platform.openai.com/api-keys"
-    # OpenAI's service tiers: "priority" is fast mode (it also answers to
-    # "fast"), "flex" the cheaper, slower one.
-    speeds = {"flex": "flex", "fast": "priority"}
+    # The same tiers as its Responses wire: "priority" is fast mode (it also
+    # answers to "fast"), "flex" the cheaper, slower one.
+    speeds = OPENAI_RESPONSES.speeds
 
     def speed_tiers(self, conf):
         # A compatible server bills and routes however it likes; only

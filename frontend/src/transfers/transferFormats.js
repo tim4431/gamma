@@ -69,8 +69,7 @@ const EXPORT_FORMATS = [
 ];
 
 // The bibliography endpoint for a page or a folder (its id; routers/export.py
-// ?mode=bibtex). `base` is the API root the URL is relative to: the app's own
-// `/api` for a fetch, or `<origin>/api` for a link someone pastes into
+// ?mode=bibtex). `base` is `<origin>/api`: the link someone pastes into
 // Overleaf. With `share` it carries a share token, which names the workspace
 // and so needs neither a session nor a ?ws=.
 export function bibliographyUrl(base, { pageId = "", folder = "", share = "" } = {}) {

@@ -18,8 +18,6 @@ nearby, since most are extensions of existing code rather than new systems.
 
 ## What Gamma already covers
 
-Worth stating first, because the overlap is larger than it looks:
-
 - Metadata by arXiv id, DOI, ISBN, Crossref title search and verified AI
   extraction, cached on the page as `properties.meta` with a per-page
   BibTeX entry and a "Copy BibTeX" button in the Share popover

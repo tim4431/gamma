@@ -491,16 +491,14 @@ Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`illustrations/TransferPreview.jsx`, an example of the options, not a render
 of the document). Gamma has fixed contents, and a PDF without a stored copy
 can only be the original file, so both export straight from step one. Logseq
-shows only the bundle switch. BibTeX has no switches but still gets a step,
-because the step is worth seeing: it previews the real bibliography
+shows only the bundle switch. BibTeX has no switches but still gets a step:
+it previews the real bibliography
 ([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
-the setup and the job step together, so their breadcrumbs agree. The breadcrumb returns to the cards without
-losing edits, from the job's last step too: `onLeaveJob` (App's
-`leaveExportJob`) drops the dialog's hold on the job — which goes on in
-Background tasks with its file offered there, exactly as closing the window
-would leave it — and `ExportDialog` reopens the setup at the step the crumb
-named. Picking another format after seeing the file is a normal second
-thought, so nothing has to be reopened for it. Both dialogs are a `SubDialog` (focus trap, Escape, backdrop)
+the setup and the job step together, so their breadcrumbs agree. The
+breadcrumb returns to the cards without losing edits, from the job's last
+step too. There `onLeaveJob` (App's `leaveExportJob`) drops the dialog's
+hold on the job, which goes on in Background tasks as if the window had
+closed, and `ExportDialog` reopens the setup at the step the crumb named. Both dialogs are a `SubDialog` (focus trap, Escape, backdrop)
 with its close-button header; the footer holds only Next or the final action.
 Zotero's post-export steps expand under "Open this export in Zotero".
 `transfers/transferFormats.js` owns the format table (label, category, hint,
@@ -524,9 +522,8 @@ goes on in Background tasks, whose row opens this step again. Once ready,
 the file downloads by itself when the window is open; a closed window's
 file is offered in the pill with a Download button, and waits in the tray.
 The finished step names the file and its size, says "Saved to your
-downloads" once the file has actually arrived (`job.downloaded`, so the
-automatic download is stated rather than left for the Download button to
-contradict — which then reads "Download again"), counts the pages, lists the
+downloads" once the automatic download has happened (`job.downloaded`;
+the button then reads "Download again"), counts the pages, lists the
 pages left out with the reason, and says what to do next: Zotero's steps,
 Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export, BibTeX's
 beside-your-.tex. A failed or
@@ -575,8 +572,7 @@ listed once it is done. BibTeX is one `.bib` for every paper in the folder.
 `?mode=bibtex` on both export endpoints (`_BibtexBuilder`, entries from
 `gamma/bibtex.py`): one `.bib` file, never a zip — a page's own citation
 entry, or one bibliography for every paper in a folder. This is what a LaTeX
-document cites, so the export is deliberately boring: no switches, no
-bundling, nothing generated at export time that is not already on the page.
+document cites, so the export has no switches and no bundling.
 
 - **Where an entry comes from**: `properties.bibtex`, the rendering the
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
@@ -586,8 +582,8 @@ bundling, nothing generated at export time that is not already on the page.
   metadata" and named in the finished export; a set where no page has any
   fails with "none of these pages has paper metadata to cite".
 - **Citation keys**: generated as first author's surname + year
-  (`bibtex.default_key`, unchanged since the first release because cached
-  entries carry it). Two papers by one author in one year would collide in a
+  (`bibtex.default_key`; it must not change, because cached entries carry
+  it). Two papers by one author in one year would collide in a
   bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
   `aa` — Better BibTeX's convention. Pinned keys are assigned first, so the
   key a user chose is never the one that moves; two pins that collide are
@@ -629,12 +625,11 @@ The dialog's BibTeX step is the two panes the Zotero import review uses
 (`.bibColumns`, the same shape as `.importReviewColumns` with its own
 classes): the papers on the left, each with the citation key underneath and a
 pin mark when that key is pinned, the pages that cannot be cited listed under
-them with the reason — where the question "why is my paper missing?" is
-actually asked, rather than after the download. The right pane holds whichever
+them with the reason. The right pane holds whichever
 paper is picked, with a copy button for that one entry; the footer's "Copy
 all" takes the whole bibliography and appears only when there is more than
 one. The modal widens for this step only (`transferModalWide`). Export is
-held while the review loads and when nothing is citable.
+held while the review loads, when it fails and when nothing is citable.
 
 ### Keeping a .bib up to date
 

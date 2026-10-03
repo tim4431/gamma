@@ -119,7 +119,7 @@ export default function QuickOpen({
       .map((r) => ({ key: r.page.id, page: r.page, section: "pages", time: recentAt.get(r.page.id) || r.page.updated_at }));
     // A folder matches on its own name or its path ("Physics / Rydberg").
     const folderRows = [...tree.folders.values()]
-      .map((f) => ({ folder: f, path: folderPath(tree, f.id), score: match(f.name, [folderPath(tree, f.id)]) }))
+      .map((f) => { const path = folderPath(tree, f.id); return { folder: f, path, score: match(f.name, [path]) }; })
       .filter((r) => r.score > 0)
       .sort((a, b) => (b.score - a.score) || a.path.localeCompare(b.path))
       .slice(0, MAX_CONTAINERS)

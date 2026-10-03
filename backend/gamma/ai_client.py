@@ -292,13 +292,13 @@ def read_reply(response, provider_protocol, on_usage=None) -> str:
 
 
 def call_ai(
-    messages, system, entry, runtime, pdf_b64s=None, effort="", speed="",
+    messages, system, entry, runtime, pdf_b64s=None, effort="",
     max_tokens=8192, timeout=60, images=None, on_usage=None,
 ):
     """Send a chat and return its complete reply text."""
     with open_ai(
-        messages, system, entry, runtime, pdf_b64s,
-        effort, speed, max_tokens, timeout, images,
+        messages, system, entry, runtime, pdf_b64s, effort,
+        max_tokens=max_tokens, timeout=timeout, images=images,
     ) as response:
         return read_reply(response, protocol(runtime, entry), on_usage)
 

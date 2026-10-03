@@ -5319,12 +5319,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   white-space: pre;
 }
-/* The whole bibliography in the export dialog's BibTeX step: more room than
-   the popover's single entry, and long titles wrap instead of scrolling
-   sideways. */
 /* The BibTeX review needs room for two panes; every other step keeps the
    dialog's usual width. */
 .reportModal.transferModalWide { width: min(1000px, calc(100vw - 32px)); max-width: 1000px; }
+/* The picked paper's entry in the BibTeX step: taller than the share
+   popover's, and long titles wrap instead of scrolling sideways. */
 .bibtexPreview {
   max-height: 240px;
   white-space: pre-wrap;

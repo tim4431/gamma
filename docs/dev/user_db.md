@@ -19,11 +19,8 @@ All state is SQLite + files on disk under a data directory (env
   workspace databases: a reader never waits on a writer. `db.connect_users_db`
   sets both; the session middleware's plain connections (`auth._users_db`)
   pass the timeout too. An account is keyed by `users.id`, a random token
-  (`db.new_account_id`, the shape of a workspace id); its `username` is
-  unique and is only the name people see and sign in with. Every other
-  column that names an account holds the id: the `user_id` columns, and
-  `created_by`, `added_by`, `invited_by` and `owner` ("Accounts are named by
-  id" below). Tables:
+  (`db.new_account_id`); its unique `username` is only the name people see
+  and sign in with ("Accounts are named by id" below). Tables:
   - `users` — accounts (`id`, `username`, bcrypt hash), the guest/admin
     flags, nullable per-user storage-limit overrides, `default_workspace`
     (the personal workspace).
@@ -152,8 +149,8 @@ All state is SQLite + files on disk under a data directory (env
     ([mirror.md](mirror.md); empty in a workspace that mirrors nothing);
   - `upload_orphans` — the stored files nothing references
     (`name`, `since`; "Stored files" below);
-  - `chats` / `chat_history` — the AI chat ([ai.md](ai.md) "Chat
-    storage"): one active conversation per `bucket` (a page's id, a
+  - `chats` / `chat_history` — the AI chat ([ai.md](ai.md) "Chat history
+    buckets"): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
     `updated_at`, and the bucket's earlier conversations by `id`. They live
     with the pages they are about, so a backup, a restore and a Gamma
@@ -171,13 +168,9 @@ All state is SQLite + files on disk under a data directory (env
   copy, a migration step, the Gamma export's in-memory file) registers the
   function itself. A restored backup is brought to the current shape
   before anything reads it or anything live is touched
-  (`ws_backup._normalize_copies`): `normalize.block_columns` gives one from
-  before migration step 26 the hot fields (`page_id` filled in by the parent
-  walk), `normalize.page_changes` one from before step 27 its change log
-  (a row per page, its tombstones folded in), `normalize.pages_db_chats`
-  one from before step 28 the chats its data.db held, the schema statements
-  add what it lacks (`page_ops`, the notes index), `normalize.block_fts`
-  builds its notes index from its rows. A restore never replaces the live
+  (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
+  migrations 26–30 in the order [migrations.md](migrations.md) "Writing a
+  step" gives). A restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
   `VACUUM` a pages.db: `unified_blocks` has no `INTEGER PRIMARY KEY`, so
@@ -233,14 +226,13 @@ external content: its content is the view `block_fts_src(rowid, block_id,
 page_id, content)` over `unified_blocks`, keyed by the block's rowid, and it
 holds no text of its own (snippets and the `block_id` / `page_id` columns
 are read back through the view). The view shows every block inside a page
-— highlights, ink, text boxes and links included — and no page's own row
-(a title is found by the library list, not here) nor the reserved rows
-(`parent_id NOT IN ('root', 'trash') AND page_id != ''` — folder and label
-names are rows of their trees, so they are indexed too, and no search
-reaches them: every search names the pages it keeps to), its text in the
-search form: `textnorm(content)` cut at `db.NOTES_INDEX_CHARS` (20,000),
-where `textnorm` is `textnorm.normalize_text`, registered on the
-connection. A page in Recently deleted keeps its rows (its blocks keep
+(highlights, ink, text boxes and links included) but no page's own row,
+since a title is found by the library list, and no reserved row:
+`parent_id NOT IN ('root', 'trash') AND page_id != ''`. Folder and label
+names are rows of their trees, so they are indexed too; no search reaches
+them, since every search names the pages it keeps to. The indexed text is
+`textnorm(content)` (`textnorm.normalize_text`, registered on the
+connection) cut at `db.NOTES_INDEX_CHARS` (20,000). A page in Recently deleted keeps its rows (its blocks keep
 their `page_id`), and every search keeps to the pages it reaches
 (`block_index.search_blocks` takes the page ids), so trashing and
 restoring, which move only the page's own row, change nothing in the
@@ -287,7 +279,8 @@ username)` and `db.account_name(conn, user_id)`, each one indexed lookup;
 lists of people are joined to `users` in their own query, never looked up
 row by row. A request carries both (`request.state.user_id`, what storage
 takes; `request.state.user`, what is shown and logged), and so does a page
-socket's peer. A rename is one `UPDATE users` ("manage.py CLI" below); a
+socket's peer. A rename changes `users.username` and nothing else that
+names the account ("manage.py CLI" below); a
 deleted account's id is never reused, so nothing of it passes to a later
 account that takes its name.
 

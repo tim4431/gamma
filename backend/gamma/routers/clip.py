@@ -18,7 +18,6 @@ Session-only — never share-token readable. Design: docs/dev/extension.md.
 import hashlib
 import json
 import re
-import secrets
 import threading
 import urllib.parse
 
@@ -26,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import require_user, require_user_id, require_ws
+from ..auth import require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -41,6 +40,7 @@ from ..blocks_store import (
     get_or_create_doc_page,
     label_names,
     last_child_position,
+    new_block_id,
     page_attachment,
     page_for_doc,
     refiled,
@@ -257,7 +257,7 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
         block = _file_page(conn, ws, actor, existing, folder, labels)
         if (payload.selection or "").strip():
             after_commit(ws, conn, apply_ops(conn, block["id"], [{
-                "op": "insert", "id": secrets.token_urlsafe(9), "parent": block["id"],
+                "op": "insert", "id": new_block_id(), "parent": block["id"],
                 "content": _quote_content(payload.selection, source_url, title)}], actor=actor))
         return _result(block, existed=True)
     props = {"web_url": source_url} if source_url else {}
@@ -397,7 +397,7 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
     """What paper is this identifier? The registry record (title, authors,
     year, venue) for the popup to show before anything is saved — a PDF tab
     has no meta tags to read a title from. 404 when the registry has nothing."""
-    require_user(request)
+    require_user_id(request)
     url = (url or "").strip()
     doi = norm_doi(doi) or norm_doi(url)
     arxiv_id = norm_arxiv(arxiv_id) or norm_arxiv(url)
@@ -455,7 +455,7 @@ class ClipNoteRequest(BaseModel):
 def _insert_last(conn, page_id: str, content: str, props: dict, now: str) -> str:
     """A new block, the last one of the page ``page_id``; its id. The
     caller commits."""
-    block_id = secrets.token_urlsafe(9)
+    block_id = new_block_id()
     pos = generate_key_between(last_child_position(conn, page_id), None)
     conn.execute(
         f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -487,7 +487,7 @@ def clip_note(payload: ClipNoteRequest, request: Request):
             ).fetchone()
             page_id = row[0] if row else create_page(conn, WEB_CLIPS_TITLE, {"web_clips": 1},
                                                      actor=request.state.user_id or "")["id"]
-        block_id = secrets.token_urlsafe(9)
+        block_id = new_block_id()
         after_commit(ws, conn, apply_ops(conn, page_id, [
             {"op": "insert", "id": block_id, "parent": page_id, "content": content}],
             actor=request.state.user_id or ""))

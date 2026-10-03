@@ -332,14 +332,14 @@ AI:
   (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
-- **Chat**: **Chat** (the default reasoning effort — every level, since
-  each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
-  the default speed, which only reaches models whose provider offers that
-  service tier ([ai.md](ai.md#speed-service-tier)),
-  and the snapshot-clearing switch), **Prompts** (the accordion with one
-  Cancel / Save pair as the section's action) and **Context size** (the
-  three budgets; the section's action is the Standard / Larger / Custom
-  preset). The old `ai-advanced`, `context` and `prompts` pane ids are
+- **Chat**: three sections. **Chat** holds the default reasoning effort,
+  the default speed and the snapshot-clearing switch. The effort menu
+  lists every level, since each model gets the nearest one it takes
+  ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
+  provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
+  **Prompts** is the accordion, with one Cancel / Save pair as its action.
+  **Context size** holds the three budgets, with the Standard / Larger /
+  Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
   aliases of this pane, each jumping to its section.
 - **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
@@ -496,7 +496,8 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
 Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
-viewer and context entry points also jump to their section.
+viewer, context, ai-advanced and prompts entry points also jump to their
+section.
 
 The desktop surface has a persistent search header and labeled sidebar. On
 phones the Back button opens a labeled category list. All controls remain
@@ -529,8 +530,8 @@ allow** writes the same preference. **Allow in this chat** is not a setting:
 it lasts for one conversation and stays in the browser
 ([ai.md](ai.md#asking-before-a-call-approvals)).
 
-Reasoning effort, the context budgets, the tools switch and the permissions
-are account preferences: they live in the profile and follow the account to
+Reasoning effort, speed, the context budgets, the tools switch and the
+permissions are account preferences: they live in the profile and follow the account to
 every browser. The chat model stays with the browser, remembered per
 provider entry; provider selection and credentials keep their own account
 keys. Context presets change the three budgets together: Standard

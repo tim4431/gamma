@@ -96,14 +96,16 @@ def _clean_domains(raw: str) -> str:
     with an address or a ``@domain`` among them. Stored one per line,
     lowercased and deduplicated, in the order given."""
     out: list[str] = []
+    bad: list[str] = []
     for word in re.split(r"[,\s]+", raw.lower()):
         name = word.strip(".").rpartition("@")[2]
         if not name:
             continue
-        if not DOMAIN_RE.match(name):
-            raise ValueError(f"{name!r} is not a domain name.")
-        if name not in out:
-            out.append(name)
+        found = out if DOMAIN_RE.match(name) else bad
+        if name not in found:
+            found.append(name)
+    if bad:
+        raise ValueError(f"Not domain names: {', '.join(bad)}.")
     if len(out) > MAX_BLOCKED_DOMAINS:
         raise ValueError(f"At most {MAX_BLOCKED_DOMAINS} domains.")
     return "\n".join(out)

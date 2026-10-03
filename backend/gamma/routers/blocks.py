@@ -281,8 +281,8 @@ def ub_get_children(block_id: str, request: Request):
 def _trees(conn, scope, rows) -> dict:
     """The listing's ``folders`` and ``labels``: each tree's blocks nested
     under ``children`` (block dicts, siblings in order) and, for a member,
-    ``seq`` — the op log's position the tree reflects, which the home view's
-    socket on the pseudo-page catches up from. A folder share sees its
+    ``seq`` — the op log's position the tree reflects, which a client
+    following the tree's room catches up from. A folder share sees its
     folder (with what is below it) and the labels its pages carry."""
     if scope is None:
         return {tree: {"seq": latest_seq(conn, tree),

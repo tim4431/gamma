@@ -251,22 +251,33 @@ def make_user(username, password, is_admin=0):
     order. Prefix names with the module's area (`bk_admin`, `ca_alice`)."""
     import bcrypt
     from gamma import workspaces
-    from gamma.db import connect_users_db, new_account_id, page_now
+    from gamma.db import account_id, connect_users_db
+    from gamma.seed import insert_account
 
     owner = _USER_OWNERS.setdefault(username.lower(), _caller_file())
     if owner != _caller_file():
         pytest.fail(f"account {username!r} is already used by {owner}; pick a module-unique name")
 
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
-            conn.execute(
-                "INSERT INTO users (id, username, password_hash, is_guest, is_admin, created_at) "
-                "VALUES (?, ?, ?, 0, ?, ?)",
-                (new_account_id(), username, bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode(), is_admin,
-                 page_now()),
-            )
+        user_id = account_id(conn, username)
+        if not user_id:
+            user_id = insert_account(conn, username, bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode(),
+                                     is_admin=bool(is_admin))
             conn.commit()
-    return workspaces.ensure_personal(account_of(username))
+    return workspaces.ensure_personal(user_id)
+
+
+def drop_user(username):
+    """Remove an account ``make_user`` made, with its sessions: a module that
+    makes an admin must not leave one behind (test_admin_users assumes it
+    knows every admin in the shared users.db)."""
+    from gamma.db import connect_users_db
+
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+                     (username,))
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
 
 
 def account_of(username):

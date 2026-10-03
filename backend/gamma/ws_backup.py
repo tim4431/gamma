@@ -280,8 +280,8 @@ def _normalize_copies(tdir: Path) -> None:
     the op log), the notes index built from its rows (``block_fts``, step
     28), the folder and label trees (``folder_blocks``, step 29), the
     content normalizers (whose rewrites the index follows) and the
-    highlight shape (``highlight_shape``, step 30). data.db: the tables it
-    does not hold now dropped."""
+    highlight shape (``highlight_shape``, step 30). data.db:
+    ``normalize_data_db`` drops the tables that moved out of it."""
     with closing(sqlite3.connect(str(tdir / "pages.db"))) as conn:
         register_functions(conn)
         block_columns(conn)
@@ -605,9 +605,7 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
     snap = tdir / "pages.db"
     if snap.exists():
         with closing(sqlite3.connect(str(snap))) as src, connect_pages_db(ws) as dst:
-            backup_seqs = {}
-            if src.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'page_ops'").fetchone():
-                backup_seqs = dict(src.execute("SELECT page_id, MAX(seq) FROM page_ops GROUP BY page_id").fetchall())
+            backup_seqs = dict(src.execute("SELECT page_id, MAX(seq) FROM page_ops GROUP BY page_id").fetchall())
             write_lock(dst)
             try:
                 taken = {r[0] for r in dst.execute("SELECT id FROM unified_blocks")}

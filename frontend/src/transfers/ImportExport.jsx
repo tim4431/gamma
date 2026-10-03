@@ -185,7 +185,7 @@ export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLea
   if (job) {
     return <ExportJobStep job={job} folder={setup.folder} folderName={setup.folderName} fetchJob={fetchJob} onClose={setup.onCancel}
       onDownload={onDownload} onStop={onStop} onRetry={onRetry}
-      onBack={onLeaveJob ? (step) => { setResume(step); onLeaveJob(); } : undefined} />;
+      onBack={(step) => { setResume(step); onLeaveJob(); }} />;
   }
   return <ExportSetup {...setup} startStep={resume} />;
 }
@@ -272,7 +272,7 @@ const NEXT_STEP = {
 // (routers/export.py), listed so the catalogs translate them.
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
   T("page has no paper metadata")];
-// And the refusals a whole export fails with, shown in the BibTeX step.
+// And the refusals a BibTeX export job fails with (its failed step shows them).
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),
   T("this page has no paper metadata to cite")];
 
@@ -304,12 +304,10 @@ function ExportJobStep({ job, folder, folderName, fetchJob, onClose, onDownload,
       {/* Walking back is allowed even once the file is ready: the export is
           done (or goes on in the tray) and picking another format is a
           normal second thought. */}
-      {onBack ? <button type="button" className="crumbBtn" onClick={() => onBack(0)}>1. {t("Choose a format")}</button>
-        : <span>1. {t("Choose a format")}</span>}
+      <button type="button" className="crumbBtn" onClick={() => onBack(0)}>1. {t("Choose a format")}</button>
       <span aria-hidden="true">/</span>
       {reviewed ? <>
-        {onBack ? <button type="button" className="crumbBtn" onClick={() => onBack(1)}>{t("2. Review")}</button>
-          : <span>{t("2. Review")}</span>}
+        <button type="button" className="crumbBtn" onClick={() => onBack(1)}>{t("2. Review")}</button>
         <span aria-hidden="true">/</span>
       </> : null}
       <span aria-current="step">{total}. {t("Export")}</span>

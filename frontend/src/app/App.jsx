@@ -6,7 +6,7 @@ import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
-import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
+import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { useTasks } from "../tasks/useTasks";
@@ -320,10 +320,10 @@ const RECENTS_CAP = 24;
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
-// The Settings panes of the AI group ("context", "ai-advanced" and "prompts"
-// are old names of the Chat pane): entering one loads the masked key list and
-// the prompt drafts.
-const AI_SETTINGS_PANES = ["ai", "assistant", "tools", "ai-advanced", "context", "prompts"];
+// The Settings panes of the AI group (old pane names resolve first): entering
+// one loads the masked key list and the prompt drafts.
+const AI_SETTINGS_PANES = ["ai", "assistant", "tools"];
+const isAiPane = (pane) => AI_SETTINGS_PANES.includes(resolveSettingsPane(pane));
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
 const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
@@ -2758,7 +2758,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
-    if (AI_SETTINGS_PANES.includes(settingsOpen) && !AI_SETTINGS_PANES.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
+    if (isAiPane(settingsOpen) && !isAiPane(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
   // Settings → Connections. `service` (a protocol id or "other", from the
@@ -2770,7 +2770,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pendingAiFormRef = useRef(null); // {service} | {entry} | null
   function openAiKeysEditor({ service = "", entry = "" } = {}) {
     const target = service ? { service } : entry ? { entry } : null;
-    if (AI_SETTINGS_PANES.includes(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
+    if (isAiPane(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
     else pendingAiFormRef.current = target;
     openSettingsPane("ai");
   }
@@ -4842,16 +4842,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     try {
+      const folder = filedIn(libTree.folders, pageFolders)[0] || "";
       let page;
       if (ext === "pdf") {
         page = await post(`/blocks/by-doc/${encodeURIComponent(hash)}`, {
-          default_title: "", source_url: `/api/uploads/${hash}.pdf`,
-          original_filename: name || "", folder: filedIn(libTree.folders, pageFolders)[0] || "",
+          default_title: "", source_url: `/api/uploads/${hash}.pdf`, original_filename: name || "", folder,
         });
       } else {
-        page = (await post("/pages/from-file", {
-          filename: `${hash}.${ext}`, original: name || "", folder: filedIn(libTree.folders, pageFolders)[0] || "",
-        })).page;
+        page = (await post("/pages/from-file", { filename: `${hash}.${ext}`, original: name || "", folder })).page;
       }
       rememberDocPage(hash, { id: page.id, title: page.content });
       fetchHomeBlocks();
@@ -6452,7 +6450,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Entering AI settings initializes prompt drafts; navigation guards protect
   // any subsequent edits until Save or Cancel.
   useEffect(() => {
-    if (!AI_SETTINGS_PANES.includes(settingsOpen)) return;
+    if (!isAiPane(settingsOpen)) return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");

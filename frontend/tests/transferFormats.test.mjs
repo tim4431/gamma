@@ -115,7 +115,7 @@ test("the review is fetched for whichever target the dialog is on", () => {
 });
 
 test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
-  // No token: the path the app fetches its own preview from.
+  // No token: the bare export path.
   assert.equal(bibliographyUrl("/api", { folder: "f1" }), "/api/folders/f1/export?mode=bibtex");
   assert.equal(bibliographyUrl("/api", { pageId: "p 1" }), "/api/pages/p%201/export?mode=bibtex");
   // With one: the fixed link Overleaf refreshes from. The token names the

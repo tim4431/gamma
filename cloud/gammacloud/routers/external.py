@@ -199,7 +199,7 @@ class SignupBody(BaseModel):
 
 @router.post("/api/oauth/signup")
 def signup(body: SignupBody, request: Request):
-    ratelimit.check(f"register:ip:{ratelimit.limit_ip(request)}", 20, 3600)
+    ratelimit.check(f"oauth-signup:ip:{ratelimit.limit_ip(request)}", 20, 3600)
     ext = request.cookies.get(identities.COOKIE, "")
     with closing(db.connect()) as conn:
         flow = identities.load(conn, ext, "signup")
