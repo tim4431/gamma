@@ -42,8 +42,8 @@ def _pdf_text(data):
 
 def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     from gamma import seed
-    from gamma.db import connect_pages_db, pdf_upload_path
-    from gamma.storage import is_pdf
+    from gamma.db import connect_pages_db
+    from gamma.storage import find_upload_file, is_pdf
 
     ws = seed.create_account("wl_alice", "wl_alice_pw")
     [page] = _pages(ws)
@@ -52,7 +52,7 @@ def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     # the sample PDF, stored by content hash like any upload
     doc_id = props["doc_id"]
     assert "source_url" not in props  # seeded in the current shape: the URL is derived
-    data = pdf_upload_path(ws, doc_id).read_bytes()
+    data = find_upload_file(f"{doc_id}.pdf", ws).read_bytes()
     assert is_pdf(data)
     text = _pdf_text(data)
     assert "Welcome to Gamma" in text and "Your first five minutes" in text

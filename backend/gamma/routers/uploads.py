@@ -6,10 +6,10 @@ import time
 from collections import OrderedDict
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
-from .. import pdf_meta
+from .. import blobs, pdf_meta
 from ..db import connect_pages_db
 from ..ink import InkError, parse_ink
 from ..server_settings import workspace_quota
@@ -31,6 +31,10 @@ from ..storage import (
 # Link visitors (anyone-with-the-link edit shares) may paste images and files
 # like any editor, within the page's workspace quota, but only so many per IP.
 LINK_UPLOADS_PER_5_MIN = 60
+# How long the bucket URL a read is redirected to stays valid (the S3 driver
+# with presigning on): a fresh one is minted for every request, so it only
+# has to outlive the browser's follow-up.
+PRESIGN_TTL_S = 300
 
 router = APIRouter(prefix="/api", tags=["uploads"])
 
@@ -185,7 +189,13 @@ def pdf_info(doc_id: str, request: Request):
 # GET and HEAD: the viewer asks HEAD for a file's size before deciding how to
 # open it (FastAPI does not add HEAD to a GET route by itself; FileResponse
 # answers a HEAD with the headers alone). Sync def: a share visitor's access
-# check reads the shared pages.
+# check reads the shared pages, and a file in a bucket is looked up there.
+# With the files in a bucket (gamma/blobs.py, presigning on), a GET that
+# passes every check is sent to the bucket by a 302 to a short-lived
+# presigned URL that answers with the same media type and disposition, so
+# the bucket serves the bytes and their Range requests; the redirect itself
+# is never cached (its URL expires). A HEAD is answered here, from the
+# object's size: a URL presigned for GET does not sign a HEAD.
 @router.api_route("/uploads/{filename}", methods=["GET", "HEAD"])
 def serve_upload(filename: str, request: Request):
     # Sanitize: only allow [hex].ext pattern, no path traversal
@@ -208,9 +218,6 @@ def serve_upload(filename: str, request: Request):
     if scope is not None and not _share_can_read_upload(ws, scope, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
-    path = find_upload_file(filename, ws)
-    if not path:
-        raise HTTPException(status_code=404, detail="not found")
     # Filenames are content hashes (or URL hashes the server only writes once),
     # so a given name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
@@ -219,10 +226,25 @@ def serve_upload(filename: str, request: Request):
     # files (office, zip, …) download, and so do svg/html — scriptable in this
     # origin (stored XSS) — which are sandboxed too in case a browser renders
     # them anyway (storage.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS).
+    disposition = None
     if ext not in INLINE_EXTENSIONS:
-        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        disposition = headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     if ext in SANDBOXED_EXTENSIONS:
         headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+
+    url = blobs.url(ws, filename, media_type=media_type, disposition=disposition, ttl=PRESIGN_TTL_S)
+    if url is not None:
+        size = blobs.size(ws, filename)
+        if size is None:
+            raise HTTPException(status_code=404, detail="not found")
+        if request.method == "HEAD":
+            return Response(media_type=media_type,
+                            headers={**headers, "Content-Length": str(size), "Accept-Ranges": "bytes"})
+        return RedirectResponse(url, status_code=302, headers={"Cache-Control": "private, no-store"})
+
+    path = find_upload_file(filename, ws)
+    if not path:
+        raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path, media_type=media_type, headers=headers)
 
 

@@ -3,14 +3,18 @@ it the server keeps.
 
 The zip is what ``GET /api/export`` downloads and ``POST /api/import-data``
 restores: consistent copies of ``pages.db`` and ``data.db`` (taken with the
-SQLite backup API, so safe while the app serves), every file under
-``uploads/`` when asked, and a ``manifest.json``. ``write_zip`` writes one,
+SQLite backup API, so safe while the app serves), every stored file
+(``uploads/``, read through gamma/blobs.py wherever the files live) when
+asked, and a ``manifest.json``. ``write_zip`` writes one,
 ``restore_zip`` applies one (replace or merge) — the two halves of every
 backup path in the app, so a stored snapshot, a downloaded export and a
 page export all restore the same way. Every database copy is quick-checked
 on the way in and out (``gamma/integrity.py``): a snapshot records the
 result in its manifest, a restore refuses a damaged backup before touching
-anything.
+anything. What is each account's own in the workspace (``PRIVATE_TABLES``:
+the members' open tabs, recents and reading positions) is no library
+content: the zip's pages.db has those tables emptied, and a restore keeps
+the live rows.
 
 Stored snapshots (``backups/workspaces/<ws>/<time>-<label>.zip``) are what
 Settings → Backups manages: taken by a workspace owner (or for every
@@ -43,7 +47,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, integrity, jobs, pdf_index, upload_gc
+from . import blobs, config, integrity, jobs, pdf_index, upload_gc
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
@@ -52,10 +56,14 @@ from .db import (PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db
                  register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
-                        normalize_pages_db, page_changes, pages_db_chats)
+                        normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .seed import create_workspace_files
 
 FORMAT = "gamma-backup-1"
+# pages.db tables that hold each account's own state, not the library's
+# (db.WORKSPACE_PREFS_SCHEMA): empty in every zip, never replaced by a restore.
+PRIVATE_TABLES = ("workspace_prefs",)
+SCRUB_CHUNK = 64 << 20             # bytes of zeros per row when a copy's free pages are overwritten
 MAX_PER_WORKSPACE = 20             # manual snapshots per workspace
 MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task together
 PRE_RESTORE_KEEP = 3               # "pre-restore" snapshots kept per workspace
@@ -84,7 +92,7 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
               progress=None, scheduled: bool = False, task_id: str = "", auto: bool = False) -> dict:
     """Write the workspace's backup zip to ``dest``. The databases are
     copied first and the uploads listed only after them, so every file the
-    copied pages reference is on disk when the list is taken; a file that
+    copied pages reference is stored when the list is taken; a file that
     goes in between (an orphan sweep) is recorded in ``missing_uploads``,
     never a failed backup. Each database copy is quick-checked
     (``integrity`` in the manifest, and the workspace's latest check).
@@ -95,9 +103,8 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
 
     progress = progress or jobs.no_progress
     root = ws_dir(ws)
-    uploads_dir = root / "uploads"
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
-    estimate = sum(_size(f) for f in uploads_dir.iterdir() if f.is_file()) if uploads and uploads_dir.is_dir() else 0
+    estimate = blobs.usage(ws) if uploads else 0
     done, total = 0, sum(_size(f) for f in db_files) + estimate
     progress(done=done, total=total, unit="bytes")
     info = workspaces.get(ws) or {}
@@ -110,23 +117,28 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
             snap = Path(str(dest) + "." + src.name)
             try:
                 checks[src.name] = snapshot_db(src, snap)
+                if src.name == "pages.db" and not checks[src.name].startswith("unreadable"):
+                    _strip_private(snap)
                 z.write(snap, src.name)
             finally:
                 for side in (snap, Path(str(snap) + "-wal"), Path(str(snap) + "-shm")):
                     side.unlink(missing_ok=True)
             done += _size(src)
             progress(done=done, total=total, unit="bytes")
-        if uploads and uploads_dir.is_dir():
-            listed = sorted(f for f in uploads_dir.iterdir() if f.is_file())
-            total = done + sum(_size(f) for f in listed)
-            for f in listed:
+        if uploads:
+            listed = sorted(blobs.list(ws))
+            total = done + sum(size for _, size, _ in listed)
+            for name, size, _ in listed:
                 try:
-                    z.write(f, f"uploads/{f.name}")
+                    path = blobs.open_path(ws, name)  # a bucket's: the node's copy, fetched now
+                    if path is None:
+                        raise FileNotFoundError(name)
+                    z.write(path, f"uploads/{name}")
                 except FileNotFoundError:
-                    missing.append(f.name)  # swept since the listing: no copied page names it
+                    missing.append(name)  # swept since the listing: no copied page names it
                     continue
-                stored.append(f.name)
-                done += _size(f)
+                stored.append(name)
+                done += size
                 progress(done=done, total=total, unit="bytes")
         manifest = {
             "format": FORMAT,
@@ -153,6 +165,35 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
         base = f"workspaces/{safe_ws_id(ws)}"
     integrity.record({f"{base}/{name}": result for name, result in checks.items()}, "workspace backup")
     return manifest
+
+
+def _strip_private(copy: Path) -> None:
+    """Empty the ``PRIVATE_TABLES`` of a pages.db copy before it is zipped
+    (a copy without them, of a workspace not upgraded to step 34 yet, keeps
+    those rows in users.db), leaving none of their bytes in the file: with
+    ``secure_delete`` on, what the delete frees is overwritten, and the
+    pages that were free already in the copy (an older value of a pref, the
+    file's own free pages) are taken into a table of zeros and freed again.
+    A damaged copy that refuses is zipped as it is, logged; a write that
+    fails (a full disk) fails the backup, as the copy itself would."""
+    try:
+        with closing(sqlite3.connect(str(copy))) as conn:
+            conn.execute("PRAGMA secure_delete = ON")
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            for table in PRIVATE_TABLES:
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table}")
+            free = conn.execute("PRAGMA freelist_count").fetchone()[0] * conn.execute("PRAGMA page_size").fetchone()[0]
+            if free:
+                conn.execute("CREATE TABLE gamma_scrub (zeros BLOB)")
+                for at in range(0, free, SCRUB_CHUNK):  # SQLite caps one blob at 1 GB
+                    conn.execute("INSERT INTO gamma_scrub VALUES (zeroblob(?))", (min(SCRUB_CHUNK, free - at),))
+                conn.execute("DROP TABLE gamma_scrub")
+            conn.commit()
+    except sqlite3.OperationalError:
+        raise
+    except sqlite3.DatabaseError as e:
+        log.warning(f"[backups] {copy.name}: the private tables of a damaged copy could not be emptied: {e}")
 
 
 def read_manifest(path: Path) -> dict:
@@ -210,7 +251,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         root = ws_dir(ws)
         review = None
         if selected is not None:
-            review = _review_import(root, tdir, upload_names)
+            review = _review_import(ws, tdir, upload_names)
             from .import_review import validate_selection
             validate_selection(selected, (p["selection_ids"][0] for p in review))
             chosen = [p for p in review if p["selection_ids"][0] in selected]
@@ -237,13 +278,13 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         if not (root / "pages.db").exists():
             create_workspace_files(ws)
         if mode == "merge":
-            uploads_added = _copy_uploads(root, tdir, upload_names, progress)
+            uploads_added = _copy_uploads(ws, tdir, upload_names, progress)
             progress(phase="restoring", stoppable=False)
             result = _merge(ws, tdir, by)
         else:
             progress(phase="saving")
             pre = _keep_current(ws, by, progress)
-            uploads_added = _copy_uploads(root, tdir, upload_names, progress)
+            uploads_added = _copy_uploads(ws, tdir, upload_names, progress)
             progress(phase="restoring", stoppable=False)
             result = {**_replace(ws, root, tdir, by), "pre_restore": pre["name"] if pre else ""}
     if review is not None:
@@ -253,40 +294,60 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
             "uploads_in_backup": len(upload_names), "uploads_added": uploads_added}
 
 
-def _copy_uploads(root: Path, tdir: Path, upload_names: list[str], progress=jobs.no_progress) -> int:
-    """The backup's files the workspace lacks, each written whole
-    (``storage.write_atomic``): a restore cut short never leaves a
+def _copy_uploads(ws: str, tdir: Path, upload_names: list[str], progress=jobs.no_progress) -> int:
+    """The backup's files the workspace lacks, each stored whole
+    (``storage.put_upload``): a restore cut short never leaves a
     truncated file under a content-hash name."""
-    from .storage import write_atomic
+    from .storage import put_upload
 
-    dest_uploads = root / "uploads"
-    dest_uploads.mkdir(parents=True, exist_ok=True)
     added = 0
     for n, base in enumerate(upload_names):
         progress(phase="copying", done=n, total=len(upload_names), unit="files")
-        target_file = dest_uploads / base
-        if not target_file.exists():
-            write_atomic(target_file, (tdir / "uploads" / base).read_bytes())
+        if not blobs.exists(ws, base):
+            put_upload(ws, base, (tdir / "uploads" / base).read_bytes())
             added += 1
     return added
 
 
 def _normalize_copies(tdir: Path) -> None:
     """Bring the unpacked databases to the current shapes before anything
-    reads them or anything live is touched. pages.db, in this order: the
-    block table's hot fields (``normalize.block_columns``, step 26), the
-    change log (``page_changes``, step 27), the chats its data.db held
-    (``pages_db_chats``, step 28), the schema statements (an old file lacks
-    the op log), the notes index built from its rows (``block_fts``, step
-    28), the folder and label trees (``folder_blocks``, step 29), the
-    content normalizers (whose rewrites the index follows) and the
-    highlight shape (``highlight_shape``, step 30). data.db:
-    ``normalize_data_db`` drops the tables that moved out of it."""
+    reads them or anything live is touched. pages.db, in this order: a copy
+    stamped below the base (``migrations.WS_VERSION_BASE``; 0, a backup
+    from before the stamps, can be of any age up to it) goes through the
+    normalizers of the steps that walked every workspace: the block
+    table's hot fields (``normalize.block_columns``, step 26), the change
+    log (``page_changes``, step 27), the chats its data.db held
+    (``pages_db_chats``, step 28) and the op log's batch columns
+    (``page_ops_batch_id``, step 33). Then every copy runs the workspace
+    steps above its stamp (0 counting as the base,
+    ``migrations.run_workspace_steps``), and the schema statements (an old
+    file lacks the op log), the notes index built from its rows
+    (``block_fts``, step 28), the folder and label trees (``folder_blocks``,
+    step 29), the content normalizers (whose rewrites the index follows)
+    and the highlight shape (``highlight_shape``, step 30) follow; the copy
+    is stamped current. data.db: ``normalize_data_db`` drops the tables
+    that moved out of it."""
+    from . import migrations  # local: only a restore runs the step list
+
+    data_db = tdir / "data.db"
     with closing(sqlite3.connect(str(tdir / "pages.db"))) as conn:
         register_functions(conn)
-        block_columns(conn)
-        page_changes(conn)
-        pages_db_chats(conn, tdir / "data.db")
+        stamp = conn.execute("PRAGMA user_version").fetchone()[0]
+        if stamp < migrations.WS_VERSION_BASE:
+            block_columns(conn)
+            page_changes(conn)
+            pages_db_chats(conn, data_db)
+            page_ops_batch_id(conn)
+        steps = migrations.workspace_steps_after(migrations.workspace_version(conn))
+        if steps:
+            data = sqlite3.connect(str(data_db)) if data_db.exists() else None
+            try:
+                migrations.run_workspace_steps("", conn, data, steps)
+            except migrations.MigrationError as e:
+                raise BackupError(f"the backup could not be brought to this version of Gamma: {e}") from e
+            finally:
+                if data is not None:
+                    data.close()
         for stmt in PAGES_SCHEMA:
             conn.execute(stmt)
         block_fts(conn)
@@ -294,8 +355,11 @@ def _normalize_copies(tdir: Path) -> None:
         normalize_pages_db(conn)
         highlight_shape(conn)
         upload_gc.restart_clocks(conn)  # its orphan rows' 30 days start now, not when it was taken
-    if (tdir / "data.db").exists():
-        with closing(sqlite3.connect(str(tdir / "data.db"))) as conn:
+        if stamp < migrations.SCHEMA_VERSION:
+            conn.execute(f"PRAGMA user_version = {migrations.SCHEMA_VERSION}")
+            conn.commit()
+    if data_db.exists():
+        with closing(sqlite3.connect(str(data_db))) as conn:
             normalize_data_db(conn)
 
 
@@ -348,7 +412,8 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
     the restore removed, one in the restored Recently deleted, one the
     backup's log has as deleted — is touched ``deleted`` unless it already
     is. The chats come with the pages (the backup's replace the live ones),
-    and the notes index follows the copied rows (its triggers). data.db
+    and the notes index follows the copied rows (its triggers). The
+    accounts' own tables (``PRIVATE_TABLES``) stay the live ones too. data.db
     follows through the sqlite backup API."""
     from . import ops
 
@@ -359,7 +424,7 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
             live_seqs = dict(live.execute("SELECT page_id, MAX(seq) FROM page_ops GROUP BY page_id").fetchall())
             live_pages = {r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")}
             live_ids = {r[0] for r in live.execute("SELECT id FROM unified_blocks")}
-            _copy_tables(live, "restored", keep=("page_changes",))
+            _copy_tables(live, "restored", keep=("page_changes", *PRIVATE_TABLES))
             pages = [r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")] + [
                 tree for tree in TREES if live.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (tree,)).fetchone()]
             for page in pages:
@@ -407,7 +472,7 @@ def _announce(ws: str, pages: list[str] | None = None) -> None:
     ops.notify_commit(ws)
 
 
-def _review_import(root, tdir, upload_names):
+def _review_import(ws, tdir, upload_names):
     """Plan the same additive merge, using only the extracted (normalized)
     snapshot. A chat is a bucket's conversations, the active one and its
     history: with its page when the bucket is one of the backup's pages,
@@ -417,10 +482,10 @@ def _review_import(root, tdir, upload_names):
     folders and labels it needs (with the folders above them)."""
     from .sync_tree import upload_refs
 
-    available = set(upload_names) | {p.name for p in (root / "uploads").glob("*")}
+    available = set(upload_names) | {name for name, _, _ in blobs.list(ws)}
     conversations = "SELECT 'chats', bucket, bucket, messages FROM chats UNION ALL " \
                     "SELECT 'chat_history', id, bucket, messages FROM chat_history"
-    with closing(sqlite3.connect(str(root / "pages.db"))) as live:
+    with closing(sqlite3.connect(str(ws_dir(ws) / "pages.db"))) as live:
         # the library's blocks: a page only in Recently deleted comes back (``_merge``)
         live_pages = {r[0]: (r[1], json.loads(r[2] or "{}"))
                       for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_LIBRARY}")}
@@ -489,7 +554,7 @@ def preview_zip(ws: str, zpath: Path) -> dict:
         uploads = _unpack(zpath, tdir)
         _validate(tdir)
         _normalize_copies(tdir)
-        pages = _review_import(ws_dir(ws), tdir, uploads)
+        pages = _review_import(ws, tdir, uploads)
     with zipfile.ZipFile(zpath) as zf:
         entries = archive_entries(zf)
     return {"pages": [{k: v for k, v in p.items() if not k.startswith("_")} for p in pages],

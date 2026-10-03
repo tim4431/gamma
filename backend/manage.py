@@ -19,11 +19,19 @@ Usage:
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
   python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
   python manage.py setup                           # idempotent: missing personal workspaces + workspace files
-  python manage.py migrate [--status] [--dry-run]  # upgrade the data directory (also runs at server start)
+  python manage.py migrate [--status] [--dry-run] [--global-only]
+                                                   # upgrade the data directory (also runs at server start),
+                                                   #   then every workspace (--global-only: leave those to the
+                                                   #   server, which upgrades each as it is opened)
   python manage.py backups                         # list the snapshots under backups/
   python manage.py backups --create [--uploads] [--label x]   # take one now (databases; + uploads)
   python manage.py backups --restore <name>        # copy one back over the data dir (server stopped!)
   python manage.py backups --delete <name> | --prune   # --prune: old pre-upgrade snapshots only
+  python manage.py db-copies --list [<workspace-id>|users]   # the databases' copies in the bucket
+  python manage.py db-copies --restore <workspace-id|users|all> [--at <stamp>]
+                                                   # put copies back in place (server stopped!); the files
+                                                   #   there are moved aside as <name>.pre-restore-<time>
+  python manage.py litestream-config [--out <path>]   # a litestream.yml for the GAMMA_S3_* bucket
 
 Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder). Commands
 name accounts by username; storage names them by id (``users.id``).
@@ -285,36 +293,57 @@ def setup():
     print("Setup complete.")
 
 
-def migrate(status_only: bool = False, dry_run: bool = False):
+def migrate(status_only: bool = False, dry_run: bool = False, global_only: bool = False):
     """Upgrade the data directory to this Gamma's schema version (also done
-    at every server start). ``--status`` only reports; ``--dry-run`` reports
-    what would run. On Windows stop the server first: an upgrade may move
-    directories that open database handles would lock."""
+    at every server start), then every workspace still behind on its own
+    steps, which the server otherwise runs as each workspace is opened and
+    in a background walk (``--global-only`` leaves them to it). ``--status``
+    only reports, with how many workspaces are behind; ``--dry-run``
+    reports what would run. On Windows stop the server first: an upgrade
+    may move directories that open database handles would lock."""
     st = migrations.status()
     if st["fresh"]:
         print("No data directory yet — nothing to migrate.")
         return
     print(f"Data directory schema version: {st['version']} (this Gamma: {st['target']})")
-    if not st["pending"]:
+    upgrade = st["version"] != st["target"]
+    pending = [f"{p['version']} {p['name']}" for p in st["pending"]] + [
+        f"{p['version']} {p['name']} (per workspace)" for p in st["workspace_steps"] if p["version"] > st["version"]]
+    if not upgrade:
         print("Up to date.")
-    else:
-        print("Pending steps: " + ", ".join(f"{p['version']} {p['name']}" for p in st["pending"]))
-    if status_only or not st["pending"]:
+    elif pending:  # none: a newer data directory, refused below
+        print("Pending steps: " + ", ".join(pending))
+    if st["workspace_steps"] and (status_only or dry_run):  # one read of every workspace's pages.db
+        print(f"Workspaces behind on their own steps: {len(migrations.workspaces_behind())}")
+    if status_only:
         return
-    try:
-        result = migrations.ensure_current(dry_run=dry_run)
-    except migrations.MigrationError as e:
-        guide = migrations.guidance(e)
-        print(f"{guide['title']}.\n{guide['summary']}")
-        for n, step in enumerate(guide["steps"], 1):
-            print(f"  {n}. {step}")
-        sys.exit(2)
+    if upgrade:
+        try:
+            result = migrations.ensure_current(dry_run=dry_run)
+        except migrations.MigrationError as e:
+            guide = migrations.guidance(e)
+            print(f"{guide['title']}.\n{guide['summary']}")
+            for n, step in enumerate(guide["steps"], 1):
+                print(f"  {n}. {step}")
+            sys.exit(2)
+        if not dry_run:
+            print(f"Snapshot of the databases before the upgrade: {result['backup']}")
+            print("Applied: " + (", ".join(result["applied"]) or "no global step"))
+            print(f"Now at schema version {result['to']}.")
     if dry_run:
         print("Dry run: nothing changed.")
         return
-    print(f"Snapshot of the databases before the upgrade: {result['backup']}")
-    print("Applied: " + ", ".join(result["applied"]))
-    print(f"Now at schema version {result['to']}.")
+    if not st["workspace_steps"]:
+        return
+    if global_only:
+        print("The workspaces behind on their own steps are left to the server: it upgrades each as it is opened.")
+        return
+    done = migrations.upgrade_workspaces()
+    print(f"Workspaces upgraded: {len(done['upgraded'])}")
+    for ws, error in sorted(done["failed"].items()):
+        print(f"  {ws} failed: {error}")
+    if done["failed"]:
+        sys.exit(2)
 
 
 def backups(args: list):
@@ -363,6 +392,74 @@ def backups(args: list):
         print("Pruned automatic snapshots: " + (", ".join(removed) if removed else "nothing"))
 
 
+def db_copies(args: list):
+    """List the databases' copies in the store, or restore some
+    (gamma/db_copies.py; docs/dev/debugging.md "Database copies in the
+    bucket")."""
+    from gamma import blobs, db_copies as copies
+
+    def arg(flag):
+        i = args.index(flag) if flag in args else -1
+        return args[i + 1] if 0 <= i < len(args) - 1 and not args[i + 1].startswith("--") else ""
+    try:
+        if "--restore" in args:
+            target = arg("--restore")
+            if not target:
+                print("Usage: python manage.py db-copies --restore <workspace-id|users|all> [--at <stamp>]")
+                sys.exit(1)
+            done = copies.restore(target, arg("--at") or None)
+            for r in done:
+                print(f"Restored {r['label']} from {r['stamp']}" +
+                      (f" (the file there is now {r['aside']})" if r["aside"] else ""))
+            print("Start the server; it migrates a copy older than this Gamma as it opens it.")
+            return
+        if "--list" not in args:
+            print("Usage: python manage.py db-copies --list [<workspace-id>|users] | "
+                  "--restore <workspace-id|users|all> [--at <stamp>]")
+            sys.exit(1)
+        group = arg("--list") or None
+        held = copies.listing(group)
+    except blobs.BlobConfigError as e:
+        print(f"The store cannot be used: {e}")
+        sys.exit(2)
+    except ValueError as e:  # a RestoreError (nothing was changed), a bad workspace id
+        print(f"Refused: {e}")
+        sys.exit(2)
+    except OSError as e:  # the store out of reach, a file that would not move
+        print(f"Failed: {e}")
+        sys.exit(2)
+    if not held:
+        print("No copies." if group else "No copies (GAMMA_DB_COPIES; docs/dev/debugging.md).")
+    for label, gens in held.items():
+        if group:  # every copy of the group's databases
+            for stamp, size in reversed(gens):
+                print(f"  {stamp}  {label}  {size / (1 << 20):.1f} MB")
+        else:
+            stamp, size = gens[-1]
+            print(f"  {label}  {len(gens)} cop{'y' if len(gens) == 1 else 'ies'}, the newest {stamp} "
+                  f"({size / (1 << 20):.1f} MB)")
+
+
+def litestream_config(args: list):
+    """Print, or write to ``--out``, a litestream.yml for the GAMMA_S3_*
+    bucket naming every database there is now."""
+    from gamma import db_copies as copies
+
+    try:
+        text, count = copies.litestream_config()
+    except ValueError as e:
+        print(f"Refused: {e}")
+        sys.exit(2)
+    out = args[args.index("--out") + 1] if "--out" in args and args.index("--out") + 1 < len(args) else ""
+    if not out:
+        sys.stdout.write(text)
+        return
+    from pathlib import Path
+
+    Path(out).write_text(text, encoding="utf-8")
+    print(f"Wrote {out}: {count} database(s). Restart Litestream to replicate them.")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -371,10 +468,16 @@ def main():
     cmd = sys.argv[1]
     args = sys.argv[2:]
     if cmd == "migrate":
-        migrate(status_only="--status" in args, dry_run="--dry-run" in args)
+        migrate(status_only="--status" in args, dry_run="--dry-run" in args, global_only="--global-only" in args)
         return
     if cmd == "backups":
         backups(args)
+        return
+    if cmd == "db-copies":  # also on an empty data directory: the restore after a lost disk
+        db_copies(args)
+        return
+    if cmd == "litestream-config":
+        litestream_config(args)
         return
     _guard_schema()
     if cmd == "create-user":

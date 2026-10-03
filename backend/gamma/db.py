@@ -3,7 +3,7 @@
 Two kinds of database (docs/dev/user_db.md):
 
 - ``users.db`` — global: accounts, sessions, workspaces + memberships, page
-  shares, personal prefs, server settings. Every column that names an
+  shares, account-wide prefs, server settings. Every column that names an
   account holds its ``users.id`` (``new_account_id``), never its username,
   so a rename is one UPDATE; ``account_id`` / ``account_name`` translate.
   Its ``PRAGMA user_version`` is
@@ -11,20 +11,30 @@ Two kinds of database (docs/dev/user_db.md):
   directory behind it is upgraded by ``gamma/migrations.py`` before the
   server serves anything, one ahead of it is refused.
 - per workspace, under ``workspaces/<id>/``: ``pages.db`` (the block tree,
-  the op and change logs, the AI chats, the notes index) and ``data.db``
+  the op and change logs, the AI chats, the notes index, each account's
+  prefs that name its pages) and ``data.db``
   (only what can be deleted and rebuilt: the PDF index and manifests,
-  cover snapshots). These files carry no version: their statements are
-  ``CREATE ... IF NOT EXISTS`` applied on every connect, and a restored
-  backup is normalized by ``gamma/normalize.py`` when it is imported.
+  cover snapshots). Their statements are ``CREATE ... IF NOT EXISTS``
+  applied when a connection opens. pages.db carries its own version (its
+  ``PRAGMA user_version``, ``workspace_version``): the workspace's pending
+  migration steps run when a connection first opens it, before those
+  statements (``_open_ws_db``), and a restored backup is brought to the
+  current shape when it is imported (gamma/ws_backup.py).
 
 ``USERS_SCHEMA`` is always the CURRENT shape. Older shapes are not patched
 here on connect — that is what the numbered migration steps are for.
 """
 
+import atexit
 import json
+import os
 import re
 import secrets
 import sqlite3
+import threading
+import time
+import weakref
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,7 +44,13 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 34
+# A workspace's pages.db keeps a version of its own (its ``PRAGMA
+# user_version``): the newest step whose per-workspace part has run on it
+# (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
+# every workspace that existed when the stamps came had had every step up
+# to it from the runner that walked them all at startup. Never changes.
+WS_VERSION_BASE = 33
 
 
 # How long a connection waits for another connection's write lock before
@@ -272,9 +288,12 @@ USERS_SCHEMA = [
         PRIMARY KEY (token, user_id)
     )""",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
-    # workspace_id '' = personal (appearance, the AI provider entries),
-    # otherwise per account AND workspace (open tabs, recents — they name
-    # pages of that workspace). See USER_PREF_KEYS / pref_scope.
+    # workspace_id '' = account-wide (the profile, the AI provider entries:
+    # USER_PREF_KEYS). The prefs per account AND workspace (open tabs,
+    # recents — they name pages of that workspace) live in that workspace's
+    # pages.db since step 34 (WORKSPACE_PREFS_SCHEMA); the rows here with a
+    # workspace id are their copies from before it, kept one release for
+    # the release before to read. See pref_scope.
     """CREATE TABLE IF NOT EXISTS user_prefs (
         user_id TEXT NOT NULL,
         workspace_id TEXT NOT NULL DEFAULT '',
@@ -446,6 +465,21 @@ CHATS_SCHEMA = [
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
 
+# workspace_prefs = each account's prefs that name this workspace's pages
+# (open tabs, recents, reading positions: every key but USER_PREF_KEYS,
+# docs/dev/settings.md), small JSON values per account and key, last write
+# wins by `updated_at` (get_pref / set_pref). Private to the account: a
+# workspace's backup zip carries none of them, and a restore keeps the live
+# rows (gamma/ws_backup.py). Migration step 34 creates it from this
+# statement and fills it from users.db.
+WORKSPACE_PREFS_SCHEMA = """CREATE TABLE IF NOT EXISTS workspace_prefs (
+    user_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+)"""
+
 
 def copy_chats(src: sqlite3.Connection, dst: sqlite3.Connection, where: str = "1", args=()) -> int:
     """Copy the conversations ``where`` (a condition on ``bucket``, with
@@ -540,6 +574,10 @@ PAGES_SCHEMA = [
     # account id, or a label — gamma/auth.py actor_of). Live clients follow
     # it over the page's websocket; a reconnecting client catches up with
     # GET /api/pages/{id}/ops?since=. Pruned to the newest rows per page.
+    # `batch_id` is the client's name for the batch ('' when it gave none,
+    # and for every server-side writer) and `cursor` the writer's caret as
+    # stored (JSON; '' on a batch without a name or a caret): a retry of the
+    # batch is answered from its row (unique per page, client and batch id).
     """CREATE TABLE IF NOT EXISTS page_ops (
         page_id TEXT NOT NULL,
         seq INTEGER NOT NULL,
@@ -547,8 +585,12 @@ PAGES_SCHEMA = [
         client TEXT NOT NULL DEFAULT '',
         at TEXT NOT NULL,
         ops TEXT NOT NULL,
+        batch_id TEXT NOT NULL DEFAULT '',
+        cursor TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (page_id, seq)
     ) WITHOUT ROWID""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_page_ops_batch ON page_ops(page_id, client, batch_id) WHERE batch_id != ''",
+    WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *BLOCK_FTS_SCHEMA,
 ]
@@ -579,6 +621,11 @@ def users_db_version(conn: sqlite3.Connection) -> int:
     return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
+def workspace_version(conn: sqlite3.Connection) -> int:
+    """A pages.db's own version (WS_VERSION_BASE for one stamped 0)."""
+    return conn.execute("PRAGMA user_version").fetchone()[0] or WS_VERSION_BASE
+
+
 def new_account_id() -> str:
     """A new account's ``users.id``: a random token like a workspace id."""
     return secrets.token_urlsafe(9)
@@ -599,6 +646,17 @@ def delete_shares(conn: sqlite3.Connection, where: str, params) -> int:
     return conn.execute(f"DELETE FROM shares WHERE {where}", params).rowcount
 
 
+def share_token_workspace(token) -> str | None:
+    """The workspace a share token names. A token is ``<workspace id>.<secret>``
+    (a workspace id never holds a dot, so the first one splits them), which
+    lets a router place share traffic by the prefix alone. None for a token
+    of any other shape, a link minted before schema version 32 among them."""
+    if not isinstance(token, str):
+        return None
+    ws, dot, secret = token.partition(".")
+    return ws if dot and secret and _WS_ID_RE.fullmatch(ws) else None
+
+
 def account_name(conn: sqlite3.Connection, user_id: str) -> str:
     """The username of the account ``user_id``; "" when there is none (a
     deleted account, an actor that is no account)."""
@@ -616,36 +674,351 @@ def account_names(conn: sqlite3.Connection, user_ids) -> dict[str, str]:
     return dict(conn.execute(f"SELECT id, username FROM users WHERE id IN ({marks})", wanted).fetchall())
 
 
+# --- connections -------------------------------------------------------------
+#
+# A ``with connect_*()`` block borrows a connection from a cache kept per
+# thread and database file and hands it back at its end, so the WAL check,
+# the pragmas, the schema statements and the SQL functions run once per
+# connection instead of once per request (about 2 ms on Windows). A sqlite3
+# connection is used by one thread at a time, and the threads that open
+# them (AnyIO's worker threads, the background passes) go from one request
+# or round to the next. docs/dev/user_db.md "Connections".
+
+CACHE_FILES_PER_THREAD = 8   # idle connections a thread keeps; the least recently used goes first
+CACHE_MAX_IDLE = 128         # idle connections in the process; each holds its file and WAL open
+CACHE_IDLE_S = 120           # an idle connection unused this long is closed
+# Set on every connection as it opens. The page cache, in KiB: twice
+# SQLite's default, so at most CACHE_MAX_IDLE x 4 MiB idle, and far less in
+# practice: it holds only pages read since the file last changed (a write
+# by another connection empties it) and pages.db's reads come from the
+# memory map instead.
+CACHE_KIB = 4096
+MMAP_BYTES = 256 << 20          # pages.db only: address space, not memory; the OS pages the file in
+JOURNAL_SIZE_LIMIT = 64 << 20   # what a WAL is cut back to when it starts over
+
+
 class Connection(sqlite3.Connection):
-    """What the ``connect_*`` helpers return: a ``with`` block commits (or
-    rolls back on an exception) and then CLOSES the connection. sqlite3's
-    own Connection only commits and leaves the closing to the garbage
-    collector, so a connection a traceback holds keeps its file open (on
-    Windows a workspace directory cannot be deleted under it). Never use a
-    connection after its ``with`` block; one opened without ``with`` is
-    closed by its owner. ``ws`` names the workspace whose database it is
-    ("" for users.db), for writers that reach the workspace's files through
-    the connection (the ink merge in gamma/ops.py)."""
+    """What the ``connect_*`` helpers return. Its ``with`` block commits (or
+    rolls back on an exception) and then hands the connection back to the
+    cache in the state a fresh one has: its cursors closed (an unfinished
+    SELECT would hold its read snapshot into the next block, and keep a
+    checkpoint from finishing), ``row_factory`` and the progress handler
+    reset. One still in a transaction, with a database attached, not in WAL
+    mode or flagged by ``close_workspace_connections`` is closed instead.
+    Never use a connection after its ``with`` block. ``close()`` closes it
+    for good, past the cache (the startup pass opens every workspace that
+    way); one taken without ``with`` is closed by its owner. ``ws`` names
+    the workspace whose database it is ("" for users.db), for writers that
+    reach the workspace's files through the connection (the ink merge in
+    gamma/ops.py)."""
 
     ws = ""
+    _path = ""
+    _file = None        # (st_dev, st_ino) of the file it opened
+    _owner = None       # weakref of the _ThreadConnections it goes back to; None: closed at its end
+    _cacheable = False  # in WAL mode: one in rollback mode is closed, so that a later one may switch the file
+    _doomed = False     # closed at the end of its block (close_workspace_connections)
+    _depth = 0          # nested ``with conn:`` blocks; the outermost one hands it back
+    _released = 0.0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cursors = weakref.WeakSet()
+
+    def cursor(self, factory=sqlite3.Cursor):
+        cur = super().cursor(factory)
+        self._cursors.add(cur)
+        return cur
+
+    def execute(self, sql, parameters=(), /):
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(self, sql, parameters, /):
+        return self.cursor().executemany(sql, parameters)
+
+    def executescript(self, script, /):
+        return self.cursor().executescript(script)
+
+    def __enter__(self):
+        self._depth += 1
+        return self
 
     def __exit__(self, exc_type, exc, tb):
         try:
             return super().__exit__(exc_type, exc, tb)
         finally:
-            self.close()
+            self._depth = max(self._depth - 1, 0)
+            if not self._depth:
+                _release(self)
+
+    def close(self):
+        _forget(self)
+        super().close()
+
+    def _same_file(self) -> bool:
+        try:
+            st = os.stat(self._path)
+        except OSError:
+            return False
+        return (st.st_dev, st.st_ino) == self._file
+
+    def _clean(self) -> bool:
+        """Back to a fresh connection's state; whether it may be cached."""
+        try:
+            for cur in list(self._cursors):
+                cur.close()
+            self.row_factory = None
+            self.set_progress_handler(None, 0)
+            if self.in_transaction or not self._cacheable:
+                return False
+            attached = sqlite3.Connection.execute(self, "PRAGMA database_list").fetchall()
+            return all(row[1] in ("main", "temp") for row in attached)
+        except sqlite3.Error:
+            return False
 
 
-def _wal(conn: sqlite3.Connection) -> None:
+class _ThreadConnections:
+    """One thread's part of the cache: ``idle`` (path → connection, the
+    least recently used first) and ``out`` (path → weakref of the
+    connection one of the thread's ``with`` blocks holds)."""
+
+    __slots__ = ("idle", "out", "__weakref__")
+
+    def __init__(self):
+        self.idle = {}
+        self.out = {}
+
+    def __del__(self):
+        # The thread ended, and nothing takes its idle connections again:
+        # the next pass closes them (``_expire``). A finalizer may run
+        # anywhere, so it takes no lock.
+        try:
+            _orphaned.extend(self.idle.values())
+        except Exception:  # noqa: BLE001 — interpreter shutdown
+            pass
+
+
+_lock = threading.Lock()
+_local = threading.local()
+_idle: "OrderedDict[int, Connection]" = OrderedDict()  # every idle connection, by id, in release order
+_out = weakref.WeakSet()  # the cached connections ``with`` blocks hold now
+_orphaned = deque()       # idle connections of threads that ended
+
+
+def _thread_connections() -> _ThreadConnections:
+    try:
+        return _local.mine
+    except AttributeError:
+        _local.mine = mine = _ThreadConnections()
+        return mine
+
+
+def _cached(path: str, ws: str, open_db, *args) -> Connection:
+    """A connection to ``path``: the thread's idle one when it has one and
+    the file at the path is still the one it opened, else a new one,
+    ``open_db(path, ws, *args)``. A block that opens the same file while
+    the thread's cached connection to it is in a ``with`` block (a helper
+    called inside one) gets a connection of its own, closed at its end:
+    sharing one would let the inner block's commit end the outer block's
+    transaction, and its rollback undo it."""
+    mine = _thread_connections()
+    stale = []
+    with _lock:
+        held = mine.out.get(path)
+        nested = held is not None and held() is not None
+        conn = None if nested else mine.idle.pop(path, None)
+        if conn is not None:
+            _idle.pop(id(conn), None)
+            _check_out(mine, conn)
+        _expire(time.monotonic(), stale)
+    _close_all(stale)
+    if conn is not None and not conn._same_file():
+        conn.close()  # the file was replaced or removed behind it
+        conn = None
+    if conn is None:
+        conn = open_db(path, ws, *args)
+        if not nested:
+            conn._owner = weakref.ref(mine)
+            with _lock:
+                _check_out(mine, conn)
+    return conn
+
+
+def _check_out(mine: _ThreadConnections, conn: Connection) -> None:
+    mine.out[conn._path] = weakref.ref(conn)
+    _out.add(conn)
+
+
+def _check_in(owner: _ThreadConnections | None, conn: Connection) -> None:
+    """Under the lock: undo ``_check_out``."""
+    _out.discard(conn)
+    held = owner.out.get(conn._path) if owner is not None else None
+    if held is not None and held() is conn:
+        del owner.out[conn._path]
+
+
+def _thread_of(conn: Connection) -> _ThreadConnections | None:
+    """The thread's part of the cache the connection goes back to; None for
+    one closed at the end of its block, or whose thread ended."""
+    return conn._owner() if conn._owner is not None else None
+
+
+def _release(conn: Connection) -> None:
+    """The end of a connection's ``with`` block: back to its thread's idle
+    connections, or closed."""
+    owner = _thread_of(conn)
+    keep = owner is not None and not conn._doomed and conn._clean()
+    stale = []
+    with _lock:
+        _check_in(owner, conn)
+        if keep and not conn._doomed and conn._path not in owner.idle:
+            conn._released = time.monotonic()
+            owner.idle[conn._path] = conn
+            _idle[id(conn)] = conn
+            while len(owner.idle) > CACHE_FILES_PER_THREAD:
+                stale.append(_drop_idle(next(iter(owner.idle.values()))))
+            _expire(conn._released, stale)
+        else:
+            stale.append(conn)
+    _close_all(stale)
+
+
+def _forget(conn: Connection) -> None:
+    """``close()``: the cache lets go of the connection."""
+    with _lock:
+        _check_in(_thread_of(conn), conn)
+        _drop_idle(conn)
+
+
+def _drop_idle(conn: Connection) -> Connection:
+    """Under the lock: take an idle connection out of the cache."""
+    _idle.pop(id(conn), None)
+    owner = _thread_of(conn)
+    if owner is not None and owner.idle.get(conn._path) is conn:
+        del owner.idle[conn._path]
+    return conn
+
+
+def _expire(now: float, stale: list) -> None:
+    """Under the lock: move what is due to close into ``stale`` — the idle
+    connections of threads that ended, those idle CACHE_IDLE_S, and the
+    oldest past CACHE_MAX_IDLE."""
+    while _orphaned:
+        conn = _orphaned.popleft()
+        if _idle.pop(id(conn), None) is conn:
+            stale.append(conn)
+    while _idle:
+        conn = next(iter(_idle.values()))
+        if len(_idle) <= CACHE_MAX_IDLE and now - conn._released < CACHE_IDLE_S:
+            break
+        stale.append(_drop_idle(conn))
+
+
+def _close_all(conns) -> None:
+    for conn in conns:
+        try:
+            sqlite3.Connection.close(conn)
+        except sqlite3.Error:
+            pass  # closing never fails the request that happens to do it
+
+
+def close_workspace_connections(ws: str) -> None:
+    """Before a workspace's databases are removed, moved or replaced: close
+    every idle cached connection to them, whichever thread's, and flag the
+    ones in a ``with`` block now to close at its end. On Windows an open
+    handle keeps the directory from being renamed or deleted; elsewhere a
+    cached connection would go on reading the old file."""
+    try:
+        folder = str(ws_dir(ws))
+    except ValueError:
+        return  # no workspace id: nothing of it is cached
+    _close_where(lambda conn: os.path.dirname(conn._path) == folder)
+
+
+def close_connections() -> None:
+    """``close_workspace_connections`` for every database, users.db
+    included: before a server backup's files are copied back
+    (``backups.restore``), and at exit."""
+    _close_where(lambda conn: True)
+
+
+def _close_where(match) -> None:
+    stale = []
+    with _lock:
+        for conn in list(_idle.values()):
+            if match(conn):
+                stale.append(_drop_idle(conn))
+        for conn in list(_out):
+            if match(conn):
+                conn._doomed = True
+    _close_all(stale)
+
+
+def evict_idle() -> int:
+    """Close the idle connections due to go (``_expire``); how many. Every
+    acquire does it too; the maintenance tick (gamma/db_maintenance.py)
+    runs it for a server gone quiet."""
+    stale = []
+    with _lock:
+        _expire(time.monotonic(), stale)
+    _close_all(stale)
+    return len(stale)
+
+
+def cached_files() -> list[tuple[str, str]]:
+    """``(path, ws)`` of every database the cache holds a connection to,
+    idle or in a ``with`` block, sorted; ``ws`` is "" for users.db."""
+    with _lock:
+        conns = [*_idle.values(), *_out]
+    return sorted({(conn._path, conn.ws) for conn in conns})
+
+
+atexit.register(close_connections)
+
+
+def _new_connection(path: str, ws: str) -> Connection:
+    """A connection for the cache, with the busy timeout. Opened with
+    ``check_same_thread=False`` so that ``close_workspace_connections`` may
+    close another thread's idle one; each is still used by one thread at a
+    time."""
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_S, factory=Connection, check_same_thread=False)
+    conn.ws, conn._path = ws, path
+    return conn
+
+
+def _settle(conn: Connection, *, mmap: bool = False) -> None:
+    """A new connection's settings: WAL (``_wal``; only a connection in WAL
+    mode is cached), the page cache (CACHE_KIB), temp tables in memory, the
+    WAL cut back to JOURNAL_SIZE_LIMIT when it starts over, and for pages.db
+    reads through a memory map (MMAP_BYTES)."""
+    conn._cacheable = _wal(conn) == "wal"
+    conn.execute(f"PRAGMA cache_size = -{CACHE_KIB}")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT}")
+    if mmap:
+        conn.execute(f"PRAGMA mmap_size = {MMAP_BYTES}")
+
+
+def _opened(conn: Connection) -> Connection:
+    """Note which file a new connection opened, for the cache's check that
+    the path still names it."""
+    st = os.stat(conn._path)
+    conn._file = (st.st_dev, st.st_ino)
+    return conn
+
+
+def _wal(conn: sqlite3.Connection) -> str:
     """WAL journal mode, as every Gamma database uses (readers never wait on
-    a writer, nor a writer on readers), with the sync level WAL makes safe.
-    Backups copy the files with the sqlite backup API, which is WAL-safe.
-    The mode is stored in the file, so usually this only reads it. A file
-    still in rollback mode (created before WAL, or copied in) is switched,
-    but the switch needs the file to itself: while another connection has
-    it open, SQLite answers "database is locked" at once, without waiting.
-    So the switch is tried without waiting, and a connection that cannot
-    switch works in the file's current mode. The startup pass and
+    a writer, nor a writer on readers), with the sync level WAL makes safe;
+    returns the mode the connection works in. Backups copy the files with
+    the sqlite backup API, which is WAL-safe. The mode is stored in the
+    file, so usually this only reads it. A file still in rollback mode
+    (created before WAL, or copied in) is switched, but the switch needs the
+    file to itself: while another connection has it open, SQLite answers
+    "database is locked" at once, without waiting. So the switch is tried
+    without waiting, and a connection that cannot switch works in the file's
+    current mode (and is closed at the end of its block rather than cached,
+    so a later one tries again). The startup pass and
     ``seed.create_workspace_files`` switch every file while nobody else has
     it open."""
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -660,18 +1033,23 @@ def _wal(conn: sqlite3.Connection) -> None:
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_S * 1000}")
     if mode == "wal":
         conn.execute("PRAGMA synchronous=NORMAL")
+    return mode
 
 
 def connect_users_db() -> Connection:
-    """Open the global users.db, creating it at SCHEMA_VERSION when it does
-    not exist yet. An existing file behind SCHEMA_VERSION raises
-    ``SchemaOutdated`` — the migration runner (gamma/migrations.py) is the
-    only code that touches an old-shape users.db, so nothing can ever read
-    or write it with the wrong assumptions. WAL mode and the busy timeout,
-    like the workspace databases; a ``with`` block closes it
-    (``Connection``)."""
-    USERS_DB.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(USERS_DB), timeout=BUSY_TIMEOUT_S, factory=Connection)
+    """The global users.db, created at SCHEMA_VERSION when it does not exist
+    yet. An existing file behind SCHEMA_VERSION raises ``SchemaOutdated`` —
+    the migration runner (gamma/migrations.py) is the only code that touches
+    an old-shape users.db, so nothing can ever read or write it with the
+    wrong assumptions. WAL mode and the busy timeout, like the workspace
+    databases. The thread's cached connection when it has one: the check
+    and the schema statements ran when it opened (``Connection``)."""
+    return _cached(str(USERS_DB), "", _open_users_db)
+
+
+def _open_users_db(path: str, ws: str) -> Connection:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = _new_connection(path, ws)
     try:
         has_users = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone()
@@ -680,24 +1058,25 @@ def connect_users_db() -> Connection:
             raise SchemaOutdated(
                 f"the data directory is at schema version {version}, this Gamma expects "
                 f"{SCHEMA_VERSION} — run `python manage.py migrate` (the server does so at startup)")
-        _wal(conn)
+        _settle(conn)
         for stmt in USERS_SCHEMA:
             conn.execute(stmt)
         if not has_users:
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
+        return _opened(conn)
     except BaseException:
         conn.close()
         raise
-    return conn
 
 
-# Prefs that follow the account regardless of workspace (stored with
-# workspace_id ''): the AI provider entries, the active entry, the
-# translation engine keys (gamma/translate_engines.py), and the preference
-# profile. Everything else is per account + workspace, because the
-# value names that workspace's pages (open tabs, recents, reading
-# positions).
+# Prefs that follow the account regardless of workspace (users.db
+# ``user_prefs``, workspace_id ''): the AI provider entries, the active
+# entry, the translation engine keys (gamma/translate_engines.py), and the
+# preference profile. Everything else is per account + workspace, because
+# the value names that workspace's pages (open tabs, recents, reading
+# positions), and lives with the workspace: ``workspace_prefs`` in its
+# pages.db.
 PROFILE_PREF_KEY = "profile"
 # gamma/cloud_sync.py: the profile as this server and Gamma Cloud last agreed
 # on it, the base of the next three-way merge. Never served by /api/prefs.
@@ -708,23 +1087,42 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "
 
 
 def pref_scope(key: str, ws: str) -> str:
+    """The workspace a pref is kept in: '' for an account-wide key (and for
+    a call that names no workspace), else ``ws``."""
     return "" if key in USER_PREF_KEYS else (ws or "")
 
 
-# (user_id, workspace_id, key, value, updated_at) in; last write wins.
-_UPSERT_PREF = ("INSERT INTO user_prefs (user_id, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(user_id, workspace_id, key) DO UPDATE SET value = excluded.value, "
-                "updated_at = excluded.updated_at")
+# Each store's upsert, (user_id, key, value, updated_at) in; last write wins.
+_UPSERT_PREF = {
+    "user_prefs": "INSERT INTO user_prefs (user_id, workspace_id, key, value, updated_at) VALUES (?, '', ?, ?, ?) "
+                  "ON CONFLICT(user_id, workspace_id, key) DO UPDATE SET value = excluded.value, "
+                  "updated_at = excluded.updated_at",
+    "workspace_prefs": "INSERT INTO workspace_prefs (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
+                       "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, "
+                       "updated_at = excluded.updated_at",
+}
 
 
-# The pref helpers below take the account's id (``users.id``).
+def _pref_store(key: str, ws: str) -> tuple[Connection, str, str]:
+    """Where a pref is kept: ``(connection, table, row filter)``, the filter
+    taking ``(user_id, key)``. A workspace-scoped key with a workspace: that
+    workspace's pages.db, ``workspace_prefs``; otherwise users.db,
+    ``user_prefs`` under workspace ''. Open it with ``with`` at once."""
+    scope = pref_scope(key, ws)
+    if scope:
+        return connect_pages_db(scope), "workspace_prefs", "user_id = ? AND key = ?"
+    return connect_users_db(), "user_prefs", "user_id = ? AND workspace_id = '' AND key = ?"
+
+
+# The pref helpers below take the account's id (``users.id``) and branch on
+# pref_scope: users.db for the account-wide keys, the workspace's pages.db
+# for the others.
 
 def get_pref(user_id: str, key: str, ws: str = ""):
     """(value, updated_at) from the account's prefs, or (None, "") when unset."""
-    with connect_users_db() as db:
-        row = db.execute(
-            "SELECT value, updated_at FROM user_prefs WHERE user_id = ? AND workspace_id = ? AND key = ?",
-            (user_id, pref_scope(key, ws), key)).fetchone()
+    conn, table, row_of = _pref_store(key, ws)
+    with conn as db:
+        row = db.execute(f"SELECT value, updated_at FROM {table} WHERE {row_of}", (user_id, key)).fetchone()
     if not row:
         return None, ""
     try:
@@ -743,21 +1141,19 @@ def set_pref(user_id: str, key: str, value, ws: str = "", *, updated_at: str | N
     account linked to Gamma Cloud is then pushed there (gamma/cloud_sync.py).
     With ``updated_at`` it is a copy synced from elsewhere: written only
     when newer than the stored one, and never pushed back."""
-    scope = pref_scope(key, ws)
-    with connect_users_db() as db:
+    conn, table, row_of = _pref_store(key, ws)
+    with conn as db:
         if updated_at is None:
             stamp = page_now()
             if key == PROFILE_PREF_KEY:
                 db.execute("BEGIN IMMEDIATE")  # the stamp read and the write as one step
-                row = db.execute("SELECT updated_at FROM user_prefs WHERE user_id = ? AND workspace_id = ? AND key = ?",
-                                 (user_id, scope, key)).fetchone()
+                row = db.execute(f"SELECT updated_at FROM {table} WHERE {row_of}", (user_id, key)).fetchone()
                 stamp = stamp_after(row[0] if row else "")
-            db.execute(_UPSERT_PREF, (user_id, scope, key, json.dumps(value), stamp))
+            db.execute(_UPSERT_PREF[table], (user_id, key, json.dumps(value), stamp))
         else:
-            db.execute(_UPSERT_PREF + " WHERE excluded.updated_at > user_prefs.updated_at",
-                       (user_id, scope, key, json.dumps(value), updated_at))
-            stamp = db.execute("SELECT updated_at FROM user_prefs WHERE user_id = ? AND workspace_id = ? AND key = ?",
-                               (user_id, scope, key)).fetchone()[0]
+            db.execute(_UPSERT_PREF[table] + f" WHERE excluded.updated_at > {table}.updated_at",
+                       (user_id, key, json.dumps(value), updated_at))
+            stamp = db.execute(f"SELECT updated_at FROM {table} WHERE {row_of}", (user_id, key)).fetchone()[0]
         db.commit()
     if updated_at is None and key == PROFILE_PREF_KEY:
         from . import cloud_sync  # local: cloud_sync imports this module
@@ -773,11 +1169,10 @@ def update_pref(user_id: str, key: str, change, ws: str = ""):
     and returns the value to store; an exception from it aborts with nothing
     written. An unchanged value is not written. Returns the value in
     effect. Not for the profile: its stamp and cloud push are set_pref's."""
-    scope = pref_scope(key, ws)
-    with connect_users_db() as db:
+    conn, table, row_of = _pref_store(key, ws)
+    with conn as db:
         db.execute("BEGIN IMMEDIATE")  # the write lock before the read
-        row = db.execute("SELECT value FROM user_prefs WHERE user_id = ? AND workspace_id = ? AND key = ?",
-                         (user_id, scope, key)).fetchone()
+        row = db.execute(f"SELECT value FROM {table} WHERE {row_of}", (user_id, key)).fetchone()
         try:
             value = json.loads(row[0]) if row else None
         except ValueError:
@@ -785,7 +1180,7 @@ def update_pref(user_id: str, key: str, change, ws: str = ""):
         new = change(value)  # may edit ``value`` in place: compare as stored
         text = json.dumps(new)
         if not row or text != row[0]:
-            db.execute(_UPSERT_PREF, (user_id, scope, key, text, page_now()))
+            db.execute(_UPSERT_PREF[table], (user_id, key, text, page_now()))
         db.commit()
     return new
 
@@ -795,11 +1190,22 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
     value, only while it is still at ``old`` (a change made meanwhile wins).
     The cloud sync does this when the account server stored a pushed value
     under another time (its own clock, millisecond precision)."""
-    with connect_users_db() as db:
-        cur = db.execute("UPDATE user_prefs SET updated_at = ? WHERE user_id = ? AND workspace_id = ? AND key = ? "
-                         "AND updated_at = ?", (new, user_id, pref_scope(key, ws), key, old))
+    conn, table, row_of = _pref_store(key, ws)
+    with conn as db:
+        cur = db.execute(f"UPDATE {table} SET updated_at = ? WHERE {row_of} AND updated_at = ?",
+                         (new, user_id, key, old))
         db.commit()
     return bool(cur.rowcount)
+
+
+def delete_workspace_prefs(ws: str, user_id: str) -> int:
+    """Delete the account's prefs kept in the workspace (``workspace_prefs``):
+    its membership ended, or the account is deleted. Returns how many went;
+    a workspace without a pages.db has none (none is created)."""
+    if not os.path.isfile(ws_db_path(ws, "pages.db")):
+        return 0
+    with connect_pages_db(ws) as db:
+        return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 
 def stamp_after(stored: str) -> str:
@@ -892,11 +1298,6 @@ def ws_uploads_dir(ws: str) -> Path:
     return ws_dir(ws) / "uploads"
 
 
-def pdf_upload_path(ws: str, doc_id: str) -> Path:
-    """Validated path to a document's stored PDF. Use instead of joining an
-    untrusted doc id into a filename by hand."""
-    return ws_uploads_dir(ws) / f"{safe_doc_id(doc_id)}.pdf"
-
 
 def register_functions(conn: sqlite3.Connection) -> None:
     """The SQL functions a pages.db's schema calls: ``textnorm(text)``, the
@@ -910,35 +1311,45 @@ def register_functions(conn: sqlite3.Connection) -> None:
     conn.create_function("textnorm", 1, normalize_text, deterministic=True)
 
 
-def _open_ws_db(ws: str, db_name: str, schema) -> Connection:
-    conn = sqlite3.connect(ws_db_path(ws, db_name), timeout=BUSY_TIMEOUT_S, factory=Connection)
-    conn.ws = ws
+def _open_ws_db(path: str, ws: str, schema, pages: bool) -> Connection:
+    """A new connection to a workspace's pages.db (``pages``) or data.db:
+    its settings (``_settle``); for pages.db the SQL functions and, when
+    its version is behind, the workspace's pending migration steps
+    (``migrations.upgrade_workspace``, which raises ``MigrationError`` when
+    one fails); then the schema statements, which describe the shape the
+    steps lead to. Once per connection, so a request pays nothing for the
+    version check."""
+    conn = _new_connection(path, ws)
     try:
-        _wal(conn)
+        _settle(conn, mmap=pages)
+        if pages:
+            register_functions(conn)
+            if workspace_version(conn) < SCHEMA_VERSION:
+                from . import migrations  # local: migrations imports this module
+                migrations.upgrade_workspace(conn)
         for stmt in schema:
             conn.execute(stmt)
+        return _opened(conn)
     except BaseException:
         conn.close()  # a locked or damaged file: never leave the handle open
         raise
-    return conn
 
 
 def connect_pages_db(ws: str) -> Connection:
     """THE way to open a workspace's pages.db. WAL mode (``_wal``), a busy
     timeout instead of an instant "database is locked", the SQL functions
-    its schema calls (``register_functions``) and the schema statements
-    (cheap no-ops once applied). A ``with`` block closes it
+    its schema calls (``register_functions``), the workspace's pending
+    migration steps and the schema statements (cheap no-ops once applied),
+    all when the connection opens: the thread's cached one when it has one
     (``Connection``)."""
-    conn = _open_ws_db(ws, "pages.db", PAGES_SCHEMA)
-    register_functions(conn)
-    return conn
+    return _cached(ws_db_path(ws, "pages.db"), ws, _open_ws_db, PAGES_SCHEMA, True)
 
 
 def connect_data_db(ws: str) -> Connection:
     """THE way to open a workspace's data.db: WAL mode, the busy timeout and
     the schema statements, like pages.db. The PDF index and manifests add
     their own tables (gamma/pdf_index.py, gamma/pdf_meta.py)."""
-    return _open_ws_db(ws, "data.db", DATA_SCHEMA)
+    return _cached(ws_db_path(ws, "data.db"), ws, _open_ws_db, DATA_SCHEMA, False)
 
 
 def get_page_snaps(ws: str, after: str = "") -> dict:

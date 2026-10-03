@@ -5,7 +5,11 @@ who may do what; the cap; snapshots go with the workspace. Plus /export-all
 
 import io
 import json
+import sqlite3
+import tempfile
 import zipfile
+from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -89,6 +93,72 @@ def test_snapshot_round_trip(owner, other):
     assert owner.delete(f"/api/workspaces/{ws}/backups/20260101-000000-nope").status_code == 404
     assert owner.delete(f"/api/workspaces/{ws}/backups/{b['name']}").status_code == 200
     assert owner.delete(f"/api/workspaces/{ws}/backups/{b['name']}").status_code == 404
+
+
+def test_no_zip_carries_anyones_prefs_and_a_restore_keeps_them(owner):
+    # Open tabs, recents and reading positions are each account's own: a
+    # snapshot, an export and a Gamma export of the workspace hold the
+    # table empty, with none of its bytes left in the file (an older, longer
+    # value included); a restore, replace or merge, keeps the live rows,
+    # whatever the backup holds.
+    ws = workspace_of("bk_owner")
+    page = make_page(owner, "Prefs stay home")
+    secret = "bk-private-tab-title"
+    assert owner.put("/api/prefs/read-pos", json={"value": {"long": secret * 300}}).status_code == 200
+    assert owner.put("/api/prefs/read-pos", json={"value": {page["id"]: 7}}).status_code == 200  # the long one freed
+    assert owner.put("/api/prefs/open-tabs", json={"value": [{"id": page["id"], "title": secret}]}).status_code == 200
+    snap = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "prefs", "uploads": False}).json()
+    zips = {
+        "snapshot": owner.get(f"/api/workspaces/{ws}/backups/{snap['name']}/download").content,
+        "export": owner.get("/api/export", params={"uploads": 0}).content,
+        "gamma": owner.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma"}).content,
+    }
+
+    def pages_db_of(data: bytes, edit=None):
+        """The zip's pages.db: (bytes, workspace_prefs rows, whether the page is in it)."""
+        raw = zipfile.ZipFile(io.BytesIO(data)).read("pages.db")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "pages.db"
+            path.write_bytes(raw)
+            with closing(sqlite3.connect(str(path))) as conn:
+                if edit:
+                    edit(conn)
+                    conn.commit()
+                rows = conn.execute("SELECT COUNT(*) FROM workspace_prefs").fetchone()[0]
+                has_page = bool(conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page["id"],)).fetchone())
+            return path.read_bytes(), rows, has_page
+
+    for kind, data in zips.items():
+        raw, rows, has_page = pages_db_of(data)
+        assert rows == 0 and has_page, kind
+        assert secret.encode() not in raw, kind
+
+    later = [{"id": page["id"], "title": "after the snapshot"}]
+    assert owner.put("/api/prefs/open-tabs", json={"value": later}).status_code == 200
+    assert owner.post(f"/api/workspaces/{ws}/backups/{snap['name']}/restore").status_code == 200
+    assert owner.get("/api/prefs/open-tabs").json()["value"] == later
+    assert owner.get("/api/prefs/read-pos").json()["value"] == {page["id"]: 7}
+    assert owner.post(f"/api/workspaces/{ws}/backups/{snap['name']}/restore", params={"mode": "merge"}).status_code == 200
+    assert owner.get("/api/prefs/open-tabs").json()["value"] == later
+    # a zip that does carry rows (written elsewhere, or by hand) changes nothing either
+    from conftest import account_of
+    me = account_of("bk_owner")
+
+    def planted(conn):
+        conn.execute("INSERT INTO workspace_prefs VALUES (?, 'open-tabs', '[\"planted\"]', '2999-01-01T00:00:00.000000Z')",
+                     (me,))
+
+    raw, rows, _ = pages_db_of(zips["export"], planted)
+    assert rows == 1
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(zips["export"])) as src, zipfile.ZipFile(buf, "w") as dst:
+        for name in src.namelist():
+            dst.writestr(name, raw if name == "pages.db" else src.read(name))
+    for mode in ("replace", "merge"):
+        r = owner.post("/api/import-data", params={"mode": mode},
+                       files={"file": ("planted.zip", buf.getvalue(), "application/zip")})
+        assert r.status_code == 200, r.text
+        assert owner.get("/api/prefs/open-tabs").json()["value"] == later, mode
 
 
 def test_cap_and_guest(owner, guest, monkeypatch):

@@ -48,9 +48,10 @@ import sqlite3
 import time
 import urllib.parse
 
-from . import collab, jobs
+from . import blobs, collab, jobs
 from .config import WORKSPACES_DIR
-from .db import account_name, connect_users_db, delete_shares, page_now, safe_ws_id, ws_dir, ws_uploads_dir
+from .db import (account_name, close_workspace_connections, connect_users_db, delete_shares, delete_workspace_prefs,
+                 page_now, safe_ws_id, ws_dir)
 from .logbuf import log
 from .seed import create_workspace_files, seed_welcome
 
@@ -431,9 +432,10 @@ def set_member(ws: str, user_id: str, role: str, by: str) -> None:
 
 
 def remove_member(ws: str, user_id: str) -> None:
-    """Drop a membership (also "leave"). The last owner cannot go, a
-    personal workspace has nobody to remove, and public access is not a
-    membership — there is nothing to remove."""
+    """Drop a membership (also "leave"), and the account's prefs in the
+    workspace (its tabs, recents, reading positions: ``_drop_prefs``). The
+    last owner cannot go, a personal workspace has nobody to remove, and
+    public access is not a membership — there is nothing to remove."""
     with connect_users_db() as conn:
         conn.execute("BEGIN IMMEDIATE")  # the last-owner check and the delete as one step
         if _personal_owner(conn, ws):
@@ -445,7 +447,20 @@ def remove_member(ws: str, user_id: str) -> None:
             raise ValueError(f"{account_name(conn, user_id) or 'that account'} is not a member of this workspace")
         conn.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
                      (ws, user_id))
+        conn.execute("DELETE FROM user_prefs WHERE workspace_id = ? AND user_id = ?",  # their copies from before step 34
+                     (ws, user_id))
         conn.commit()
+    _drop_prefs(ws, user_id)
+
+
+def _drop_prefs(ws: str, user_id: str) -> None:
+    """The account's prefs kept in the workspace go (``db.delete_workspace_prefs``).
+    A workspace that cannot be opened (damaged, its upgrade failing) keeps
+    them, logged: the membership change stands."""
+    try:
+        delete_workspace_prefs(ws, user_id)
+    except Exception as e:  # noqa: BLE001 — sqlite3.Error, a failed upgrade, a bad id
+        log.warning(f"[workspaces] the prefs of account {user_id} in workspace {ws} could not be removed: {e}")
 
 
 # --- pending memberships: invite by Gamma Cloud username ---------------------
@@ -724,6 +739,7 @@ def _delete_rows(conn, ws: str) -> None:
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
     delete_shares(conn, "workspace_id = ?", (ws,))
+    # the prefs from before step 34 (later ones go with the workspace's pages.db)
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
 
@@ -741,13 +757,24 @@ def _retrying(fn, *args):
             time.sleep(REMOVE_RETRY_S)
 
 
+def _unheld(ws: str, fn, *args):
+    """``fn(*args)`` once no idle cached connection holds the workspace's
+    databases open (``db.close_workspace_connections``; one in a ``with``
+    block closes at its end, for the next try): on Windows an open handle
+    keeps the directory from being renamed or removed."""
+    close_workspace_connections(ws)
+    return fn(*args)
+
+
 def remove_files(ws: str) -> str:
-    """Remove the workspace directory (and its stored backups); returns ""
-    or a warning. The directory is first renamed to ``.deleting-<id>-…``
+    """Remove the workspace directory, its stored files (``blobs.delete_workspace``:
+    a bucket's objects are not in the directory) and its stored backups;
+    returns "" or a warning. The directory is first renamed to ``.deleting-<id>-…``
     (atomic: from then on nothing finds the workspace, and a background
     pass about to open one of its databases finds no directory instead of
     creating a fresh file in a half-removed one), then removed. What a file
-    held open keeps there (Windows) goes with ``remove_leftovers``."""
+    held open keeps there (Windows) goes with ``remove_leftovers``. Each
+    try first closes the cached connections to its databases (``_unheld``)."""
     from . import ws_backup  # local: ws_backup imports seed → db
 
     ws_backup.remove_all(ws)
@@ -755,16 +782,20 @@ def remove_files(ws: str) -> str:
         path = ws_dir(ws)
     except ValueError:
         return ""
+    try:
+        blobs.delete_workspace(ws)
+    except OSError as e:  # a bucket out of reach: its objects outlive the workspace
+        log.warning(f"[workspaces] the stored files of workspace {ws} could not be removed: {e}")
     if not path.exists():
         return ""
     doomed = path.with_name(f"{LEFTOVER_PREFIX}{path.name}-{secrets.token_hex(3)}")
     try:
-        _retrying(os.rename, path, doomed)
+        _retrying(_unheld, ws, os.rename, path, doomed)
     except OSError as e:
         log.warning(f"[workspaces] could not set {path} aside ({e}); removing it in place")
         doomed = path
     try:
-        _retrying(shutil.rmtree, str(doomed))
+        _retrying(_unheld, ws, shutil.rmtree, str(doomed))
         return ""
     except OSError as e:
         if doomed != path:  # the workspace is gone; the rest is swept later
@@ -786,7 +817,8 @@ def remove_leftovers() -> list[str]:
         if not (d.is_dir() and d.name.startswith(LEFTOVER_PREFIX)):
             continue
         try:
-            shutil.rmtree(str(d))
+            # its connections were cached under the name it had: .deleting-<id>-<hex>
+            _unheld(d.name[len(LEFTOVER_PREFIX):].rpartition("-")[0], shutil.rmtree, str(d))
         except OSError as e:
             log.warning(f"[workspaces] could not remove {d.name} yet: {e}")
             continue
@@ -812,10 +844,16 @@ def delete_account_workspaces(user_id: str) -> list[str]:
     """When an account goes: its personal workspaces are deleted; it leaves
     every shared workspace and every share that invited it, and the
     workspaces where it was the only owner are deleted too (their other
-    members lose them — the admin UI says so before). Returns the deleted
-    workspace ids."""
+    members lose them — the admin UI says so before). Its prefs go from
+    every workspace that stays where it could keep some: those it was a
+    member of, and the public ones (a guest has no public access). Returns
+    the deleted workspace ids."""
     with connect_users_db() as conn:
         deleted = _deleted_with(conn, user_id)
+        kept = [ws for ws, in conn.execute(
+            "SELECT workspace_id FROM workspace_members WHERE user_id = ? UNION "
+            "SELECT w.id FROM workspaces w JOIN users u ON u.id = ? AND u.is_guest = 0 WHERE w.access = 'public'",
+            (user_id, user_id)) if ws not in deleted]
         conn.execute("DELETE FROM workspace_members WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM share_users WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
@@ -826,6 +864,8 @@ def delete_account_workspaces(user_id: str) -> list[str]:
         conn.commit()
     for ws in deleted:
         remove_files(ws)
+    for ws in kept:
+        _drop_prefs(ws, user_id)
     return deleted
 
 
@@ -899,10 +939,9 @@ def all_workspaces() -> list[dict]:
     out = []
     for r in rows:
         info = _info(r)
-        uploads = ws_uploads_dir(info["id"])
-        size = sum(f.stat().st_size for f in uploads.iterdir() if f.is_file()) if uploads.is_dir() else 0
         out.append({**info, "personal": owners.get(info["id"], "") if info["kind"] == "personal" else "",
-                    "default": info["id"] in defaults, "used_bytes": size, "members": members(info["id"])})
+                    "default": info["id"] in defaults, "used_bytes": blobs.usage(info["id"]),
+                    "members": members(info["id"])})
     return out
 
 

@@ -20,8 +20,8 @@ import bcrypt
 from fractional_indexing import generate_n_keys_between
 
 from .config import WORKSPACES_DIR
-from .db import (DATA_SCHEMA, PAGES_SCHEMA, connect_pages_db, connect_users_db, new_account_id, page_now,
-                 register_functions, safe_ws_id)
+from .db import (DATA_SCHEMA, PAGES_SCHEMA, SCHEMA_VERSION, connect_pages_db, connect_users_db, new_account_id,
+                 page_now, register_functions, safe_ws_id)
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
@@ -154,8 +154,10 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
 
 def create_workspace_files(ws_id: str):
     """Create fresh pages.db, data.db and uploads/ under workspaces/<id>/
-    (existing files are kept). The Welcome page is ``seed_welcome``'s, once
-    the workspace's rows exist (gamma/workspaces.py)."""
+    (existing files are kept). A new pages.db is stamped SCHEMA_VERSION:
+    it has the current shape, so no migration step ever runs on it
+    (gamma/migrations.py). The Welcome page is ``seed_welcome``'s, once the
+    workspace's rows exist (gamma/workspaces.py)."""
     target = WORKSPACES_DIR / safe_ws_id(ws_id)
     target.mkdir(parents=True, exist_ok=True)
     nw = page_now()
@@ -168,8 +170,11 @@ def create_workspace_files(ws_id: str):
         # open, which needs the file to itself — two first openers race.
         pages_db.execute("PRAGMA journal_mode=WAL")
         register_functions(pages_db)
+        fresh = not pages_db.execute("SELECT 1 FROM sqlite_master").fetchone()
         for stmt in PAGES_SCHEMA:
             pages_db.execute(stmt)
+        if fresh:
+            pages_db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         if not pages_db.execute("SELECT 1 FROM unified_blocks WHERE id = 'root'").fetchone():
             pages_db.execute(
                 "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "

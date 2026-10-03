@@ -72,17 +72,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import config, ops, pdf_meta, textmerge, workspaces
+from . import blobs, config, ops, pdf_meta, textmerge, workspaces
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
 from .auth import MIRROR_ACTOR
 from .blocks_store import FOLDERS, LABELS, TREES, create_page, fetch_subtree, last_child_position, page_root_id
-from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
+from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
 from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
 from .publisher_sessions import cipher
 from .routers.sync import changes as local_changes
-from .storage import matches_name, write_atomic
+from .storage import find_upload_file, matches_name, put_upload
 from .sync_tree import (ancestors, apply, children_of, diff, moved, snapshot_from_rows, snapshot_from_tree,
                         subtree_ids, tree_order, upload_refs)
 from .text_box import normalize_text_box
@@ -115,6 +115,25 @@ class PageDeferred(Exception):
     page on the remote (a cross-page move there, which the other page's
     round of this same pass settles), or the page it was about to create
     there appeared meanwhile (the next round finds it on both sides)."""
+
+
+class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib's redirects, except that one leaving the remote's origin goes
+    without its credentials: a remote whose files are in a bucket answers a
+    file's GET with a presigned URL (gamma/blobs.py), which is its own
+    authorization — the bucket refuses a request that carries a second one,
+    and the write token is nothing for it to see."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        here, there = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        if new is not None and (here.scheme, here.netloc) != (there.scheme, there.netloc):
+            for name in ("Authorization", "X-gamma-workspace", "Cookie"):  # urllib's capitalization
+                new.remove_header(name)
+        return new
+
+
+_file_opener = urllib.request.build_opener(_OffOriginRedirect)
 
 
 class Remote:
@@ -180,12 +199,12 @@ class Remote:
     def _streaming(self) -> bool:
         return self.fetch == self._urllib_fetch
 
-    def _open(self, req, timeout: int):
+    def _open(self, req, timeout: int, opener=None):
         """``urlopen`` for the streaming paths, every failure a RemoteError
         (``_urllib_fetch`` keeps an HTTP error's status and body instead, for
         ``request`` to read the detail from)."""
         try:
-            return urllib.request.urlopen(req, timeout=timeout)
+            return (opener.open if opener else urllib.request.urlopen)(req, timeout=timeout)
         except urllib.error.HTTPError as e:
             raise RemoteError(e.code, (e.read() or b"")[:200].decode("utf-8", "replace")) from e
         except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
@@ -203,7 +222,7 @@ class Remote:
                 progress(len(data), len(data))
             return data
         req = urllib.request.Request(self.url + path, headers=self._headers())
-        with self._open(req, 60) as resp:
+        with self._open(req, 60, _file_opener) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
             chunks, done = [], 0
             while True:
@@ -837,10 +856,8 @@ def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
 # --- uploads ----------------------------------------------------------------------------
 
 def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
-    uploads = ws_uploads_dir(ws)
-    uploads.mkdir(parents=True, exist_ok=True)
     for name in sorted(names):
-        if not UPLOAD_NAME_RE.match(name) or (uploads / name).exists():
+        if not UPLOAD_NAME_RE.match(name) or blobs.exists(ws, name):
             continue
         prog = report.get("progress")
         try:
@@ -856,7 +873,7 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
             log.warning(f"[mirror] {ws}: {name} from {remote.url} is not what its name says "
                         f"({len(data)} bytes) — not stored")
             continue
-        write_atomic(uploads / name, data)
+        put_upload(ws, name, data)
         report["files_pulled"] += 1
         if name.endswith(".pdf"):
             pdf_meta.schedule(ws, name[:-4])
@@ -864,8 +881,8 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks reference (content, props, a
-    page's ``doc_id``) that are not in its uploads folder; only those of
-    ``pages`` (page ids) when given."""
+    page's ``doc_id``) that it does not store (one listing of its files,
+    ``blobs.list``); only those of ``pages`` (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
             rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
@@ -877,16 +894,17 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
             blocks.append({"content": content or "", "props": json.loads(props or "{}")})
         except ValueError:
             blocks.append({"content": content or "", "props": {}})
-    uploads = ws_uploads_dir(ws)
-    return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and not (uploads / n).exists()}
+    stored = {name for name, _, _ in blobs.list(ws)}
+    return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
 def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
-    uploads = ws_uploads_dir(ws)
     for name in sorted(names):
-        path = uploads / name
-        if not UPLOAD_NAME_RE.match(name) or not path.is_file() or remote.head_ok(f"/api/uploads/{name}"):
+        if not UPLOAD_NAME_RE.match(name) or not blobs.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
             continue
+        path = find_upload_file(name, ws)
+        if path is None:
+            continue  # purged since
         data = path.read_bytes()
         prog = report.get("progress")
         out = remote.post_file("/api/uploads" if name.endswith(".pdf") else "/api/upload-file", name, data,
@@ -1209,15 +1227,17 @@ INK_KEYS = ("ink_url", "ink_strokes", "pdf_position")
 def _confirm_push(ws: str, remote: Remote, page_id: str, state: dict, *, resend: bool, report: dict) -> dict:
     """A push this copy never read the answer to: its batches (``pending``)
     are sent again under their ids, minus what the remote already shows
-    (``_unlanded``). The remote answers a batch it applied (and still
-    remembers, ops.REPLAY_TTL) without applying it again, and applies one it
-    never got — or forgot, a restart — of which only what it does not show
-    is sent, so nothing lands twice. The remote then holds what was pushed,
-    which becomes the base: the merge that follows never takes this copy's
-    edits for the remote's, nor sends them again. A resend the remote
-    refuses (the page changed under it) or no resend (``resend`` false: the
-    page is gone here, or the copy only receives) leaves the base with what
-    landed; this copy's edits beyond it stay edits. Returns the state."""
+    (``_unlanded``). The remote answers a batch it applied (its op log still
+    holds the batch's row) without applying it again, and applies one it
+    never got — or no longer knows: the row pruned, or a remote of an older
+    release, which kept the ids in memory, restarted — of which only what
+    it does not show is sent, so nothing lands twice. The remote then holds
+    what was pushed, which becomes the base: the merge that follows never
+    takes this copy's edits for the remote's, nor sends them again. A
+    resend the remote refuses (the page changed under it) or no resend
+    (``resend`` false: the page is gone here, or the copy only receives)
+    leaves the base with what landed; this copy's edits beyond it stay
+    edits. Returns the state."""
     base = state["base"]
     remote_tree, _ = _remote_tree(remote, page_id)
     landed = []
@@ -1960,8 +1980,8 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                 failed[page_id] = flags
                 report["errors"].append(f"{page_id}: {e}")
                 log.warning(f"[mirror] {ws}: page {page_id}: {e}")
-        # files the copy's pages reference but its uploads folder lacks (an
-        # interrupted round, a file lost on disk): fetched again every round
+        # files the copy's pages reference but it does not store (an
+        # interrupted round, a file lost): fetched again every round
         _pull_files(ws, remote, missing_uploads(ws, mirror["page_filter"]), report)
         # cursors move only when the round could talk to the remote at all, and only
         # when nothing reset them meanwhile (a direction change; a force waits its turn)

@@ -11,8 +11,9 @@ default. Quota 0 means unlimited.
 
 What a workspace's uploads are checked against (`workspace_quota`):
   - a PERSONAL workspace: its account's limits, and the account's usage is
-    the uploads/ of all its personal workspaces together — nothing anyone
-    puts into a shared workspace counts against a person;
+    the stored files of all its personal workspaces together (``blobs.usage``:
+    their uploads/, or their objects in a bucket) — nothing anyone puts into
+    a shared workspace counts against a person;
   - a SHARED workspace: the server-wide per-file cap and the workspace's own
     `workspaces.quota_mb` (NULL = unlimited), which admins set.
 The databases are not metered.
@@ -34,9 +35,9 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from . import config
+from . import blobs, config
 from .config import MAX_UPLOAD_BYTES
-from .db import account_name, connect_users_db, page_now, ws_uploads_dir
+from .db import account_name, connect_users_db, page_now
 
 MB = 1024 * 1024
 DEFAULT_MAX_UPLOAD_MB = MAX_UPLOAD_BYTES // MB
@@ -258,12 +259,9 @@ def user_limits(user_id: str) -> dict:
 def workspace_bytes(ws: str) -> int:
     """Upload bytes stored in one workspace."""
     try:
-        uploads = ws_uploads_dir(ws)
+        return blobs.usage(ws)
     except ValueError:
         return 0
-    if not uploads.exists():
-        return 0
-    return sum(f.stat().st_size for f in uploads.iterdir() if f.is_file())
 
 
 def usage_bytes(user_id: str) -> int:
@@ -298,7 +296,7 @@ def check_upload_allowed(ws: str, nbytes: int) -> None:
     """Hard gate for explicit uploads into a workspace: 413 over the
     per-file cap, 507 over the quota that applies (``workspace_quota``).
 
-    Callers should skip this when the content hash already exists on disk —
+    Callers should skip this when the content hash is stored already —
     re-uploading a stored file costs nothing, so it is always allowed.
     """
     limits = workspace_quota(ws)

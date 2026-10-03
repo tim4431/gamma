@@ -215,7 +215,7 @@ cd ../backend
 GAMMA_STATIC_DIR=../frontend/dist uvicorn app:app --host 127.0.0.1 --port 9001
 ```
 
-Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy, set it to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file). Otherwise every visitor shares the proxy's rate-limit bucket.
+Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy, set it to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file). Otherwise every visitor shares the proxy's rate-limit bucket. The build ships Brotli and gzip copies of its assets. The backend serves them itself, and a proxy that serves `dist` directly can too ([serving the build](docs/dev/debugging.md#serving-the-build)).
 
 </details>
 

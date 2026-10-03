@@ -114,6 +114,52 @@ def test_prefs_require_session(client):
     assert anon.put("/api/prefs/open-tabs", json={"value": []}).status_code == 401
 
 
+def _stored(ws, user_id):
+    """The account's rows in the workspace's ``workspace_prefs`` ({key:
+    value}) and its users.db ``user_prefs`` rows ({(workspace, key)})."""
+    from gamma.db import connect_pages_db, connect_users_db
+    with connect_pages_db(ws) as conn:
+        kept_here = dict(conn.execute("SELECT key, value FROM workspace_prefs WHERE user_id = ?", (user_id,)))
+    with connect_users_db() as conn:
+        in_users_db = set(conn.execute("SELECT workspace_id, key FROM user_prefs WHERE user_id = ?", (user_id,)))
+    return kept_here, in_users_db
+
+
+def test_workspace_prefs_are_kept_in_their_workspace(alice):
+    # Open tabs, recents and reading positions live in the workspace's own
+    # pages.db, per account, each workspace with its own value; users.db
+    # keeps only the account-wide keys. Same endpoints, same helpers.
+    from gamma import db
+    from conftest import account_of, workspace_of
+    me, home = account_of("prefs_alice"), workspace_of("prefs_alice")
+    r = alice.post("/api/workspaces", json={"name": "Prefs elsewhere"})
+    assert r.status_code == 200, r.text
+    other = r.json()["id"]
+    assert alice.put("/api/prefs/open-tabs", json={"value": ["home-tab"]}, headers={"X-Gamma-Workspace": home}).status_code == 200
+    assert alice.put("/api/prefs/open-tabs", json={"value": ["other-tab"]}, headers={"X-Gamma-Workspace": other}).status_code == 200
+    assert alice.put("/api/prefs/read-pos", json={"value": {"d1": 4}}, headers={"X-Gamma-Workspace": home}).status_code == 200
+    assert alice.put("/api/prefs/ai-provider", json={"value": "mine"}, headers={"X-Gamma-Workspace": other}).status_code == 200
+    assert alice.get("/api/prefs/open-tabs", headers={"X-Gamma-Workspace": other}).json()["value"] == ["other-tab"]
+    assert alice.get("/api/prefs/open-tabs").json()["value"] == ["home-tab"]  # no workspace named: the default one
+    assert alice.get("/api/prefs/ai-provider", headers={"X-Gamma-Workspace": home}).json()["value"] == "mine"
+    kept_home, in_users_db = _stored(home, me)
+    assert kept_home == {"open-tabs": '["home-tab"]', "read-pos": '{"d1": 4}'}
+    assert _stored(other, me)[0] == {"open-tabs": '["other-tab"]'}
+    assert ("", "ai-provider") in in_users_db and not {k for _, k in in_users_db} & {"open-tabs", "read-pos"}
+    assert db.get_pref(me, "open-tabs", other)[0] == ["other-tab"] and db.get_pref(me, "ai-provider", home)[0] == "mine"
+    # a synced copy older than the stored value is not written; a newer one is
+    stamp = db.get_pref(me, "open-tabs", home)[1]
+    assert db.set_pref(me, "open-tabs", ["stale"], home, updated_at="2020-01-01T00:00:00.000000Z") == stamp
+    newer = "2999-01-01T00:00:00.000000Z"
+    assert db.set_pref(me, "open-tabs", ["synced"], home, updated_at=newer) == newer
+    assert db.get_pref(me, "open-tabs", home) == (["synced"], newer)
+    assert db.restamp_pref(me, "open-tabs", newer, "2999-01-01T00:00:00.001000Z", home)
+    # a call that names no workspace keeps a workspace-scoped key in users.db
+    db.set_pref(me, "open-tabs", ["nowhere"])
+    assert db.get_pref(me, "open-tabs")[0] == ["nowhere"] and ("", "open-tabs") in _stored(home, me)[1]
+    assert db.get_pref(me, "open-tabs", home)[0] == ["synced"]
+
+
 # --- AI provider entries (GUI key management) ---------------------------------
 
 def test_guest_cannot_store_keys(guest):

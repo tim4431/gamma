@@ -385,7 +385,7 @@ function pdfProxyUrl(sourceUrl, { save = false, share = "" } = {}) {
 // costs one upstream connection and no download (and never `save`: a
 // cancelled stream is not cached anyway).
 async function probePdfUrl(sourceUrl) {
-  const r = await fetch(pdfProxyUrl(sourceUrl), { credentials: "include" });
+  const r = await fetch(pdfProxyUrl(sourceUrl), { credentials: "same-origin" });
   if (!r.ok) throw await apiError(r); // reads the error body — cancel only the good stream
   try { await r.body?.cancel(); } catch {}
 }

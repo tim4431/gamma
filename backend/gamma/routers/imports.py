@@ -24,7 +24,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
 from ..auth import actor_of, require_user_id, require_ws
-from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
+from ..db import connect_pages_db, page_now, safe_doc_id
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
                             last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
                             touch_page, write_lock)
@@ -37,7 +37,8 @@ from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_pos
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import display_filename, is_pdf, pdf_url, store_file, store_pdf
+from ..storage import (UploadDir, display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file,
+                       store_pdf)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -740,7 +741,7 @@ def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
             "quote": quote, "color": color, "position": position}
 
 
-def _strip_embedded_annotations(pdf_path) -> tuple[int, set]:
+def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
     """Rewrite the stored PDF without the annotations the import turns into
     blocks (``_extract_pdf_annotations``, folded replies included), with
     their threads and /Popup windows (``pdf_export.drop_annotations``), so
@@ -750,10 +751,11 @@ def _strip_embedded_annotations(pdf_path) -> tuple[int, set]:
     removed and the keys of the blocks they make (a reply's legacy key too).
 
     Note the file keeps its content-hash name even though its bytes change —
-    the name is only a key (``doc_id`` property), never re-derived."""
+    the name is only a key (``doc_id`` property), never re-derived.
+    ``pdf_path`` is the stored file (a local path or a ``StoredFile``)."""
     from PyPDF2 import PdfReader, PdfWriter
 
-    reader = PdfReader(str(pdf_path))
+    reader = PdfReader(os.fspath(pdf_path))
     doomed, keys = set(), set()
 
     def take(record):
@@ -771,18 +773,10 @@ def _strip_embedded_annotations(pdf_path) -> tuple[int, set]:
         return 0, set()
     writer = PdfWriter()
     writer.append(reader)
-    # Atomic swap so a concurrent download never sees a half-written file.
-    fd, tmp_name = tempfile.mkstemp(suffix=".pdf", dir=str(pdf_path.parent))
-    try:
-        with os.fdopen(fd, "wb") as f:
-            writer.write(f)
-        os.replace(tmp_name, str(pdf_path))
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    out = io.BytesIO()
+    writer.write(out)
+    # Stored whole, so a concurrent download never sees a half-written file.
+    put_upload(ws, pdf_path.name, out.getvalue())
     return removed, keys
 
 
@@ -814,9 +808,10 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     under its own key or the legacy one, from before replies were notes),
     then optionally strip the originals from the file. ``found`` counts the
     annotations that make blocks, replies included. Shared by the per-paper
-    endpoint below and the Zotero library import."""
+    endpoint below and the Zotero library import. ``pdf_path``: the stored
+    file, a local path (``storage.find_upload_file``) or a ``StoredFile``."""
     from PyPDF2 import PdfReader
-    reader = PdfReader(str(pdf_path))
+    reader = PdfReader(os.fspath(pdf_path))
     found = _extract_pdf_annotations(reader)
     if not found:
         return {"found": 0, "imported": 0, "stripped": 0}
@@ -893,7 +888,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     if strip:
         keys = set()
         try:
-            stripped, keys = _strip_embedded_annotations(pdf_path)
+            stripped, keys = _strip_embedded_annotations(ws, pdf_path)
         except Exception as e:
             log.warning(f"[pdf-annots] could not strip annotations from {pdf_path.name}: {e}")
         if stripped:
@@ -913,10 +908,11 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
 def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
     ws = require_ws(request, write=True)
     try:
-        pdf_path = pdf_upload_path(ws, payload.doc_id)
+        name = f"{safe_doc_id(payload.doc_id)}.pdf"
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid document id")
-    if not pdf_path.exists():
+    pdf_path = find_upload_file(name, ws)
+    if pdf_path is None:
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
     try:
         result = import_embedded_annotations(ws, payload.block_id, pdf_path, payload.strip,
@@ -1193,8 +1189,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
         plan = _zotero_plan(zf)
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        uploads = ws_uploads_dir(ws)
-        uploads.mkdir(parents=True, exist_ok=True)
+        uploads = UploadDir(ws)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
                   "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}

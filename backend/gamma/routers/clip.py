@@ -49,13 +49,13 @@ from ..blocks_store import (
     tree_parents,
     write_lock,
 )
-from ..db import connect_pages_db, get_pref, page_now, safe_doc_id, ws_uploads_dir
+from ..db import connect_pages_db, get_pref, page_now, safe_doc_id
 from ..logbuf import log
 from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
-from .. import pdf_meta
-from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, url_filename, write_atomic
+from .. import blobs, pdf_meta
+from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, put_upload, url_filename
 from .metadata import fetch_page_metadata, registry_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -316,7 +316,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             doc_id = safe_doc_id(payload.doc_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid doc_id")
-        if not (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file():
+        if not blobs.exists(ws, f"{doc_id}.pdf"):
             raise HTTPException(status_code=404, detail="no uploaded PDF with this doc_id — upload it first")
         page_source = stored_pdf_url(doc_id)
     else:
@@ -333,13 +333,12 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                 page_source = resolved["source_url"]
                 note = resolved.get("note", "")
                 doc_id = url_doc_id(page_source)
-                local = ws_uploads_dir(ws) / f"{doc_id}.pdf"
-                if not local.is_file():
+                if not blobs.exists(ws, f"{doc_id}.pdf"):
                     _, data = download_pdf(page_source, want_bytes=payload.save_copy,
                                            referer=resolved.get("referer", ""))
                     if payload.save_copy:
                         if can_store(ws, len(data)):
-                            write_atomic(local, data)
+                            put_upload(ws, f"{doc_id}.pdf", data)
                             pdf_meta.schedule(ws, doc_id)
                         else:
                             log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")

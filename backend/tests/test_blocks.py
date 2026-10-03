@@ -1,7 +1,10 @@
 """Core data model: block CRUD, tree replacement, ordering, search, replace,
 and the cleanup that must happen on delete."""
 
-from conftest import make_page
+import json
+
+from conftest import guest_name, make_page, workspace_of
+from gamma.db import connect_pages_db
 
 
 def test_create_and_subtree(guest):
@@ -97,3 +100,63 @@ def test_properties_merge_not_replace(guest):
     r = guest.get(f"/api/blocks/{page['id']}/subtree")
     props = r.json()["block"]["properties"]
     assert props["folder"] == "A" and props["category"] == "x"
+
+
+def _store_props(block_id, raw):
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (raw, block_id))
+
+
+def _stored_props(block_id):
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        return conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]
+
+
+def test_tree_reads_answer_what_the_stored_text_says(guest):
+    # orjson parses and encodes the tree reads (blocks_store.load_json,
+    # routers/blocks.TreeJSON). The answers are the stored values; what
+    # orjson refuses and json.dumps wrote (NaN, half an emoji) is read as
+    # before, then sent as null and U+FFFD.
+    page = make_page(guest, "Stored JSON page")
+    plain = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "plain"}).json()
+    odd = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "odd"}).json()
+    emoji = chr(0x1F600)
+    plain_raw = json.dumps({"emoji": emoji, "word": "café", "n": 1.5, "big": 10 ** 20})
+    odd_raw = json.dumps({"half": "a" + chr(0xD83D) + "b", "nan": float("nan"), "word": "café"})
+    assert plain_raw.isascii() and odd_raw.isascii() and "NaN" in odd_raw  # as json.dumps stores them
+    _store_props(plain["id"], plain_raw)
+    _store_props(odd["id"], odd_raw)
+    want = {plain["id"]: {"emoji": emoji, "word": "café", "n": 1.5, "big": 10 ** 20},
+            odd["id"]: {"half": "a" + chr(0xFFFD) + "b", "nan": None, "word": "café"}}
+
+    sub = guest.get(f"/api/blocks/{page['id']}/subtree")
+    assert sub.status_code == 200, sub.text
+    assert {b["id"]: b["properties"] for b in sub.json()["block"]["children"]} == want
+    kids = guest.get(f"/api/blocks/{page['id']}/children")
+    assert kids.status_code == 200, kids.text
+    assert {b["id"]: b["properties"] for b in kids.json()["children"]} == want
+    assert guest.get(f"/api/blocks/{plain['id']}").json()["properties"] == want[plain["id"]]
+    # reads never rewrite the stored text, and a write keeps json.dumps' shape
+    assert (_stored_props(plain["id"]), _stored_props(odd["id"])) == (plain_raw, odd_raw)
+    assert guest.put(f"/api/blocks/{plain['id']}", json={"properties": {"word": "naïve"}}).status_code == 200
+    stored = _stored_props(plain["id"])
+    assert stored.isascii() and '"word": ' + json.dumps("naïve") in stored
+
+
+def test_a_tree_deeper_than_orjson_nests_still_answers(guest):
+    # orjson stops at 255 levels of nesting, about 125 blocks; the subtree
+    # read falls back to the standard encoder.
+    page = make_page(guest, "Deep page")
+    depth = 140
+    tree = node = {"id": "deep0", "content": "level 0", "properties": {}, "children": []}
+    for i in range(1, depth):
+        child = {"id": f"deep{i}", "content": f"level {i}", "properties": {}, "children": []}
+        node["children"].append(child)
+        node = child
+    assert guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [tree]}).status_code == 200
+    r = guest.get(f"/api/blocks/{page['id']}/subtree")
+    assert r.status_code == 200, r.text
+    node, levels = r.json()["block"], 0
+    while node["children"]:
+        node, levels = node["children"][0], levels + 1
+    assert levels == depth and node["content"] == f"level {depth - 1}"

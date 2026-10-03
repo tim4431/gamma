@@ -20,7 +20,6 @@ import json
 import re
 import secrets
 from urllib.parse import unquote
-import sqlite3
 import time
 from datetime import datetime, timezone
 
@@ -31,8 +30,7 @@ from fastapi.responses import JSONResponse
 
 from . import guests, publisher_sessions
 from .blocks_store import folder_subtree_ids, page_in_folder, page_root_id, pages_in_folder
-from .config import USERS_DB
-from .db import BUSY_TIMEOUT_S, Connection, account_names, parse_stamp
+from .db import account_names, connect_users_db, parse_stamp, share_token_workspace
 from .logbuf import log
 
 SESSION_COOKIE = "session"
@@ -147,13 +145,6 @@ _SESSION_SQL = ("SELECT u.id, u.username, u.is_guest, u.is_admin, u.default_work
                 "FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?")
 
 
-def _users_db() -> Connection:
-    """A plain connection to users.db for the per-request reads here (no
-    schema statements — every request pays for this one), closed by its
-    ``with`` block."""
-    return sqlite3.connect(str(USERS_DB), timeout=BUSY_TIMEOUT_S, factory=Connection)
-
-
 def session_lookup(token: str | None):
     """``(user_id, username, is_guest, is_admin, default_workspace)`` for a
     live session token, else None (an expired guest account included).
@@ -162,7 +153,7 @@ def session_lookup(token: str | None):
     the sweeper deletes the expired guest."""
     if not token:
         return None
-    with _users_db() as conn:
+    with connect_users_db() as conn:
         row = conn.execute(_SESSION_SQL, (token,)).fetchone()
     if not row or _session_expired(row[5]) or (row[2] and guests.is_expired(row[6])):
         return None
@@ -176,7 +167,7 @@ def _middleware_session(token: str) -> tuple[tuple | None, tuple | None]:
     for a guest past its lifetime. An expired session row is deleted here:
     server-side expiry, so a stolen token can't outlive its window even
     though the browser cookie's Max-Age is long."""
-    with _users_db() as conn:
+    with connect_users_db() as conn:
         row = conn.execute(_SESSION_SQL, (token,)).fetchone()
         if row and _session_expired(row[5]):
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
@@ -521,10 +512,15 @@ def share_lookup(token: str) -> dict | None:
     """The share row for a token as a dict ({token, workspace_id, page_id,
     folder, created_by, audience, role, users: [{user_id, role}]} —
     ``created_by`` and the invited are account ids), or None. A row names a
-    page OR a folder (exactly one of ``page_id`` / ``folder`` is set)."""
-    if not token:
+    page OR a folder (exactly one of ``page_id`` / ``folder`` is set). A
+    token is ``<workspace id>.<secret>`` (``db.share_token_workspace``): one
+    of another shape, or whose prefix is not its row's workspace, names no
+    share — the request paths count it with ``note_share_miss`` like an
+    unknown token."""
+    ws = share_token_workspace(token)
+    if not ws:
         return None
-    with _users_db() as conn:
+    with connect_users_db() as conn:
         row = conn.execute(
             "SELECT workspace_id, page_id, folder, created_by, audience, role FROM shares WHERE token = ?", (token,)
         ).fetchone()
@@ -533,7 +529,7 @@ def share_lookup(token: str) -> dict | None:
     if not row:
         return None
     workspace_id, page_id, folder, created_by, audience, role = row
-    if not workspace_id or bool(page_id) == bool(folder):
+    if workspace_id != ws or bool(page_id) == bool(folder):
         return None
     return {
         "token": token, "workspace_id": workspace_id, "page_id": page_id or "", "folder": folder or "",
@@ -656,7 +652,7 @@ def actor_names(actors) -> dict[str, str]:
     shown}`` — an account by its username ("" once it is deleted), a link
     visitor's ``link:<name>`` and the mirror as they are. One users.db
     read."""
-    with _users_db() as conn:
+    with connect_users_db() as conn:
         names = account_names(conn, actors)
     return {a: names.get(a) or (a if a.startswith(LINK_ACTOR_PREFIX) or a == MIRROR_ACTOR else "")
             for a in set(actors)}

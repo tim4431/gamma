@@ -74,8 +74,13 @@ the frontend changes: editing a mirror is editing a workspace.
   also have arrived whole: a body shorter than the `Content-Length` the
   remote announced (the link dropped mid-file, where a streaming read just
   stops) is an error of the page, never bytes to store (`Remote.get_bytes`).
-  What is stored is written whole (`storage.write_atomic`,
-  [user_db.md](user_db.md) "Stored files").
+  A remote whose files are in a bucket answers a file's GET with a
+  redirect to a presigned URL. The fetch follows it without the write token
+  or the workspace header (`sync_engine._OffOriginRedirect`): the URL is its
+  own authorization, and the bucket refuses a request that carries a
+  second one. What is stored goes through the store, written whole
+  (`storage.put_upload`, [user_db.md](user_db.md) "Stored files"), and so
+  do the presence checks, the missing-file sweep and a push's reads.
 - **Deletions**: pages through the tombstones (the change feed's `deleted`
   entries, a page's row of the change log turned `deleted`), blocks
   through the diff. The trash ([home_library.md](home_library.md) "Recently
@@ -315,12 +320,13 @@ proxy's 504, the app quit) is settled first thing the next round
 (`_confirm_push`): each batch goes again under its id, minus what the
 remote already shows (`_unlanded`: an insert that is there, a text that
 holds the change, a move or property the remote shows or overrode since).
-The remote answers a batch it applied without applying it again (it
-remembers ids for `ops.REPLAY_TTL`) and applies one it never got; one it
-forgot (a restart) is applied too, and since only what it does not show
-goes, nothing is merged twice. Either way what was pushed becomes the
-base, so a collaborator who typed in the pushed block meanwhile keeps the
-text and nothing is doubled. A delete of a subtree the remote changed since,
+The remote answers a batch it applied without applying it again (the id is
+kept on the batch's row of its op log), and applies one it never got. It
+also applies one it no longer knows: the row was pruned, or the remote runs
+an older release, which kept the ids in memory, and restarted. Only what the
+remote does not show goes, so nothing is merged twice. Either way what was
+pushed becomes the base, so a collaborator who typed in the pushed block
+meanwhile keeps the text and nothing is doubled. A delete of a subtree the remote changed since,
 and a change to a block the remote no longer holds, do not go again: the
 merge that follows decides (an edit beats a delete). A resend the remote
 refuses leaves the base with what landed; this copy's edits beyond it are
@@ -720,9 +726,10 @@ workspace there:
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
-   The answer is the link `<share host>/?share=<token>` (`url`), the
-   page's public address (`public_url`, below), the share and the mirror's
-   status.
+   The answer is the link `<share host>/?share=<token>` (`url`; the token
+   is the share host's, `<workspace id there>.<secret>`, taken as it is),
+   the page's public address (`public_url`, below), the share and the
+   mirror's status.
 
 From then on the page is an ordinary mirrored page: edits here go there at
 the next round, edits made through an edit share come back, conflicts are

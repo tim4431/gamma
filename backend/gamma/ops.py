@@ -57,10 +57,11 @@ someone else changed the page meanwhile (the block is gone, lives in another
 page now, or the move would make a cycle) says so in ``OpError.conflict``,
 with the op's index, so a client can drop that op and send the rest.
 
-A client names each batch (``batch``, the same id on every retry of it): the
-answer to a batch this process already applied is replayed instead of
-applying it twice (``_replays``, in memory — a restart forgets them, and the
-clients catch up from the log anyway).
+A client names each batch (``batch``, the same id on every retry of it),
+and the batch's log row keeps the name (``batch_id``) with the writer's
+caret as stored (``cursor``): a retry finds that row under the write lock
+and gets the same answer instead of applying twice, across restarts. A
+retry whose row was pruned from the log is applied again.
 
 ``ws`` everywhere below is the workspace id (docs/dev/workspaces.md),
 ``actor`` who makes the change (an account's id, or a writer's label —
@@ -71,9 +72,6 @@ everything a page's viewers see comes from one code path and one log.
 
 import json
 import re
-import threading
-import time
-from collections import OrderedDict
 from datetime import timedelta
 from typing import Annotated, Literal, Union
 
@@ -87,9 +85,9 @@ from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, block_to_dict, delete_subtree, ensure_reserved,
     fetch_subtree, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
     move_subtree_to_page, subtree_refs, touch_page, trashed_page, valid_block_id, write_lock)
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
-from .storage import content_digest, pdf_url, store_file, upload_refs
+from .storage import UploadDir, content_digest, pdf_url, store_file, upload_refs
 
 MAX_OPS = 500
 MAX_CONTENT = 200_000
@@ -104,8 +102,6 @@ PRUNE_EVERY = 16     # prune check cadence (every Nth seq, or a batch over its s
 # (410) instead: refetching the page is cheaper than replaying it.
 CATCHUP_MAX_BATCHES = 200
 CATCHUP_MAX_BYTES = 1_000_000
-REPLAY_KEEP = 4096   # batch answers remembered, all pages together ...
-REPLAY_TTL = 600     # ... for at most this many seconds
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 # Conflict codes: the page changed under the batch, so an op no longer applies.
@@ -219,7 +215,8 @@ def props_patch(old: dict, new: dict) -> dict:
 class _Batch:
     """One apply_ops call: the page, the timestamp, an ancestry cache."""
 
-    def __init__(self, conn, page_id: str, now: str, share_scoped: bool, cursor: dict | None = None):
+    def __init__(self, conn, page_id: str, now: str, share_scoped: bool, cursor: dict | None = None,
+                 merges: dict | None = None):
         self.conn = conn
         self.ws = getattr(conn, "ws", "")  # the workspace whose files an ink merge reads
         self.page_id = page_id
@@ -227,6 +224,7 @@ class _Batch:
         self.now = now
         self.share_scoped = share_scoped
         self.cursor = cursor  # the writer's caret, remapped when its block's text is merged
+        self.merges = {} if merges is None else merges  # text merges by their texts (``_merged``)
         self._page_of: dict[str, str | None] = {page_id: page_id}
         self.applied: list[dict] = []
         self.deleted: list[str] = []
@@ -296,20 +294,8 @@ class _Batch:
             patch = _filing_patch(patch)
         if content is not None and len(content) > MAX_CONTENT:
             raise OpError(413, "content too long")
-        base = op.get("base")
-        if (content is not None and base is not None and len(base) <= MAX_CONTENT
-                and base != (row[0] or "") and base != content and content != (row[0] or "")):
-            # (a client whose edit is already the text — the same change made
-            # twice, a retried batch — has nothing to merge: patching it in
-            # again would double it)
-            # Someone else changed the block since this client read it:
-            # apply the client's edit as a patch on the current text.
-            merged, _clean = textmerge.merge(base, content, row[0] or "")
-            cur = self.cursor
-            if cur and cur.get("block") == block_id and merged != content:
-                cur["anchor"] = textmerge.map_offset(content, merged, cur.get("anchor", -1)) if cur.get("anchor", -1) >= 0 else -1
-                cur["head"] = textmerge.map_offset(content, merged, cur.get("head", -1)) if cur.get("head", -1) >= 0 else -1
-            content = merged
+        if content is not None and op.get("base") is not None:
+            content = _merged(self.merges, block_id, op["base"], content, row[0] or "", self.cursor)
         props = json.loads(row[1] or "{}")
         if patch and block_id == self.page_id:
             patch = _attachment_patch(patch, props)
@@ -360,7 +346,7 @@ class _Batch:
         new, base, now = patch.get("ink_url"), base_props.get("ink_url"), props.get("ink_url") or ""
         if not (isinstance(new, str) and new and isinstance(base, str)) or now in (base, new) or not self.ws:
             return patch
-        uploads = ws_uploads_dir(self.ws)
+        uploads = UploadDir(self.ws)
         ours = inkmod.read_upload(uploads, new)
         theirs = inkmod.read_upload(uploads, now) if now else None
         if ours is None or (now and theirs is None):
@@ -474,6 +460,60 @@ class _Batch:
         self.applied.append({"op": "delete", "id": block_id})
 
 
+def _memo(memo: dict, fn, *args):
+    """``fn(*args)``, kept in ``memo`` by the function and its arguments."""
+    key = (fn, *args)
+    if key not in memo:
+        memo[key] = fn(*args)
+    return memo[key]
+
+
+def _merged(merges: dict, block_id: str, base: str, content: str, stored: str, cursor: dict | None) -> str:
+    """The text a ``set`` of ``content``, edited from ``base``, stores over
+    the block's text ``stored`` now, the writer's ``cursor`` remapped into
+    it when it is in that block. When someone else changed the block since
+    the writer read it, the writer's edit is applied as a patch on the
+    current text (gamma/textmerge.py). An edit that is already the text —
+    the same change made twice, a retried batch — has nothing to merge:
+    patching it in again would double it. The diffs are kept in ``merges``
+    by their texts, so a merge ``_premerge`` computed before the write lock
+    is not computed again under it."""
+    if len(base) > MAX_CONTENT or stored in (base, content) or base == content:
+        return content
+    merged, _clean = _memo(merges, textmerge.merge, base, content, stored)
+    if cursor and cursor.get("block") == block_id and merged != content:
+        for end in ("anchor", "head"):
+            at = cursor.get(end, -1)
+            cursor[end] = _memo(merges, textmerge.map_offset, content, merged, at) if at >= 0 else -1
+    return merged
+
+
+def _premerge(conn, page_id: str, ops: list[dict], cursor: dict | None) -> dict:
+    """The batch's text merges (``_merged``) against the texts its blocks
+    hold now, computed before the write lock is taken: the merge of a block
+    edited in many places (an offline copy's round, the agent's edit of a
+    long note) takes tens of milliseconds, which under the lock every
+    writer of the workspace would wait out. Returns the memo the batch
+    starts from under the lock, where a merge whose block still holds the
+    text merged into is taken from it and any other is computed as before:
+    the batch stores the same either way."""
+    sets = [op for op in ops if op.get("op") == "set" and isinstance(op.get("id"), str)
+            and isinstance(op.get("content"), str) and isinstance(op.get("base"), str)
+            and len(op["content"]) <= MAX_CONTENT]
+    merges: dict = {}
+    if not sets:
+        return merges
+    rows = conn.execute(  # by id: the page's index would walk all of its blocks
+        "SELECT id, content, page_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+        (json.dumps([op["id"] for op in sets]),)).fetchall()
+    stored = {r[0]: r[1] or "" for r in rows if r[2] == page_id}  # the lock refuses any other block
+    cursor = dict(cursor) if cursor else None  # remapped here only to fill the memo
+    for op in sets:
+        if op["id"] in stored:
+            _merged(merges, op["id"], op["base"], op["content"], stored[op["id"]], cursor)
+    return merges
+
+
 def _filing_patch(patch: dict) -> dict:
     """A page root's ``patch`` with its ``folders`` / ``labels`` (a list of
     block ids, or null) without repeats; an empty list removes the key.
@@ -498,13 +538,19 @@ def _attachment_patch(patch: dict, props: dict) -> dict:
     return patch
 
 
-def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0) -> int:
+def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0, *,
+         batch_id: str = "", cursor: dict | None = None) -> int:
+    """One row of the page's log. ``batch_id`` and ``cursor`` (the caret as
+    stored, kept for a named batch only) are what a retry of the batch is
+    answered from (``_replayed``); every other writer logs ''."""
     seq = max(conn.execute(
         "SELECT COALESCE(MAX(seq), 0) FROM page_ops WHERE page_id = ?", (page_id,)).fetchone()[0], after) + 1
     payload = json.dumps(applied)
+    caret = json.dumps(cursor) if batch_id and cursor is not None else ""
     conn.execute(
-        "INSERT INTO page_ops (page_id, seq, actor, client, at, ops) VALUES (?, ?, ?, ?, ?, ?)",
-        (page_id, seq, actor, client, now, payload))
+        "INSERT INTO page_ops (page_id, seq, actor, client, at, ops, batch_id, cursor) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (page_id, seq, actor, client, now, payload, batch_id, caret))
     if seq % PRUNE_EVERY == 0 or len(payload) > KEEP_OPS_BYTES // PRUNE_EVERY:
         _prune(conn, page_id, now)
     return seq
@@ -529,46 +575,23 @@ def _prune(conn, page_id: str, now: str) -> None:
         conn.execute("DELETE FROM page_ops WHERE page_id = ? AND seq < ?", (page_id, keep_from))
 
 
-# Answers to client-named batches by (page, client, batch id): a retry of a
-# batch whose first attempt did land (the answer was lost on the way back)
-# gets the same answer instead of applying twice. In memory and bounded:
-# the oldest go past REPLAY_KEEP entries or REPLAY_TTL seconds.
-_replays: OrderedDict = OrderedDict()
-_replays_lock = threading.Lock()
-
-
-def _replay_get(key: tuple) -> dict | None:
-    with _replays_lock:
-        hit = _replays.get(key)
-        return hit[1] if hit and time.monotonic() - hit[0] <= REPLAY_TTL else None
-
-
-def _replay_put(key: tuple, answer: dict) -> None:
-    now = time.monotonic()
-    with _replays_lock:
-        _replays[key] = (now, answer)
-        _replays.move_to_end(key)
-        while _replays and (len(_replays) > REPLAY_KEEP or now - next(iter(_replays.values()))[0] > REPLAY_TTL):
-            _replays.popitem(last=False)
-
-
-def _replay_drop(key: tuple) -> None:
-    with _replays_lock:
-        _replays.pop(key, None)
-
-
-def _replayed(conn, page_id: str, answer: dict) -> dict:
-    """``apply_ops``'s result for a batch applied earlier, its ops read back
-    from the log (none once the row is pruned); ``replayed`` marks it, so
+def _replayed(conn, page_id: str, client: str, batch_id: str) -> dict | None:
+    """``apply_ops``'s result for the batch ``client`` named ``batch_id``
+    on the page, applied earlier (a retry whose answer was lost on the way
+    back), read back from its row of the log. None when the log holds no
+    such row: never applied, or pruned since. ``replayed`` marks it, so
     nothing is fanned out or derived again."""
-    row = conn.execute("SELECT actor, client, ops FROM page_ops WHERE page_id = ? AND seq = ?",
-                       (page_id, answer["seq"])).fetchone()
-    result = {"page_id": page_id, "seq": answer["seq"], "at": answer["at"],
-              "actor": row[0] if row else "", "client": row[1] if row else "",
-              "ops": json.loads(row[2]) if row else [], "deleted_ids": [], "dropped_uploads": [],
+    row = conn.execute(
+        "SELECT seq, at, actor, ops, cursor FROM page_ops "
+        "WHERE page_id = ? AND client = ? AND batch_id = ? AND batch_id != ''",  # the partial index's term
+        (page_id, client, batch_id)).fetchone()
+    if not row:
+        return None
+    result = {"page_id": page_id, "seq": row[0], "at": row[1], "actor": row[2], "client": client,
+              "ops": json.loads(row[3]), "deleted_ids": [], "dropped_uploads": [],
               "doc_deleted": False, "replayed": True}
-    if answer.get("cursor") is not None:
-        result["cursor"] = answer["cursor"]
+    if row[4]:
+        result["cursor"] = json.loads(row[4])
     return result
 
 
@@ -585,30 +608,29 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     gamma/upload_gc.py); ``doc_deleted``: a deleted block carried a PDF.
     ``cursor`` (``{block, anchor, head}``, the writer's
     caret in the text it sent) comes back remapped into the text actually
-    stored when a merge changed it. Raises ``OpError`` (nothing written) on a
-    bad op. ``batch_id``: the client's name for the batch — one this process
-    already applied for that client is answered again (``replayed``), not
-    re-applied. Lone surrogates in the ops' strings are stored as U+FFFD.
-    ``page_id`` is a page of the library or a pseudo-page (``TREES``)."""
+    stored when a merge changed it; the text merges are computed before the
+    write lock is taken (``_premerge``). Raises ``OpError`` (nothing
+    written) on a bad op. ``batch_id``: the client's name for the batch,
+    kept on its log row with the caret: one the page's log holds for that
+    client is answered from that row again (``replayed``), not re-applied, a restart
+    in between or not; one pruned from the log since is applied again. Lone
+    surrogates in the ops' strings are stored as U+FFFD. ``page_id`` is a
+    page of the library or a pseudo-page (``TREES``)."""
     ops = _checked(ops)
-    key = (page_id, client, batch_id) if batch_id else None
-    write_lock(conn)  # up front: seq is per page
+    merges = _premerge(conn, page_id, ops, cursor)  # the slow part of a batch, before the lock
+    write_lock(conn)  # then at once: seq is per page, and a retry waiting here finds the row its first try wrote
     try:
         if not is_op_page(conn, page_id):
             raise OpError(404, "page not found")
-        answer = _replay_get(key) if key else None
-        if answer:
+        replay = _replayed(conn, page_id, client, batch_id) if batch_id else None
+        if replay:
             conn.rollback()
-            return _replayed(conn, page_id, answer)
+            return replay
         result = _apply(conn, page_id, ops, actor=actor, client=client, share_scoped=share_scoped,
-                        cursor=dict(cursor) if cursor else None)
-        if key:  # remembered before the lock goes, so a retry waiting on it sees the answer
-            _replay_put(key, {"seq": result["seq"], "at": result["at"], "cursor": result.get("cursor")})
+                        cursor=dict(cursor) if cursor else None, batch_id=batch_id, merges=merges)
         conn.commit()
     except BaseException:
         conn.rollback()
-        if key:
-            _replay_drop(key)
         raise
     return result
 
@@ -639,12 +661,15 @@ def _checked(ops: list[dict]) -> list[dict]:
 
 
 def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
-           share_scoped: bool = False, cursor: dict | None = None) -> dict:
+           share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "",
+           merges: dict | None = None) -> dict:
     """One checked batch on ``page_id`` inside the caller's transaction,
     under its write lock: the ops applied, the page touched, the batch
-    logged. Returns ``apply_ops``' result; commits nothing."""
+    logged (under ``batch_id``, with the caret as stored). ``merges``: the
+    text merges ``_premerge`` computed before the lock. Returns
+    ``apply_ops``' result; commits nothing."""
     now = page_now()
-    batch = _Batch(conn, page_id, now, share_scoped, cursor)
+    batch = _Batch(conn, page_id, now, share_scoped, cursor, merges)
     for i, op in enumerate(ops):
         kind = op.get("op")
         try:
@@ -666,7 +691,7 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     dropped = batch.dropped - batch.added
     upload_gc.claim(conn, batch.added - batch.dropped)
     touch_page(conn, page_id, actor, now=now)
-    seq = _log(conn, page_id, actor, client, now, batch.applied)
+    seq = _log(conn, page_id, actor, client, now, batch.applied, batch_id=batch_id, cursor=cursor)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
               "doc_deleted": batch.doc_deleted, "chats_filed": batch.chats_filed}
@@ -733,7 +758,8 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
     produces, fanned out with the batch so peers place it against the same
     text (a standalone presence message would reach them first, in
     offsets their copy doesn't have yet). A replayed batch (``batch_id``
-    seen before) was fanned out the first time and is only answered."""
+    found in the page's log) was fanned out the first time and is only
+    answered."""
     with connect_pages_db(ws) as conn:
         result = apply_ops(conn, page_id, ops, actor=actor, client=client,
                            share_scoped=share_scoped, cursor=cursor, batch_id=batch_id)

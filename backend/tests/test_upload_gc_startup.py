@@ -61,6 +61,9 @@ def test_startup_serves_the_others_when_one_workspace_is_damaged(data_dir, monke
     monkeypatch.setattr(upload_gc, "reconcile", no_sweep)
     seq = _last_seq()
     app_mod._startup_maintenance()  # does not raise
+    # a file that cannot be read counts as behind on the workspace steps
+    # while one is pending: the background walk opens it, and says so
+    migrations.warm()
     assert any("wsbroken" in m for m in _errors_since(seq))
 
 

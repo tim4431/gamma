@@ -305,6 +305,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
     assert r.status_code == 200, r.text
     out = r.json()
     token = out["share"]["token"]
+    assert token.startswith(f"{host_ws}.")  # the share host's token, passed through whole
     assert out["url"] == f"{HOST}/?share={token}"
     assert out["share"]["audience"] == "anyone" and out["share"]["role"] == "view"
     assert out["mirror"]["ws"] == local_ws and out["mirror"]["page_filter"] == [page["id"]]

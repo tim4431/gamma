@@ -36,7 +36,7 @@ test("range open disables streaming and autofetch, keeps ranges", () => {
   assert.equal(o.disableAutoFetch, true);
   assert.equal(o.disableRange, false);
   assert.ok(o.rangeChunkSize > 0);
-  assert.equal(o.withCredentials, true);
+  assert.equal(o.withCredentials, false);
 });
 
 test("layoutFromManifest turns dims into heights/widths, with fallbacks", () => {

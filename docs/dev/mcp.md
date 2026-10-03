@@ -228,7 +228,10 @@ folder or below it.
 
 Links never grant extra MCP access. Share tokens resolve only inside the already
 authorized workspace, including restricted shares whose workspace the user can
-already read. Revoked, unknown, mismatched, or cross-workspace references fail
+already read. A token names its workspace (`<workspace id>.<secret>`,
+[api.md](api.md) "Auth model"), so one whose prefix is another workspace is
+refused before any lookup, and a link minted before schema version 32 (a bare
+secret) resolves nothing. Revoked, unknown, mismatched, or cross-workspace references fail
 without disclosing the target. URLs are never fetched; foreign origins are
 rejected. Localhost, 127.0.0.1 and ::1 are equivalent only at the same scheme and
 port. A new server address requires the corresponding connection and link.

@@ -4,6 +4,7 @@ account follows it through the real HTTP API — the engine's transport is
 an in-process TestClient carrying the write token."""
 
 import io
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -299,7 +300,15 @@ def test_a_file_missing_from_the_copy_is_fetched_again():
     _sync(local)
     path = ws_uploads_dir(local.ws) / f"{up['doc_id']}.pdf"
     assert path.is_file()
-    path.unlink()
+    # The pulled PDF's manifest walk (pdf_meta.schedule) runs on a background
+    # thread and may still hold the file open; Windows refuses the unlink
+    # until it closes.
+    for _ in range(40):
+        try:
+            path.unlink()
+            break
+        except PermissionError:
+            time.sleep(0.05)
     assert sync_engine.missing_uploads(local.ws) == {f"{up['doc_id']}.pdf"}
     status = _sync(local)  # nothing changed on either side, the file still comes back
     assert status["files_pulled"] == 1 and path.read_bytes() == PDF

@@ -27,7 +27,9 @@ fi
 # step) is left as it is: `migrate` prints what to do, `setup` is skipped,
 # and the server below starts anyway to show the same guidance at its
 # address, instead of this container exiting into a restart loop.
-if $AS_USER python manage.py migrate; then
+# --global-only: the users.db steps; each workspace's own steps run when it
+# is first opened after the upgrade (docs/dev/migrations.md).
+if $AS_USER python manage.py migrate --global-only; then
     # Idempotent: gives every account a personal workspace and repairs missing workspace files.
     # First-run accounts are the app's own job: an empty instance seeds an
     # "admin" account with a random password printed once to the container log

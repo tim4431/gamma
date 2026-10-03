@@ -1,9 +1,10 @@
 """Normalization of old data shapes inside a workspace's databases.
 
-The per-workspace files (``pages.db``, ``data.db``) carry no schema version:
-a backup restored through ``/api/import-data`` can be as old as the first
-release, and the block-content shapes below were changed without ever
-keeping a read-side shim. So the same idempotent pass runs in two places —
+A backup restored through ``/api/import-data`` can be as old as the first
+release, and one taken before the workspace stamps (``pages.db``'s
+``user_version``, gamma/migrations.py) says nothing of its age. The
+block-content shapes below were changed without ever keeping a read-side
+shim. So the same idempotent pass runs in two places —
 the ``baseline`` migration step (every existing library, once) and the
 backup restore (each imported file). Every step SQL-filters (``LIKE``) for
 the old shape first, so a clean database costs one query per step and
@@ -16,9 +17,12 @@ that may still carry the shape.
 The table shapes are the migration steps' business, except where a restored
 backup needs them as well: ``block_columns`` (step 26), ``page_changes``
 (step 27), ``pages_db_chats`` and ``block_fts`` (step 28),
-``folder_blocks`` (step 29) and ``highlight_shape`` (step 30) run in their
-step and on every restore, in the order ``ws_backup._normalize_copies``
-gives (docs/dev/migrations.md "Writing a step"). Nothing adds a column or
+``folder_blocks`` (step 29), ``highlight_shape`` (step 30) and
+``page_ops_batch_id`` (step 33) run in their step and on restore (those
+before the schema statements on a copy stamped below the base), in the
+order ``ws_backup._normalize_copies`` gives (docs/dev/migrations.md
+"Writing a step"). From step 34 on a step's workspace part is its own
+restore normalizer (migrations.WORKSPACE_STEPS). Nothing adds a column or
 fills a table on connect. The pages.db connections given to these steps
 have ``db.register_functions``.
 """
@@ -164,6 +168,26 @@ def page_changes(conn: sqlite3.Connection) -> bool:
                 "SELECT page_id, ? + ROW_NUMBER() OVER (ORDER BY deleted_at, page_id), 'deleted', deleted_at, actor "
                 "FROM deleted_pages WHERE page_id NOT IN (SELECT page_id FROM page_changes)", (last,))
             conn.execute("DROP TABLE deleted_pages")
+    return True
+
+
+def page_ops_batch_id(conn: sqlite3.Connection) -> bool:
+    """Give a pages.db from before migration step 33 the op log's batch
+    columns, in one transaction committed here: ``batch_id`` and ``cursor``
+    ('' on the rows it holds, none of which a retry is answered from) and
+    the unique index on page, client and batch id (db.PAGES_SCHEMA's
+    ``idx_page_ops_batch``). A file without an op log (a backup older than
+    it) gets the whole table from the schema statements; one that has them
+    is left as it is. Returns whether it changed the file."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(page_ops)")}
+    indexed = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_page_ops_batch'").fetchone()
+    if not have or ({"batch_id", "cursor"} <= have and indexed):
+        return False
+    with _transaction(conn):
+        for name in ("batch_id", "cursor"):
+            if name not in have:
+                conn.execute(f"ALTER TABLE page_ops ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+        conn.execute(next(s for s in PAGES_SCHEMA if s.startswith("CREATE UNIQUE INDEX IF NOT EXISTS idx_page_ops_batch ")))
     return True
 
 

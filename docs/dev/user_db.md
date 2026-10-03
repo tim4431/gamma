@@ -17,10 +17,11 @@ All state is SQLite + files on disk under a data directory (env
   schema version (`db.SCHEMA_VERSION`). Every request reads it, so it has
   WAL journal mode and the `db.BUSY_TIMEOUT_S` (10 s) busy timeout like the
   workspace databases: a reader never waits on a writer. `db.connect_users_db`
-  sets both; the session middleware's plain connections (`auth._users_db`)
-  pass the timeout too. An account is keyed by `users.id`, a random token
-  (`db.new_account_id`); its unique `username` is only the name people see
-  and sign in with ("Accounts are named by id" below). Tables:
+  sets both, and the session middleware reads it through the same cached
+  connections ("Connections" below). An account is keyed
+  by `users.id`, a random token (`db.new_account_id`); its unique
+  `username` is only the name people see and sign in with ("Accounts are
+  named by id" below). Tables:
   - `users` — accounts (`id`, `username`, bcrypt hash), the guest/admin
     flags, nullable per-user storage-limit overrides, `default_workspace`
     (the personal workspace).
@@ -50,12 +51,17 @@ All state is SQLite + files on disk under a data directory (env
     `audience` anyone/users/list and `role` view/edit; `share_users`
     (`token`, `user_id`, `role`) — the people a link invites, each with
     their own role ([api.md](api.md) "Shares");
-  - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`:
-    workspace `''` for the account-wide keys (`db.USER_PREF_KEYS`: the
+  - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
+    under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile`, the active AI provider, the AI provider entries
-    and the machine-translation keys with their secrets, the seen notices),
-    the workspace id for everything that names its pages (open
-    tabs, recents, reading positions). A value the server
+    and the machine-translation keys with their secrets, the seen notices).
+    Everything that names a workspace's pages (open tabs, recents, reading
+    positions) is kept in that workspace's pages.db (`workspace_prefs`,
+    below) from migration step 34 on. The rows here with a workspace id are
+    the copies from before it, left for the release before to read; they go
+    with their workspace, their membership and their account, and the
+    release after drops them. `db.get_pref` / `set_pref` / `update_pref`
+    pick the store by `db.pref_scope`. A value the server
     edits in part (the provider entries, the translation keys, the seen
     notices) is changed through `db.update_pref(user, key, change)`: the
     read and the write share one `BEGIN IMMEDIATE` transaction, so two
@@ -82,7 +88,8 @@ All state is SQLite + files on disk under a data directory (env
 - `jobs/` — the files background jobs produce (`<id>/artifact`, downloaded
   through `/api/jobs/{id}/download`) and the uploads they read
   (`incoming/`). Swept with their rows; not metered against any quota and
-  not part of server snapshots.
+  not part of server snapshots. They stay on the node's disk when the
+  stored files are in a bucket too ("Stored files" below).
 - `workspaces/<id>/pages.db` — the core data model: the `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
@@ -133,8 +140,11 @@ All state is SQLite + files on disk under a data directory (env
   The op log and the mirror carry `properties` alone; nothing writes `kind`
   or `doc_id`. Next to it:
   - `page_ops` — the per-page operation log: one row per applied batch,
-    `seq` counting up per page, pruned to the newest 300 rows, 24 hours and
-    2 MB of payload ([collab.md](collab.md));
+    `seq` counting up per page, with the client's name for the batch
+    (`batch_id`, unique per page and client where it is set) and the
+    writer's caret as stored (`cursor`), from which a retry is answered;
+    pruned to the newest 300 rows, 24 hours and 2 MB of payload
+    ([collab.md](collab.md));
   - `page_changes` — the workspace's change log, one row per page that
     exists or ever existed (`page_id`, `seq` unique across the workspace,
     `kind` `live` or `deleted`, `at`, `actor` an account id like the op
@@ -157,20 +167,37 @@ All state is SQLite + files on disk under a data directory (env
     export carry them with no code of their own; a page's chats go when the
     page is deleted for good (`ops.delete_page`), not while it is in
     Recently deleted; a deleted folder's are filed into `home`'s history;
+  - `workspace_prefs` — each account's prefs that name the workspace's
+    pages, per `(user_id, key)`: open tabs (`open-tabs`), recents
+    (`recent-views`), reading positions (`read-pos`), every key but the
+    account-wide ones, last write wins by `updated_at`
+    ([settings.md](settings.md)). The app's most frequent small writes,
+    kept with the workspace they are about. Private to the account: a
+    backup zip or export of the workspace has the table empty, none of its
+    bytes left (`ws_backup.PRIVATE_TABLES`), a restore keeps the live rows,
+    and an account's rows go when its membership ends or the account is
+    deleted (from the workspaces it was a member of and the public ones);
   - `block_fts` — the notes index ("The notes index" below).
 
   Open it ONLY through `db.connect_pages_db(ws)`:
   WAL journal mode (readers never wait on a writer — several browsers,
   several members), a 10 s busy timeout, the SQL function the notes
   index calls (`db.register_functions`) and the schema statements (only
-  `CREATE … IF NOT EXISTS`: no column is added on connect). A raw
+  `CREATE … IF NOT EXISTS`: no column is added on connect), all set up
+  when the connection opens ("Connections" below). The file has a version
+  of its own, its `PRAGMA user_version` (`db.workspace_version`; 0 is
+  `db.WS_VERSION_BASE`): a connection that opens one behind on a
+  workspace migration step runs the step first, after a copy of the
+  workspace's two databases, before the schema statements
+  ([migrations.md](migrations.md) rule 5). A raw
   `sqlite3.connect` that writes blocks or reads the notes index (a backup
   copy, a migration step, the Gamma export's in-memory file) registers the
   function itself. A restored backup is brought to the current shape
   before anything reads it or anything live is touched
   (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
-  migrations 26–30 in the order [migrations.md](migrations.md) "Writing a
-  step" gives). A restore never replaces the live
+  migrations 26–30 and 33 and the workspace steps above the copy's version,
+  in the order [migrations.md](migrations.md) "Writing a step" gives). A
+  restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
   `VACUUM` a pages.db: `unified_blocks` has no `INTEGER PRIMARY KEY`, so
@@ -201,10 +228,16 @@ All state is SQLite + files on disk under a data directory (env
   (`/api/upload-file`), filenames are content sha256[:24] + extension (dedup;
   a PDF the proxy or a clip cached is named by its URL's hash instead), and
   `.partial/`, where a write in progress lives until it is complete
-  ("Stored files" below).
+  ("Stored files" below). Empty when the files are kept in a bucket
+  (`GAMMA_BLOBS=s3`).
+- `cache/uploads/<id>/` — with the files in a bucket, the node's copies of
+  the ones it read lately (`GAMMA_BLOB_CACHE_DIR`), downloads in progress
+  under `.partial/`. Derived: deleting it costs only downloads.
 - `backups/<time>-<label>/` — snapshots of the whole data directory's
   databases (and, on request, the uploads): the migration runner's `v<N>`
-  ones (newest three kept once an upgrade finishes; `backups/upgrade.json`
+  ones (`users.db`, the workspaces' databases when a step walks them all,
+  and each workspace's added as its own steps run, listed in
+  `workspaces.jsonl`; newest three kept once an upgrade finishes; `backups/upgrade.json`
   names the snapshot of one that has not) and the ones admins take from
   Settings → Server or `manage.py backups`, never pruned
   ([migrations.md](migrations.md) "Backups").
@@ -220,6 +253,14 @@ All state is SQLite + files on disk under a data directory (env
 - `backups/integrity.json` — the latest failed integrity check per database
   file (`gamma/integrity.py`), what the admins' `db-damage` notice reads;
   `backups/tasks/` holds the backup tasks.
+- `backups/dbcopies.json` — with the databases copied to the bucket
+  (`GAMMA_DB_COPIES`, `gamma/db_copies.py`): the mtime and size of each
+  database and its WAL at its last copy, and this directory's first round.
+  Losing it costs one round that copies everything again.
+  `backups/.dbcopies/` holds a round's copies on their way up. The copies
+  live in the store: `<prefix>dbcopies/` in the bucket, or `dbcopies/` in
+  the data directory with the local store
+  ([debugging.md](debugging.md#database-copies-in-the-bucket)).
 
 **The notes index.** `block_fts` in pages.db is an FTS5 table with
 external content: its content is the view `block_fts_src(rowid, block_id,
@@ -284,38 +325,137 @@ names the account ("manage.py CLI" below); a
 deleted account's id is never reused, so nothing of it passes to a later
 account that takes its name.
 
-**Connections are closed deterministically.** `connect_users_db`,
-`connect_pages_db` and `connect_data_db` return `db.Connection`: its `with`
-block commits (rolls back on an exception) and then closes it. sqlite3's own
-Connection only commits there and leaves the closing to the garbage
-collector. On Windows an open handle keeps a deleted workspace's directory
-on disk and its WAL files locked. So a connection is never used after its
-`with` block, and a raw `sqlite3.connect` (a backup copy, a snapshot) is
-wrapped in `contextlib.closing`. The request handlers that open them are
-sync defs, in the threadpool ([debugging.md](debugging.md) "Gotchas worth
-knowing").
+**Connections.** `connect_users_db`, `connect_pages_db` and
+`connect_data_db` return a `db.Connection` from a cache kept per thread and
+per database file. Its `with` block commits (rolls back on an exception)
+and hands the connection back instead of closing it, so the WAL check, the
+pragmas below, the schema statements and `textnorm` (and, on a pages.db
+behind, its pending migration steps) run once per connection, not once
+per request: `with connect_pages_db(ws): pass` went
+from about 2 ms to under 20 µs on Windows (measured 2026-10). A connection
+comes back in the state a fresh one has: its cursors are closed (an
+unfinished SELECT would hold its read snapshot into the next block, which
+would then read old rows and keep checkpoints from finishing), and
+`row_factory` and the progress handler are reset. One still in a
+transaction, with a database attached, or in rollback mode is closed
+instead. A connection is never used after its `with` block. `close()`
+closes one for good, past the cache; that is how the startup pass opens
+every workspace without filling it. A raw `sqlite3.connect` (a backup copy,
+a snapshot) is wrapped in `contextlib.closing`. The request handlers that
+open connections are sync defs, in the threadpool
+([debugging.md](debugging.md) "Gotchas worth knowing").
+
+- **Per thread.** A sqlite3 connection is used by one thread at a time, and
+  AnyIO's worker threads go from one request to the next. A block that
+  opens a file while its thread's cached connection to it is in a `with`
+  block (a helper called inside one) gets a connection of its own, closed
+  at its end: sharing one would let the inner block's commit end the outer
+  block's transaction, and its rollback undo it. Connections are opened
+  with `check_same_thread=False` only so that another thread may close an
+  idle one.
+- **Bounds.** A thread keeps at most `db.CACHE_FILES_PER_THREAD` (8) idle
+  connections and the process `db.CACHE_MAX_IDLE` (128, each holding its
+  file and WAL open), the least recently used going first. One idle for
+  `db.CACHE_IDLE_S` (120 s) is closed by the next acquire on any thread or
+  by the maintenance tick, and so are the idle ones of a thread that ended.
+  Before it reuses a connection, the cache checks that the path still names
+  the file the connection opened (device and inode), so a file replaced
+  behind it is opened afresh.
+- **Removing or replacing files.** `db.close_workspace_connections(ws)`
+  closes every idle connection to a workspace's databases, whichever
+  thread's, and flags the ones in a `with` block to close at its end.
+  `workspaces.remove_files` runs it before each try of the rename and of
+  the removal, `remove_leftovers` before it removes a `.deleting-*`
+  directory, and `backups.restore` closes every connection
+  (`db.close_connections`, also run at exit) before it copies files back.
+  On Windows an open handle keeps a directory on disk and its WAL files
+  locked; elsewhere a cached connection would go on reading the old file.
+  A workspace restore (`ws_backup`) writes into the live files through
+  SQLite (an attached copy, the backup API) and needs neither. Code that
+  removes, moves or replaces a database file calls it first.
+- **Pragmas**, set once per connection beside WAL and
+  `synchronous=NORMAL`: `cache_size` 4 MiB (`db.CACHE_KIB`, twice SQLite's
+  default: at most 512 MiB over 128 idle connections, far less in practice,
+  since the cache holds only pages read since the file last changed and a
+  write by another connection empties it), `temp_store=MEMORY`,
+  `journal_size_limit` 64 MiB (`db.JOURNAL_SIZE_LIMIT`, what a WAL is cut
+  back to when it starts over), and on pages.db `mmap_size` 256 MiB
+  (`db.MMAP_BYTES`; address space, not memory: its reads come through the
+  OS's page cache instead of the connection's).
+- **Maintenance.** `gamma/db_maintenance.py`'s `tick` runs every five
+  minutes (`EVERY_S`) from the app's `every()` loop. It closes the idle
+  connections due to go (`db.evict_idle`). It truncates a WAL larger than
+  16 MB (`WAL_TRUNCATE_BYTES`) with `PRAGMA wal_checkpoint(TRUNCATE)` on a
+  connection that never waits: a writer at work or a reader on an older
+  snapshot makes it give up until the next round, rather than hold new
+  writers back. It runs `PRAGMA optimize=0x10002` (with `analysis_limit`
+  1000, `ANALYSIS_LIMIT`) on each database the cache holds a connection to
+  (`db.cached_files`), four hours (`OPTIMIZE_EVERY_S`) after this process
+  first saw it in use and every four hours after. It reads file sizes and
+  the cache and never opens every workspace, and logs one `[db]` line when
+  it truncated or optimized something.
 
 The journal mode lives in the file. A new workspace's `pages.db` and
 `data.db` are created in WAL mode (`seed.create_workspace_files`), and the
-startup pass opens every existing one. A connection reads the mode and
+startup pass opens every existing one (but a workspace behind on its
+migration steps, which the background walk after it opens). A connection
+reads the mode and
 switches a file still in rollback mode (`db._wal`), without waiting: the
 switch needs the file to itself, and SQLite answers "database is locked" at
 once while another connection has it open. A connection that cannot switch
-works in the file's mode until a later one does.
+works in the file's mode and is closed at the end of its block rather than
+cached, so a later one tries again.
 
 ## Stored files
 
 `gamma/storage.py` writes them, `gamma/upload_gc.py` keeps track of the ones
-nothing uses.
+nothing uses, and `gamma/blobs.py` is where they live.
 
-- **Written whole.** Every writer of a stored file goes through
-  `storage.write_atomic`: uploads, images, ink, imports (`storage.store_file`
-  / `store_pdf`), the PDF proxy's cache, a clip's copy, the AI chat's
-  re-download, a mirror's pull, a restore. The bytes go to a temp file in
-  `uploads/.partial/`, are flushed to disk and renamed over the name. A write
-  cut short (a full disk, a killed process) leaves nothing under the name,
-  never a truncated file that a later upload of the same bytes would take
-  for stored.
+- **The store.** One interface with two drivers, chosen at startup from
+  `GAMMA_BLOBS`. `local`, the default, needs no setting and keeps each
+  workspace's files in its `uploads/` as described below. `s3` keeps them
+  in an S3-compatible bucket (AWS, Cloudflare R2, MinIO), one object per
+  file under `<GAMMA_S3_PREFIX>uploads/<workspace>/<name>`, through boto3.
+  Only that driver imports boto3 (`requirements-s3.txt`; the Docker image
+  has it, the desktop app does not). The calls are `put`, `exists`, `size`,
+  `open_path`, `delete`, `delete_workspace`, `list` (name, size, mtime),
+  `touch`, `usage`, `url` and `sweep_partial`, and every read and write of
+  a stored file goes through them. The writers are `storage.store_pdf` /
+  `store_file` (hashed names, dedup, quota) and `storage.put_upload` (bytes
+  under a name chosen elsewhere: the proxy's cache, a clip, a mirror's
+  pull, a restore, a stripped PDF, the AI chat's re-download).
+  `storage.find_upload_file` gives a file on disk to read. The presence
+  checks, the GC's listing and purge, the quota, the backup zips, a
+  workspace's deletion and the uploads route's redirect call `blobs`
+  directly. `db.ws_uploads_dir` is the local driver's alone. Setup:
+  [debugging.md](debugging.md#stored-files-in-a-bucket).
+- **A file on disk.** pdfium, the zip writers and the PDF exporters read a
+  local file. `find_upload_file` gives the stored file itself under the
+  local driver and the node's cached copy under S3, downloading it first on
+  a miss, so the call may take a download's time. The cache
+  (`GAMMA_BLOB_CACHE_DIR`, default `<data dir>/cache/uploads`) is kept
+  under `GAMMA_BLOB_CACHE_BYTES` (default 2 GiB) by evicting the copies
+  used longest ago (each use renews a copy's mtime, which orders the cache
+  after a restart); a put leaves its bytes there, since a PDF is read again
+  at once for its manifest. One process uses a cache directory. Code
+  written against a directory of files (the exporters, `ink.read_upload`,
+  the PDF writers) gets `storage.UploadDir(ws)`, whose `/ name` is a
+  `StoredFile` read only when used, so an export that lists its files first
+  and packs them later never holds a copy the cache has evicted since.
+- **What is stored is asked of the store.** `exists` and `size` under S3
+  are a HEAD of the object, never a look at the cache (which may outlive a
+  bucket it was filled from); what this process put, fetched or saw there
+  is remembered for ten minutes, and every delete goes through the driver.
+  A dedup hit is safe either way: its re-date (`touch`) is a call to the
+  bucket, and an object gone from it is stored again.
+- **Written whole.** Every writer above goes through the store's `put`,
+  and the local driver's `put` through `storage.write_atomic`. The bytes go
+  to a temp file in `uploads/.partial/`, are
+  flushed to disk and renamed over the name. A write cut short (a full
+  disk, a killed process) leaves nothing under the name, never a truncated
+  file that a later upload of the same bytes would take for stored. An S3
+  object is written whole by the bucket; the node's copy of it goes through
+  `write_atomic` like a local file.
 - **Dedup repairs.** A dedup hit compares the sizes and rewrites a copy an
   older write left short. For a PDF only when the stored bytes are the start
   of the new ones: a PDF whose embedded annotations were stripped keeps its
@@ -332,13 +472,14 @@ nothing uses.
   `<doc_id>.pdf`). A mirror's file transfer and a page export's file list
   read references through it too.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
-  file goes, the file stays on disk and is served as before. Its name is
+  file goes, the file stays in the store and is still served. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
   later batch, a block moved to another page, an AI edit or a re-attached
   PDF brings a reference back. The writer then clears the record in its own
   transaction (`upload_gc.claim`: the op batches, `PUT
   /blocks/{id}/children`, `blocks_store.create_page`). An upload of the same
-  bytes re-dates the file (`os.utime`), which restarts both the upload grace
+  bytes re-dates the file (`blobs.touch`: `os.utime`, or the object copied
+  onto itself with new metadata), which restarts both the upload grace
   and the 30 days. It does so under the workspace's `upload_gc.guard`, the
   lock the purge holds from its check to its delete, so a re-upload lands
   either before the check (the file stays) or after the delete (the bytes
@@ -351,35 +492,52 @@ nothing uses.
   request. A batch that drops nothing (typing in a block that keeps its
   image, a folder change on a PDF page) costs nothing.
 - **The full pass.** `upload_gc.reconcile` is one scan of the blocks that
-  mention an upload, diffed against the directory listing. It runs for every
+  mention an upload, diffed against the store's listing (`blobs.list`: the
+  directory, or the bucket under the workspace's prefix). It runs for every
   workspace a minute after startup and every six hours, and catches what
   writers outside the op path (imports, a restore, a mirror) left behind. It
   records unreferenced files older than the 15-minute upload grace (an
   upload is stored before the block that names it). It clears the records
   of files that are referenced again or gone, removes day-old temp files
-  from `.partial/`, and purges. A workspace whose pages.db cannot be opened
-  is logged as an error and the pass goes on to the next.
+  from `.partial/` (the cache's, under S3), and purges. A workspace whose
+  pages.db cannot be opened is logged as an error and the pass goes on to
+  the next.
 - **The purge.** A file whose record and mtime are both more than 30 days
-  old is deleted. The references are read again under the workspace's write
-  lock first, so no batch can add one meanwhile. The purge refuses (a
+  old is deleted through the store (an object and the node's copy of it).
+  The references and the files' dates are read again under the workspace's
+  write lock first, so no batch can add one meanwhile. The purge refuses (a
   warning in the server log, nothing deleted) when the pages.db looks wrong:
   no root row, no pages, a failing `PRAGMA quick_check`, or more files at
   once than one purge may take (over 100, or over 10 and a fifth of the
   workspace's files). A restore starts the restored records' 30 days over
   (`upload_gc.restart_clocks`), so it never makes a file due at once.
+- **Elsewhere.** A workspace's deletion removes its objects with its
+  directory (`workspaces.remove_files`, `blobs.delete_workspace`; a bucket
+  out of reach then leaves them, with a warning in the log). A backup zip
+  reads the files through the store, and a restore puts the ones the
+  workspace lacks. The job artifacts (`jobs/`), the workspace snapshots
+  (`backups/workspaces/`, `backups/deleted/`) and the server snapshots stay
+  on the node's disk whatever the store. A server snapshot's "uploads"
+  copies only the `uploads/` directories, so with a bucket it copies no
+  files: the bucket is the store of record.
 
 ## Schema versions
 
 `db.py` always creates the current shape and alters nothing on connect. An
 existing data directory is brought up to it by the numbered steps in
-`gamma/migrations.py` at every server start, with a snapshot first. A
+`gamma/migrations.py`, with a snapshot first: the global ones at every
+server start (`users.db`'s `user_version` is the data directory's
+version), each workspace's own ones when it is first opened after the
+upgrade or by the background walk after startup (its `pages.db` has a
+`user_version` of its own; a new workspace is stamped current). A
 directory this build cannot upgrade (newer, or below `MIN_UPGRADABLE`) is
-not served: the server shows one page saying what to run instead. A server
-linked to Gamma Cloud reports its build and schema version there
-([cloud_accounts.md](cloud_accounts.md)). `db.connect_users_db()` raises
-`SchemaOutdated` on an old file so nothing reads it with new assumptions.
-Content normalization of a workspace's files (`gamma/normalize.py`) runs on
-every backup restore. Rules, versions, the floor and how to write a step:
+not served: the server shows one page saying what to run instead.
+`db.connect_users_db()` raises
+`SchemaOutdated` on an old file so nothing reads it with new assumptions;
+a workspace whose own step fails answers a 503 with the guidance while the
+others are served. Content normalization of a workspace's files
+(`gamma/normalize.py`) and the workspace steps above a backup's version run
+on every backup restore. Rules, versions, the floor and how to write a step:
 [migrations.md](migrations.md). A server linked to Gamma Cloud
 reports its schema version, with its build, to the account server
 ([cloud_accounts.md](cloud_accounts.md), "The server list").
@@ -460,10 +618,14 @@ missing files; creates no guest). Workspaces: `list-workspaces`,
 `create-workspace <name> <owner> [shared [public [viewer|editor]]]`, `set-member
 <ws> <user> <owner|editor|viewer|none>`, `set-access <ws> <private|public>
 [viewer|editor]`. Data directory: `migrate`
-(`--status`, `--dry-run`), `backups` (list, naming automatic and damaged
+(`--status`, `--dry-run`; `--global-only` runs the users.db steps and leaves
+each workspace's own to the server), `backups` (list, naming automatic and damaged
 ones; `--create [--uploads]`, `--delete`, `--restore`, `--prune` — the
-automatic pre-upgrade snapshots only). Every command but
-`migrate`/`backups` refuses an outdated data directory.
+automatic pre-upgrade snapshots only), `db-copies` (`--list [ws|users]`,
+`--restore <ws|users|all> [--at <stamp>]`: the database copies in the
+bucket, [debugging.md](debugging.md) "Database copies in the bucket") and
+`litestream-config [--out <path>]`. Every command but `migrate`, `backups`,
+`db-copies` and `litestream-config` refuses an outdated data directory.
 
 `rename-user` changes the account's username and nothing else that names
 it: every row, file and op log names the id. The one convention that
@@ -508,8 +670,9 @@ account stays (507).
 total quota (`quota_mb`, 0 = unlimited); server-wide defaults in the users.db
 `settings` KV, per-user overrides as nullable `users` columns (NULL = inherit,
 explicit JSON null clears). An account's limits apply to uploads into its
-PERSONAL workspaces, and its usage is their `uploads/` directories together
-— nothing anyone uploads into a shared workspace counts against a person. A
+PERSONAL workspaces, and its usage is their stored files together
+(`blobs.usage`) — nothing anyone uploads into a shared workspace counts
+against a person. A
 shared workspace is checked against the server-wide per-file cap and its
 own `workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
 Workspaces or Members & sharing). `workspace_quota(ws)` resolves the pair
@@ -517,6 +680,13 @@ that applies. `check_upload_allowed(ws, n)` hard-gates `/api/uploads`, `/api/upl
 `/api/upload-file` and the imports (413 over per-file, 507 over quota;
 already-stored hashes always pass — dedup adds no bytes); `can_store`
 soft-gates best-effort caches (proxy `save=1`, ai_context re-download).
+A check reads the usage without walking the files. `blobs.usage` lists a
+workspace once, keeps the total for a minute and adjusts it on the
+driver's own puts and deletes. The local driver also lists again once the
+directory's mtime moved (a file added or removed by anything else). The
+check runs on every stored write, an ink merge's under the workspace's
+write lock: with 2,000 files it takes 0.12 ms, where two walks of the
+directory took 48 ms (Windows, measured 2026-10).
 `GET /api/quota` = the request's workspace: the limits that apply,
 `used_bytes` (the account's total for a personal workspace, the workspace's
 own for a shared one), `workspace_bytes` (this workspace's), and `account`

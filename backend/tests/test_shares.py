@@ -128,6 +128,47 @@ def test_share_token_is_stable_per_page(bob):
     assert bob.post(f"/api/share/{other['id']}").json()["token"] != t1
 
 
+def test_a_share_token_names_its_workspace(bob, anon, monkeypatch):
+    """A token is <workspace id>.<secret> (db.share_token_workspace), so a
+    router can place share traffic by its prefix without a lookup. One of
+    another shape (the bare secret a link minted before schema version 32
+    carries), or whose prefix is not its share's workspace, is refused like
+    an unknown token and counted as a miss, on every path that reads one."""
+    from starlette.websockets import WebSocketDisconnect
+    from gamma import auth, ratelimit
+    from gamma.app import app
+    from gamma.db import connect_users_db, page_now, share_token_workspace
+    page = make_page(bob, "Placed by its prefix")
+    token = _share(bob, page["id"])["token"]
+    ws = anon.get(f"/api/share/{token}").json()["workspace_id"]
+    prefix, _dot, secret = token.partition(".")
+    assert prefix == ws and share_token_workspace(token) == ws and len(secret) == 16
+    assert share_token_workspace(_folder_share(bob, make_folder(bob, "placed"))["token"]) == ws
+    assert [share_token_workspace(t) for t in (secret, f".{secret}", f"{ws}.", f"a/b.{secret}", None)] == [None] * 5
+    # a row whose token names another workspace than its own (none is minted so)
+    stray = make_page(bob, "Stray prefix")
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_by, created_at) VALUES (?, ?, ?, '', ?)",
+                     (f"elsewhere.{secret}x", ws, stray["id"], page_now()))
+
+    monkeypatch.setattr(auth, "SHARE_MISSES_PER_5_MIN", 5)
+    ratelimit._buckets.clear()
+    try:
+        assert anon.get(f"/api/share/{secret}").status_code == 404  # an old link's bare token
+        assert anon.get(f"/api/share/elsewhere.{secret}").status_code == 404  # another workspace's prefix
+        assert anon.get(f"/api/share/elsewhere.{secret}x").status_code == 404  # the prefix is not the row's
+        assert anon.get(f"/api/blocks/{page['id']}", params={"share": secret}).status_code == 401
+        with TestClient(app) as sock_client, pytest.raises(WebSocketDisconnect):
+            with sock_client.websocket_connect(f"/api/ws/page/{page['id']}?share={secret}"):
+                pass
+        # each of the five was a miss (the socket's too): the sixth is over the limit
+        assert anon.get(f"/api/share/elsewhere.{secret}").status_code == 429
+    finally:
+        ratelimit._buckets.clear()
+    assert anon.get(f"/api/share/{token}").status_code == 200
+    assert anon.get(f"/api/blocks/{page['id']}", params={"share": token}).status_code == 200
+
+
 def test_share_requires_a_session(anon, bob):
     page = make_page(bob, "No anon sharing")
     assert anon.post(f"/api/share/{page['id']}").status_code == 401

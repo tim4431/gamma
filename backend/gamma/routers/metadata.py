@@ -28,7 +28,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage
+from .. import ai_usage, blobs
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
@@ -38,7 +38,7 @@ from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_ws
 from ..blocks_store import page_attachment, write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
-from ..db import connect_data_db, connect_pages_db, page_now, ws_uploads_dir
+from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
 from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
@@ -754,7 +754,7 @@ def metadata_status(request: Request):
                 index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     except sqlite3.OperationalError:
         pass  # index tables don't exist yet — search has never run
-    uploads = ws_uploads_dir(ws)
+    stored = {name for name, _, _ in blobs.list(ws)}  # one listing, not a lookup per paper
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
@@ -769,8 +769,7 @@ def metadata_status(request: Request):
             "title": (meta or {}).get("title") or content or "Untitled",
             "updated_at": updated_at,
             "doc_id": doc_id,
-            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id)
-                             and (uploads / f"{doc_id}.pdf").exists()),
+            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id) and f"{doc_id}.pdf" in stored),
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),

@@ -1,11 +1,22 @@
 """Versioned upgrades of the data directory.
 
-The data directory has ONE schema version, stored as ``PRAGMA user_version``
-of ``users.db`` (``db.SCHEMA_VERSION`` is what this code expects). A
-release that changes stored shapes ships a numbered step here and bumps the
-constant; the step is the whole change — moved files, rebuilt tables,
-rewritten rows — and ``db.py``'s ``CREATE TABLE`` statements always describe
-the CURRENT shape, so nothing is patched lazily on connect.
+Two stamps, one number. ``PRAGMA user_version`` of ``users.db`` is the data
+directory's schema version (``db.SCHEMA_VERSION`` is what this code
+expects); each workspace's ``pages.db`` has its own, the newest step whose
+per-workspace part has run on it (``db.workspace_version``: a file stamped
+0 is at ``db.WS_VERSION_BASE``). A release that changes stored shapes ships
+a numbered step here and bumps the constant; the step is the whole change —
+moved files, rebuilt tables, rewritten rows — and ``db.py``'s ``CREATE
+TABLE`` statements always describe the CURRENT shape, so nothing is
+patched lazily on a read.
+
+A step has a global part (``STEPS``: a function of the users.db
+connection, run at startup) and/or, from version 34 on, a workspace part
+(``WORKSPACE_STEPS``: a function of one workspace's files, run on each
+workspace when it is first opened after the upgrade, ``upgrade_workspace``;
+in a background walk after startup, ``warm``; by ``manage.py migrate``; and
+on a restored backup's copy). Steps up to the base walk every workspace
+themselves (``_each_pages_db``).
 
 The rules that keep this safe and small:
 
@@ -15,16 +26,20 @@ The rules that keep this safe and small:
   refused: the server then serves one page saying what to run instead
   (``guidance()``, gamma/app.py), and an older Gamma never opens files it
   does not understand.
-- **Backup first.** Before the first pending step every database file is
+- **Backup first.** Before an upgrade changes anything users.db — and
+  every workspace's databases when a pending step walks them — is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
-  rewrite them). An upgrade that does not finish keeps that snapshot named
-  in ``backups/upgrade.json`` and every retry reuses it, so a restart loop
-  neither piles up copies nor rotates the clean one out. Once an upgrade
-  finishes, only the newest ``backups.KEEP_BACKUPS`` automatic snapshots
-  are kept; hand-made ones are never pruned.
+  rewrite them). A workspace's own steps copy its two databases into that
+  snapshot first (``workspaces/<id>/``). An upgrade that does not finish
+  keeps that snapshot named in ``backups/upgrade.json`` and every retry
+  reuses it, so a restart loop neither piles up copies nor rotates the
+  clean one out. Once an upgrade finishes, only the newest
+  ``backups.KEEP_BACKUPS`` automatic snapshots are kept; hand-made ones are
+  never pruned.
 - **One step, one stamp.** Steps run in order; the version is stamped after
-  each one, so an interrupted upgrade resumes at the step that did not
+  each one (in users.db for a global part, in the pages.db for a workspace
+  part), so an interrupted upgrade resumes at the step that did not
   finish. Every step is written to be re-runnable (it checks what it is
   about to do).
 - **Nothing piles up.** A step is kept only while ``MIN_UPGRADABLE`` is
@@ -41,16 +56,19 @@ import json
 import re
 import shutil
 import sqlite3
-from contextlib import closing
+import threading
+import time
+from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 
 from . import backups, config
 from .blocks_store import FOLDERS, folder_by_path
-from .db import (SCHEMA_VERSION, USERS_SCHEMA, new_account_id, page_now, register_functions, safe_ws_id,
-                 users_db_version)
+from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USER_PREF_KEYS, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
+                 connect_pages_db, new_account_id, page_now, register_functions, safe_ws_id, users_db_version,
+                 workspace_ids, workspace_version, ws_dir)
 from .logbuf import log
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db, page_changes,
-                        pages_db_chats)
+                        page_ops_batch_id, pages_db_chats)
 
 # The lowest version this release upgrades from: a data directory at it
 # has had the steps up to it, and this release carries the steps after it
@@ -67,12 +85,15 @@ UPGRADE_VIA = {
 class MigrationError(RuntimeError):
     """The data directory cannot be brought to SCHEMA_VERSION by this
     process: a step failed (``step``, ``snapshot``), or one of the two
-    refusals below. ``guidance()`` turns any of them into what the person
+    refusals below. With ``workspace``, one workspace's own steps failed as
+    it opened (``upgrade_workspace``): that workspace is not served, every
+    other one is. ``guidance()`` turns any of them into what the person
     should do."""
 
     step = ""
     snapshot = ""
     version: int | None = None
+    workspace = ""
 
 
 class NewerDataError(MigrationError):
@@ -99,12 +120,27 @@ def data_version() -> int | None:
 
 
 def pending_steps(version: int) -> list:
+    """The global steps a data directory at ``version`` has still to run."""
     return [(v, name, fn) for v, name, fn in STEPS if v > version]
+
+
+def workspace_steps_after(version: int) -> list:
+    """The workspace steps a pages.db at ``version`` has still to run."""
+    return [(v, name, fn) for v, name, fn in WORKSPACE_STEPS if v > version]
+
+
+def _newest_step() -> int:
+    """The version the steps lead to (SCHEMA_VERSION, as the bump rule
+    keeps it)."""
+    return max(v for v, _, _ in STEPS + WORKSPACE_STEPS)
 
 
 def status() -> dict:
     """``{"version", "target", "fresh", "pending": [{"version", "name"}],
-    "backups": [...]}`` for the CLI and the startup line."""
+    "workspace_steps": [{"version", "name"}], "backups": [...]}`` for the
+    CLI and the startup line: the global steps still to run, and every
+    workspace step a workspace can be behind on. Cheap: it opens no
+    workspace (``workspaces_behind`` counts those, for the CLI)."""
     version = data_version()
     fresh = version is None
     pending = [] if fresh else pending_steps(version)
@@ -113,6 +149,7 @@ def status() -> dict:
         "target": SCHEMA_VERSION,
         "fresh": fresh,
         "pending": [{"version": v, "name": name} for v, name, _ in pending],
+        "workspace_steps": [{"version": v, "name": name} for v, name, _ in workspace_steps_after(WS_VERSION_BASE)],
         "backups": [b["name"] for b in backups.list_backups()],
     }
 
@@ -120,14 +157,16 @@ def status() -> dict:
 # --- the runner ---------------------------------------------------------------
 
 def ensure_current(dry_run: bool = False) -> dict:
-    """Bring the data directory to SCHEMA_VERSION. Returns ``{"from", "to",
-    "applied": [names], "backup": path | None}``. Raises ``NewerDataError``
-    / ``TooOldDataError`` (refuse to run) or ``MigrationError`` (a step
-    failed — the version stays at the last completed step; fix or restore
-    the backup and rerun)."""
+    """Bring the data directory to SCHEMA_VERSION: the global steps, then
+    users.db stamped. The workspace steps this upgrade brings run on each
+    workspace later (``upgrade_workspace``). Returns ``{"from", "to",
+    "applied": [names], "workspace_steps": [names], "backup": path |
+    None}``. Raises ``NewerDataError`` / ``TooOldDataError`` (refuse to
+    run) or ``MigrationError`` (a step failed — the version stays at the
+    last completed step; fix or restore the backup and rerun)."""
     version = data_version()
     if version is None:
-        return {"from": SCHEMA_VERSION, "to": SCHEMA_VERSION, "applied": [], "backup": None}
+        return {"from": SCHEMA_VERSION, "to": SCHEMA_VERSION, "applied": [], "workspace_steps": [], "backup": None}
     if version > SCHEMA_VERSION:
         raise _refusal(NewerDataError, version,
                        f"the data directory ({config.DATA_DIR}) is at schema version {version}, newer than "
@@ -140,14 +179,19 @@ def ensure_current(dry_run: bool = False) -> dict:
                        f"({UPGRADE_VIA['image']}) once on the same data directory first: it brings it "
                        f"to schema version {UPGRADE_VIA['schema']}.")
     pending = pending_steps(version)
-    result = {"from": version, "to": SCHEMA_VERSION, "applied": [], "backup": None}
+    result = {"from": version, "to": SCHEMA_VERSION, "applied": [],
+              "workspace_steps": [name for _, name, _ in workspace_steps_after(version)], "backup": None}
     if dry_run:
         return result
-    if not pending:
+    newest = _newest_step()
+    if version >= newest:
         if backups.unfinished_upgrade():  # stamped its last step, stopped before tidying up
             _finish_upgrade()
         return result
-    result["backup"] = _snapshot_before(version)
+    # The workspaces' files are copied up front only when a pending step
+    # walks them all (the steps up to the base); a workspace step copies its
+    # own workspace's into the same snapshot when it runs.
+    result["backup"] = _snapshot_before(version, workspaces=any(v <= WS_VERSION_BASE for v, _, _ in pending))
     log.info(f"[migrate] upgrading data directory from schema version {version} to "
              f"{SCHEMA_VERSION}; snapshot in {result['backup']}")
     for v, name, fn in pending:
@@ -165,7 +209,14 @@ def ensure_current(dry_run: bool = False) -> dict:
             raise failed from e
         result["applied"].append(name)
         log.info(f"[migrate] step {v} ({name}) done")
+    if data_version() < newest:  # the newest steps have a workspace part only
+        with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+            conn.execute(f"PRAGMA user_version = {newest}")
+            conn.commit()
     _finish_upgrade()
+    if result["workspace_steps"]:
+        log.info(f"[migrate] workspace steps {', '.join(result['workspace_steps'])} run on each workspace as it "
+                 f"is opened, and in the background")
     return result
 
 
@@ -216,6 +267,24 @@ def guidance(error: MigrationError) -> dict:
             ],
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
         }
+    if error.workspace:
+        kept = (f"A copy of its databases from before the upgrade is in {error.snapshot}, under "
+                f"workspaces/{error.workspace}/." if error.snapshot else
+                "No copy of its databases could be taken, so nothing in it was changed.")
+        return {
+            "title": "This workspace could not be upgraded",
+            "summary": (f"The upgrade of workspace {error.workspace} stopped at migration step {error.step}; it "
+                        f"is at schema version {error.version}, the last step that completed, and is not served "
+                        f"until the step succeeds. Every other workspace is served. The upgrade is tried again "
+                        f"the next time the workspace is opened."),
+            "steps": [
+                f"Read the cause in the server log: {error}",
+                "Fix it (disk space, file permissions, a damaged database) and open the workspace again, or run "
+                "`manage.py migrate` with the server stopped: the upgrade continues where it stopped.",
+                kept,
+            ],
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
+        }
     back = (f"Or go back: with the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` "
             f"restores the snapshot, then run the previous release." if error.snapshot else
             "Or go back to the previous release with the snapshot `manage.py backups` lists.")
@@ -234,12 +303,14 @@ def guidance(error: MigrationError) -> dict:
     }
 
 
-def _snapshot_before(version: int) -> str:
-    """The snapshot this upgrade rolls back to. An earlier attempt that did
-    not finish (a failed step, a crash — and a restart loop retrying it)
-    took one before it changed anything, and that one is reused: retries
-    neither pile up copies nor push the clean one out. A snapshot that
-    cannot be written stops the upgrade before any step runs."""
+def _snapshot_before(version: int, workspaces: bool) -> str:
+    """The snapshot this upgrade rolls back to: users.db, and every
+    workspace's databases when ``workspaces`` (a pending step walks them).
+    An earlier attempt that did not finish (a failed step, a crash — and a
+    restart loop retrying it) took one before it changed anything, and that
+    one is reused: retries neither pile up copies nor push the clean one
+    out. A snapshot that cannot be written stops the upgrade before any
+    step runs."""
     unfinished = backups.unfinished_upgrade()
     if unfinished:
         kept = backups.info(unfinished.get("backup") or "")
@@ -248,7 +319,7 @@ def _snapshot_before(version: int) -> str:
                      f"{unfinished.get('from')}; its snapshot {kept['name']} is kept")
             return kept["path"]
     try:
-        taken = backups.create(f"v{version}", auto=True)
+        taken = backups.create(f"v{version}", auto=True, workspaces=workspaces)
         backups.mark_upgrade({"from": version, "to": SCHEMA_VERSION, "backup": taken["name"],
                               "started_at": page_now()})
     except Exception as e:
@@ -268,9 +339,232 @@ def _finish_upgrade() -> None:
         log.warning(f"[migrate] could not prune old pre-upgrade snapshots: {e}")
 
 
+# --- per workspace --------------------------------------------------------------
+# A workspace's steps (WORKSPACE_STEPS) run when its pages.db is first
+# opened behind them (db._open_ws_db calls upgrade_workspace), in the
+# background walk after startup (``warming``), by ``manage.py migrate``
+# (``upgrade_workspaces``) and on a restored backup's copy
+# (ws_backup._normalize_copies, ``run_workspace_steps``).
+
+WARM_PAUSE_MAX_S = 1.0  # the background walk rests as long as its last workspace took, at most this
+
+_locks_guard = threading.Lock()
+_ws_locks: dict[str, threading.Lock] = {}  # per workspace: one thread runs its steps, the others wait
+_snapshot_lock = threading.Lock()
+_snapshot: tuple = ()  # (backups dir, name, the data version it holds): where the workspaces' copies go
+
+
+def _workspace_lock(ws: str) -> threading.Lock:
+    with _locks_guard:
+        return _ws_locks.setdefault(ws, threading.Lock())
+
+
+def upgrade_workspace(conn) -> None:
+    """Run the workspace steps a pages.db is behind on, as a connection
+    opens it (db._open_ws_db: the SQL functions registered, the schema
+    statements not applied yet). Under this process's lock for the
+    workspace, so a second thread opening it waits here rather than on
+    SQLite's busy timeout, and finds the version current when it reads it
+    again. A file with no tables yet (the connection created it) is
+    stamped current: the schema statements give it the current shape.
+    Otherwise the workspace's two databases are copied into the upgrade's
+    snapshot first (``_snapshot_workspace``), then the steps run
+    (``run_workspace_steps``). Raises MigrationError when the copy cannot
+    be written or a step fails: the workspace is not served (a request gets
+    a 503 with ``guidance``), every other one is, and the next open tries
+    again."""
+    ws = conn.ws
+    with _workspace_lock(ws):
+        stamp = workspace_version(conn)
+        pending = workspace_steps_after(stamp)
+        if not pending:
+            return
+        if not conn.execute("SELECT 1 FROM sqlite_master").fetchone():
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+        started = time.monotonic()
+        snapshot = _snapshot_workspace(ws, stamp, pending)
+        data_db = Path(conn._path).with_name("data.db")
+        with (closing(sqlite3.connect(str(data_db), timeout=BUSY_TIMEOUT_S)) if data_db.is_file()
+              else nullcontext()) as data:
+            run_workspace_steps(ws, conn, data, pending, snapshot=snapshot)
+        log.debug(f"[migrate] workspace {ws}: steps {', '.join(str(v) for v, _, _ in pending)} done in "
+                  f"{time.monotonic() - started:.2f} s; its files from before are in {snapshot}")
+
+
+def run_workspace_steps(ws: str, pages, data, steps, *, snapshot: str = "") -> None:
+    """``steps`` (``workspace_steps_after`` the file's version) on one
+    workspace's files, in order: each in one transaction on ``pages``, taken
+    with ``BEGIN IMMEDIATE`` (the workspace's write lock), which also
+    writes its stamp; ``data`` (the workspace's data.db, None when there is
+    none) has a transaction of its own, committed just before. A step does
+    not commit. ``ws`` is '' for a backup's copy. The version is read again
+    under the lock, so a step another process ran meanwhile is not run
+    twice. Raises MigrationError naming the step that failed, both its
+    transactions rolled back: the version stays at the last completed
+    step."""
+    for v, name, fn in steps:
+        try:
+            pages.execute("BEGIN IMMEDIATE")
+            if workspace_version(pages) >= v:
+                pages.rollback()
+                continue
+            if data is not None:
+                data.execute("BEGIN")
+            fn(ws, pages, data)
+            if data is not None:
+                data.commit()
+            pages.execute(f"PRAGMA user_version = {v}")
+            pages.commit()
+        except Exception as e:
+            pages.rollback()
+            if data is not None:
+                data.rollback()
+            where = f"workspace {ws}" if ws else "a backup's copy"
+            failed = MigrationError(
+                f"migration step {v} ({name}) failed on {where}: {e}. It is at the last completed step; "
+                f"fix the cause and open it again (or run `manage.py migrate`).")
+            failed.step, failed.snapshot, failed.workspace = f"{v} ({name})", snapshot, ws
+            failed.version = workspace_version(pages)
+            raise failed from e
+
+
+def _snapshot_workspace(ws: str, stamp: int, pending: list) -> str:
+    """Copy the workspace's databases into the upgrade's snapshot before
+    its steps run (``backups.add_workspace``: one it holds already keeps
+    its first copy); returns the snapshot's path. Raises MigrationError
+    when the copy cannot be written: nothing was changed then."""
+    try:
+        return backups.add_workspace(_upgrade_snapshot(stamp), ws)
+    except Exception as e:
+        failed = MigrationError(f"could not snapshot workspace {ws} before upgrading it: {e}. Nothing was "
+                                f"changed; free disk space (or fix the cause) and open it again.")
+        failed.step, failed.version, failed.workspace = f"{pending[0][0]} ({pending[0][1]})", stamp, ws
+        raise failed from e
+
+
+def _upgrade_snapshot(stamp: int) -> str:
+    """The snapshot a workspace at ``stamp`` is copied into: the newest
+    automatic one (the snapshot of the latest upgrade), once it holds a
+    data directory at least that new (its ``schema_version``) — restoring
+    it then gives users.db and the workspace's files of one time. When
+    there is none (deleted, or a workspace copied in behind a current data
+    directory), a new one of users.db alone is taken. Looked up once per
+    process."""
+    global _snapshot
+    with _snapshot_lock:
+        where = str(config.BACKUPS_DIR)
+        if (_snapshot and _snapshot[0] == where and _snapshot[2] >= stamp
+                and backups.backup_path(_snapshot[1]).is_dir()):
+            return _snapshot[1]
+        newest = backups.latest_auto()
+        if newest is None or (newest.get("schema_version") or 0) < stamp:
+            newest = backups.create(f"v{data_version()}", auto=True, workspaces=False)
+        _snapshot = (where, newest["name"], newest.get("schema_version") or 0)
+        return newest["name"]
+
+
+def is_behind(ws: str) -> bool:
+    """Whether the workspace's pages.db has a workspace step still to run,
+    read from its stamp without opening it for real. False at once,
+    opening nothing, while no workspace step is above WS_VERSION_BASE. A
+    file that cannot be read counts as behind: opening it says what is
+    wrong."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return False
+    path = ws_dir(ws) / "pages.db"
+    if not path.is_file():
+        return False
+    try:
+        with closing(sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_S)) as conn:
+            return bool(workspace_steps_after(workspace_version(conn)))
+    except sqlite3.Error:
+        return True
+
+
+def workspaces_behind() -> list[str]:
+    """Every workspace ``is_behind`` (``manage.py migrate --status``: one
+    read of every workspace's pages.db, so never on the startup path)."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return []
+    return [ws for ws in workspace_ids() if is_behind(ws)]
+
+
+def upgrade_workspaces(stop: threading.Event | None = None) -> dict:
+    """Open every workspace that is behind (``is_behind``), past the
+    connection cache, so its steps run (``upgrade_workspace``); returns
+    ``{"upgraded": [ids], "failed": {id: error}}``. A workspace that fails
+    is logged and the walk goes on. ``stop`` (the background walk's) makes
+    it rest after each workspace as long as that one took, at most
+    WARM_PAUSE_MAX_S, so requests keep most of the disk, and end early once
+    set."""
+    done = {"upgraded": [], "failed": {}}
+    for ws in workspace_ids():
+        if stop is not None and stop.is_set():
+            break
+        if not is_behind(ws):
+            continue
+        started = time.monotonic()
+        try:
+            connect_pages_db(ws).close()
+        except Exception as e:  # noqa: BLE001 — one workspace never stops the walk
+            done["failed"][ws] = str(e)
+            log.error(f"[migrate] workspace {ws} could not be upgraded, the others go on: {e}")
+        else:
+            done["upgraded"].append(ws)
+        if stop is not None:
+            stop.wait(min(time.monotonic() - started, WARM_PAUSE_MAX_S))
+    return done
+
+
+def warm(stop: threading.Event | None = None) -> dict:
+    """The background walk after startup: ``upgrade_workspaces``, resting
+    between workspaces, so most are upgraded before anyone opens them (the
+    first request to one that is not does it inline). Returns at once,
+    opening nothing, while no workspace step is above WS_VERSION_BASE."""
+    if not workspace_steps_after(WS_VERSION_BASE):
+        return {"upgraded": [], "failed": {}}
+    done = upgrade_workspaces(stop or threading.Event())
+    if done["upgraded"] or done["failed"]:
+        log.info(f"[migrate] background walk: {len(done['upgraded'])} workspace(s) upgraded, "
+                 f"{len(done['failed'])} failed")
+    return done
+
+
+def _warm_thread(stop: threading.Event) -> None:
+    try:
+        warm(stop)
+    except Exception:  # noqa: BLE001 — a daemon thread's error goes to the log
+        log.exception("[migrate] the background walk failed")
+
+
+@contextmanager
+def warming():
+    """While the app runs (its lifespan): ``warm`` in a daemon thread,
+    started only when a workspace step is above WS_VERSION_BASE, and told
+    to stop at shutdown (it finishes the workspace it is on; one cut off by
+    the exit rolls back and runs again at the next open)."""
+    stop = threading.Event()
+    if workspace_steps_after(WS_VERSION_BASE):
+        threading.Thread(target=_warm_thread, args=(stop,), name="migrate-warm", daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+
+
 # --- steps --------------------------------------------------------------------
-# Each step gets an open users.db connection (autocommit off) and must leave
-# the database consistent when it returns; the runner stamps the version.
+# A global step (STEPS) gets an open users.db connection (autocommit off)
+# and must leave the database consistent when it returns; the runner stamps
+# the version. From version 34 on it keeps the previous release able to
+# read users.db (columns and tables are added; a rename or a drop waits a
+# release), and it never touches a workspace's files: that is a workspace
+# step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on one workspace's
+# pages.db and data.db connections (data None when there is no data.db; ws
+# '' on a backup's copy), inside the runner's transaction (it does not
+# commit). A workspace step is also what a restored backup goes through,
+# so it is re-runnable and finds a table it changes missing on an old copy
+# (the schema statements, applied after it, create that one).
 
 def _columns(conn, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
@@ -513,14 +807,18 @@ _V25_PAGES_SCHEMA = [
 def _each_pages_db(step: str, fn, schema=_V25_PAGES_SCHEMA) -> None:
     """``fn(conn)`` on every workspace's pages.db, the ``schema`` statements
     applied first (``_V25_PAGES_SCHEMA`` unless the step says otherwise) and
-    the SQL functions registered (``db.register_functions``). A file that
-    fails — a damaged database — is logged as an error and skipped: one
-    broken library must not keep every other account's server from
-    starting. That workspace stays as it was for an admin to restore; a
-    restore from the step's snapshot needs the step run again on that
-    file."""
+    the SQL functions registered (``db.register_functions``), then the
+    file's own version raised to the step's (``step`` is ``"<version>
+    (<name>)"``), so a file the steps up to the base walked carries a
+    stamp. A file that fails — a damaged database — is logged as an error
+    and skipped: one broken library must not keep every other account's
+    server from starting. That workspace stays as it was for an admin to
+    restore; a restore from the step's snapshot needs the step run again on
+    that file. Steps from version 34 on never walk the workspaces: their
+    workspace part is a WORKSPACE_STEPS function."""
     if not config.WORKSPACES_DIR.is_dir():
         return
+    version = int(step.split(" ", 1)[0])
     for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
         pages_db = ws_root / "pages.db"
         if not ws_root.is_dir() or not pages_db.is_file() or ws_root.name.startswith("."):
@@ -531,6 +829,9 @@ def _each_pages_db(step: str, fn, schema=_V25_PAGES_SCHEMA) -> None:
                 for stmt in schema:
                     pdb.execute(stmt)
                 fn(pdb)
+                if pdb.execute("PRAGMA user_version").fetchone()[0] < version:
+                    pdb.execute(f"PRAGMA user_version = {version}")
+                pdb.commit()
         except sqlite3.Error as e:
             log.error(f"[migrate] step {step}: workspace {ws_root.name} skipped, its pages.db failed: {e}")
 
@@ -1019,6 +1320,59 @@ def _v31_session_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v32_share_token_workspace(conn: sqlite3.Connection) -> None:
+    """A share token carries its workspace, ``<workspace id>.<secret>``
+    (``db.share_token_workspace``), so a router can place share traffic by
+    the prefix without a lookup. Every token of ``shares`` without a dot
+    (the bare secret every share had until now) gains its share's workspace
+    id and a dot in front, and the ``share_users`` rows keyed by it follow,
+    in one transaction. Links sent out before this step stop opening.
+    Re-runnable: a token with a dot is left as it is."""
+    conn.execute("UPDATE share_users SET token = (SELECT s.workspace_id || '.' || s.token FROM shares s "
+                 "WHERE s.token = share_users.token) "
+                 "WHERE instr(token, '.') = 0 AND token IN (SELECT token FROM shares)")
+    conn.execute("UPDATE shares SET token = workspace_id || '.' || token WHERE instr(token, '.') = 0")
+    conn.commit()
+
+
+def _v33_page_ops_batch_id(conn: sqlite3.Connection) -> None:
+    """Every workspace's op log keeps the client's name for each batch
+    (gamma/ops.py ``apply_ops``): ``page_ops`` gains ``batch_id`` and
+    ``cursor`` ('' on the rows logged before) and the unique index on page,
+    client and batch id (gamma/normalize.py ``page_ops_batch_id``, which a
+    restored older backup goes through as well), so a retried batch is
+    answered from its row across restarts instead of from memory. No frozen
+    statements first (``schema=()``); users.db is untouched. Re-runnable: a
+    file that has them is left as it is."""
+    _each_pages_db("33 (page_ops_batch_id)", page_ops_batch_id, schema=())
+
+
+def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The prefs that name a workspace's pages (open tabs, recents, reading
+    positions: every key but ``db.USER_PREF_KEYS``) move into the workspace.
+    Its pages.db gains ``workspace_prefs`` (db.WORKSPACE_PREFS_SCHEMA), and
+    the rows users.db ``user_prefs`` holds under the workspace's id are
+    copied in through a read connection of the step's own; a row the
+    workspace has at the same or a later time is kept, so a second run
+    changes nothing and never undoes a later write. A backup's copy (``ws``
+    '') has nothing to copy: its table starts empty. users.db is not
+    written: the release before reads its rows there."""
+    pages.execute(WORKSPACE_PREFS_SCHEMA)
+    if not ws or not config.USERS_DB.is_file():
+        return
+    with closing(sqlite3.connect(str(config.USERS_DB), timeout=BUSY_TIMEOUT_S)) as users:
+        if not users.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_prefs'").fetchone():
+            return
+        account_wide = sorted(USER_PREF_KEYS)
+        rows = users.execute(
+            "SELECT user_id, key, value, updated_at FROM user_prefs WHERE workspace_id = ? "
+            f"AND key NOT IN ({', '.join('?' * len(account_wide))})", (ws, *account_wide)).fetchall()
+    pages.executemany(
+        "INSERT INTO workspace_prefs (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at "
+        "WHERE excluded.updated_at > workspace_prefs.updated_at", rows)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1032,4 +1386,14 @@ STEPS = [
     (29, "folder_blocks", _v29_folder_blocks),
     (30, "highlight_shape", _v30_highlight_shape),
     (31, "session_columns", _v31_session_columns),
+    (32, "share_token_workspace", _v32_share_token_workspace),
+    (33, "page_ops_batch_id", _v33_page_ops_batch_id),
+]
+
+# The workspace parts of the steps from version 34 on: (version, name,
+# fn(ws, pages, data)), in order; a step with a global part too has its
+# entry in STEPS under the same version and name.
+WORKSPACE_STEPS = [
+    # Next release: a global step deletes the users.db user_prefs rows whose workspace_id is not '' (34 kept them).
+    (34, "workspace_prefs", _v34_workspace_prefs),
 ]

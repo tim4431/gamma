@@ -320,6 +320,40 @@ def test_prefs_follow_account_and_workspace(ann, lab):
     assert ann.get("/api/prefs/profile", headers=_in(mine)).json()["value"]["theme"] == "dark"
 
 
+def _prefs_in(ws):
+    """The workspace's ``workspace_prefs`` rows, as {(account id, key)}."""
+    from gamma.db import connect_pages_db
+    with connect_pages_db(ws) as conn:
+        return set(conn.execute("SELECT user_id, key FROM workspace_prefs"))
+
+
+def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
+    # removed by an owner or leaving: the account's tabs, recents and reading
+    # positions in that workspace go (and their copies from before step 34
+    # in users.db); everyone else's stay
+    from gamma.db import connect_users_db, page_now
+    room = boss.post("/api/workspaces", json={"name": "Prefs room", "kind": "shared", "owner": "ws_ann"}).json()["id"]
+    a, b = account_of("ws_ann"), account_of("ws_ben")
+    assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "editor"}).status_code == 200
+    for client in (ann, ben):
+        assert client.put("/api/prefs/open-tabs", json={"value": ["t"]}, headers=_in(room)).status_code == 200
+    assert ben.put("/api/prefs/read-pos", json={"value": {"d": 1}}, headers=_in(room)).status_code == 200
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO user_prefs VALUES (?, ?, 'recent-views', '[]', ?)", (b, room, page_now()))
+    assert _prefs_in(room) == {(a, "open-tabs"), (b, "open-tabs"), (b, "read-pos")}
+
+    assert ann.delete(f"/api/workspaces/{room}/members/ws_ben").status_code == 200
+    assert _prefs_in(room) == {(a, "open-tabs")}
+    with connect_users_db() as conn:
+        assert not conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ? AND workspace_id = ?", (b, room)).fetchone()
+    assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "viewer"}).status_code == 200
+    assert ben.get("/api/prefs/open-tabs", headers=_in(room)).json()["value"] is None
+    assert ben.put("/api/prefs/open-tabs", json={"value": ["again"]}, headers=_in(room)).status_code == 200
+    assert ben.delete(f"/api/workspaces/{room}/members/ws_ben").json()["left"] is True
+    assert _prefs_in(room) == {(a, "open-tabs")}
+    assert boss.delete(f"/api/workspaces/{room}").status_code == 200
+
+
 def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
     """An account's usage is its personal workspace's uploads, nothing else;
     a shared workspace has its own optional quota that admins set."""
@@ -461,6 +495,14 @@ def test_deleting_an_account_keeps_workspaces_with_other_owners(boss):
     solo = eve.post("/api/workspaces", json={"name": "Eve solo"}).json()["id"]  # a second personal one
     duo = boss.post("/api/workspaces", json={"name": "Eve+Fay", "kind": "shared", "owner": "ws_eve"}).json()["id"]
     assert eve.put(f"/api/workspaces/{duo}/members/ws_fay", json={"role": "owner"}).status_code == 200
+    # the account's prefs in the workspaces that stay: one it is a member
+    # of, and a public one it only reads
+    hall = boss.post("/api/workspaces", json={"name": "Eve's hall", "kind": "shared", "access": "public",
+                                              "public_role": "viewer"}).json()["id"]
+    for client, ws in ((eve, duo), (fay, duo), (eve, hall)):
+        assert client.put("/api/prefs/open-tabs", json={"value": ["t"]}, headers=_in(ws)).status_code == 200
+    e, f = account_of("ws_eve"), account_of("ws_fay")
+    assert _prefs_in(duo) == {(e, "open-tabs"), (f, "open-tabs")} and (e, "open-tabs") in _prefs_in(hall)
     personal = workspace_of("ws_eve")
     r = boss.delete("/api/admin/users/ws_eve")
     assert r.status_code == 200, r.text
@@ -469,3 +511,5 @@ def test_deleting_an_account_keeps_workspaces_with_other_owners(boss):
     assert workspaces.get(duo) and workspaces.role_of(duo, account_of("ws_fay")) == "owner"
     assert workspaces.get(solo) is None and workspaces.get(personal) is None
     assert fay.get("/api/blocks/root/children", headers=_in(duo)).status_code == 200
+    assert _prefs_in(duo) == {(f, "open-tabs")} and not {row for row in _prefs_in(hall) if row[0] == e}
+    assert boss.delete(f"/api/workspaces/{hall}").status_code == 200

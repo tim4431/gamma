@@ -131,7 +131,8 @@ GAMMA_DATA_DIR/
   users.db                 accounts, sessions, workspaces, memberships,
                            page shares and account preferences
   workspaces/<id>/
-    pages.db               blocks, the op and change logs, AI chats, notes index
+    pages.db               blocks, the op and change logs, AI chats, notes index,
+                           each account's tabs, recents and reading positions
     data.db                derived only: PDF text index, PDF manifests, covers
     uploads/               PDFs, images and other attachments
 ```
@@ -145,7 +146,9 @@ pages, only editors and owners change them (a viewer's chat and covers stay
 in its browser tab). AI keys, provider choice and the preference profile
 (appearance, reading, library and chat settings, [settings.md](settings.md))
 belong to the account. Open tabs, recents, reading positions and saved
-layouts belong to an **account and workspace**.
+layouts belong to an **account and workspace**; the server keeps the
+first three in the workspace's pages.db (`workspace_prefs`), and an
+account's go when it leaves the workspace or is deleted.
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
 not restored because their owner is unknown.
@@ -276,7 +279,10 @@ or merges the databases, and not after (`restore_zip`'s `progress`,
 [tasks.md](tasks.md)).
 
 Exports transfer library content. Passwords, sessions and private AI
-credentials stay with the account.
+credentials stay with the account, and so do each account's open tabs,
+recents and reading positions: a zip's pages.db has `workspace_prefs`
+empty, none of its bytes left (`ws_backup.PRIVATE_TABLES`), and a restore
+keeps the live rows.
 
 A snapshot copies the databases first (the SQLite backup API) and lists the
 uploads only after that, so every file the copied pages name is on disk when
@@ -364,6 +370,7 @@ no copy is kept of a delete that did not happen. A guest's workspace keeps
 no copy. The directory is then renamed to `.deleting-<id>-…` (atomic, so a
 background pass about to open one of its databases finds none instead of
 creating a fresh file in a half-removed directory) and removed, each step
+closing the server's own cached connections to the workspace first and
 retried for a second while a file is held open (Windows). What still stays
 is removed at the next startup or hourly (`workspaces.remove_leftovers`); a
 dot-named directory is never taken for a workspace. Its open page sockets

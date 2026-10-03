@@ -26,6 +26,24 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+S3_TEST_BUCKET = "gamma-test"
+
+
+@pytest.fixture
+def s3_bucket():
+    """moto's in-process S3 with one empty bucket, ``S3_TEST_BUCKET``, for the
+    S3 driver's tests (gamma/blobs.py, gamma/db_copies.py): the raw boto3
+    client, live for the test. Skipped where moto is not installed."""
+    moto = pytest.importorskip("moto")
+    with moto.mock_aws():
+        import boto3
+
+        raw = boto3.client("s3", region_name="us-east-1", aws_access_key_id="testing",
+                           aws_secret_access_key="testing")
+        raw.create_bucket(Bucket=S3_TEST_BUCKET)
+        yield raw
+
+
 @pytest.fixture(autouse=True)
 def _quick_approvals(monkeypatch):
     """A chat test whose tool call waits on an approval nobody answers gives
@@ -309,7 +327,6 @@ def data_dir(tmp_path, monkeypatch):
     caches a data-directory path is pointed at it, so the suite's shared one
     is never touched. The app is built on the suite's directory first."""
     import gamma.app  # noqa: F401
-    import gamma.auth as auth_mod
     import gamma.db as db_mod
     import gamma.seed as seed_mod
     import gamma.workspaces as ws_mod
@@ -322,7 +339,6 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(auth_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(seed_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     monkeypatch.setattr(ws_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     return tmp_path

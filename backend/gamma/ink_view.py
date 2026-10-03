@@ -13,10 +13,10 @@ draws when it renders. ``pdf_text.render_page`` rasterizes either.
 
 from . import ink as inkmod
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
-from .db import ws_uploads_dir
 from .logbuf import log
 from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_text_boxes, sheets_of
 from .pdf_text import RENDER_MAX_SIDE, render_page
+from .storage import UploadDir
 
 # A cropped picture's margin around the handwriting (points, or a tenth of
 # its larger side) and the least it shows of each side of the page, so one
@@ -65,7 +65,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
     if block is None:
         return {"error": "error: no such block on that page"}
     props = block["properties"]
-    uploads = ws_uploads_dir(ws)
+    uploads = UploadDir(ws)
 
     def load(b):
         url = b["properties"].get("ink_url")

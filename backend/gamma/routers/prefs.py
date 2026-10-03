@@ -1,13 +1,15 @@
-"""Per-account UI preferences: a tiny JSON key-value store in users.db
-(``user_prefs``).
+"""Per-account UI preferences: a tiny JSON key-value store.
 
 Lets browser state that should follow the account (open tabs, ...) sync
 across devices: last write wins, `updated_at` tells clients whether the
 stored copy is newer than what they have. Most keys are stored per account
-AND workspace (open tabs name that workspace's pages); the keys in
-``db.USER_PREF_KEYS`` (the preference profile, the AI provider entries)
-follow the account everywhere. Session-only — share links never read or
-write prefs. Values are opaque JSON blobs; keep them small.
+AND workspace (open tabs name that workspace's pages), in the request's
+workspace's pages.db (``workspace_prefs``, which no export of the
+workspace carries); the keys in ``db.USER_PREF_KEYS`` (the preference
+profile, the AI provider entries) follow the account everywhere, in
+users.db (``user_prefs``). ``db.get_pref`` / ``set_pref`` pick the store.
+Session-only — share links never read or write prefs. Values are opaque
+JSON blobs; keep them small.
 
 `profile` holds every account-scoped setting of the web app as one object
 keyed by preference name (``db.get_profile`` / ``db.set_profile``); the
@@ -26,9 +28,10 @@ generic endpoints must never serve it raw. The same goes for
 and `search-services` (the web search and OpenAlex keys,
 /api/ai/search-services).
 
-Every endpoint here is a sync def: they read and write users.db (and
-data.db for the covers), which may wait on another connection's write lock
-— FastAPI's threadpool keeps the event loop free meanwhile.
+Every endpoint here is a sync def: they read and write users.db or the
+workspace's pages.db (and data.db for the covers), which may wait on
+another connection's write lock — FastAPI's threadpool keeps the event loop
+free meanwhile.
 
 Also here: /api/page-snaps — the recents-card cover thumbnails (small JPEG
 data URLs the client captures from the rendered viewer). Same "UI state that

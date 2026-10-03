@@ -12,6 +12,11 @@ python manage.py setup          # idempotent: missing personal workspaces + work
 uvicorn app:app --host 127.0.0.1 --port 9001 --reload
 ```
 
+The requirements install uvicorn with its standard extras, so its automatic
+choices take httptools for HTTP and, on Linux and macOS, uvloop for the event
+loop (pip skips uvloop on Windows by its platform marker); `--reload` watches
+with watchfiles. No command names them.
+
 Frontend (React + Vite):
 
 ```bash
@@ -25,7 +30,7 @@ First run: the app seeds an `admin` account with a random password printed
 once to the console (only while zero non-guest accounts exist). User CRUD
 also via `python manage.py` (create-user, set-password, set-admin,
 rename-user, delete-user, list-users, list-workspaces, set-member,
-sweep-guests, migrate, backups).
+sweep-guests, migrate, backups, db-copies, litestream-config).
 
 Docker:
 
@@ -33,6 +38,222 @@ Docker:
 docker build -t gamma .
 docker run -p 9001:9001 -v gamma-data:/data ghcr.io/tim4431/gamma
 ```
+
+### Serving the build
+
+`npm run build` writes a Brotli and a gzip copy beside each compressible file
+in `dist/` ([pdf_loading.md](pdf_loading.md), "The worker"). Wherever the
+backend serves the build (`GAMMA_STATIC_DIR`: the Docker image, the desktop
+app, a manual install) it sends the copy a request accepts, so a reverse
+proxy in front of it needs no compression of its own for those files. A
+proxy that serves `dist` itself, passing only `/api` (with its WebSockets) to
+the backend, sends the copies with Caddy's `file_server { precompressed br
+gzip }` or nginx's `brotli_static on; gzip_static on;` (`brotli_static` comes
+with the ngx_brotli module). It then also owns the backend's other static
+rules: `index.html` for any path that is no file, `/assets/*` cached
+`public, max-age=31536000, immutable`, everything else `no-cache`.
+
+### Stored files in a bucket
+
+By default a workspace's files are kept in its `uploads/` and nothing needs
+setting. `GAMMA_BLOBS=s3` keeps them in an S3-compatible bucket instead
+(AWS S3, Cloudflare R2, MinIO; `gamma/blobs.py`, [user_db.md](user_db.md)
+"Stored files"). It needs boto3: the Docker image installs
+`requirements-s3.txt` beside `requirements.txt` (about 23 MB, most of it
+botocore's service models), and a checkout runs `pip install -r
+requirements-s3.txt`. The variables, read at startup:
+
+- `GAMMA_S3_BUCKET` (required), `GAMMA_S3_ENDPOINT` (unset for AWS; R2's
+  `https://<account>.r2.cloudflarestorage.com`, MinIO's address; a bucket
+  behind its own endpoint is addressed by path), `GAMMA_S3_REGION` (R2:
+  `auto`), `GAMMA_S3_ACCESS_KEY` and `GAMMA_S3_SECRET_KEY` (both unset:
+  boto3's own chain, the `AWS_*` variables or an instance role),
+  `GAMMA_S3_PREFIX` (put before every key, for a bucket several servers
+  share: `<prefix>/uploads/<workspace>/<name>`). The key must be allowed to
+  list, read, write and delete under the prefix.
+- `GAMMA_BLOB_CACHE_DIR` (default `<data dir>/cache/uploads`) and
+  `GAMMA_BLOB_CACHE_BYTES` (default 2147483648): the node's copies of the
+  files it reads itself (the manifest walk, text extraction, exports,
+  backups), the ones used longest ago evicted past the cap.
+- `GAMMA_S3_PRESIGN` (default on): the uploads route answers a browser with
+  a 302 to a presigned URL, so the bucket serves the bytes; `0` streams
+  them through the node from its cache instead, and the bucket needs no
+  CORS.
+
+A server that cannot use the bucket (no bucket of that name, no
+credentials, a key refused, an endpoint out of reach, a cache directory it
+cannot create) logs the reason and does not start. The check is one
+listing of the bucket, made at startup before the data directory is
+upgraded (`blobs.check`, from `app.create_app`). The job artifacts
+(`jobs/`) and the backup zips stay on the node's disk. Moving an existing
+data directory's files into a bucket is not automated: copy each
+`workspaces/<id>/uploads/<name>` to `<prefix>/uploads/<id>/<name>` before
+switching.
+
+With presigning on, the browser follows the redirect to the bucket's
+origin. The redirected request keeps the `X-Gamma-Workspace` header that
+the client's fetch wrapper adds, so the browser sends a preflight first,
+and pdf.js reads the range headers. The bucket's CORS rule:
+
+```json
+[{
+  "AllowedOrigins": ["https://gamma.example.org"],
+  "AllowedMethods": ["GET", "HEAD"],
+  "AllowedHeaders": ["*"],
+  "ExposeHeaders": ["Content-Range", "Accept-Ranges", "Content-Length", "ETag"],
+  "MaxAgeSeconds": 3600
+}]
+```
+
+`AllowedOrigins` may be `*` or the app's own origins. The viewer's PDF
+reads (the whole-file fetch, the HEAD, pdf.js's range requests, the proxy
+probe) use same-origin credentials. The session cookie still reaches the
+server, and the redirected request reaches the bucket without credentials,
+which a plain CORS answer allows: nothing requires
+`Access-Control-Allow-Credentials`. `GAMMA_S3_PRESIGN=0` keeps the bytes
+on the server's path for a store whose CORS cannot be set.
+
+#### Database copies in the bucket
+
+With a bucket, the databases are copied there too, so a lost disk costs at
+most one interval of work. `gamma/db_copies.py` runs a round from the
+app's `every()` loop at startup and then at each interval. The round copies
+users.db and each workspace's pages.db and data.db through the store's
+object calls (`blobs.put_object`, `get_object`, `list_objects`,
+`delete_object`), which keep whole files in a namespace of their own
+beside `uploads/`. The variables (the interval is read at startup, the
+others at each round):
+
+- `GAMMA_DB_COPIES`: on by default with `GAMMA_BLOBS=s3`, off with the files
+  local. Turned on with the local store, the copies go to
+  `<data dir>/dbcopies/` on the same disk. That is for trying the feature
+  out and for tests, not a backup.
+- `GAMMA_DB_COPIES_INTERVAL`: seconds between rounds (default 3600, at
+  least 60). `GAMMA_DB_COPIES_KEEP`: copies kept per database (default 7).
+
+The keys are `<prefix>dbcopies/users/<stamp>.db` and
+`<prefix>dbcopies/<workspace>/<stamp>-pages.db` / `-data.db`. `<stamp>` is
+the round's UTC time, such as `20261003T140000Z`, and is the same for every
+copy the round takes.
+
+- **A copy.** Each database is copied with the SQLite backup API into
+  `backups/.dbcopies/`, which is consistent while the server writes. The
+  copy is quick-checked, uploaded (boto3 sends it in parts past 8 MB) and
+  then deleted. A copy that fails its check is not uploaded: the log gets a
+  warning, the admins get the `db-damage` notice, and the next round tries
+  again. A failed upload is logged and the round goes on with the other
+  databases.
+- **Only what changed.** The round compares the mtime and size of each
+  file and of its WAL with what they were at its last copy, which
+  `backups/dbcopies.json` records. That is two stats per database, without
+  opening it. Before a copy, a WAL with frames in it is checkpointed and
+  truncated if nothing holds it (the maintenance tick's checkpoint, which
+  never waits). The server folding the WAL into the file later, as its last
+  connection closes, then does not count as a change. users.db changes
+  with every sign-in, so it is copied in most rounds. Measured 2026-10 on
+  Windows: with 1,000 empty workspaces (2,001 databases), a round that finds
+  nothing changed takes about 120 ms. The first round, which copies all of
+  them to the local store, takes about 25 s.
+- **The log.** A round writes one `[dbcopies]` line when it copied or
+  failed something, as a warning when something failed.
+- **Pruning.** After a round copies a database, the copies past the newest
+  `GAMMA_DB_COPIES_KEEP` are removed. A data directory never removes copies
+  older than its own first round. So a server started on an empty volume (a
+  lost disk, restarted before anyone restored it) copies its fresh users.db
+  without pushing out the copies of the lost one. A restore makes the older
+  copies the directory's own, and pruning goes on as usual.
+- **What the copies leave out.** The copies of a deleted workspace stay in
+  the bucket; remove `dbcopies/<id>/` by hand or with a lifecycle rule. The
+  stored files are in the bucket already. `publisher-sessions.key` in the
+  data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied. It
+  encrypts the saved AI keys, the Gamma Cloud grants, the mirrors' tokens
+  and the publisher sessions in users.db, so keep it somewhere else, or a
+  restored server cannot read those. Two servers that share a bucket need a
+  `GAMMA_S3_PREFIX` each.
+
+**Restore**, with the server stopped. `manage.py db-copies --list` shows
+each database's copies (how many, the newest), and `--list <workspace>` or
+`--list users` lists every copy of one. Then run `manage.py db-copies
+--restore <workspace|users|all> [--at <stamp>]`. `all` restores users.db
+and every workspace the bucket holds copies of, which is the way back
+after a lost disk. Each database gets its newest copy, or with `--at` its
+newest copy from that round or earlier. Because a database is copied
+whenever it changes, that is what it held at that round. A workspace's
+data.db without such a copy is left as it is, since everything in it is
+rebuilt. The command refuses, changing nothing, in these cases:
+
+- users.db or a database it would replace is open, which an exclusive open
+  detects: a running server holds the files it used lately.
+- A download fails its quick check. Every copy is downloaded beside its
+  database first.
+- Without `--at`, a database has copies from both before and after this
+  data directory's first round. Then a server ran on an empty disk, and its
+  own copies are the newest. The message names the `--at` that takes the
+  newest copy from before.
+
+Then each database in place is moved aside with its WAL, as
+`<name>.pre-restore-<time>`, and the copy takes its name. A restored
+pages.db's unreferenced-file clocks start over, as with a server backup.
+Start the server; it migrates a copy older than this Gamma. Delete the
+`.pre-restore-` files once the restored server works. In Docker:
+
+```bash
+docker compose stop gamma
+docker compose run --rm --no-deps --entrypoint python gamma manage.py db-copies --list users
+docker compose run --rm --no-deps --entrypoint python gamma manage.py db-copies --restore all
+docker compose start gamma
+```
+
+The server backups (`manage.py backups --restore`,
+[migrations.md](migrations.md#backups-gammabackupspy)) are a different
+thing: whole-directory snapshots on the node's own disk.
+
+#### Litestream
+
+Litestream streams each database's WAL to a bucket within seconds of a
+write. The scheduled copies above are the simpler default; choose
+Litestream when seconds of loss matter. It runs beside Gamma, not in the
+image. `manage.py litestream-config [--out <path>]` writes a
+`litestream.yml` (Litestream 0.5 or later, one `replica` per database) for
+the bucket the `GAMMA_S3_*` variables name. It has an entry for users.db
+and for each workspace's pages.db and data.db that exist, replicated to
+`<prefix>litestream/users.db` and `<prefix>litestream/<workspace>/<name>`.
+The keys are not written into the file: it names `${GAMMA_S3_ACCESS_KEY}`
+and `${GAMMA_S3_SECRET_KEY}`, which Litestream expands from its own
+environment. Write the file inside the container, so its paths are the
+container's:
+
+```bash
+docker exec gamma python manage.py litestream-config --out /data/litestream.yml
+```
+
+Run Litestream as a sidecar on the same volume, at the same path, with
+the same keys (docker-compose.yml.example has the service, commented
+out):
+
+```yaml
+  litestream:
+    image: litestream/litestream
+    command: replicate -config /data/litestream.yml
+    volumes:
+      - gamma-data:/data
+    environment:
+      GAMMA_S3_ACCESS_KEY: ...
+      GAMMA_S3_SECRET_KEY: ...
+    restart: unless-stopped
+```
+
+Litestream does not watch its configuration. Run the command again and
+restart the sidecar (`docker compose restart litestream`) whenever a
+workspace is added or deleted; a workspace created since is not
+replicated until then. Litestream 0.5 can also follow a directory itself
+(`dir:` with `watch: true`), which this command does not write. To
+restore, stop Gamma and Litestream, move the database and its `-wal` and
+`-shm` aside (Litestream does not write over an existing file), and run
+`docker compose run --rm litestream restore -config /data/litestream.yml
+/data/workspaces/<id>/pages.db` for each file. The copies and Litestream can
+run together, under `dbcopies/` and `litestream/`; `GAMMA_DB_COPIES=0` turns
+the copies off.
 
 ## Tests
 
@@ -505,23 +726,34 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   40, 45 slow PDF-proxy downloads in flight made a PDF range read time out.
   Each account's AI calls open at once are capped too ([ai.md](ai.md)
   "Calls open at once").
-- A connection is closed when its `with` block ends: the `db.connect_*`
-  helpers return `db.Connection`, whose `__exit__` commits (or rolls back)
-  and then closes. sqlite3's own only commits and leaves the closing to the
-  garbage collector, and on Windows an open connection keeps a deleted
-  workspace's directory on disk. Never use a connection after its `with`
-  block, and close a raw `sqlite3.connect` with `contextlib.closing`.
-  `tests/test_db_connections.py` runs with the collector off.
+- A connection outlives its `with` block, in a cache kept per thread and
+  database file: the `db.connect_*` helpers return `db.Connection`, whose
+  `__exit__` commits (or rolls back), closes the block's cursors and hands
+  the connection back ([user_db.md](user_db.md) "Connections"). Never use a
+  connection or a cursor after its `with` block, and close a raw
+  `sqlite3.connect` with `contextlib.closing`. On Windows an open handle
+  keeps a workspace's directory on disk, so code that removes, moves or
+  replaces a database file first calls `db.close_workspace_connections(ws)`
+  (`workspaces.remove_files` does). `tests/test_db_connections.py` checks,
+  with the garbage collector off, that requests leave nothing open outside
+  the cache, that the number open stays bounded, and that a deleted
+  workspace leaves no handle behind.
 - All state is SQLite + files under the data dir (`GAMMA_DATA_DIR`, default
   the repo's `data/`): global `users.db` (accounts, workspaces, memberships,
-  shares, personal prefs), per-workspace `workspaces/<id>/pages.db`,
+  shares, account-wide prefs), per-workspace `workspaces/<id>/pages.db`,
   `data.db`, `uploads/`. Safe to inspect with any SQLite client while the
   server runs; on Windows, open handles lock the directory (matters for the
   migration's moves — stop the server before `manage.py migrate`).
 - The server upgrades the data directory at startup (`gamma/migrations.py`,
-  snapshot first, log line `[migrate]`) and refuses to start on a directory
-  written by a newer Gamma — [migrations.md](migrations.md). `python
-  manage.py migrate --status` says where a directory stands.
+  snapshot first, log line `[migrate]`). A directory written by a newer
+  Gamma is not served: every address shows the guidance page instead
+  ([migrations.md](migrations.md) rule 3). A workspace's own steps run
+  when it is first opened after the upgrade, or in the background walk
+  after startup. A request that opens it waits for them, and one whose
+  step failed answers a 503 `workspace_not_upgradable` with the guidance
+  while every other workspace is served. `python manage.py
+  migrate --status` says where a directory stands, with how many
+  workspaces are behind.
 - Every API call names its workspace (`X-Gamma-Workspace` header from the
   fetch wrapper, `?ws=` on the websocket and in URLs); a 403 "not a member"
   on an otherwise fine request means the tab's workspace is not the one you

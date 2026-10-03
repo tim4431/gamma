@@ -209,13 +209,18 @@ def test_merge_skips_pages_with_same_doc_id(mdonor, mreceiver):
 
 
 def test_merge_never_touches_prefs(mdonor, mreceiver):
-    from gamma.db import get_pref, set_pref
+    # the tabs live in each workspace's pages.db (workspace_prefs): the
+    # donor's export carries none, and the receiver's stay
+    from conftest import workspace_of
+    from gamma.db import connect_pages_db, get_pref, set_pref
 
-    receiver = account_of("mreceiver")
-    set_pref(account_of("mdonor"), "open-tabs", ["donor-tab"])
-    set_pref(receiver, "open-tabs", ["receiver-tab"])
+    donor, receiver = account_of("mdonor"), account_of("mreceiver")
+    set_pref(donor, "open-tabs", ["donor-tab"], workspace_of("mdonor"))
+    set_pref(receiver, "open-tabs", ["receiver-tab"], workspace_of("mreceiver"))
     backup = mdonor.get("/api/export")
     r = mreceiver.post("/api/import-data?mode=merge",
                        files={"file": ("b.zip", backup.content, "application/zip")})
     assert r.status_code == 200, r.text
-    assert get_pref(receiver, "open-tabs")[0] == ["receiver-tab"]
+    assert get_pref(receiver, "open-tabs", workspace_of("mreceiver"))[0] == ["receiver-tab"]
+    with connect_pages_db(workspace_of("mreceiver")) as conn:
+        assert conn.execute("SELECT user_id FROM workspace_prefs").fetchall() == [(receiver,)]

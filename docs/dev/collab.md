@@ -34,7 +34,9 @@ SQLite is the source of truth; there is no OT or CRDT. Concurrent edits of
 one block's text are reconciled by a stateless three-way merge at apply
 time (`gamma/textmerge.py`, below).
 Presence is temporary: standalone cursor messages and optional cursors on
-operation batches are broadcast but never written to the operation log.
+operation batches are broadcast, not logged. The one exception is a named
+batch's caret, kept on its row of the operation log only so that a retry
+gets the same answer ("Ops" below).
 
 ## Ops (`gamma/ops.py`)
 
@@ -122,17 +124,21 @@ the request ([user_db.md](user_db.md) "Stored files"). The data.db purge
 when a deleted block carried a PDF.
 
 A batch may carry `batch`, the client's id for it, the same on every retry.
-The answer to a batch this process already applied for that client is kept
-in memory (`_replays`: at most `REPLAY_KEEP` answers for `REPLAY_TTL`
-seconds each, holding seq, time and caret; the ops are read back from the
-log). A retry gets that answer instead of being applied twice, which the
-three-way merge would otherwise do to the same keystrokes. The lookup and
-the store happen under the batch's write lock. A restart forgets the
-answers; a retry after one is applied again, which the create-if-absent
-insert and the merge's "already the text" rule make mostly harmless. An
-offline copy names its pushes the same way and keeps the ids in its state
-until the answer is read, sending again only what the remote does not
-show yet ([mirror.md](mirror.md) "Rounds cut short").
+The batch's row of the op log keeps the id (`batch_id`) and the writer's
+caret as stored, remapped by a merge (`cursor`), one row per page, client
+and id ("The op log" below). A retry looks that row up first thing under
+the batch's write lock and gets the first attempt's answer from it (seq,
+time, actor, the ops as applied, the caret) instead of being applied
+twice, which the three-way merge would otherwise do to the same
+keystrokes. Nothing is fanned out or derived again. The
+answer is in the database, so it survives a restart. The limit is pruning:
+once the log has dropped the row, a retry is applied again, which the
+create-if-absent insert and the merge's "already the text" rule make
+mostly harmless. A refused batch writes no row, so the same id, fixed and
+sent again, applies. An offline copy names its pushes the same way and
+keeps the ids in its state until the answer is read, sending again only
+what the remote does not show yet ([mirror.md](mirror.md) "Rounds cut
+short").
 
 `apply_ops(conn, page_id, ops, actor=, client=, share_scoped=, cursor=, batch_id=)` applies and
 commits; `after_commit(ws, conn, result)` does the derived-data work and
@@ -181,7 +187,7 @@ spot.
 
 ## The op log
 
-`page_ops(page_id, seq, actor, client, at, ops)` in each workspace's `pages.db`
+`page_ops(page_id, seq, actor, client, at, ops, batch_id, cursor)` in each workspace's `pages.db`
 (`db.PAGES_SCHEMA`), one row per applied batch, `seq` counting up per page
 (the write lock is taken up front with `BEGIN IMMEDIATE`, so it never
 collides). `actor` is the id of the account that made the change (a share
@@ -194,7 +200,13 @@ feed carry it as stored. `client` the tab's id, `"ai"` (the agent's tools), `"re
 user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
 "Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a
-page can cause, [paper_metadata.md](paper_metadata.md)).
+page can cause, [paper_metadata.md](paper_metadata.md)). `batch_id` is the
+client's name for the batch and `cursor` its caret as stored (JSON); both
+are `''` on a batch without a name, which covers every server-side writer
+(`record_ops`, `log_reload`, `apply_batches` and the rest). A partial
+unique index (`idx_page_ops_batch`, where `batch_id != ''`) allows one row
+per page, client and id. The catch-up below returns neither column: an old
+batch's caret would place a peer who may have left.
 
 A `set` logs the block's whole text, so typing in one long block writes that
 text once per flush. The log is therefore bounded three ways per page:
@@ -202,7 +214,9 @@ text once per flush. The log is therefore bounded three ways per page:
 payload (2 MB). The bounds are checked every `PRUNE_EVERY` batches (16), and
 at once after a batch bigger than its share of the bytes (`ops._prune`).
 Only the oldest rows go and the newest always stays, so `seq` keeps counting
-from it and a gap is still told by the lowest seq left.
+from it and a gap is still told by the lowest seq left. A batch's id goes
+with its row, so a retry that arrives after its row was pruned is applied
+again ("Ops" above).
 
 `GET /api/pages/{id}/ops?since=` returns the batches after a seq. It answers
 410, and the client reloads the tree, in three cases: the log no longer
@@ -554,6 +568,26 @@ focus, and `peers` / `me` as React state. The session owns:
   `edit_block` replace sends the text it read in that turn (`read_block`,
   `read_page`, the chat's context — [ai_tools.md](ai_tools.md)), so a person
   typing in that block while the model writes keeps their keystrokes.
+  - The server merges before the batch takes the workspace's write lock
+    (`ops._premerge`, against the text stored then). Under the lock the
+    batch reuses each merge whose block still holds that text and merges
+    any other again, so it stores the same either way. A batch with
+    nothing to merge pays one read of its sets' rows by id. Measured in
+    2026-10 (`apply_ops` in process, one page): a typing flush's merge is
+    0.05–0.1 ms of a 1–8 ms hold, but a block edited in 40 places (the
+    agent's edit, an offline copy's round) takes 33–39 ms to merge at 4
+    or 16 KB, over 90 % of the hold. With the merge before the lock,
+    those holds are 1.5–3.3 ms. The diff still holds the GIL, so the
+    process's other requests slow while it runs. What it saves is the wait
+    on the lock: SQLite's busy handler polls with growing sleeps, and a
+    typist writing beside a stream of such merges got 10 batches through
+    in 10 s with the merge under the lock, against 200 outside it.
+  - The ink merge stays under the lock, since it stores the merged file
+    there ([handwriting.md](handwriting.md) "Two writers, one group"). On
+    the Windows test machine almost all of its 20–30 ms is file work:
+    reading the three files, the quota check's walk of the uploads
+    directory, and the fsync'd write. The stroke merge itself is 0.3 ms.
+    A text box's merge is 0.02 ms.
 - **reconciliation**: `inflight` counts queued-or-sent content sets per
   block (text folded into a queued property-only set counts too — `pushOp`
   returns the op it folded into). The content of a remote `set` for a block with one in flight is *deferred* and, on
@@ -711,8 +745,10 @@ state in App instead of the tree.
   the hello's (or the previous ack's) — never as absolute counts — so a
   step added to one test never renumbers the others.
 - `backend/tests/test_collab_robustness.py`: conflict codes and the op
-  index, a retried batch answered once, create-if-absent inserts, lone
-  surrogates, a tab reconnecting on its client id, a stale room, the hello
+  index, a retried batch answered once from its log row (from a fresh
+  process too, and applied again once the row is pruned), create-if-absent
+  inserts, lone surrogates, a tab reconnecting on its client id, a stale
+  room, the hello
   counting a batch committed while joining, revoked shares and removed or
   re-roled members closing or re-announcing open sockets.
 - `backend/tests/test_text_box_merge.py`: the same-box merge through the

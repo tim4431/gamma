@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 
+import orjson
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import upload_gc
@@ -53,6 +54,21 @@ def valid_block_id(block_id) -> bool:
     return isinstance(block_id, str) and bool(BLOCK_ID_RE.match(block_id)) and block_id not in RESERVED
 
 
+def load_json(text: str):
+    """Stored JSON text (a ``properties`` column, a ``json_extract`` of
+    several paths) parsed by orjson (docs/dev/api.md has the timings).
+    What orjson refuses and ``json.dumps`` may have written goes to the
+    standard library: NaN or an infinity, the escape of a lone UTF-16
+    surrogate (the op path stores U+FFFD, ``ops.storable``), nesting past
+    1,024 levels. An integer past 64 bits comes back a float, as a browser
+    reads it anyway. Writes keep ``json.dumps``, so nothing stored changes
+    shape."""
+    try:
+        return orjson.loads(text)
+    except orjson.JSONDecodeError:
+        return json.loads(text)
+
+
 def block_to_dict(row) -> dict:
     """The API's block from a ``BLOCK_COLUMNS`` row. ``page_id`` and
     ``kind`` are read-only: no write takes them, the server derives both."""
@@ -61,7 +77,7 @@ def block_to_dict(row) -> dict:
         "parent_id": row[1],
         "position": row[2],
         "content": row[3] or "",
-        "properties": json.loads(row[4] or "{}"),
+        "properties": load_json(row[4] or "{}"),
         "created_at": row[5],
         "updated_at": row[6],
         "page_id": row[7],

@@ -4,6 +4,7 @@ import json
 import sqlite3
 import time
 
+import orjson
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
@@ -28,6 +29,7 @@ from ..blocks_store import (
     flatten_tree,
     free_position,
     get_or_create_doc_page,
+    load_json,
     new_block_id,
     page_for_doc,
     page_root_id,
@@ -40,7 +42,7 @@ from .. import cloud_auth, trash, upload_gc
 from ..db import connect_pages_db, page_now
 from ..markdown_export import build_tree
 from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, move_across_pages,
-                   note_reload, trash_page)
+                   note_reload, storable, trash_page)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 
@@ -49,6 +51,27 @@ router = APIRouter(prefix="/api", tags=["blocks"])
 # The Ctrl+F notes scan answers with what it found so far (``partial``)
 # once it has run this long.
 BLOCK_SEARCH_BUDGET_S = 2.0
+
+
+class TreeJSON(JSONResponse):
+    """The tree reads' answer (a page's subtree, a block's children, the
+    library listing), encoded by orjson (docs/dev/api.md has the timings).
+    The handler builds it, so the encoding runs in its worker thread: a
+    returned dict is encoded on the event loop. NaN and the infinities go
+    out as null. A lone surrogate a stored row may hold goes out as U+FFFD
+    (``ops.storable``): UTF-8 has no encoding for one. What orjson still
+    refuses goes through the standard encoder: nesting past 255 levels (a
+    tree about 125 blocks deep), an integer past 64 bits."""
+
+    def render(self, content) -> bytes:
+        try:
+            return orjson.dumps(content)
+        except orjson.JSONEncodeError:
+            content = storable(content)
+        try:
+            return orjson.dumps(content)
+        except orjson.JSONEncodeError:
+            return super().render(content)
 
 
 class UBCreateRequest(StorableBody):
@@ -266,7 +289,7 @@ def ub_get_children(block_id: str, request: Request):
             out = {"children": [page_summary(r, _page_preview(conn, r[0])) for r in rows],
                    **_trees(conn, scope, rows)}
             conn.rollback()
-            return out
+            return TreeJSON(out)
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
         if _reach(conn, block_id, scope) is None:
@@ -275,7 +298,7 @@ def ub_get_children(block_id: str, request: Request):
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
         ).fetchall()
-    return {"children": [block_to_dict(r) for r in rows]}
+    return TreeJSON({"children": [block_to_dict(r) for r in rows]})
 
 
 def _trees(conn, scope, rows) -> dict:
@@ -290,7 +313,7 @@ def _trees(conn, scope, rows) -> dict:
                 for tree in TREES}
     folder = build_tree(fetch_subtree(conn, scope.folder), scope.folder) if scope.folder else None
     at = SUMMARY_PROPS.index(LABELS)
-    carried = {i for r in rows for i in filing({LABELS: json.loads(r[5])[at]}, LABELS)}
+    carried = {i for r in rows for i in filing({LABELS: load_json(r[5])[at]}, LABELS)}
     labels = [block_to_dict(r) for r in conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE page_id = ? AND id IN (SELECT value FROM json_each(?)) "
         "ORDER BY position", (LABELS, json.dumps(sorted(carried))))]
@@ -317,7 +340,7 @@ def page_summary(row, preview: str) -> dict:
     with the SUMMARY_META fields it has. SQLite picks them out (one
     ``json_extract`` of several paths, a JSON array), so a page's big
     properties are never parsed here."""
-    values = json.loads(row[5])
+    values = load_json(row[5])
     props = {k: v for k, v in zip(SUMMARY_PROPS, values) if v is not None}
     meta = {k: v for k, v in zip(SUMMARY_META, values[len(SUMMARY_PROPS):]) if v is not None}
     if meta:
@@ -370,9 +393,7 @@ def ub_get_subtree(block_id: str, request: Request):
     out = {"block": build_tree(rows, block_id)}
     if seq is not None:
         out["seq"] = seq
-    # Serialized here, in the worker thread: a returned dict is encoded on the
-    # event loop, which a 5,000-block page would stall for a fifth of a second.
-    return JSONResponse(out)
+    return TreeJSON(out)
 
 
 @router.get("/blocks/{block_id}/backlinks")

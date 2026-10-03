@@ -470,3 +470,54 @@ def test_merged_batch_remaps_the_writers_caret(guest):
         m = recv(w, "ops")
         assert m["ops"][0]["content"] == "hello brave world!"
         assert m["cursor"] == {"block": blk["id"], "anchor": 18, "head": 18}
+
+
+def test_a_merge_runs_before_the_write_lock_and_again_if_the_block_changed(guest, monkeypatch):
+    """A batch's text merges are computed before it takes the workspace's
+    write lock (ops._premerge), and the batch under the lock takes them from
+    there; a block someone changed in between is merged again, against the
+    text it holds then, with the caret remapped into that."""
+    from gamma import ops, textmerge
+    from gamma.db import connect_pages_db
+    ws = workspace_of(guest_name())
+    page = make_page(guest, "Premerge page")["id"]
+    blk = guest.post("/api/blocks", json={"parent_id": page, "content": "hello world"}).json()["id"]
+    assert _ops(guest, page, [{"op": "set", "id": blk, "content": "hello brave world!", "base": "hello world"}]).status_code == 200
+    held, merged_into = {}, []  # the batch's connection; (under its lock?, the text merged into)
+    real_merge, real_premerge = textmerge.merge, ops._premerge
+
+    def merge(base, ours, theirs, *args):
+        merged_into.append((held["conn"].in_transaction, theirs))
+        return real_merge(base, ours, theirs, *args)
+
+    monkeypatch.setattr(textmerge, "merge", merge)
+
+    def apply(content):
+        with connect_pages_db(ws) as conn:
+            held["conn"] = conn
+            return ops.apply_ops(conn, page, [{"op": "set", "id": blk, "content": content, "base": "hello world"}],
+                                 actor="", client="b", cursor={"block": blk, "anchor": len(content), "head": len(content)})
+
+    result = apply("hello world, again")
+    expected = real_merge("hello world", "hello world, again", "hello brave world!")[0]
+    assert result["ops"][0]["content"] == expected
+    assert merged_into == [(False, "hello brave world!")], "merged once, before the lock"
+
+    first, stored = expected, f"oh {expected}"
+    someone = [{"op": "set", "id": blk, "content": stored, "base": first}]
+
+    def premerge_then_someone_types(conn, *args):
+        merges = real_premerge(conn, *args)
+        if someone:
+            ops.commit_ops(ws, page, [someone.pop()], actor="")
+        return merges
+
+    monkeypatch.setattr(ops, "_premerge", premerge_then_someone_types)
+    merged_into.clear()
+    result = apply("hello world, and again")
+    expected = real_merge("hello world", "hello world, and again", stored)[0]
+    caret = textmerge.map_offset("hello world, and again", expected, len("hello world, and again"))
+    assert result["ops"][0]["content"] == expected and expected.startswith("oh ")
+    assert result["cursor"] == {"block": blk, "anchor": caret, "head": caret}
+    assert merged_into == [(False, first), (True, stored)], "merged again under the lock"
+    assert _tree(guest, page)[0]["content"] == expected

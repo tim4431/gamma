@@ -21,12 +21,12 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..auth import require_user, resolve_ws, share_scope
-from ..db import connect_pages_db, ws_uploads_dir
-from .. import pdf_meta
+from ..db import connect_pages_db
+from .. import blobs, pdf_meta
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
-from ..storage import DIGEST_CHARS, is_pdf, write_atomic
+from ..storage import DIGEST_CHARS, is_pdf, put_upload
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -395,18 +395,17 @@ def proxy_pdf(source_url: str, request: Request):
     scope = share_scope(request)
     if scope is not None and not _share_allows_source(ws, scope, source_url):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
-    uploads = ws_uploads_dir(ws)
     # Proxy cache ids hash the URL (the bytes aren't known yet), same length
     # as the content-hash upload names.
     pdf_doc_id = hashlib.sha256(source_url.encode()).hexdigest()[:DIGEST_CHARS]
-    local_path = uploads / f"{pdf_doc_id}.pdf"
+    stored_name = f"{pdf_doc_id}.pdf"
     want_save = request.query_params.get("save") == "1"
 
     # If a local copy exists, redirect to the uploads route (supports Range
     # requests). The browser follows a redirect with no help from the app, so
     # the query that named the workspace — a share token, or ?ws= — rides
     # along, or the copy would be looked for in the session's own library.
-    if local_path.exists():
+    if blobs.exists(ws, stored_name):
         carried = {k: v for k, v in request.query_params.items() if k in ("share", "ws")}
         target = f"/api/uploads/{pdf_doc_id}.pdf" + (f"?{urllib.parse.urlencode(carried)}" if carried else "")
         return RedirectResponse(target, status_code=302)
@@ -462,7 +461,7 @@ def proxy_pdf(source_url: str, request: Request):
                 if not is_pdf(data):
                     log.info(f"[pdf] not caching {pdf_doc_id}: the body is not a PDF")
                 elif can_store(ws, len(data)):
-                    write_atomic(local_path, data)
+                    put_upload(ws, stored_name, data)
                     pdf_meta.schedule(ws, pdf_doc_id)
                 else:
                     log.info(f"[pdf] not caching {pdf_doc_id} ({len(data)} bytes): over storage limits")

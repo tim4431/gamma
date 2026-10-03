@@ -46,6 +46,12 @@ to the shared page's document (`_share_can_read_upload`). The check reads the
 shared pages only and remembers a yes for a few minutes, so a PDF opened by
 range requests asks once, not per chunk.
 
+With the stored files in a bucket ([debugging.md](debugging.md) "Stored
+files in a bucket"), the route answers an allowed GET with a 302 to a
+presigned URL instead of the bytes. The whole-file fetch and pdf.js's
+range requests follow it to the bucket, whose CORS rule must allow the
+workspace header. The server answers a HEAD itself.
+
 ## The client (`src/pdf/PdfViewer.jsx`, `src/pdf/pdfSource.js`)
 
 `pdf/pdfSource.js` holds the pure decisions, unit-tested in
@@ -114,6 +120,19 @@ every page load, because Starlette's `FileResponse` sets an ETag but never
 compares one (at 20 Mbps, 0.6 to 0.85 s of every open — the research note has
 the measurement). The static route in `gamma/app.py` compares the ETag
 itself, so the unhashed files (`index.html`, favicons) get a real 304.
+
+The build writes a Brotli (quality 11) and a gzip (level 9) copy beside every
+emitted js, mjs, css, html and svg file of 1 KB or more, where the copy is
+smaller. That is the `precompress` plugin in `frontend/vite.config.js`, about
+5 s of the build. The static route sends the `.br` copy when the request's
+`Accept-Encoding` allows `br`, else the `.gz` one for `gzip`, else the file
+itself. Each goes out with the file's own media type and cache rule. A file
+with a copy answers `Vary: Accept-Encoding`, and each encoding has its own
+ETag, so the 304 above holds per encoding. The worker goes out as 0.3 MB
+instead of 1.3 MB, the main chunk as 0.69 MB instead of 2.7 MB. The route
+answers HEAD as well. An `/api` path without a HEAD route of its own gets a
+405. A reverse proxy that serves `dist` itself can send the same copies
+([debugging.md](debugging.md#serving-the-build)).
 
 The backend pins `.mjs` and `.js` to `text/javascript`, independently of OS
 MIME mappings (Windows registry entries can otherwise make the worker plain
@@ -196,7 +215,7 @@ share token rides on the ranges, the manifest and the HEAD).
 
 | Open | Before | After (four runs) | On the wire |
 |---|---|---|---|
-| Cold (nothing cached, first visit) | 9.73 s | 0.68 to 0.79 s; page boxes at 65 to 78 ms | 0.3 MB in 2 range requests, plus the 1.3 MB worker script (0.6 s of the total, once per browser) |
+| Cold (nothing cached, first visit) | 9.73 s | 0.68 to 0.79 s; page boxes at 65 to 78 ms; 0.46 s with the worker precompressed (one run) | 0.3 MB in 2 range requests, plus the worker script once per browser: 1.3 MB (0.6 s of the total) as it is, 0.3 MB (0.16 s) as its Brotli copy |
 | Warm (new tab: IndexedDB + HTTP cache) | 1.01 s | 0.13 to 0.14 s | nothing |
 | Same tab, back from the library (`DOC_CACHE`) | not measured before | 0.04 s (pages in the DOM at 8 ms) | nothing |
 

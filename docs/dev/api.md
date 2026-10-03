@@ -23,6 +23,10 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   a caller without effective access gets 403. The returned workspace id is what the data helpers
   take; the account's id (`auth.actor_of`) is the actor.
 - Share tokens (`?share=<token>`) are the ONLY unauthenticated **read** path.
+  A token is `<workspace id>.<secret>`, split at the first dot (a workspace
+  id never holds one; `db.share_token_workspace` is the one parser), so a
+  router can place share traffic by the prefix without a lookup. It is
+  stored whole in `shares.token`, and every lookup is by the whole token.
   `resolve_ws` returns the session's workspace, or the workspace of the share
   named by a valid `?share=` token. There is no `?user=` fallback: it would
   trust any username and leak whole accounts. A share names a PAGE of a
@@ -92,8 +96,15 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   page socket): past `auth.SHARE_MISSES_PER_5_MIN` (30) in five minutes the
   address gets 429 for the rest of the window and the server log carries
   one warning per window — the admin's only signal that someone is probing
-  for links. Tokens are 96 random bits, so guessing one is hopeless; the
-  throttle is about noise and visibility, not about protecting the space.
+  for links. A token without the `<workspace id>.<secret>` shape, or whose
+  prefix is not its share's workspace, is unknown too (`auth.share_lookup`
+  refuses it). So is every link minted before schema version 32, whose
+  token is the bare secret: step `share_token_workspace` rewrote the
+  stored tokens, and the Share popover shows the new link
+  ([migrations.md](migrations.md)). The secret is 96 random bits, so
+  guessing one is hopeless (the workspace prefix is no secret). The
+  throttle is about noise and visibility, not about protecting the
+  space.
   The link-visitor throttles above log the same way.
   Keep that read/write + scope distinction when adding endpoints.
 - Outbound fetches of user-supplied URLs (PDF proxy/resolver, AI PDF
@@ -102,7 +113,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   loopback/private/link-local/metadata addresses (SSRF), re-checking on every
   redirect.
 - Workspace ids and doc ids are validated (`db.safe_ws_id` / `db.safe_doc_id`,
-  used by `ws_db_path` / `ws_uploads_dir` / `pdf_upload_path`) before they
+  used by `ws_db_path` / `ws_uploads_dir`) before they
   become filesystem paths — no traversal.
 - The session cookie is `HttpOnly; SameSite=Lax`, and `Secure` when the request
   is HTTPS (auto via scheme / `X-Forwarded-Proto` — off on plain-HTTP LAN so
@@ -135,9 +146,16 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   touched: streams (the AI chat and translation NDJSON, event streams),
   files and their range requests (uploads, PDFs, the app's assets) and
   anything already encoded pass through as they are. A dict a sync
-  endpoint returns is encoded on the event loop, so `GET
-  /blocks/{id}/subtree` answers a `JSONResponse` it serialized in its
-  worker thread (a 5,000-block page stalled the loop ~175 ms otherwise).
+  endpoint returns is encoded on the event loop, so the tree reads (`GET
+  /blocks/{id}/subtree`, `/blocks/{id}/children`, the library listing)
+  answer a `routers/blocks.TreeJSON` they encoded in their worker thread
+  (a 5,000-block page stalled the loop ~175 ms otherwise). It encodes with
+  orjson, in about a tenth of the standard library's time, and
+  `blocks_store.load_json` parses each row's `properties` with it in about
+  a fifth. A stored NaN goes out as null and a stored lone surrogate as
+  U+FFFD (both were a 500); what orjson refuses, such as nesting past 255
+  levels (a tree about 125 blocks deep), falls back to the standard
+  library. Writes keep `json.dumps`, so the stored text does not change.
 - Every response carries baseline hardening headers (`X-Content-Type-Options`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Content-Security-Policy:
   frame-ancestors 'self'`, and HSTS on HTTPS). SVG uploads are served
@@ -338,12 +356,12 @@ guarded fetch path.
 | POST | `/upload-file` | store a file for a block to reference as `[name](/api/uploads/<hash>.<ext>)` — the file chip. Any extension except executables (`storage.BLOCKED_EXTENSIONS`: exe, msi, bat, dll, ps1, …; 400 "not accepted (executable)"); the extension comes from the uploaded name, lowercased, `.bin` when there is none; images route like `/upload-image`, a `.pdf` must be a real PDF and lands under the same `<hash>.pdf` the PDF ingest mints (so it can be opened as a document page later), an `.ink` must be a valid drawing (the route a mirror pushes drawings by); same hashing + limits → `{url, name, size, already_existed}` |
 | POST | `/upload-ink` | store a handwriting group's `gamma-ink` JSON (the request body; validated against `gamma/ink.py`'s schema and limits, stored as it came, so the clients' `serializeInk` bytes dedup and a client can name a file by its hash) as `<hash>.ink` → `{url, size, strokes, bbox, pdf_position, already_existed}`; editors and edit shares. [handwriting.md](handwriting.md) |
 | GET | `/pdf-info/{doc_id}` | the document manifest the viewer lays a PDF out from before pdf.js has parsed it (`gamma/pdf_meta.py`, [pdf_loading.md](pdf_loading.md)): `{doc_id, bytes, pages, dims: [[w, h], …]}` in PDF points, rotation applied; same access rule as the file; computed in pdfium on first request when the upload-time background walk has not run (`pages: 0` for an unreadable file, not cached); 400 malformed id, 404 no such file |
-| GET, HEAD | `/uploads/{filename}` | serve stored files (HEAD: the headers alone, which is how the viewer learns a file's size before choosing its transport); with their media type (`storage.FILE_MEDIA_TYPES`, else `application/octet-stream`); pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg); blocked or malformed extensions 400. Sync `def`: a share visitor's access check reads the shared pages in the threadpool |
+| GET, HEAD | `/uploads/{filename}` | serve stored files (HEAD: the headers alone, which is how the viewer learns a file's size before choosing its transport); with their media type (`storage.FILE_MEDIA_TYPES`, else `application/octet-stream`); pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg); blocked or malformed extensions 400. With the files in a bucket (`GAMMA_BLOBS=s3`, presigning on), a GET that passes every check answers 302 with `Cache-Control: private, no-store` to a presigned URL of the object, valid 300 s (`PRESIGN_TTL_S`). The URL's response parameters carry the media type and disposition, so the bucket serves the bytes and their Range requests. A HEAD is answered here from the object's size, since a URL presigned for GET signs no HEAD. With presigning off, the node streams its cached copy like a local file ([user_db.md](user_db.md) "Stored files"). Sync `def`: a share visitor's access check reads the shared pages, and a bucket's object is looked up, in the threadpool |
 | GET | `/quota` | the limits that apply to uploads into the request's workspace — the account's for a personal one (`used_bytes` = all its personal workspaces), the workspace's own for a shared one — with `workspace_bytes` and `account` (the person, or "") |
 
 ### Shares (`shares.py`)
 
-One share link per page or per folder of a workspace. What a token reaches and who gets in: "Auth model" above.
+One share link per page or per folder of a workspace. What a token reaches and who gets in: "Auth model" above. A new link's token is `<workspace id>.<secret>`; links minted before schema version 32 do not open ("Unknown tokens" above).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -351,7 +369,7 @@ One share link per page or per folder of a workspace. What a token reaches and w
 | GET/PUT/DELETE | `/share-settings/{page_id}` | read settings (`{token: null}` when unshared; any member) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: unknown usernames or roles → 400; the token stays; `edit`+`anyone` is allowed — see "Link visitors" above) / stop sharing (the token dies) — editors and owners |
 | POST | `/share/folder/{folder_id}` | the same for a folder (an empty one too): 404 unless `folder_id` is a folder of the workspace |
 | GET/PUT/DELETE | `/share-settings/folder/{folder_id}` | the folder share's settings, changes and stop, as for a page. The share names the folder by id: a rename or a move changes nothing; it dies with the folder, whichever path deletes it (`ops.after_commit`) |
-| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, folder, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` plus, for a page share, `doc_id` (the page's PDF attachment id via `page_attachment`, `""` without one), for a folder share `folder_name` (`folder` is its id); a folder share's listing is `GET /blocks/root/children` through the token; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"; 404 unknown (or a page share whose page is deleted or in Recently deleted, until a restore; or a folder share whose folder is gone), 401 sign in first, 403 signed in but not allowed |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, folder, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` plus, for a page share, `doc_id` (the page's PDF attachment id via `page_attachment`, `""` without one), for a folder share `folder_name` (`folder` is its id); a folder share's listing is `GET /blocks/root/children` through the token; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"; 404 unknown (a token of another shape or with another workspace's prefix included; or a page share whose page is deleted or in Recently deleted, until a restore; or a folder share whose folder is gone), 401 sign in first, 403 signed in but not allowed |
 
 ### Folders and labels (`folders.py`) — see [home_library.md](home_library.md) "Folders and labels"
 
@@ -543,7 +561,7 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 ### Prefs (`prefs.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `read-pos` are stored per workspace (the request's), `profile` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); reading `profile` first syncs it with Gamma Cloud when the last sync is over a minute old, and its answer carries `cloud_choice` (a first sync waits for the person's choice); values over 64 KB get 413; refuses the reserved `ai-settings`, `translate-engines` and `profile-base` keys |
+| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `read-pos` are stored per workspace (the request's), in its `pages.db` (`workspace_prefs`, which no export or backup of the workspace carries), `profile` / `ai-provider` account-wide in `users.db` (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); reading `profile` first syncs it with Gamma Cloud when the last sync is over a minute old, and its answer carries `cloud_choice` (a first sync waits for the person's choice); values over 64 KB get 413; refuses the reserved `ai-settings`, `translate-engines` and `profile-base` keys |
 | PATCH | `/prefs/profile` | `{set: {name: value}}`: sets those entries of the profile and keeps every other one as stored (`db.patch_profile`) — how the web app saves, so a tab's stale copy of an entry it did not touch never undoes one synced from elsewhere; answers `{key, value, updated_at}` with the whole profile; 413 over 64 KB |
 | GET | `/page-snaps` | all recents-card cover thumbnails `{snaps: {pageId: {img, at}}}`; `?after=<iso>` returns only newer ones (the focus-pull delta) |
 | PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side); the covers are the workspace's, so workspace editors only (a viewer's stay in its browser) |

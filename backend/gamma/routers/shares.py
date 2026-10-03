@@ -25,6 +25,11 @@ Workspace members keep their workspace role on top (gamma/auth.py
 share_access). The token confines reads (and edit writes) to the shared
 pages' subtrees and assets (share_grant / share_scope).
 
+A token is ``<workspace id>.<secret>`` (``db.share_token_workspace`` reads
+it), so share traffic can be placed by its prefix without a lookup; one of
+another shape, or whose prefix is not its share's workspace, is refused like
+an unknown token.
+
 The token lives until "Stop sharing" (DELETE; sharing again mints a new
 one). A folder share names its folder by id, so a rename or a move changes
 nothing about it; it dies with the folder (``delete_folder_shares``, run by
@@ -175,7 +180,7 @@ def _create(ws: str, request: Request, target: ShareScope, payload: ShareSetting
         return _settings(existing)
     fields = _validated(request.state.user_id, {"audience": "anyone", "role": "view", "users": []},
                         payload or ShareSettings())
-    token = secrets.token_urlsafe(12)
+    token = f"{ws}.{secrets.token_urlsafe(12)}"  # <workspace id>.<secret>: db.share_token_workspace
     with connect_users_db() as conn:
         # One share per target (the unique indexes): when another request
         # created it since the lookup above, that link stands and is answered.

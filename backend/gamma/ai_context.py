@@ -10,7 +10,7 @@ from urllib.request import Request as URLRequest
 
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
                            page_attachment, page_for_doc, page_root_id)
-from .db import connect_data_db, connect_pages_db, page_now, pdf_upload_path
+from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
 from .highlights import is_highlight, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -19,7 +19,7 @@ from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, image_part, outline, page_count, page_label, render_page)
 from .server_settings import can_store
-from .storage import write_atomic
+from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
 
@@ -627,9 +627,10 @@ def context_markdown(title: str, system: str, messages: list, tools: list | None
     return "\n".join(out)
 
 
-def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:
-    """Best-effort download of a missing PDF from its recorded source URL."""
-    log.info(f"[ai_chat] PDF NOT FOUND at {pdf_path}, attempting download from source_url")
+def _download_pdf_from_source(ws: str, doc_id: str, name: str) -> None:
+    """Best-effort download of a missing PDF from its recorded source URL,
+    stored as the workspace's ``name``."""
+    log.info(f"[ai_chat] PDF NOT FOUND: {name} in workspace {ws}, attempting download from source_url")
     try:
         with connect_pages_db(ws) as connection:
             row = connection.execute(
@@ -651,21 +652,24 @@ def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:
         if not can_store(ws, len(pdf_data)):
             log.info(f"[ai_chat] not caching {doc_id} ({len(pdf_data)} bytes): over storage limits")
             return
-        write_atomic(pdf_path, pdf_data)
+        put_upload(ws, name, pdf_data)
         log.info(f"[ai_chat] downloaded {len(pdf_data)} bytes from {source}")
     except Exception as error:
         log.warning(f"[ai_chat] download failed: {error}")
 
 
 def pdf_path(ws: str, doc_id: str):
-    """Return a document's local PDF path, downloading it when possible."""
+    """Return a document's local PDF path (``storage.find_upload_file``),
+    downloading it from its source when it is not stored."""
     try:
-        path = pdf_upload_path(ws, doc_id)
+        name = f"{safe_doc_id(doc_id)}.pdf"
     except ValueError:
         return None
-    if not path.exists():
-        _download_pdf_from_source(ws, doc_id, path)
-    return path if path.exists() else None
+    path = find_upload_file(name, ws)
+    if path is None:
+        _download_pdf_from_source(ws, doc_id, name)
+        path = find_upload_file(name, ws)
+    return path
 
 
 def truncate(text: str, limit: int) -> str:

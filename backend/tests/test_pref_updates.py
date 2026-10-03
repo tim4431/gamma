@@ -34,6 +34,30 @@ def test_update_pref_serializes_concurrent_edits():
     assert sorted(db.get_pref(me, "ai-provider")[0]) == ["fast", "slow"]
 
 
+def test_update_pref_on_a_workspace_key_serializes_in_the_workspace():
+    # a workspace-scoped key (reading positions) is kept in the workspace's
+    # pages.db: its read-modify-write takes that file's write lock, so two
+    # edits still both land; nothing is written to users.db
+    ws = make_user("pu_ws", "pu-password-1")
+    me = account_of("pu_ws")
+
+    def slow_add(value):
+        time.sleep(0.3)  # still inside the first edit's transaction
+        return {**(value or {}), "slow": 1}
+
+    t = _later(lambda: db.update_pref(me, "read-pos", lambda v: {**(v or {}), "fast": 2}, ws), 0.1)
+    db.update_pref(me, "read-pos", slow_add, ws)
+    t.join()
+    value, stamp = db.get_pref(me, "read-pos", ws)
+    assert value == {"slow": 1, "fast": 2}
+    assert db.update_pref(me, "read-pos", lambda v: v, ws) == value and db.get_pref(me, "read-pos", ws)[1] == stamp
+    with db.connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT updated_at FROM workspace_prefs WHERE user_id = ? AND key = 'read-pos'",
+                            (me,)).fetchone() == (stamp,)
+    with db.connect_users_db() as conn:
+        assert not conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ? AND key = 'read-pos'", (me,)).fetchone()
+
+
 def test_update_pref_aborts_on_error_and_skips_unchanged_writes():
     make_user("pu_abort", "pu-password-1")
     me = account_of("pu_abort")

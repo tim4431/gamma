@@ -18,8 +18,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-droid-fallback \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements-s3.txt: boto3, for keeping uploads in an S3-compatible bucket
+# (GAMMA_BLOBS=s3, docs/dev/debugging.md); unused while the files stay local.
+COPY backend/requirements.txt backend/requirements-s3.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-s3.txt
 
 COPY backend/app.py backend/manage.py ./
 COPY backend/gamma/ ./gamma/
