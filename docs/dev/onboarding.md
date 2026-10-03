@@ -6,18 +6,21 @@ built. The first paper tour is also offered to every new library.** A synced
 `onboarding` pref and a checklist are not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
-the illustration registry `media.js` with its drawings in `media/`,
-one file per tour in `tours/`, the hints in `tours/hints.js`), the node test
+the scene player `scene.js`, the illustration registry `media.js` with its
+drawings in `media/` and their shared stylesheet `media.css`, one file per
+tour in `tours/`, the hints in `tours/hints.js`), the node test
 `tests/guide.test.mjs` and the e2e scenarios `guide.mjs` (first paper),
 `contextualGuide.mjs` (AI chat) and `triggeredGuide.mjs` (offers and hints).
 
-The first tour is a welcome card, the add-a-paper demo, then the user's
-own highlight on that paper, a typed note demonstration, an `llm` label
-demonstration, and a final spotlight on the Home button (on a phone, the
-bottom bar's Library tab, which carries `header.home` there). Returning to the
-library emits `home.opened`, shows Done, and completes the tour
-automatically; Finish can also close it. Either way the tour ends on its
-finish card (below).
+The first tour is a welcome card and five steps. Gamma adds a paper (the
+add-a-paper demo). It drags across a sentence, and the user may highlight
+one of their own; then the same for a box around the equation. One demo
+types a note and adds the `llm` label. The last step is a spotlight on the
+Home button (on a phone, the bottom bar's Library tab, which carries
+`header.home` there). Each highlight step keeps Next after its demo, and
+the user's own highlight of that kind ticks it. Returning to the library emits `home.opened`, shows
+Done, and completes the tour automatically; Finish can also close it.
+Either way the tour ends on its finish card (below).
 
 The welcome card (`welcome: true` on the tour, its first step `intro:
 true`) is a centred 440 px card. It holds a "2-minute tour" chip
@@ -27,7 +30,7 @@ then the user tries it, and a three-line `outline` marking each line
 the tour** (`next`) starts it, and a footnote says the tour can be replayed
 from the account menu. A demo server gets its own title ("Welcome to the
 Gamma demo"): two `intro` variants, picked by `requires: {demo}`. The card
-is not counted as a step (the add demo reads "Step 1 of 8"). It is also the
+is not counted as a step (the add demo reads "Step 1 of 5"). It is also the
 tour's offer, which every new account gets on arrival (see the table below)
 without anything dimmed. Start begins with the add demo; Explore on my own
 settles the offer for the tour's version.
@@ -39,7 +42,7 @@ made, each line only when it happened:
 
 - the paper: the run's first `page.opened`, whose payload carries its `title`;
 - the number of highlights (`highlight.created`);
-- the note and the `llm` label, when their demos ran to the end.
+- the note and the `llm` label, when their demo ran to the end.
 
 Two tiles follow. **Ask the paper** starts the AI chat tour when an AI
 provider is connected, else opens Settings → Connections (App's
@@ -80,41 +83,40 @@ their subject is on screen: someone else on the page, a cited reply. Hints
 are never listed. `?guide=` URLs never start a tour, and the chat header has
 no guide button. In Chinese a tour is 教程.
 
-Every card has a short title and at most one short body sentence: a demo
-says what Gamma is about to do, a practice step what to do (`bodyTouch`
-words it for a touch screen: "Long-press a word…"). Its head says what kind
-of step it is — **▶ Watch** (a demo), **Your turn** (a step waiting for the
-user's action), **✓ Done** (the acknowledgement) or nothing (a step that
-explains) — with "Step n of m" on the right, and a segmented bar shows the
-progress. The primary button is the call to action only where the step
-itself is the action (Next, Done): a demo has **Skip this demo**, the user's
-turn has Back and a quiet **Skip step**, so the task, not skipping it, is
-the loudest thing on the card.
+Every card has a title of about six words and at most one short body
+sentence. `bodyTouch` words it for a touch screen ("Long-press a word…").
+The scene or the demo shows the rest ("Showing, not telling", below). Its
+head says what kind of step it is: **▶ Watch** (a demo), **Your turn** (a
+step that waits, because later steps need its result), **✓ Done** (the
+acknowledgement) or nothing (a light step). "Step n of m" sits on the
+right, and a segmented bar shows the progress. A light step has Back and
+Next whether or not the user tries what it shows. A demo has **Skip this
+demo**; on a demo that then hands over, Skip stops the demo and leaves the
+user on the step to try it. A waiting step has Back and a quiet **Skip
+step**, so the task, not skipping it, is the loudest thing on the card.
 
 AI chat (`tours/aiChat.js`) has steps per place, chosen by step-level
-`requires`, each ending on Send: a "Your turn" step on the composer that
-waits for the user's own send (`chat.sent`), its link reading Done. The tour
-never submits a message or starts recording, and there is no voice step.
+`requires`, each ending on Send: a light step on the composer whose Done
+leaves, and which the user's own send (`chat.sent`) ticks. The tour never
+submits a message or starts recording, and there is no voice step.
 
 - **On a paper** (`view: "pdf"`): the message box types *What is the main
-  result, and where is it shown?* ("Ask about this paper; type @ to bring in
-  another one"); with the PDF window visible, the Ctrl-drag demo frames a
-  figure (`findFigure`, below) and releases, so the snapshot lands in the
-  chat, and the next step points at it; then Send ("answers link to the exact
-  passages they quote"). Hidden PDFs and phone chat skip the figure steps.
+  result, and where is it shown?* ("Ask about this paper"); with the PDF
+  window visible, the Ctrl-drag demo frames a figure (`findFigure`, below)
+  and releases, so the snapshot lands in the chat. The same demo then
+  points at it (`{point: "chat.imageContext"}`). Then Send ("Answers link to
+  the passages they quote"). Hidden PDFs and phone chat skip the figure step.
 - **On a page of notes** (`view: "page"`): *Turn these notes into a short
-  summary*, then the notes ("Drag across a note's text to change just that
-  part", optional), then Send.
+  summary* ("Or select part of a note to have it rewritten"), then Send.
 - **On the library** (`view: "home"`): *Which of these papers use attention?
-  File them into ML/attention* ("it can search, read and file your pages" —
+  File them into ML/attention* ("It can search, read and file your pages" —
   true under the default tool permissions), then the Tools button
   (optional), then Send.
 - **No AI connected** (`aiConfigured: false`, and `aiEditable`: the account
   can store keys — a guest cannot, and gets no tour): one step on the chat's
-  setup card (`chat.setup`), "Chat needs an AI connection: add a key, or sign
-  in with ChatGPT". Clicking a tile opens Settings → Connections, whose
-  `settings.opened {pane: "ai"}` finishes it. The message box is disabled
-  then, so nothing is typed into it.
+  setup card (`chat.setup`), "Connect an AI to use chat". Clicking a tile
+  opens Settings → Connections, whose `settings.opened {pane: "ai"}` ticks
+  it. The message box is disabled then, so nothing is typed into it.
 
 `aiConfigured` is unknown (undefined) until `/api/ai/models` answers, so
 neither variant is picked too early. Existing drafts are restored after an
@@ -132,30 +134,30 @@ show Done before advancing automatically.
 **Arrange windows** (`tours/windows.js`) is available under Account → Tours
 on desktop, including without an AI connection. It also offers once after
 opening a PDF (`page.opened`). Starting it reveals and expands Chat and,
-when the PDF is visible, Notes. Three practice steps wait for double-clicks
-to collapse and expand Chat (`window.collapsed {id, collapsed}`), then a
-title drag and drop (`window.moved {id, side}`). A Notes title spotlight
-explains the same controls when Notes is docked; the last step points at
-View to explain reopening a window closed with ×. The user's arrangement
-is kept. Phone layouts have no dock controls and do not list or offer this
+when the PDF is visible, Notes. It is two light steps on Chat's title, each
+with a scene. In "Double-click to fold, again to unfold" the ghost pointer
+double-clicks the real title, and `window.collapsed {id: "chat"}` ticks the
+step. In "Drag a title to move the window" the pointer carries the title to
+the left, where the dock's own drop preview shows where Chat would land;
+`window.moved {id: "chat"}` ticks it. The user's arrangement is
+kept. Phone layouts have no dock controls and do not list or offer this
 tour.
 
 **The PDF viewer** and **The notebook view** (`tours/viewer.js`) walk the
 viewer's left edge top to bottom: the PDF's table of contents (`optional`:
-only a PDF with an outline has it), the tool column, full screen. The two
-viewers share the column up to the pen (zoom out, zoom in, fit to width,
-the pen, in the same places in both) and full screen. What only one viewer
-has comes after them: Translate and the phone's selection mode on a PDF,
-Paper and Notes view in the notebook view. So the tours are **siblings**:
-the zoom, pen and full screen steps are `shared`, the same step objects in
-both files. A user who has finished one tour gets the other without them.
-Its one `recap` card spotlights the shared run (`viewer.common`), "Zoom,
-fit and the pen work as on a PDF", and the tour moves on to what is new
-there. After the PDF tour the notebook view's is three cards (the recap,
-Paper, Notes view); the other way round, the PDF's is the outline, the
-recap and Translate. A read-only page has no pen, so the recap has a
-variant that names only zoom and fit. "Finished" is the sibling's stored
-`done`; a tour left halfway teaches nothing to skip.
+only a PDF with an outline has it), then the tool column. The two viewers
+share the column up to the pen (zoom out, zoom in, fit to width, the pen,
+in the same places in both). The zoom step's scene visits the three zoom
+buttons; the pen step's presses the pen and writes a stroke on the page.
+What only one viewer has comes after them: Translate and the phone's
+selection mode on a PDF, Paper and Notes view in the notebook view. So the
+tours are **siblings**: the zoom and pen steps are `shared`, the same step
+objects in both files, and a user who has finished one tour gets the other
+without them. After the PDF tour the notebook view's is two cards (Paper,
+Notes view). The other way round, the PDF's tour keeps only the outline
+and Translate. When the paper has neither, the tour is neither offered nor
+listed (a tour with nothing to show, below). "Finished" is the
+sibling's stored `done`; a tour left halfway teaches nothing to skip.
 
 The PDF viewer is offered on `page.opened`. It is listed after Arrange
 windows, which therefore takes the first paper of a load; a paper opened on
@@ -182,18 +184,18 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 | Guide | Offered when | Points at |
 |---|---|---|
-| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | the address box (a drawing of the fetch), Upload files, New page, New notebook (a drawing of the one page behind both views) |
-| Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: double-click to collapse and expand, drag to dock; Notes' title when docked; View to reopen closed windows |
+| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover, undimmed whole: the address box (a scene typing into it), Upload files, New notebook (a drawing of the one page behind both views) |
+| Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: a scene double-clicking it to fold, then one dragging it to the left dock |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
-| Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |
-| Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
-| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the phone's selection mode, full screen; after The notebook view, one recap card on the shared buttons replaces zoom, the pen and full screen |
-| The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views), full screen; after The PDF viewer, the recap, the paper and Notes view |
-| Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a drawing of the next page arriving), its pen, the paper menu (a drawing of the paper changing), the notebook view |
-| Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button, with a drawing of the job outliving the window; a task's row; Clear finished. The last two are `optional`: a tour started from the menu may find no rows |
-| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (its menu), the label chips with a drawing of one paper in several folders, the pinned strip, Recently viewed, Recently deleted; everything but the first step is `optional`, so a library with nothing pinned passes over it |
-| Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
+| Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access with Stop sharing (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
+| Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table), each with a scene clicking it — on the table just made when the page has several, each card clear of the table |
+| Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, then the eraser and the lasso on one card (Ctrl+Z brings back what was erased); finishing re-arms the pen |
+| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the phone's selection mode; after The notebook view, only the outline and Translate |
+| The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
+| Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/page`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a scene writing low on it while the next page's outline arrives under it), its pen, the notebook view (a drawing of the one page behind both views). The paper is the notebook view tour's to teach |
+| Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button (the job runs on the server and outlives the tab); a task's row with Clear finished, `optional`: a tour started from the menu may find no rows |
+| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), a centred card with a drawing of one paper in several folders, Recently viewed, Recently deleted; the last two are `optional`, so a library with nothing viewed passes over them |
+| Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack (a face marks their block), undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
 | hint: block references | the `[[` search shows results (`ref.search`) | the search: mention vs `![[…]]` |
@@ -280,8 +282,13 @@ Engine abilities available to every step:
   decides (a PDF without a table of contents).
 - **Sibling tours** (`sibling: "<tour id>"` on both), for two tours about
   controls that are partly the same. A step marked `shared` is left out of
-  the run once the sibling is `done`. A step marked `recap` is in the run
-  only then (`stepApplies` in `triggers.js`). The viewer tours above.
+  the run once the sibling is `done` (`stepApplies` in `triggers.js`). The
+  viewer tours above.
+- **A tour with nothing to show** is neither listed nor offered: when every
+  step left after `requires`, `creates` and `shared` is `optional` and none
+  of their anchors is on screen (`firstShown` in `useGuide.js`).
+- **Waiting steps.** A `creates` step waits for the user (Your turn, no
+  Next), because later steps need what it makes. Every other step is light.
 - **Leaving on the last card.** When a run's prerequisites stop holding, it
   ends. If it was on its last step and that step waits for no action, the
   tour is recorded as done, since every card was shown.
@@ -317,6 +324,91 @@ Engine abilities available to every step:
   the overlay; the token stays literal in the i18n key
   ([i18n.md](i18n.md)), and a test checks every token names a command or a
   key.
+
+## Showing, not telling
+
+The October 2026 review set four rules for every tour. Each card is cheap
+to try, and the screen does the explaining.
+
+1. **Light by default.** A step that invites a try keeps Next. If the user
+   does the thing, its `advanceOn` event ticks it (✓ Done) and the tour
+   moves on; if not, Next moves on all the same. Only a step whose result
+   later steps need waits for the user: a `creates` step. That card says
+   **Your turn**, has no Next, and offers a quiet **Skip step**.
+2. **Show on the real UI.** A gesture is a `scene` played over the real
+   control: a ghost pointer double-clicks the actual title, drags the
+   actual window to where it would dock. It is never a drawing of the
+   control beside the control. A drawing (`media`) is only for a concept
+   with no place on screen (Illustrations, below).
+3. **One sentence per card.** A title of about six words, imperative when
+   it is an action. A body only when the title cannot carry it, and then
+   one short sentence. The card never narrates what the scene or the demo
+   already shows.
+4. **One motion system.** One vocabulary of scene primitives, one timing
+   scale (`MOTION` in `guide/scene.js`), one layer order, theme tokens only.
+
+### Scenes
+
+A step's `scene: [...]` is a list of primitives `guide/scene.js` plays in
+order, then holds the last frame, fades and plays again. It changes
+nothing: no click, key or drag reaches the app, and its shapes take no
+pointer events. Each primitive names a registered anchor and reads that
+anchor's box when it plays, so a scene follows the layout. `at` is a point
+in the anchor's box as fractions of it, `[0.5, 0.5]` by default.
+
+| Primitive | What it shows |
+|---|---|
+| `{point: anchor, at?}` | the pointer glides there and a soft halo marks the spot |
+| `{click: anchor, at?, count?, button?}` | a press and its ripple; `count: 2` a double-click, `button: "right"` a right-click (a mouse badge beside the pointer) |
+| `{drag: anchor, at?, to: {zone, window}}` | the pointer presses, carries an outline of the anchor and lets go where `window` (`chat` or `notes`) would dock on side `zone` (`left`, `right` or `bottom`). The dock's own drop preview appears there at the size that window would get (App's `dockZone` service, the geometry the real drag previews) |
+| `{stroke: anchor, at?: [x0, y0, x1, y1]}` | the pointer writes a squiggle inside that part of the anchor |
+| `{type: anchor}` | the pointer steps aside, and a caret runs a line of text into the field |
+| `{ghost: anchor, size?}` | a dashed outline of what is about to appear under the anchor (the next sheet of paper) |
+| `{wait: ms}` | a pause |
+
+A scene plays only while its step is the user's to look at: not during a
+demo or the Done moment, never on an offer or a hint. When the user presses
+anywhere, or their pointer comes onto a spot the scene uses (the title it
+double-clicks, the part of the page it writes on), the scene clears away,
+since they are trying it. It starts again from the top once their
+pointer has been elsewhere for 1.5 s. Under reduced motion it plays once
+at no speed and keeps its last frame, still. On a touch screen the pointer
+is a fingertip and a right-click plays as a long press. The test checks that every
+primitive is a known kind and names a registered anchor, and that hints
+have no scene.
+
+### Surfaces
+
+An anchor inside a popover or a panel names it as its `surface` in the
+registry (`add.popover`, `share.popover`, `account.menu`, `tasks.panel`).
+The spotlight's hole is then the whole surface, so the rows around the
+anchor stay readable and clickable, and the ring marks the anchor itself.
+The card keeps clear of the surface (it joins the step's `avoid` box). A
+surface opens by the same `open` path as the anchors in it; the test
+checks that.
+
+### Motion and layers
+
+- **Timing.** `MOTION` in `guide/scene.js` is the guide's one scale. A
+  glide takes 520 ms (the demo pointer's CSS transition is the same), a
+  press 90 ms and a ripple 520 ms. The finished frame holds 1.6 s, then a
+  short rest comes before the next loop. Fades use 160 ms, the app's
+  `--dur-base`.
+- **Layers.** Everything the guide draws lives in one root at
+  `--z-tip`, in document order and without z-indexes of its own: the
+  dimmed sheet and its ring, the demo's click shield, an offer's beacon,
+  the scene, the demo pointer, the card. A scene's shapes always pass
+  under the pointer, and the pointer under the card.
+- **One pointer.** Scenes and demos draw the same white system pointer
+  (`.guidePointer`, `POINTER_PATH`). While a demo or a scene types, the
+  pointer fades out, so the text is the thing to watch.
+- **The sheet lifts while the user acts.** A press inside the hole lowers
+  the dimming for as long as the pointer is down. What the app shows in
+  answer is then not dimmed under it: a dock's drop preview, the colour
+  palette after a selection.
+- **Colours.** Scene shapes are accent outlines and washes from the theme's
+  tokens, and the drop preview is the dock's own (`.dockPreview`'s look),
+  so a scene never passes for a control of the app.
 
 ## Demo steps
 
@@ -358,12 +450,15 @@ step completes only for its matching type.
 
 - Actions: `{click: anchor}`, `{type: anchor, text, speed?}`,
   `{press: "Enter", on?: anchor}`, `{waitFor: {event, match?}, timeout?,
-  status?}`, `{wait: ms}`. Click and type move the spotlight and a drawn
-  pointer to the element first, pause a beat, then act. Typing goes through
-  the native value setter plus an `input` event, so React-controlled inputs
-  see it. Meanwhile the pointer waits faded at the field's left edge, just
-  below it (above it at the bottom of the window), so the typed text stays
-  readable. Keys are dispatched as `KeyboardEvent`s (the engine's own
+  status?}`, `{wait: ms}`, and `{point: anchor, wait?}`, which moves the
+  spotlight and the pointer to what the demo just made and stays a moment
+  (1.2 s by default) without touching it. Click and type move the spotlight
+  and the drawn pointer to the element first, pause a beat, then act.
+  Typing goes through the native value setter plus an `input` event, so
+  React-controlled inputs see it. Meanwhile the pointer waits at the
+  field's left edge, just below it (above it at the bottom of the window),
+  faded out, so the typed text is the thing to watch. The note demo does
+  the same over the note. Keys are dispatched as `KeyboardEvent`s (the engine's own
   hotkeys ignore untrusted events); a press `on` a field shows the key as a
   cap beside the pointer for 600 ms. Events that fire during the step are
   buffered, so a `waitFor` after a fast action still catches its result.
@@ -383,15 +478,19 @@ step completes only for its matching type.
   clicks, the card shows ▶ Watch and a thin line of the actions done so far,
   and Back/Next are hidden. **Skip this demo** stops the actions (their
   cleanups run) and moves on, except on a step marked `skippable: false`
-  (the add-a-paper demo, which every later step depends on). Arrow and Enter
-  navigation is paused too; the close button and Esc still leave the tour.
-  After the actions, a step without `advanceOn` advances by itself, one with
-  it hands over to the user. A failed action (anchor never appeared, event
+  (the add-a-paper demo, which every later step depends on). On a step that
+  hands over to the user, Skip stops the demo and stays for the try
+  (`skipDemo` in `useGuide.js`). Arrow and Enter navigation is paused too;
+  the close button and Esc still leave the tour. After the actions, a step
+  without `advanceOn` advances by itself, one with it hands over to the
+  user: a demo and its try are one step (the first tour's highlights). A failed action (anchor never appeared, event
   timed out) leaves the card up with "couldn't finish" and Skip; the tour is
   never stuck.
 - `placement` on a step names the card's preferred side so it does not cover
   what the demo is about to open (the Add step sits to the left of the
-  button; its popover opens below).
+  button; its popover opens below). While a demo works inside the step's
+  own anchor (the note demo in the Notes window), the card keeps clear of
+  that whole anchor, so it covers nothing the demo uses next.
 
 The survey behind these choices is [docs/research/onboarding.md](../research/onboarding.md).
 
@@ -403,39 +502,50 @@ same contract as an anchor — a tour names an illustration and never a path,
 and `npm test` fails on an id with no file, a file no step shows, and a file
 the registry does not know.
 
-**What a drawing is for.** The guide points at the real UI. A drawing is for
-what the still UI cannot show: a sequence (an address becoming a saved
-paper), a before and after (the paper of a page changing), or a relationship
-(one paper in several folders; the one page behind both views). It never
-replaces the spotlight, so a step whose picture would only be a portrait of
-the control it already points at does not get one.
+**What a drawing is for.** A concept that has no place on screen. A gesture
+on the real UI is a scene's to show ("Scenes", above), so a drawing never
+shows a control, a click or a drag. Two ideas have earned one: one paper
+filed in several folders and never copied (`labels-folders`, the library
+tour), and one page behind both views, the notes and the notebook view
+(`page-notebook`, the Add and notebook tours).
 
 **Why it is inlined.** `GuideOverlay` puts the file's markup straight into
 the card rather than loading it as an `<img>`, so it paints from the theme's
-tokens (`var(--accent)`, `currentColor`). There are eight themes, so a
-drawing carrying its own colours — or deciding them from
-`prefers-color-scheme` — would be wrong in most of them. The files are this
-repository's own, built into the bundle by `import.meta.glob(… "?raw")`;
-nothing a user supplies is ever inlined.
+tokens. There are eight themes, so a drawing carrying its own colours — or
+deciding them from `prefers-color-scheme` — would be wrong in most of them.
+The files are this repository's own, built into the bundle by
+`import.meta.glob(… "?raw")`; nothing a user supplies is ever inlined.
 
-**What a drawing must do**, each checked by `tests/guide.test.mjs`:
+**One grammar** (`guide/media.css`). A drawing is plain shapes carrying the
+stylesheet's classes, with no `<style>`, colour or words of its own, so the
+drawings look like one set:
 
-- **Scope its rules.** Inlined, its `<style>` is the document's, so every
-  selector begins `[data-media="<id>"]` and the only at-rule is
-  `@keyframes`. Otherwise a drawing could paint the app.
-- **Take its colours from tokens.** No `#hex`, `rgb()` or `rgba()`.
-- **Size itself from CSS.** A `viewBox` and no `width`/`height` on the root.
-  The registry's `ratio` (1.4–2.2 — the card is 320 px wide) gives the box
-  an `aspect-ratio`, so the card is its final height when `place.js`
-  measures it and a picture never moves its own card.
-- **Say nothing in words.** Copy belongs on the card, where it is
-  translated ([i18n.md](i18n.md)); a drawing holds shapes and glyphs, so it
-  needs no per-language version.
-- **Keep its animation to itself.** Each file carries its own `@keyframes`,
-  so a drawing is one file to read and change. `guide.css` stops all of them
-  at once under `prefers-reduced-motion`
-  (`.guideMedia svg * { animation: none }`), so an asset never has to
-  remember to.
+- **Shapes**, painted from tokens: `m-card` (a surface: a paper, a panel, a
+  sheet), `m-well` (a sunken area), `m-line` and `m-line-dim` (lines of
+  text), `m-rule` (a ruled line), `m-chip` and `m-chip-on` (a pill), `m-glyph`
+  and `m-glyph-on` (an icon's stroke), `m-link` (the accent connector or
+  outline) and `m-ink` (handwriting). The accent goes on the one thing the
+  drawing is about.
+- **Motion**, on one clock: `--m-t` (an `@property` number) runs from 0 to
+  1 over the period `--m-period` (4.8 s), twice, then rests at 1. An
+  element's motion class starts at its `style="--m-at: …"` (0 to 0.7 of
+  the period): `m-appear` fades in and settles, `m-draw` draws a stroke
+  along its path (`pathLength="1"`), `m-light` lights an accent mark. A
+  drawing's order is data, and its rhythm is every drawing's.
+- **The still picture is the whole one.** At `--m-t: 1` every element is
+  complete, and that is where the drawing rests, what reduced motion shows
+  and what a browser without `@property` shows.
+
+**What a drawing must do**, each checked by `tests/guide.test.mjs`: open
+with a comment saying what it shows; use only plain shape elements, the
+geometry attributes and `media.css` classes (every class it uses has a
+`.guideMedia .<class>` rule); no `<style>`, `<text>`, raw colour, id or
+event attribute; no inline style but `--m-at`; `pathLength="1"` on every
+`m-draw`; no `transform` on an `m-appear`; a `viewBox` and no
+`width`/`height` on the root. The registry's `ratio` (1.4–2.2 — the card is
+320 px wide) gives the box an `aspect-ratio`, so the card is its final
+height when `place.js` measures it and a picture never moves its own card.
+`media.css` itself is scoped under `.guideMedia` and paints from tokens.
 
 A drawing goes on a step of a running tour only. An offer and a hint stay a
 card of words: they interrupt, so they stay small.
@@ -498,12 +608,13 @@ anchors are the only thing the guide needs from it. No guide code imports App
 state directly; App passes what the engine needs through one `useGuide()`
 call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
-`phone`, `dockedNotes`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
+`phone`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
 `cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
-services demos and tour ends call (`show`, `restore`, `openSettings`,
-`findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`) and `tidy`.
+services demos, scenes and tour ends call (`show`, `restore`, `openSettings`,
+`findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`, `dockZone`)
+and `tidy`.
 
 ## Tour scripts
 
@@ -523,13 +634,16 @@ export default {
   offer: { title: T("You made a table"), line: T("Cells, rows and columns are edited in place.") },
   steps: [
     { id: "table-make", anchor: "dock.notes", placement: "left", creates: "notes.table",
-      title: T("Type /table in a note, then click outside it"), advanceOn: { event: "table.shown" } },
+      title: T("Type /table in a note"), body: T("Then click outside it."), advanceOn: { event: "table.shown" } },
     { id: "table-cell", anchor: "notes.table", placement: "bottom",
-      title: T("Click any cell and type: {key:Tab} moves to the next, {key:Enter} saves"), advanceOn: { event: "table.edited" } },
+      title: T("Click a cell and type"), body: T("{key:Tab} moves on, {key:Enter} saves."),
+      scene: [{ click: "notes.table", at: [0.25, 0.75] }], advanceOn: { event: "table.edited" } },
     { id: "table-add", anchor: "notes.tableAdd", avoid: "notes.table", placement: "bottom",
-      title: T("+ adds a row or column; hover a row or column for its handle: drag to move, click for options") },
+      title: T("+ adds a row or column"), body: T("Hover one for its handle: drag it, or click for options."),
+      scene: [{ click: "notes.tableAdd" }] },
     { id: "table-whole", anchor: "notes.tableCorner", avoid: "notes.table", placement: "top",
-      title: T("The corner selects the whole table: copy, move or delete it"), next: T("Done") },
+      title: T("The corner selects the whole table"), body: T("Then copy, move or delete it."),
+      scene: [{ click: "notes.tableCorner" }], next: T("Done") },
   ],
 };
 ```
@@ -556,11 +670,14 @@ Tour fields:
 Step fields:
 
 - `id`, `anchor` (null: a centred card; an anchorless hint sits in the
-  bottom-left corner), `title` (one short line) and `body` (at most one
-  sentence; `bodyTouch` words it for a touch screen). Both take `**bold**`,
-  `*italic*`, `` `code` `` and `{key:…}`.
-- `media`: an illustration id from `guide/media.js`, drawn above the copy
-  (Illustrations, below).
+  bottom-left corner), `title` (about six words) and `body` (at most one
+  short sentence, only when the title cannot carry it; `bodyTouch` words it
+  for a touch screen). Both take `**bold**`, `*italic*`, `` `code` `` and
+  `{key:…}`.
+- `scene`: a looping demonstration on the real UI that changes nothing
+  ("Scenes", above).
+- `media`: an illustration id from `guide/media.js`, drawn above the copy,
+  for a concept with no place on screen (Illustrations, below).
 - `placement`: the card's preferred side (`top`, `bottom`, `left`, `right`),
   or `inside` to tuck it into the anchor's bottom-right corner (the whole
   PDF viewer). `avoid`: another anchor whose box the card keeps clear of as
@@ -568,14 +685,15 @@ Step fields:
 - `requires`: facts for this step; a step whose facts do not hold is left
   out of the run when the tour starts (the AI chat tour's steps per place).
   Nothing is ever shown for a step that does not apply.
-- `advanceOn: {event, match?}`: the user's action that completes the step,
-  shown as "Your turn". Without it, Next advances.
+- `advanceOn: {event, match?}`: the user's action that ticks the step (✓
+  Done, then on). The step keeps Next unless it `creates` something,
+  when it waits for the action ("Your turn").
 - `next`: the primary button's label (Done, Finish).
 - `do: [...]`: a demo (Demo steps, above), with `delay` (the pause before
   the first action, 900 ms) and `skippable: false`.
 - `optional`, `creates`, `reveal`: see the engine abilities above.
-- `shared`, `recap`: a step the sibling tour also teaches, and the card
-  that stands in for those once the sibling is done (Sibling tours).
+- `shared`: a step the sibling tour also teaches, left out once the
+  sibling is done (Sibling tours).
 - `intro`, with `outline`, `later` and `footnote`: the welcome card.
 
 `open` paths live in the registry, not on steps.
@@ -636,15 +754,18 @@ mounted once in App, renders what it says.
   silently) or withdraws the offer. A demo action waits up to 4 s for its
   anchor, then shows "couldn't finish".
 - **Spotlight**: one fixed SVG with an even-odd path: the dimmed sheet with a
-  rounded hole around the anchor, padded 6 px, and a pulsing accent ring.
-  The hole is unpainted, so pointer events reach the real control; the
-  painted sheet swallows clicks. While a demo acts, a shield swallows
-  clicks in the hole too. The anchor is scrolled into view (`nearest`) when
-  the step opens.
+  rounded hole around the anchor (or around its `surface`), padded 6 px,
+  and a pulsing accent ring on the anchor. The hole is unpainted, so
+  pointer events reach the real control; the painted sheet swallows
+  clicks. While a demo acts, a shield swallows clicks in the hole too;
+  while the user presses inside it, the sheet lifts. The anchor is scrolled
+  into view (`nearest`) when the step opens. Changes inside the guide's own
+  root (a scene's shapes, the demo pointer) never re-measure it.
 - **Card** (`place.js`): 320 px, the popover look (same tokens as the account
   menu, [ui-design.md](ui-design.md)). It goes on the step's `placement`
   when that fits, else below, above, right, left, each judged clear of the
-  spotlight and of the step's `avoid` box; clamped to the viewport; a beak
+  spotlight and of its `avoid` box (the step's `avoid` anchor, the anchor's
+  surface, or the demo's step anchor); clamped to the viewport; a beak
   on the edge that faces the anchor. At 640 px and narrower it is a bottom
   sheet (above the phone layout's tab bar). It is `role="dialog"` with
   `aria-live="polite"` and never takes focus: mousedown is prevented, so an
@@ -742,12 +863,14 @@ frontend/src/guide/
   triggers.js       when a tour is offered; per-account progress
   keys.js           {key:…} in copy: a command's chord for this account
   media.js          illustration registry: id → {ratio, description}
-  media/*.svg       one drawing per id, scoped to its own [data-media] and painted from tokens
+  media/*.svg       one drawing per id, drawn with media.css's shapes
+  media.css         the drawings' shared grammar: shapes, motion, the card's media box
   finish.js         a tour's finish card: what the run made
   place.js          where a card goes beside its spotlight
   useGuide.js       state machine, offers, reveal, demo actions
+  scene.js          a step's scene: its primitives, MOTION (the guide's timing) and the player
   previewHighlight.js, previewArea.js, typeDemoNote.js   the demos that drag or type
-  GuideOverlay.jsx  spotlight + card + bottom sheet, offer, hint and finish cards
+  GuideOverlay.jsx  spotlight + scene layer + card + bottom sheet, offer, hint and finish cards
   tours/*.js        one file per tour; tours/index.js registers them
   tours/hints.js    the hints
   guide.css
@@ -756,8 +879,9 @@ backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, 
 backend/tests/test_welcome.py         who gets it, the PDF, the op batch, the fallbacks
 frontend/tests/guide.test.mjs         schema, anchor references, event names, triggers, placement
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
-frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on the library, a paper, a hidden PDF,
-                                                  a phone, and with no AI connected
+frontend/tests/e2e/scenarios/contextualGuide.mjs  Arrange windows (its scenes, then the user's own fold
+                                                  and drag); the AI chat tour on the library, a paper,
+                                                  a hidden PDF, a phone, and with no AI connected
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made by /table or a paste,
                                                   not merely shown, pointed at the new one), sharing
@@ -772,7 +896,7 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 - `npm test` (`guide.test.mjs`): every step's `anchor`, `creates`, `reveal`
   and `avoid` and every offer anchor is in the registry; every step's
   `media` is a registered id with a file, every registered drawing is shown
-  by a step, and each one scopes its rules to its own `[data-media]`, takes
+  by a step, and each one is built only from `media.css` classes, takes
   its colours from tokens, sizes itself from a `viewBox` and declares a
   ratio between 1.4 and 2.2; every registered
   anchor is carried by an element and every `data-guide` in the source is
@@ -782,26 +906,38 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   trigger's `requires`, `anyOf`, version) behave; progress survives a
   reload, separates accounts, tolerates broken storage and stays in
   sessionStorage on a demo server; the AI chat and sharing tours pick their
-  steps per situation; the viewer tours share their steps and turn them into
-  a recap once the sibling is done; every `{key:…}` names a command or a key; offer copy
+  steps per situation; the viewer tours share their steps and drop them
+  once the sibling is done; every `{key:…}` names a command or a key; offer copy
   is catalogued; the finish card lists only what the run made; a repeated
-  anchor picks as its `pick` says; a card keeps clear of its `avoid` box.
+  anchor picks as its `pick` says; a card keeps clear of its `avoid` box;
+  every scene primitive is a known kind naming registered anchors (a dock
+  zone names a side and a window) and no hint has a scene or a drawing; a
+  surface is a registered anchor opened by the same path as the anchors in
+  it.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
   the first tour runs end to end from the Tours menu (welcome card, the add
-  demo, both practice highlights, the note and label demos, Home, the finish
-  card's items and tiles) and replays on the paper already open; without the
+  demo, both highlights with their demos and the light hand-over, the note
+  and label demo, Home, the finish card's items and tiles), Skip on a
+  highlight demo stays for the try, and the tour replays on the paper
+  already open; without the
   vars override its demo opens the Welcome page's PDF with no resolver call,
   and falls back to arXiv once that page is deleted; a new account's empty
   library is offered the tour once.
-- `contextualGuide.mjs`: the AI chat tour's steps per place, the figure
-  snapshot taken back when the tour ends unsent, and the setup card with no
-  AI connected.
+- `contextualGuide.mjs`: Arrange windows — its double-click scene lands on
+  the real title and changes nothing, the steps keep Next, the drag scene's
+  drop preview is the left dock zone clear of the card, the sheet lifts and
+  the scene steps aside while the user drags, and their own fold and drop
+  tick the steps; the AI chat tour's steps per place, the figure snapshot
+  taken back when the tour ends unsent, and the setup card with no AI
+  connected.
 - `triggeredGuide.mjs`: each offer appears after its event without dimming
   the app; Show me runs the tour (inside the Share popover and the account
-  menu without closing them); a hover-only control shows while pointed at;
+  menu without closing them); the Add popover is the spotlight's surface,
+  its other rows clickable, and its typing scene types nothing for real;
+  the library's scene right-clicks a card; a hover-only control shows while pointed at;
   the tables tour points at the table just made and its cards keep clear of
   it; the PDF viewer tour is listed and walked on a PDF without a table of
-  contents, and after it the notebook view's offer is three cards that end
+  contents, and after it the notebook view's offer is two cards that end
   as done when the user clicks Notes view; a hint keeps the editor's caret; a `creates` step or an optional step
   whose anchor is there or gone passes without a warning; nothing is offered
   twice, or at all once Suggest tours is off in Settings.
@@ -818,10 +954,15 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 - New feature worth a triggered tour: emit an event where it happens (one
   line, catalogued), write `tours/<name>.js` with a `trigger`, register it in
   `tours/index.js`, add its strings to the catalog. A single card is a hint.
-- Something the still UI cannot show (a sequence, a before and after, a
-  relationship): add a drawing — `guide/media/<id>.svg` and a row in
-  `guide/media.js` — and name it from the step's `media`. Keep pointing at
-  the real control (Illustrations).
+- A gesture worth showing (a double-click, a drag, where something lands):
+  a `scene` on the step, from the primitives above, on registered anchors.
+  Add a primitive to `guide/scene.js` only when no combination shows it.
+- A concept with no place on screen (one page behind two views, one paper
+  in many folders): a drawing — `guide/media/<id>.svg` and a row in
+  `guide/media.js` — named from the step's `media`. Keep pointing at the
+  real control (Illustrations).
+- Copy: a title of about six words, a body only when needed, never a
+  sentence that narrates what the scene or the demo shows.
 - Renaming or removing a control: update the registry row; the tests name the
   affected steps.
 - Copy changes: edit the tour file or `welcome.md`. Bump `version` only when a

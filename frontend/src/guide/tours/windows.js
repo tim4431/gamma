@@ -1,5 +1,7 @@
 import { T } from "../../shared/i18n/i18n.js";
-
+// Two gestures on Chat's title, each shown by a looping `scene` on the real
+// title: a double-click folds the window (and unfolds it), a drag docks it
+// elsewhere. Doing either ticks its step; Next moves on without it.
 export default {
   id: "windows",
   version: 1,
@@ -10,26 +12,17 @@ export default {
   offerAnchor: "chat.grip",
   offer: {
     title: T("Make room for your paper"),
-    line: T("Collapse, reopen and rearrange Chat and Notes."),
+    line: T("Fold and move Chat and Notes."),
   },
   steps: [
     { id: "window-collapse", anchor: "chat.grip", placement: "left",
-      title: T("Collapse Chat to its title bar"),
-      body: T("Double-click the Chat title to make more room."),
-      advanceOn: { event: "window.collapsed", match: { id: "chat", collapsed: true } } },
-    { id: "window-expand", anchor: "chat.grip", placement: "left",
-      title: T("Bring Chat back"),
-      body: T("Double-click the same title again to expand the window."),
-      advanceOn: { event: "window.collapsed", match: { id: "chat", collapsed: false } } },
+      title: T("Double-click to fold, again to unfold"),
+      scene: [{ click: "chat.grip", count: 2 }, { wait: 600 }],
+      advanceOn: { event: "window.collapsed", match: { id: "chat" } } },
     { id: "window-move", anchor: "chat.grip", placement: "left",
-      title: T("Drag Chat to a new position"),
-      body: T("Drag its title left, right or down, then release over the highlighted area."),
-      advanceOn: { event: "window.moved", match: { id: "chat" } } },
-    { id: "window-notes", anchor: "notes.grip", placement: "left", requires: { dockedNotes: true }, optional: true,
-      title: T("Notes works the same way"),
-      body: T("Double-click its title to collapse or expand; drag it to rearrange your windows.") },
-    { id: "window-reopen", anchor: "header.view", placement: "bottom",
-      title: T("Reopen a closed window"),
-      body: T("After closing a window with ×, open View and choose AI Chat or Notes to bring it back.") },
+      title: T("Drag a title to move the window"),
+      scene: [{ drag: "chat.grip", to: { zone: "left", window: "chat" } }],
+      advanceOn: { event: "window.moved", match: { id: "chat" } },
+      next: T("Done") },
   ],
 };

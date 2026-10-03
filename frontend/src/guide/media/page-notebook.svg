@@ -1,66 +1,27 @@
 <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
-  <!-- One page, two views: the sheets sit among the notes, or fill the
-       viewer. The same sheet lights up on both sides, because it is the
-       same block either way (guide/media.js). -->
-  <style>
-    [data-media="page-notebook"] .frame { fill: var(--bg-card); stroke: var(--border); }
-    [data-media="page-notebook"] .well { fill: var(--bg-page); stroke: var(--border-subtle); }
-    [data-media="page-notebook"] .note { fill: var(--text-dim); opacity: 0.45; }
-    [data-media="page-notebook"] .sheet { fill: var(--bg-surface); stroke: var(--border); }
-    [data-media="page-notebook"] .rule { stroke: var(--border-subtle); stroke-width: 1; }
-    [data-media="page-notebook"] .ink { stroke: var(--text-secondary); stroke-width: 1.6; fill: none; stroke-linecap: round; }
-    [data-media="page-notebook"] .same { stroke: var(--accent); fill: none; stroke-width: 1.6; }
-    [data-media="page-notebook"] .link { stroke: var(--accent); stroke-width: 1.4; fill: none; stroke-dasharray: 3 4; opacity: 0.75; }
-    [data-media="page-notebook"] .tab { fill: var(--bg-raised); stroke: var(--border); }
-    [data-media="page-notebook"] .tabOn { fill: var(--accent-bg); stroke: var(--accent); }
-    [data-media="page-notebook"] .pulseA { animation: pnPulse 4.4s ease-in-out infinite; }
-    [data-media="page-notebook"] .pulseB { animation: pnPulse 4.4s ease-in-out infinite; animation-delay: 0.35s; }
-    [data-media="page-notebook"] .trace { stroke-dasharray: 60; animation: pnTrace 4.4s ease-in-out infinite; }
-    @keyframes pnPulse {
-      0%, 18% { opacity: 0; }
-      36%, 74% { opacity: 1; }
-      100% { opacity: 0; }
-    }
-    @keyframes pnTrace {
-      0%, 30% { stroke-dashoffset: 60; }
-      52%, 78% { stroke-dashoffset: 0; }
-      100% { stroke-dashoffset: 60; }
-    }
-  </style>
+  <!-- One page, two views: on the left a sheet of paper stands among the
+       notes, on the right the same sheets fill the viewer, one under the
+       other. It is one sheet either way, so it is written on in both at
+       once and lit in both (guide/media.js, docs/dev/notebooks.md). -->
 
-  <!-- left: the notes view, a sheet standing among the note blocks -->
-  <rect class="frame" x="12" y="26" width="132" height="152" rx="9" stroke-width="1" />
-  <rect class="tab" x="24" y="36" width="42" height="11" rx="5.5" stroke-width="1" />
-  <rect class="note" x="24" y="56" width="92" height="5" rx="2.5" />
-  <rect class="note" x="24" y="67" width="72" height="5" rx="2.5" />
-  <g>
-    <rect class="sheet" x="24" y="82" width="96" height="58" rx="4" stroke-width="1" />
-    <path class="rule" d="M30 96h84M30 106h84M30 116h84M30 126h84" />
-    <path class="ink" d="M40 124c8-10 14 4 22-5s12 6 20-3" />
-    <rect class="same pulseA" x="21.5" y="79.5" width="101" height="63" rx="6" />
-  </g>
-  <rect class="note" x="24" y="150" width="84" height="5" rx="2.5" />
-  <rect class="note" x="24" y="161" width="60" height="5" rx="2.5" />
+  <!-- the notes view: a first block, the sheet, the blocks after it -->
+  <rect class="m-card" x="16" y="18" width="136" height="164" rx="10" />
+  <circle class="m-line" cx="31" cy="37" r="2.2" />
+  <rect class="m-line" x="40" y="34" width="80" height="6" rx="3" />
+  <rect class="m-card" x="40" y="52" width="72" height="86.25" rx="3" />
+  <path class="m-rule" d="M49 74.5H103M49 89.5H103M49 104.5H103M49 119.5H103" />
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.04" d="M52 73.38c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3 0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
+  <rect class="m-link m-light" style="--m-at: 0.4" x="36.5" y="48.5" width="79" height="93.25" rx="6" />
+  <circle class="m-line-dim" cx="31" cy="155" r="2.2" />
+  <rect class="m-line-dim" x="40" y="152" width="92" height="6" rx="3" />
+  <circle class="m-line-dim" cx="31" cy="169" r="2.2" />
+  <rect class="m-line-dim" x="40" y="166" width="62" height="6" rx="3" />
 
-  <!-- the two views are one page -->
-  <path class="link trace" d="M150 102h20" />
-
-  <!-- right: the notebook view, the sheets in the viewer's place -->
-  <rect class="frame" x="176" y="26" width="132" height="152" rx="9" stroke-width="1" />
-  <rect class="tabOn" x="188" y="36" width="42" height="11" rx="5.5" stroke-width="1" />
-  <rect class="well" x="186" y="54" width="90" height="114" rx="5" stroke-width="1" />
-  <g>
-    <rect class="sheet" x="194" y="60" width="74" height="48" rx="4" stroke-width="1" />
-    <path class="rule" d="M200 72h62M200 81h62M200 90h62M200 99h62" />
-    <path class="ink" d="M206 97c6-8 11 3 17-4s9 5 15-2" />
-    <rect class="same pulseB" x="191.5" y="57.5" width="79" height="53" rx="6" />
-  </g>
-  <rect class="sheet" x="194" y="114" width="74" height="48" rx="4" stroke-width="1" />
-  <path class="rule" d="M200 126h62M200 135h62M200 144h62M200 153h62" />
-
-  <!-- the notes stay beside them, one row per sheet -->
-  <rect class="note" x="284" y="62" width="16" height="5" rx="2.5" />
-  <rect class="note" x="284" y="73" width="12" height="5" rx="2.5" />
-  <rect class="note" x="284" y="116" width="16" height="5" rx="2.5" />
-  <rect class="note" x="284" y="127" width="10" height="5" rx="2.5" />
+  <!-- the notebook view: the sheets fill the viewer, the next one below -->
+  <rect class="m-well" x="168" y="18" width="136" height="164" rx="10" />
+  <rect class="m-card" x="184" y="32" width="104" height="124.58" rx="3" />
+  <path class="m-rule" d="M197 64.5H275M197 86.17H275M197 107.83H275M197 129.5H275" />
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.04" d="M201.33 62.88c2.17-7.58 6.5-7.58 7.04 0c0.54-7.58 6.5-7.58 7.04 0c0.87 3.25 3.79 3.25 5.42-0.54c1.73-3.79 2.71-13-0.32-13c-2.82 0-2.17 9.75 1.73 13.43c2.6 2.17 5.96-0.22 6.82-3.9c0.65-2.82 5.42-3.25 5.63 0.22c0.22 3.25-4.98 4.55-5.85 1.08c-0.32-1.52 3.68-1.08 6.07 2.17c2.17 2.6 6.07-0.65 7.15-3.68c0.97-2.82 4.55-2.6 4.33 0.43c-0.22 2.6-3.9 3.68-4.12 1.52c-0.22-2.17 4.33-1.73 6.72 1.73c2.38 3.47 6.5 1.08 8.23-1.52" />
+  <rect class="m-link m-light" style="--m-at: 0.4" x="180.5" y="28.5" width="111" height="131.58" rx="6" />
+  <path class="m-card" d="M184 182v-13a3 3 0 0 1 3-3h98a3 3 0 0 1 3 3v13" />
 </svg>

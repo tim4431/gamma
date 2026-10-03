@@ -1,21 +1,29 @@
 // The guide's visible part: a dimmed sheet with a cut-out around the current
 // step's anchor (clicks pass through the hole, so the user acts on the real
 // control) and a card beside it. A step without an anchor is a centred card.
-// A demo step moves the spotlight to whatever it acts on and shows a pointer
-// gliding there. Anchors are found by data-guide id, retried briefly while
-// the UI mounts; a step whose anchor never appears is skipped with a warning,
-// never shown pointing at nothing. An offer (a triggered tour's invitation,
-// or a hint) is the same card without the dimmed sheet. The card never takes
-// focus or counts as a click outside the popover it points into.
-// docs/dev/onboarding.md.
+// An anchor inside a popover or panel (its registry `surface`) leaves that
+// whole surface undimmed, the ring on the anchor. A step's `scene` plays in
+// its own layer over the real UI (guide/scene.js); a demo step moves the
+// spotlight to whatever it acts on and shows a pointer gliding there.
+// Anchors are found by data-guide id, retried briefly while the UI mounts; a
+// step whose anchor never appears is skipped with a warning, never shown
+// pointing at nothing. An offer (a triggered tour's invitation, or a hint)
+// is the same card without the dimmed sheet. The card never takes focus or
+// counts as a click outside the popover it points into.
+//
+// Layers, bottom to top, all in document order inside one root: the dimmed
+// sheet and its ring, the demo shield, a beacon, the scene, the demo
+// pointer, the card. docs/dev/onboarding.md, "Motion and layers".
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { anchorElement } from "./anchors.js";
+import { ANCHORS, anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
 import { mediaRatio } from "./media.js";
 import { CARD_W, placeCard } from "./place.js";
+import { POINTER_PATH, playScene } from "./scene.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
 import "./guide.css";
+import "./media.css";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const PAD = 6;          // spotlight padding around the anchor
@@ -43,6 +51,9 @@ function renderBody(text, bindings) {
 }
 // A practice step may word its body for touch ("Long-press a word…").
 const COARSE = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+const REDUCED = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const pad = (b) => ({ top: b.top - PAD, left: b.left - PAD, right: b.right + PAD, bottom: b.bottom + PAD, width: b.width + PAD * 2, height: b.height + PAD * 2 });
+const holePath = (r) => `M${r.left},${r.top} h${r.width} a8,8 0 0 1 8,8 v${r.height - 16} a8,8 0 0 1 -8,8 h${-r.width} a8,8 0 0 1 -8,-8 v${-(r.height - 16)} a8,8 0 0 1 8,-8 z`;
 
 // A step's illustration (`media`, guide/media.js): the drawing of that id,
 // bundled from guide/media/. It goes into the card as markup rather than an
@@ -170,6 +181,7 @@ export default function GuideOverlay({ guide, keybindings }) {
   const [rect, setRect] = useState(null);   // spotlight rect (padded) or null
   const [missing, setMissing] = useState(false);
   const cardRef = useRef(null);
+  const rootRef = useRef(null);
   const [cardPos, setCardPos] = useState(null);
   // A demo waiting on something slow (a paper downloading) says so.
   const [slow, setSlow] = useState(false);
@@ -210,17 +222,28 @@ export default function GuideOverlay({ guide, keybindings }) {
         }
         return;
       }
-      // A step's `avoid` anchor is a box its card keeps clear of too (the
-      // table above its add strip).
-      const a = step.avoid && anchor === step.anchor ? anchorElement(step.avoid)?.getBoundingClientRect() : null;
-      setRect({ top: b.top - PAD, left: b.left - PAD, width: b.width + PAD * 2, height: b.height + PAD * 2,
-        right: b.right + PAD, bottom: b.bottom + PAD,
-        avoid: a?.width ? { top: a.top - PAD, left: a.left - PAD, right: a.right + PAD, bottom: a.bottom + PAD } : null });
+      // The surface the anchor sits in (the Add popover around its address
+      // box) is the hole, and the card keeps clear of it; so it does of a
+      // step's `avoid` anchor (the table above its add strip), and, while a
+      // demo works inside the step's own anchor (a note in the Notes
+      // window), of that whole anchor, so it covers nothing the demo uses next.
+      const surfaceId = ANCHORS[anchor]?.surface;
+      const s = surfaceId ? anchorElement(surfaceId)?.getBoundingClientRect() : null;
+      const own = anchor !== step.anchor && step.anchor && step.placement !== "inside" ? anchorElement(step.anchor)?.getBoundingClientRect() : null;
+      const holds = own && b.left >= own.left && b.right <= own.right && b.top >= own.top && b.bottom <= own.bottom;
+      const a = step.avoid && anchor === step.anchor ? anchorElement(step.avoid)?.getBoundingClientRect() : holds ? own : null;
+      const keep = [s, a].filter((box) => box?.width).map(pad);
+      setRect({ ...pad(b), hole: s?.width ? pad(s) : null,
+        avoid: keep.length ? { top: Math.min(...keep.map((k) => k.top)), left: Math.min(...keep.map((k) => k.left)),
+          right: Math.max(...keep.map((k) => k.right)), bottom: Math.max(...keep.map((k) => k.bottom)) } : null });
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
     if (!inviting && !finishing) anchorElement(anchor)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    const mo = new MutationObserver(schedule);
+    // The guide's own layers (a scene's shapes, the demo pointer) move no anchor.
+    const mo = new MutationObserver((records) => {
+      if (records.some((r) => !rootRef.current?.contains(r.target))) schedule();
+    });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true });
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
@@ -250,10 +273,50 @@ export default function GuideOverlay({ guide, keybindings }) {
     setCardPos(placeCard(rect, card.offsetHeight, vw, vh, step?.placement, rect.avoid));
   }, [visible, rect, step]);
 
+  // The step's scene plays while the step is the user's to look at: not
+  // during a demo, the Done moment, an offer or the finish card, and only
+  // once its spotlight is measured. It restarts only with the step.
+  const sceneRef = useRef(null);
+  const rectRef = useRef(rect);
+  rectRef.current = rect;
+  const busy = !inviting && !!live?.busy;
+  const scene = visible && !inviting && !finishing && !busy && !done && !live?.failed && rect ? step?.scene || null : null;
+  useEffect(() => {
+    const layer = sceneRef.current;
+    if (!scene || !layer) return undefined;
+    return playScene(layer, scene, { services: { dockZone: guide.dockZone }, reduced: REDUCED(), touch: COARSE() });
+  }, [scene]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While the user acts in the spotlight (a drag, a selection), the sheet
+  // lifts, so what the app shows in answer — a drop preview, a colour
+  // palette — is not dimmed under it.
+  const [acting, setActing] = useState(false);
+  useEffect(() => {
+    if (!visible || inviting || finishing) return undefined;
+    let timer = 0;
+    const down = (e) => {
+      const r = rectRef.current?.hole || rectRef.current;
+      if (!e.isTrusted || !r || cardRef.current?.contains(e.target) || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      clearTimeout(timer);
+      setActing(true);
+    };
+    const up = () => { clearTimeout(timer); timer = setTimeout(() => setActing(false), 400); };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      clearTimeout(timer);
+      setActing(false);
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, [visible, inviting, finishing, step]);
+
   if (!visible || !step) return null;
   if (finishing) {
     return (
-      <div className="guideRoot" data-guide-finish={step.id}>
+      <div className="guideRoot" ref={rootRef} data-guide-finish={step.id}>
         <div className="guideScrim" onClick={guide.dismiss} aria-hidden="true" />
         {rect ? <Beacon rect={rect} /> : null}
         <div className="guideCard guideCardCentered guideCardWelcome guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
@@ -267,15 +330,17 @@ export default function GuideOverlay({ guide, keybindings }) {
   // The welcome card: a welcome tour's intro step, or its offer.
   const welcome = inviting ? !!offer.welcome : !!step.intro && !anchor;
   const centered = !anchor && (!inviting || welcome);
-  const busy = !inviting && !!live?.busy;
   const vw = window.innerWidth, vh = window.innerHeight;
-  const hole = rect
-    ? `M${rect.left},${rect.top} h${rect.width} a8,8 0 0 1 8,8 v${rect.height - 16} a8,8 0 0 1 -8,8 h${-rect.width} a8,8 0 0 1 -8,-8 v${-(rect.height - 16)} a8,8 0 0 1 8,-8 z`
-    : "";
-  // What the card is: a demo to watch, the user's turn (a step that waits
-  // for their action), the acknowledgement of it, or a step that explains.
+  // The hole is the anchor's surface when it has one; the ring stays on the anchor.
+  const hole = rect ? holePath(rect.hole || rect) : "";
+  const ring = rect ? holePath(rect) : "";
+  // What the card is: a demo to watch, the user's turn (a `creates` step:
+  // the rest of the tour needs what it makes, so it waits), the
+  // acknowledgement of an action, or a light step — one that explains, or
+  // invites a try with Next still there (its `advanceOn` ticks it if the
+  // user does it).
   const failed = !inviting && !!live?.failed;
-  const yourTurn = !inviting && !busy && !failed && !done && !!step.advanceOn;
+  const yourTurn = !inviting && !busy && !failed && !done && !!step.creates;
   const primaryLabel = inviting ? (offer.hint ? t("Got it") : t("Show me")) : failed ? t("Skip") : step.next ? t(step.next)
     : index + 1 >= count ? t("Done") : t("Next");
   const showPrimary = inviting || (!busy && !done && !yourTurn);
@@ -285,7 +350,7 @@ export default function GuideOverlay({ guide, keybindings }) {
   const body = !inviting && COARSE() && step.bodyTouch ? step.bodyTouch : step.body;
 
   return (
-    <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${inviting && offer.hint ? "guideHint" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
+    <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${inviting && offer.hint ? "guideHint" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""} ${acting ? "acting" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined} ref={rootRef}>
       {!inviting ? <svg className="guideDim" width={vw} height={vh} viewBox={`0 0 ${vw} ${vh}`} aria-hidden="true">
         <path
           d={`M0,0 H${vw} V${vh} H0 Z ${hole}`}
@@ -293,18 +358,19 @@ export default function GuideOverlay({ guide, keybindings }) {
           className="guideDimFill"
           style={{ pointerEvents: centered || busy ? "auto" : "visiblePainted" }}
         />
-        {rect ? <path d={hole} className="guideRing" /> : null}
+        {rect ? <path d={ring} className="guideRing" /> : null}
       </svg> : null}
       {busy && rect ? <div className="guideShield" aria-hidden="true" /> : null}
       {inviting && rect ? <Beacon rect={rect} /> : null}
+      {scene ? <div className="guideScene" ref={sceneRef} aria-hidden="true" data-guide-scene={step.id} /> : null}
       {!inviting && live?.cursor ? (
         <div
-          className={`guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""} ${live.cursor.faded ? "faded" : ""}`}
+          className={`guidePointer guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""} ${live.cursor.faded ? "faded" : ""}`}
           style={{ transform: `translate(${live.cursor.x}px, ${live.cursor.y}px)` }}
           aria-hidden="true"
         >
           <svg width="22" height="26" viewBox="0 0 22 26">
-            <path d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" fill="#fff" stroke="#111" strokeWidth="1.4" strokeLinejoin="round" />
+            <path d={POINTER_PATH} />
           </svg>
           {live.cursor.modifier ? <kbd className="guideModifier">{live.cursor.modifier}</kbd> : null}
         </div>
@@ -375,7 +441,7 @@ export default function GuideOverlay({ guide, keybindings }) {
                 <div className="guideFoot">
                   {inviting && !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
                   {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-                  {link ? <button className="uiBtn sm ghost guideLink" onClick={next}>{link}</button> : null}
+                  {link ? <button className="uiBtn sm ghost guideLink" onClick={busy ? guide.skipDemo : next}>{link}</button> : null}
                   <span className="guideBtns">
                     {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
                   </span>

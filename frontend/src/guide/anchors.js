@@ -9,10 +9,13 @@
 // there; any other view names the situation that brings the anchor up (a
 // chat reply with a citation, a table in the notes…) and is never checked.
 // open: anchors inside a closed surface list the anchors the engine clicks
-// first to reveal them. pick: when the anchor repeats, "last" means the
-// newest one (the latest chat reply), "recent" the one inside the element
-// the app marks data-guide-recent (the table the user just made); the first
-// one otherwise, and when nothing is marked.
+// first to reveal them. surface: the popover or panel such an anchor sits
+// in; a tour's spotlight leaves that whole surface undimmed, with the ring
+// on the anchor itself, and its card keeps clear of it. pick: when the
+// anchor repeats, "last" means the newest one (the latest chat reply),
+// "recent" the one inside the element the app marks data-guide-recent (the
+// table the user just made); the first one otherwise, and when nothing is
+// marked.
 
 export const ANCHORS = {
   "header.view": { view: "desktop", description: "View menu: reopen closed windows" },
@@ -25,20 +28,23 @@ export const ANCHORS = {
   "header.search": { view: "any", description: "Workspace search (Ctrl+F)" },
   "header.share": { view: "page", description: "The page's Share button" },
   "header.account": { view: "any", description: "Account & settings menu; on a phone, the bottom bar's More, the same menu with the topbar's other actions on top" },
-  "account.tour": { view: "any", open: ["header.account"], description: "Tours submenu in the account menu" },
-  "account.card": { view: "any", open: ["header.account"], description: "The account menu's card: you, this workspace and your role" },
-  "account.workspaces": { view: "any", open: ["header.account"], description: "The account menu's workspace switcher" },
-  "add.urlInput": { view: "any", open: ["header.add"], description: "The Add popover's URL / arXiv / DOI box" },
-  "add.upload": { view: "any", open: ["header.add"], description: "Upload files — PDFs and markdown notes from this computer" },
-  "add.newPage": { view: "any", open: ["header.add"], description: "New page: an empty page of notes" },
-  "add.newNotebook": { view: "any", open: ["header.add"], description: "New notebook: a page that starts with one blank sheet to write on" },
+  "account.menu": { view: "any", open: ["header.account"], description: "The account menu itself" },
+  "account.tour": { view: "any", open: ["header.account"], surface: "account.menu", description: "Tours submenu in the account menu" },
+  "account.card": { view: "any", open: ["header.account"], surface: "account.menu", description: "The account menu's card: you, this workspace and your role" },
+  "account.workspaces": { view: "any", open: ["header.account"], surface: "account.menu", description: "The account menu's workspace switcher" },
+  "add.popover": { view: "any", open: ["header.add"], description: "The Add popover itself" },
+  "add.urlInput": { view: "any", open: ["header.add"], surface: "add.popover", description: "The Add popover's URL / arXiv / DOI box" },
+  "add.upload": { view: "any", open: ["header.add"], surface: "add.popover", description: "Upload files — PDFs and markdown notes from this computer" },
+  "add.newPage": { view: "any", open: ["header.add"], surface: "add.popover", description: "New page: an empty page of notes" },
+  "add.newNotebook": { view: "any", open: ["header.add"], surface: "add.popover", description: "New notebook: a page that starts with one blank sheet to write on" },
   "tasks.panel": { view: "tasks", open: ["header.tasks"], description: "The background tasks panel: In progress, then Finished" },
-  "tasks.row": { view: "tasks", open: ["header.tasks"], description: "One task's row: its bar and detail, with Stop, Download, Start again and Remove" },
-  "tasks.clear": { view: "tasks", open: ["header.tasks"], description: "Clear finished: drops the finished rows and their files" },
-  "share.link": { view: "shared page", open: ["header.share"], description: "The share popover's link and its Copy link button, once the page is shared" },
-  "share.access": { view: "page", open: ["header.share"], description: "General access: who can open the share link, and whether they can edit; the first pick creates the link" },
-  "share.people": { view: "page", open: ["header.share"], description: "Who has access: the invite box, you, the workspace's members, each invited person with their own access" },
-  "share.stop": { view: "shared page", open: ["header.share"], description: "Stop sharing, confirmed inline" },
+  "tasks.row": { view: "tasks", open: ["header.tasks"], surface: "tasks.panel", description: "One task's row: its bar and detail, with Stop, Download, Start again and Remove" },
+  "tasks.clear": { view: "tasks", open: ["header.tasks"], surface: "tasks.panel", description: "Clear finished: drops the finished rows and their files" },
+  "share.popover": { view: "page", open: ["header.share"], description: "The Share popover itself" },
+  "share.link": { view: "shared page", open: ["header.share"], surface: "share.popover", description: "The share popover's link and its Copy link button, once the page is shared" },
+  "share.access": { view: "page", open: ["header.share"], surface: "share.popover", description: "General access: who can open the share link, and whether they can edit; the first pick creates the link" },
+  "share.people": { view: "page", open: ["header.share"], surface: "share.popover", description: "Who has access: the invite box, you, the workspace's members, each invited person with their own access" },
+  "share.stop": { view: "shared page", open: ["header.share"], surface: "share.popover", description: "Stop sharing, confirmed inline" },
   "pdf.viewer": { view: "pdf", description: "The PDF viewer" },
   "pdf.page": { view: "pdf", description: "Each rendered PDF page; supports rectangle drags" },
   "pdf.textLayer": { view: "pdf", description: "Selectable text on each rendered PDF page" },
@@ -48,7 +54,6 @@ export const ANCHORS = {
   // The viewer's left edge, the same in the PDF and the notebook viewer up
   // to the pen; "viewer" is either of them, open and not closed.
   "viewer.tools": { view: "viewer", description: "The viewer's tool column, mid-left: zoom, the pen, then what only this viewer has" },
-  "viewer.common": { view: "viewer", description: "The run of the column both viewers share: zoom, fit to width and the pen" },
   "viewer.zoom": { view: "viewer", description: "Zoom out, zoom in and fit to width" },
   "viewer.fullscreen": { view: "viewer", description: "Full screen, bottom-left" },
   "viewer.translate": { view: "translatable pdf", description: "Translate this page; right-click or long-press for the whole document and options" },

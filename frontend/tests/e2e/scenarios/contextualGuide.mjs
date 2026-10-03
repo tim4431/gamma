@@ -5,7 +5,10 @@ import { FAKE_AI_MODELS } from "../harness.mjs";
 
 export async function contextualGuideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
-  await step("guide: arrange windows collapses, expands, docks and reopens", async () => {
+  // Arrange windows: each move is a scene on the real title; the steps are
+  // light (Next stays, doing it ticks the step); the drag's scene shows the
+  // dock's own drop preview where Chat would land, clear of the card.
+  await step("guide: arrange windows shows each move on the real title, then the user folds and docks Chat", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["Arrange your reading windows."]]), "windows.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Window tour", source_url: up.source_url } });
     const ctx = await alice.context(browser);
@@ -17,26 +20,52 @@ export async function contextualGuideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="windows"]');
-      await page.waitForSelector('[data-guide-overlay="window-collapse"]');
+      await page.waitForSelector('[data-guide-overlay="window-collapse"] .guideCard');
+      assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Next", "a light step keeps Next");
+      assertEq(await page.locator('.guideCard .guideChip.turn').count(), 0, "and does not wait for the user");
       const grip = page.locator('[data-guide="chat.grip"]');
+      const centre = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+      const inside = (p, b) => p.x >= b.x - 2 && p.x <= b.x + b.width + 2 && p.y >= b.y - 2 && p.y <= b.y + b.height + 2;
+      // The scene double-clicks the real title, and changes nothing.
+      const ripple = page.locator('[data-guide-scene="window-collapse"] .guideSceneRipple').first();
+      await ripple.waitFor({ state: "attached", timeout: 8000 });
+      assert(inside(centre(await ripple.boundingBox()), await grip.boundingBox()), "the ripple lands on the Chat title");
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0, "the scene folds nothing");
+      // Doing it ticks the step (Done) and moves on; again unfolds.
       await grip.dblclick();
-      await page.waitForSelector('[data-guide-overlay="window-expand"]');
+      await page.locator('.guideCard .guideDone').waitFor();
       assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 1);
+      await page.waitForSelector('[data-guide-overlay="window-move"] .guideCard');
       await grip.dblclick();
-      await page.waitForSelector('[data-guide-overlay="window-move"]');
       assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0);
+      // The user's pointer in the spotlight holds the scene back; once it
+      // has left a while, the scene plays.
+      await page.mouse.move(300, 300);
+      // The drag scene: the dock's drop preview on the left, clear of the card.
+      const preview = page.locator('[data-guide-scene="window-move"] .guideScenePreview');
+      await preview.waitFor({ timeout: 12000 });
+      await until(async () => Number(await preview.evaluate((el) => getComputedStyle(el).opacity)) > 0.9, { what: "the drop preview shows" });
+      const zone = await preview.boundingBox();
+      const viewer = await page.locator('[data-guide="pdf.viewer"]').boundingBox();
+      assert(zone.x <= viewer.x + 4 && zone.width < viewer.width * 0.6, `the preview is the left dock zone: ${JSON.stringify(zone)}`);
+      const card = await page.locator(".guideCard").boundingBox();
+      assert(zone.x + zone.width <= card.x || card.x + card.width <= zone.x, "the card keeps clear of the preview");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/windows-drag-scene.png` });
+      // The user's own drag: the sheet lifts while they hold, the scene steps
+      // aside, and the drop ticks the last step.
       const box = await grip.boundingBox();
       const viewport = page.viewportSize();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
+      await page.locator(".guideRoot.acting").waitFor();
+      assertEq(await page.locator('[data-guide-scene] .guideSceneRipple, [data-guide-scene] .guideScenePreview').count(), 0,
+        "the scene steps aside while the user tries it");
       await page.mouse.move(viewport.width * 0.4, viewport.height * 0.85, { steps: 12 });
       await page.mouse.up();
-      await page.waitForSelector('[data-guide-overlay="window-notes"]');
+      await page.locator('.guideCard .guideDone').waitFor();
       assertEq(await page.locator('[data-panel-id="slot-bottom"] [data-guide="chat.grip"]').count(), 1);
-      await page.locator('.guideCard .primary').click();
-      await page.waitForSelector('[data-guide-overlay="window-reopen"]');
-      await page.locator('.guideCard .primary').click();
       await until(async () => await page.locator('.guideCard').count() === 0);
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:alice:windows") || "null")?.state), "done");
       // Both titles remain usable, and the last step's recovery path works.
       await page.locator('[data-guide="notes.grip"]').dblclick();
       assertEq(await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').count(), 1);
@@ -97,25 +126,23 @@ export async function contextualGuideScenarios(env) {
         if (flags.keep) await page.screenshot({ path: `${server.dir}/chat-${mode}-input.png` });
         if (mode === "pdf") {
           // A box is dragged on the paper; its snapshot is the next step's subject.
+          // The same demo then points at the snapshot it put in the chat.
           await page.waitForSelector('[data-guide-overlay="chat-figure"] .guideCursor.dragging');
-          await page.waitForSelector('[data-guide-overlay="chat-snapshot"]');
           await page.waitForSelector('[data-guide="chat.imageContext"] img');
           assertEq(await page.locator('[data-hl-id]').count(), 0, "context creates no saved annotation");
           if (flags.keep) await page.screenshot({ path: `${server.dir}/chat-pdf-context.png` });
-          await page.locator('.guideCard .primary').click();
         } else if (!paperId) {
           // The library's tools step, when its header button is on screen.
           await page.waitForSelector(`[data-guide-overlay="chat-tools"], [data-guide-overlay="${send}"]`);
           if (await page.locator('[data-guide-overlay="chat-tools"]').count()) await page.locator('.guideCard .primary').click();
         }
-        // The last step waits for the user's own Send; its link leaves.
+        // The last step invites the user's own Send; its Done leaves without one.
         await page.waitForSelector(`[data-guide-overlay="${send}"]`);
         await until(async () => await input.inputValue() === "Keep this draft", { what: "existing draft is restored" });
         assertEq(await page.getByRole("button", { name: "Cancel recording", exact: true }).count(), 0, "tour never records");
         assertEq(await page.locator('[data-guide-overlay="chat-voice"]').count(), 0, "no voice step");
-        assertEq(await page.locator('.guideCard .primary').count(), 0, "the send step's action is the user's Send");
-        assertEq((await page.locator('.guideCard .guideLink').textContent()).trim(), "Done");
-        await page.locator('.guideCard .guideLink').click();
+        assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Done", "a light last step: Done, and Send ticks it");
+        await page.locator('.guideCard .primary').click();
         await until(async () => await page.locator('.guideCard').count() === 0);
         assertEq(sends, 0, "tour sends no AI request");
         if (mode === "pdf") {
@@ -141,7 +168,7 @@ export async function contextualGuideScenarios(env) {
       await page.locator(".chatSetup").waitFor();
       await openTours(page, null);
       await page.waitForSelector('[data-guide-overlay="chat-setup"]');
-      assertEq(await page.locator('.guideCard .primary').count(), 0, "the step waits for a tile");
+      assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Done", "a light step: a tile ticks it, Done leaves");
       // Picking a service opens Settings → Connections, which ends the tour.
       await page.locator(".chatSetup").getByRole("button", { name: /^Anthropic/ }).click();
       await page.getByRole("dialog", { name: "Connect an AI service", exact: true }).waitFor();

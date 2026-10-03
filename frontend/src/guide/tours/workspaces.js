@@ -9,9 +9,9 @@ export default {
   trigger: {},
   offerAnchor: "header.account",
   offerPlacement: "bottom",
-  offer: { title: T("You were added to a shared workspace"), line: T("See how to switch to it and what your role allows.") },
+  offer: { title: T("You were added to a shared workspace"), line: T("How to switch to it, and your role there.") },
   steps: [
-    { id: "ws-switch", anchor: "account.workspaces", placement: "left", title: T("Switch between your workspaces here") },
-    { id: "ws-role", anchor: "account.card", placement: "left", title: T("The workspace you are in, and your role there"), next: T("Done") },
+    { id: "ws-switch", anchor: "account.workspaces", placement: "left", title: T("Switch workspaces here") },
+    { id: "ws-role", anchor: "account.card", placement: "left", title: T("Your current workspace and role"), next: T("Done") },
   ],
 };

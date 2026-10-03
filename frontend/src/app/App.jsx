@@ -5422,6 +5422,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // Where window `winId` would land dropped in `zone` ({side, index}): the
+  // REAL landing geometry — the existing slot's rect (or the default size a
+  // new slot would open with), halved to the drop position when other
+  // windows already live there. The drag's preview, and the guide's scene
+  // of that drag (services.dockZone).
+  function dockPreviewRect(winId, zone) {
+    const wa = document.querySelector(".workArea")?.getBoundingClientRect();
+    if (!wa) return null;
+    const slotEl = document.querySelector(`[data-panel-id="slot-${zone.side}"]`);
+    let r;
+    if (slotEl) {
+      const b = slotEl.getBoundingClientRect();
+      r = { left: b.left, top: b.top, width: b.width, height: b.height };
+    } else if (zone.side === "bottom") {
+      r = { left: wa.left, top: wa.top + wa.height * 0.68, width: wa.width, height: wa.height * 0.32 };
+    } else if (zone.side === "left") {
+      r = { left: wa.left, top: wa.top, width: wa.width * 0.26, height: wa.height };
+    } else {
+      r = { left: wa.left + wa.width * 0.72, top: wa.top, width: wa.width * 0.28, height: wa.height };
+    }
+    const others = layout[zone.side].filter((w) => w !== winId && winVisible[w]).length;
+    if (others > 0) {
+      if (zone.side === "bottom") {
+        r = { ...r, width: r.width / 2, left: zone.index === 0 ? r.left : r.left + r.width / 2 };
+      } else {
+        r = { ...r, height: r.height / 2, top: zone.index === 0 ? r.top : r.top + r.height / 2 };
+      }
+    }
+    return r;
+  }
+
   // Drag any window by its grip; drop zones dock it left, right, or bottom.
   // Within a slot the drop half decides the order (top/left half = first),
   // which is how windows swap places. One implementation for every window.
@@ -5442,38 +5473,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const side = ev.clientX < window.innerWidth / 2 ? "left" : "right";
       return { side, index: ev.clientY < window.innerHeight * 0.35 ? 0 : 99 };
     }
-    // Preview shows the REAL landing geometry: the existing slot's rect (or
-    // the default size a new slot would open with), halved to the drop
-    // position when other windows already live there.
-    function previewRect(zone) {
-      const wa = document.querySelector(".workArea")?.getBoundingClientRect();
-      if (!wa) return null;
-      const slotEl = document.querySelector(`[data-panel-id="slot-${zone.side}"]`);
-      let r;
-      if (slotEl) {
-        const b = slotEl.getBoundingClientRect();
-        r = { left: b.left, top: b.top, width: b.width, height: b.height };
-      } else if (zone.side === "bottom") {
-        r = { left: wa.left, top: wa.top + wa.height * 0.68, width: wa.width, height: wa.height * 0.32 };
-      } else if (zone.side === "left") {
-        r = { left: wa.left, top: wa.top, width: wa.width * 0.26, height: wa.height };
-      } else {
-        r = { left: wa.left + wa.width * 0.72, top: wa.top, width: wa.width * 0.28, height: wa.height };
-      }
-      const others = layout[zone.side].filter((w) => w !== winId && winVisible[w]).length;
-      if (others > 0) {
-        if (zone.side === "bottom") {
-          r = { ...r, width: r.width / 2, left: zone.index === 0 ? r.left : r.left + r.width / 2 };
-        } else {
-          r = { ...r, height: r.height / 2, top: zone.index === 0 ? r.top : r.top + r.height / 2 };
-        }
-      }
-      return r;
-    }
     function onMove(ev) {
       if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
       dragging = true;
-      setDockPreview(previewRect(zoneFor(ev)));
+      setDockPreview(dockPreviewRect(winId, zoneFor(ev)));
     }
     function onUp(ev) {
       if (dragging) {
@@ -6777,6 +6780,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setCollapsedWins((prev) => ({ ...prev, notes: false }));
         }
       },
+      // A scene's drag of a window to a dock side: where it would land.
+      dockZone: (win, side) => dockPreviewRect(win, { side, index: 99 }),
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -6823,7 +6828,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
       phone: !!isPhone,
-      dockedNotes: !isPhone && !homeMode && !!pageAttach && !pdfHidden,
       sharedWorkspace: workspaces.some((w) => !w.personal),
       // the open page's share audience ("" unshared or not loaded): the
       // sharing tour words its access step for an anyone-with-the-link share
@@ -9257,7 +9261,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
-          <div className="popover addPopover">
+          <div className="popover addPopover" data-guide="add.popover">
             <input
               autoFocus
               className="searchInput"
@@ -9404,7 +9408,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <MenuScope className="popover userPopover">
+            <MenuScope className="popover userPopover" data-guide="account.menu">
               <div className="userCard" data-guide="account.card">
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
@@ -9814,8 +9818,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <div className="pdfCtlBox pdfZoomOverlay" data-guide="viewer.tools">
               {/* The PDF and the notebook viewer share the buttons up to the
                   pen, in the same places; what only one of them has comes
-                  after (the viewer tours' recap points at the shared run). */}
-              <div className="pdfCtlGroup" data-guide="viewer.common">
+                  after (the viewer tours teach the shared run once). */}
+              <div className="pdfCtlGroup">
                 <div className="pdfCtlGroup" data-guide="viewer.zoom">
                   <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
                     <ZoomOutIcon size={16} />

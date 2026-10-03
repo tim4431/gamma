@@ -36,7 +36,7 @@ export async function guideScenarios(env) {
       await page.click(".guideCard .uiBtn.primary");
       // The demo: Add opens, the link is typed, Enter opens the paper.
       await page.waitForSelector('[data-guide-overlay="add-demo"][data-guide-busy]');
-      assertEq(await page.locator(".guideCard .guideCount").textContent(), "Step 1 of 8", "the welcome card is not counted as a step");
+      assertEq(await page.locator(".guideCard .guideCount").textContent(), "Step 1 of 5", "the welcome card is not counted as a step");
       assertEq(await page.locator('.guideCard .guideBtns button').count(), 0, "automatic step has no navigation buttons, including during its initial pause");
       assertEq(await page.locator('.guideCard .guideChip.watch').count(), 1, "a demo says to watch");
       assertEq(await page.locator('.guideCard .guideLink').count(), 0, "the add demo cannot be skipped: every later step needs its paper");
@@ -50,18 +50,20 @@ export async function guideScenarios(env) {
         >= document.querySelector('[data-guide="add.urlInput"]').getBoundingClientRect().bottom), { what: "the typing pointer is off the text" });
       await until(async () => (await page.inputValue('[data-guide="add.urlInput"]')).endsWith(".pdf"), { what: "the demo typed the link" });
       await page.locator(".guideModifier", { hasText: "Enter" }).waitFor();
-      await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
+      // The highlight step shows the drag first, then hands over.
+      await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip this demo", "other demos can be skipped one by one");
       const firstPointer = await page.locator(".guideCursor").getAttribute("style");
       await until(async () => (await page.locator(".guideCursor").getAttribute("style")) !== firstPointer, { what: "the example pointer moves across the text" });
       await page.waitForSelector('[data-guide="pdf.highlightColor"]');
       assertEq((await page.evaluate(() => window.getSelection().toString())).replace(/\s/g, ""), ABSTRACT_PASSAGE.replace(/\s/g, ""), "demo selects the requested abstract across lines");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/highlight-demo.png` });
-      await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard', { timeout: 30000 });
+      await page.waitForSelector('[data-guide-overlay="highlight"]:not([data-guide-busy]) .guideCard', { timeout: 30000 });
       assertEq(await page.evaluate(() => window.getSelection().toString()), "", "example selection clears before handing over");
-      assertEq(await page.locator('.guideCard .guideChip.turn').count(), 1, "the practice step says it is the user's turn");
-      assertEq(await page.locator('.guideCard .uiBtn.primary').count(), 0, "on the user's turn the task, not a button, is the call to action");
-      assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip step");
+      // A light step: the user may try it, and Next is there whether or not they do.
+      assertEq(await page.locator('.guideCard .guideChip.turn').count(), 0, "a light step does not wait for the user");
+      assertEq(await page.locator('.guideCard .uiBtn.primary').textContent(), "Next", "Next stays on a step that invites a try");
+      assertEq(await page.locator('.guideCard .guideLink').count(), 0, "nothing to skip on a light step");
       assertEq(await page.locator("[data-hl-id]").count(), 0, "the example creates no saved highlight");
       assert(/[?&]block=/.test(page.url()), "the paper opened");
       await waitForPdf(page, 1);
@@ -70,7 +72,7 @@ export async function guideScenarios(env) {
       await page.locator(".plainTip .colorBtn").first().click();
       await page.locator(".guideCard .guideDone").waitFor();
       assertEq(await page.locator('.guideCard .uiBtn.primary').count(), 0, "Done needs no Next button");
-      await page.waitForSelector('[data-guide-overlay="area-demo"] .guideCursor.dragging');
+      await page.waitForSelector('[data-guide-overlay="area"][data-guide-busy] .guideCursor.dragging');
       await page.waitForSelector('.pdfAreaMarquee');
       await until(async () => page.evaluate(() => {
         const marquee = document.querySelector('.pdfAreaMarquee');
@@ -90,7 +92,7 @@ export async function guideScenarios(env) {
       }, { what: "the formula rectangle finishes growing" });
       assertEq(await page.locator('.guideModifier').textContent(), "Ctrl", "box demonstration shows the modifier");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/area-demo.png` });
-      await page.waitForSelector('[data-guide-overlay="area"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="area"]:not([data-guide-busy]) .guideCard');
       assertEq(await page.locator('.pdfAreaMarquee').count(), 0, "example rectangle is cleaned up");
       const pdfBox = await page.locator('[data-guide="pdf.page"]').first().boundingBox();
       const viewerBox = await page.locator('[data-guide="pdf.viewer"]').boundingBox();
@@ -104,13 +106,12 @@ export async function guideScenarios(env) {
       await page.keyboard.up("Control");
       await page.locator('.plainTip .colorBtn').first().click();
       await page.locator('.guideCard .guideDone').waitFor();
-      await page.waitForSelector('[data-guide-overlay="notes"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="note-label"] .guideCard');
       assertEq(await page.locator('[data-guide="dock.notes"]').count(), 1, "the notes window is anchored");
       await page.waitForSelector('[data-guide="notes.editor"]');
       await until(async () => (await page.locator('[data-guide="notes.editor"]').allTextContents()).some((t) => t.includes("Attention compares queries")), { what: "notes demo types real text" });
       const paperId = new URL(page.url()).searchParams.get("block");
-      await page.waitForSelector('[data-guide-overlay="label"] .guideCard');
-      await page.waitForSelector('[data-guide-overlay="home"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="home"] .guideCard', { timeout: 20000 });
       // The label field made the llm label (a block of the label tree) and
       // filed the page under it, once.
       const saved = await until(async () => {
@@ -144,7 +145,7 @@ export async function guideScenarios(env) {
       await until(async () => await page.locator(".userPopover").count() === 0);
       // Replaying with the same PDF already open must still complete.
       await page.click(".guideCard .uiBtn.primary");
-      await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
+      await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       assertEq(new URL(page.url()).searchParams.get("block"), paperId, "replay reuses the open paper");
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
@@ -191,9 +192,9 @@ export async function guideScenarios(env) {
       };
       page.on("request", track);
       await page.click(".guideCard .uiBtn.primary");
-      await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
+      await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       await page.locator(".guideCard .guideLink", { hasText: "Skip this demo" }).click();
-      await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="highlight"]:not([data-guide-busy]) .guideCard');
       assertEq(await page.evaluate(() => window.getSelection().toString()), "", "skipping a demo clears its temporary selection");
       assertEq(new URL(page.url()).searchParams.get("block"), paperId, "arXiv demo opens the saved library copy");
       assertEq(unexpected.length, 0, "known paper needs no resolver or page creation");

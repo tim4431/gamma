@@ -2,9 +2,12 @@ import { T } from "../../shared/i18n/i18n.js";
 // Offered once a sheet of paper is made (a new notebook, +, /page, or
 // writing low on the last sheet). Started from the Tours menu on a page
 // without one, the first step has the user make one for the rest to point
-// at. Two things about a notebook cannot be seen standing still — the next
-// page arriving under your hand, and the paper changing — so those two steps
-// carry a drawing (guide/media.js, docs/dev/notebooks.md).
+// at. The next page arriving under your hand cannot be seen standing still,
+// so that step shows it (`scene`: a stroke low on the sheet, the outline of
+// the page that comes); the last carries the drawing of the one page behind
+// both views (guide/media.js, docs/dev/notebooks.md). The paper itself is
+// left to the notebook view's tour, offered once the user follows the last
+// step there.
 export default {
   id: "notebook",
   version: 1,
@@ -15,24 +18,23 @@ export default {
   // would be withdrawn — and withdrawing one spends it for good.
   trigger: { event: "sheet.created", requires: { notebookView: false } },
   offerAnchor: "notes.sheet",
-  offer: { title: T("You have a page to write on"), line: T("Its paper, the pages that add themselves, and the notebook view.") },
+  offer: { title: T("You have a page to write on"), line: T("Pages that add themselves, and the notebook view.") },
   steps: [
     { id: "nb-make", anchor: "dock.notes", placement: "left", creates: "notes.sheet",
-      title: T("Type /page in a note, or pick Add > New notebook"),
+      title: T("Type /page in a note"),
+      body: T("Or choose Add > New notebook."),
       advanceOn: { event: "sheet.created" } },
-    { id: "nb-grow", anchor: "notes.sheet", placement: "left", media: "notebook-pages",
-      title: T("Write near the bottom and the next page is already there"),
-      body: T("So there is always paper below you. **+** under a page adds one wherever you like.") },
+    { id: "nb-grow", anchor: "notes.sheet", placement: "left",
+      title: T("Pages add themselves as you write"),
+      body: T("**+** under a page adds one anywhere."),
+      scene: [{ stroke: "notes.sheet", at: [0.15, 0.78, 0.7, 0.92] }, { ghost: "notes.sheet", size: 44 }] },
     { id: "nb-pen", anchor: "sheet.pen", placement: "top",
-      title: T("Write on it with a pen, a stylus or the mouse"),
-      body: T("Your drawing is also a note: unfold the page to caption it or replay it."),
-      bodyTouch: T("Your drawing is also a note: unfold the page to caption it or replay it. An Apple Pencil writes while your hand scrolls.") },
-    { id: "nb-paper", anchor: "notebook.paperMenu", placement: "left", media: "notebook-paper",
-      title: T("Each page has its own paper"),
-      body: T("Size, orientation, pattern and background. **Apply to all pages** gives every page here the same paper.") },
+      title: T("Pick the pen to write on it"),
+      body: T("Your drawing is also a note you can caption."),
+      bodyTouch: T("An Apple Pencil writes while your finger scrolls.") },
     { id: "nb-view", anchor: "sheet.notebookView", placement: "top", media: "page-notebook",
-      title: T("The same pages, filling the viewer"),
-      body: T("One page either way — in the notebook view your notes list its pages beside them."),
+      title: T("Open them in the notebook view"),
+      body: T("Same page, its sheets filling the viewer."),
       next: T("Done") },
   ],
 };

@@ -1,0 +1,112 @@
+/* The guide's drawings (guide/media/*.svg, guide/media.js; docs/dev/
+   onboarding.md, "Illustrations"): one grammar every drawing is built
+   from. A drawing is shapes carrying these classes and nothing else, no
+   <style> and no colour of its own, so all of them look like one set and
+   follow the eight themes. Every rule is scoped under .guideMedia, the box
+   GuideOverlay inlines a drawing into, and paints from theme tokens only.
+   tests/guide.test.mjs fails on a class a drawing uses that is not here. */
+
+/* The box: its height comes from the registry's ratio through an inline
+   aspect-ratio, so the card is already its final size when place.js
+   measures it. */
+.guideMedia {
+  --m-period: 4.8s;
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+/* ---- Shapes ------------------------------------------------------------
+   m-card      a surface: a paper, a panel, a sheet
+   m-well      a sunken area inside a surface: the viewer behind its sheets
+   m-line      a line of text that leads (a title, a first block)
+   m-line-dim  a quieter line of text
+   m-rule      a ruled line on a sheet
+   m-chip      a pill: a label, a folder
+   m-chip-on   the pill the drawing is about
+   m-glyph     an icon's stroke
+   m-glyph-on  the same, in the accent
+   m-link      the accent stroke: the connector or outline that says what
+               the drawing is about. The accent is for that one thing.
+   m-ink       handwriting on a sheet
+   Tones use fill-opacity, never opacity, which the motion classes own. */
+.guideMedia .m-card { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; }
+.guideMedia .m-well { fill: var(--bg-deeper); stroke: var(--border-subtle); stroke-width: 1; }
+.guideMedia .m-line { fill: var(--text-muted); fill-opacity: 0.6; }
+.guideMedia .m-line-dim { fill: var(--text-dim); fill-opacity: 0.4; }
+.guideMedia .m-rule { fill: none; stroke: var(--border); stroke-width: 1; }
+.guideMedia .m-chip { fill: var(--bg-block); stroke: var(--border); stroke-width: 1; }
+.guideMedia .m-chip-on { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.2; }
+.guideMedia .m-glyph,
+.guideMedia .m-glyph-on,
+.guideMedia .m-link,
+.guideMedia .m-ink { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.guideMedia .m-glyph { stroke: var(--text-muted); stroke-width: 1.4; }
+.guideMedia .m-glyph-on { stroke: var(--accent); stroke-width: 1.4; }
+.guideMedia .m-link { stroke: var(--accent); stroke-width: 1.6; }
+.guideMedia .m-ink { stroke: var(--text-secondary); stroke-width: 1.6; }
+
+/* ---- Motion ------------------------------------------------------------
+   One clock per drawing: --m-t runs from 0 to 1 over the period, after a
+   short rewind from the finished picture, twice, and then rests at 1. An
+   element's motion class reads the clock from its --m-at on (an inline
+   style="--m-at: 0.3", 0 to 0.7, roughly the fraction of the loop where it
+   starts), so a drawing's order is data and its rhythm is the same as
+   every other drawing's.
+   m-appear  fades in and settles 4 units up (it owns the element's
+             transform, so it goes on an element without a transform)
+   m-draw    a stroke draws along its path (the element needs pathLength="1")
+   m-light   fades in where it stands: an accent mark lighting up
+   Every rule below computes to the finished state at --m-t: 1, so the
+   still picture (the rest, reduced motion, a browser without @property)
+   is the complete one. */
+@property --m-t {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+.guideMedia svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  --m-t: 1;
+  animation: m-clock var(--m-period) linear 2;
+  /* start at the empty frame: the first loop skips the rewind */
+  animation-delay: calc(var(--m-period) * -0.08);
+}
+@keyframes m-clock {
+  0% { --m-t: 1; }
+  8% { --m-t: 0; }
+  100% { --m-t: 1; }
+}
+/* --m-p: the element's own progress, 0 to 1 over its span; --m-e: the same,
+   eased in and out (smoothstep). */
+.guideMedia .m-appear,
+.guideMedia .m-light,
+.guideMedia .m-draw {
+  --m-p: clamp(0, (var(--m-t) - var(--m-at, 0)) / var(--m-span), 1);
+  --m-e: calc(var(--m-p) * var(--m-p) * (3 - 2 * var(--m-p)));
+}
+.guideMedia .m-appear {
+  --m-span: 0.12;
+  opacity: var(--m-e);
+  transform: translateY(calc((1 - var(--m-e)) * 4px));
+}
+.guideMedia .m-light {
+  --m-span: 0.12;
+  opacity: var(--m-e);
+}
+.guideMedia .m-draw {
+  --m-span: 0.22;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: calc(1 - var(--m-e));
+  /* a round cap would leave a dot where the stroke has not started */
+  opacity: clamp(0, var(--m-p) * 30, 1);
+}
+/* The still picture at once. The app-wide rule in app.css would also run
+   the clock for a millisecond and land on it. */
+@media (prefers-reduced-motion: reduce) {
+  .guideMedia svg { animation: none; }
+}

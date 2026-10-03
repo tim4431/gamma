@@ -8,8 +8,9 @@ export default {
   trigger: { event: "peer.joined" },
   offer: { title: T("Someone else is on this page"), line: T("See where they are and how edits merge.") },
   steps: [
-    { id: "presence-who", anchor: "page.presence", placement: "bottom", title: T("Someone else is on this page. Click a face to jump to them") },
-    { id: "presence-where", anchor: "notes.peers", optional: true, placement: "left", title: T("Their face marks the block they are on") },
-    { id: "presence-undo", anchor: "dock.notes", placement: "left", title: T("Edits save live for everyone; {key:app.undo} undoes only yours"), next: T("Done") },
+    { id: "presence-who", anchor: "page.presence", placement: "bottom",
+      title: T("Click a face to jump to them"), body: T("It also marks the block they're on.") },
+    { id: "presence-undo", anchor: "dock.notes", placement: "left",
+      title: T("Edits save live for everyone"), body: T("{key:app.undo} undoes only yours."), next: T("Done") },
   ],
 };

@@ -16,7 +16,7 @@ A new account starts with a **Welcome** page: the first steps in short, with a s
 
 On open, each paper's title, authors and venue are filled in automatically (arXiv → DOI → AI), see [Metadata and citations](#metadata-and-citations).
 
-**Guided tours.** The account menu (top right) → **Tours** lists the tours that fit where you are: **Your first paper** and **AI chat** anywhere, **Sharing a page** and **Editing tables** on a page, **Handwriting** and **The PDF viewer** on a PDF, **The notebook view** in a notebook's viewer — short walkthroughs that point at the real controls and wait for you to try them. A new, empty library is offered **Your first paper** when you arrive. Short tips and tour offers also appear right after you first use a feature, saying what just happened; turn them off in Settings → Appearance → **Suggest tours**.
+**Guided tours.** The account menu (top right) → **Tours** lists the tours that fit where you are: **Your first paper** and **AI chat** anywhere, **Sharing a page** and **Editing tables** on a page, **Handwriting** and **The PDF viewer** on a PDF, **The notebook view** in a notebook's viewer — short walkthroughs that show each move on the real controls; try it yourself, or press Next to go on. A new, empty library is offered **Your first paper** when you arrive. Short tips and tour offers also appear right after you first use a feature, saying what just happened; turn them off in Settings → Appearance → **Suggest tours**.
 
 ## Reading and highlighting
 
