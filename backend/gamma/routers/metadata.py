@@ -777,6 +777,7 @@ def metadata_status(request: Request):
             # None for records stored before the flag existed — the client
             # falls back to the source/kind rule (isUnverifiedPaperMeta).
             "meta_unverified": (meta or {}).get("unverified"),
+            "meta_user_verified": bool((meta or {}).get("user_verified")),
             "meta_error": (props.get("meta_error") or {}).get("detail", ""),
             "indexed": bool(entry and entry["ver"] == INDEX_VERSION),
             "index_stale": bool(entry and entry["ver"] != INDEX_VERSION),
@@ -1033,6 +1034,25 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
                 actor=request.state.user_id)
     return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": "manual", "cached": False}
+
+
+class MetaVerifyRequest(BaseModel):
+    block_id: str
+
+
+@router.post("/metadata/verify")
+def metadata_verify(payload: MetaVerifyRequest, request: Request):
+    """The user checked the stored record against the paper and vouches for
+    it: the unverified flag clears, the source stays (an AI reading is still
+    one). A refetch replaces the record, and the mark goes with it."""
+    ws = require_ws(request, write=True)
+    _, props = _load_page(ws, payload.block_id)
+    meta = props.get("meta")
+    if not meta:
+        raise HTTPException(status_code=409, detail="no metadata to verify")
+    meta = {**meta, "unverified": False, "user_verified": True}
+    _save_props(ws, payload.block_id, {"meta": meta}, actor=request.state.user_id)
+    return {"meta": meta}
 
 
 class CiteRequest(BaseModel):

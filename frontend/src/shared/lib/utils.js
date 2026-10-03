@@ -275,6 +275,14 @@ const META_SOURCE_NAMES = {
 };
 function metaSourceInfo(meta) {
   if (!meta?.source) return null;
+  // The user checked the record against the paper (the popover's Verify);
+  // the source still says where it came from.
+  if (meta.user_verified) {
+    const ai = meta.source === "ai";
+    const name = ai ? t("AI-extracted") : META_SOURCE_NAMES[meta.source] || meta.source;
+    return { label: t("{name} — verified by hand", { name: name }), short: t("{name} ✓", { name: ai ? "AI" : name }), warn: false,
+             hint: T("Checked against the paper by hand") };
+  }
   const kind = meta.kind || "paper";
   const unverified = isUnverifiedPaperMeta(meta.source, kind, meta.unverified);
   if (meta.source === "ai") {

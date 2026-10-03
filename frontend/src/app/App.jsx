@@ -3039,6 +3039,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Metadata save failed: {message}", { message: err.message }));
     }
   }
+  // The Source row's Verify: the user vouches for the record as it stands,
+  // which clears the red "!" everywhere. Unsaved edits are saved instead — a
+  // hand edit already counts as vouched for.
+  async function verifyMeta() {
+    if (metaDirty) { saveMetaEdits(); return; }
+    const blockId = focusedBlockIdRef.current;
+    if (!blockId) return;
+    try {
+      const data = await apiJson(`${API}/metadata/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ block_id: blockId }),
+      });
+      if (focusedBlockIdRef.current !== blockId) return;
+      setPageMeta(data.meta);
+      setFocusedBlock((prev) => prev && prev.id === blockId
+        ? { ...prev, properties: { ...prev.properties, meta: data.meta } }
+        : prev);
+      fetchHomeBlocks();
+      setStatus(t("Metadata marked as verified."));
+    } catch (err) {
+      setStatus(t("Verify failed: {message}", { message: err.message }));
+    }
+  }
   // Draft copies of the editable prompts (empty = server default), rebuilt
   // from the saved values whenever the Prompts/Assistant pane opens.
   const [metaPromptDraft, setMetaPromptDraft] = useState("");
@@ -4765,7 +4789,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (opening) {
       const r = metaBtnRef.current?.getBoundingClientRect();
       if (r) setMetaPopPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
-      setSourceDraft(inputUrl);
     }
     setOpenPopover(opening ? "meta" : null);
   }
@@ -5957,7 +5980,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Ask the AI for the document's title and fill it into the page name.
   const [aiTitleBusy, setAiTitleBusy] = useState(false);
-  const [sourceDraft, setSourceDraft] = useState(""); // edit buffer for the source-PDF popover
   async function aiFillTitle() {
     if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
@@ -7926,7 +7948,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ? t("Fetching paper metadata…")
                         : metaSrc?.warn
                           ? t(metaSrc.hint)
-                          : t("Edit metadata (authors, venue, DOI, source file…)")}
+                          : t("Edit metadata (authors, venue, DOI, cite key…)")}
                       aria-label={t("Paper metadata")}
                       onClick={() => openMetaPopover()}
                     >
@@ -8065,8 +8087,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           {metaSrc ? (
                             <div className="metaRow">
                               <span className="metaKey">{t("Source")}</span>
-                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={t(metaSrc.hint)}>
-                                {t(metaSrc.label)}
+                              <span className="metaVal metaValEdit">
+                                <span className={metaSrc.warn ? "metaValWarn" : undefined} title={t(metaSrc.hint)}>
+                                  {t(metaSrc.label)}
+                                </span>
+                                {metaSrc.warn && !readOnly ? (
+                                  <button
+                                    className="uiBtn sm metaVerifyBtn"
+                                    title={t("I checked these fields against the paper — mark the record as correct")}
+                                    onClick={verifyMeta}
+                                  >
+                                    <CheckIcon size={12} />{t("Verify")}
+                                  </button>
+                                ) : null}
                               </span>
                             </div>
                           ) : null}
@@ -8101,6 +8134,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               ) : null}
                             </span>
                           </div>
+                          {pageAttach && inputUrl ? (
+                            <div className="metaRow">
+                              <span className="metaKey">{t("Source file")}</span>
+                              <span className="metaVal metaValEdit">
+                                <span className="metaPath" title={inputUrl}>{inputUrl}</span>
+                                <button
+                                  className="chatMsgActionBtn metaRowBtn"
+                                  title={t("Copy the source URL")}
+                                  aria-label={t("Copy source URL")}
+                                  onClick={() => copyFlash("source", inputUrl)}
+                                >
+                                  {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                                </button>
+                              </span>
+                            </div>
+                          ) : null}
                           {pdfTextPreview ? (
                             <div className="reportOverlay" onClick={() => setPdfTextPreview(null)}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
@@ -8128,48 +8177,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <button className="uiBtn primary" onClick={saveMetaEdits}>{t("Save metadata")}</button>
                           </div>
                         ) : null}
-                        {pageAttach ? <>
-                        <div className="popoverDivider" />
-                        <div className="popoverSection">{t("Source file")}</div>
-                        <div className="shareRow">
-                          <input
-                            value={sourceDraft}
-                            onChange={(e) => setSourceDraft(e.target.value)}
-                            placeholder={t("PDF URL or /api/uploads/…")}
-                          />
-                          <button
-                            className="chatMsgActionBtn"
-                            title={t("Copy the source URL")}
-                            aria-label={t("Copy source URL")}
-                            disabled={!sourceDraft.trim()}
-                            onClick={() => copyFlash("source", sourceDraft.trim())}
-                          >
-                            {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
-                          </button>
-                        </div>
-                        {sourceDraft.trim() && sourceDraft.trim() !== inputUrl ? (
-                          <div className="reportModalBtns">
-                            <button
-                              className="uiBtn primary"
-                              onClick={async () => {
-                                const url = sourceDraft.trim();
-                                setOpenPopover(null);
-                                try {
-                                  await apiJson(`${API}/blocks/${focusedBlockId}`, {
-                                    method: "PUT",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ properties: { source_url: url } }),
-                                  });
-                                  await openBlock(focusedBlockId);
-                                  setStatus(t("Source PDF replaced."));
-                                } catch (err) {
-                                  setStatus(t("Replace failed: {message}", { message: err.message }));
-                                }
-                              }}
-                            >{t("Replace source")}</button>
-                          </div>
-                        ) : null}
-                        </> : null}
                       </div>
                     ) : null}
                   </span>

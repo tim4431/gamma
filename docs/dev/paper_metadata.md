@@ -91,7 +91,11 @@ instead. Registry-sourced records carry no kind except books; a book record
 (`kind: book`, or a publisher without a venue) renders as BibTeX `@book`
 with `publisher`/`isbn`, and the metadata popover swaps the journal rows
 for Publisher/ISBN. A hand edit keeps the kind and clears the flag (the user
-vouched for the record).
+vouched for the record). So does **Verify** on a flagged Source row, without
+an edit: `/api/metadata/verify` sets `meta.user_verified` and clears
+`meta.unverified`, keeping the source, so the row reads "AI-extracted —
+verified by hand" (Settings: "AI ✓"). With unsaved edits in the popover,
+Verify saves them instead. A refetch replaces the record and drops the mark.
 
 The fetch also kicks background search indexing for the paper
 (`ai_context.ensure_indexed`) — the paper is being set up, so search, the AI
@@ -99,7 +103,9 @@ document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
 citation). In the popover, the DOI and arXiv rows carry an open-on-registry
-link and a copy button for that URL beside the field.
+link and a copy button for that URL beside the field. A page with a PDF
+also gets a read-only Source file row (the attachment's path, with a copy
+button); replacing the PDF goes through the paperclip (detach, attach).
 
 **Citation key.** The BibTeX key is generated from the first author's surname
 and the year (`bibtex.default_key`). The popover's Cite key row pins one as

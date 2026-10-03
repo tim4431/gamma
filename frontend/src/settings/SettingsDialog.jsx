@@ -408,9 +408,10 @@ function MetaStatusSection({ value }) {
     if (!p.has_meta) {
       return p.meta_error ? cell("bad", t("failed"), p.meta_error) : cell("muted", t("none"), t("No metadata yet"));
     }
-    const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
+    const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified,
+      user_verified: p.meta_user_verified });
     if (!src) return cell("ok", t("yes"), t("Metadata resolved"));
-    return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
+    return cell(src.warn ? "bad" : p.meta_source === "ai" && !p.meta_user_verified ? "muted" : "ok", src.short, t(src.hint));
   };
   // Text and index are separate columns: extraction state is only known once
   // the indexer has visited the doc, so an unindexed paper shows "unknown".
@@ -471,7 +472,7 @@ function MetaStatusSection({ value }) {
         <>
           <div className="setStats">
             <Stat icon={PaperIcon} label={t("verified")} value={counts.verified} total={list.length}
-              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
+              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited or verified by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
             <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
               title={t("Papers whose PDF yielded extractable text")} />
             <Stat icon={SearchIcon} label={t("indexed")} value={counts.indexed} total={list.length}

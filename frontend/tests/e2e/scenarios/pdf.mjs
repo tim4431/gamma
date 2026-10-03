@@ -49,6 +49,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // An AI record no registry confirmed carries the red "!" until the user
+  // verifies it in the metadata popover; the source file is a read-only row.
+  await step("pdf: Verify vouches for an unverified metadata record; the source file is a table row", async () => {
+    const meta = { title: "Quantum entanglement in Rydberg arrays", authors: ["A. Writer"], year: "2026", source: "ai", unverified: true };
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta, bibtex: "@article{writer2026,\n  title = {Quantum entanglement in Rydberg arrays}\n}" } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.locator(".metaWarnDot").waitFor();
+    await page.click("button[aria-label='Paper metadata']");
+    const pop = page.locator(".metaPopover");
+    const row = (key) => pop.locator(".metaRow").filter({ has: page.locator(".metaKey").getByText(key, { exact: true }) });
+    assertEq(await row("Source").locator(".metaValWarn").innerText(), "AI-extracted — unverified");
+    const path = await row("Source file").locator(".metaPath").innerText();
+    assert(path.startsWith("/api/uploads/") && path.includes(docId), `source file row: ${path}`);
+    assertEq(await pop.locator("input:not(.metaInput)").count(), 0, "the path is not an edit box");
+    await row("Source").getByRole("button", { name: "Verify", exact: true }).click();
+    await until(async () => (await account.api(`/api/blocks/${pageId}`)).properties.meta.user_verified === true, { what: "the verified mark saved" });
+    await until(async () => (await row("Source").innerText()).includes("AI-extracted — verified by hand"), { what: "the Source row says verified" });
+    assertEq(await page.locator(".metaWarnDot").count(), 0, "the red ! is gone");
+    assertEq(await row("Source").getByRole("button").count(), 0, "nothing left to verify");
+    await page.click("button[aria-label='Paper metadata']");
+    // The later steps expect a page without metadata.
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
   // The spans must not inherit the interface language: pdf.js measures them
   // in the PDF's language, and a Chinese <html lang> resolves the generic
   // font families to CJK fonts — spans (and every highlight made from a

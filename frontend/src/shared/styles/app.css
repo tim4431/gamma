@@ -5389,7 +5389,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .metaPopover { min-width: 340px; max-width: 420px; }
 .metaTable { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px; }
 .metaRow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.45; }
-.metaKey { color: var(--text-dim); flex: 0 0 52px; }
+/* Wide enough for the longest key, "Source file", on one line. */
+.metaKey { color: var(--text-dim); flex: 0 0 64px; }
 .metaVal { color: var(--text-secondary); min-width: 0; word-break: break-word; }
 .metaVal a { color: var(--accent); text-decoration: none; }
 .metaVal a:hover { text-decoration: underline; }
@@ -5422,6 +5423,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
    hit target from inflating the text row's height, so keys and values stay
    on one baseline. */
 .metaTable .metaRowBtn { width: 20px; height: 20px; margin: -4px 0; }
+/* The Source row's Verify, at the row's end: a compact uiBtn whose negative
+   margins keep the row's height, like the icon buttons above. */
+.metaTable .uiBtn.metaVerifyBtn { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-3); }
+/* The source file's path: one line, the whole path in the tooltip. */
+.metaPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- reference-link creation --- */
 .linkTipBtn {

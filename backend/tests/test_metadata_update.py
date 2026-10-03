@@ -64,6 +64,28 @@ def test_update_missing_page_404(guest):
     assert r.status_code == 404
 
 
+def test_verify_clears_the_flag_and_keeps_the_record(guest):
+    meta = {"title": "Read by AI", "authors": ["A. Writer"], "source": "ai", "unverified": True}
+    page = make_page(guest, "Verify page", properties={"meta": meta, "bibtex": "@article{x}"})
+    r = guest.post("/api/metadata/verify", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"] == {**meta, "unverified": False, "user_verified": True}
+    props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert props["meta"]["source"] == "ai" and props["meta"]["user_verified"] is True
+    assert props["bibtex"] == "@article{x}"
+    row = next(p for p in guest.get("/api/metadata/status").json()["papers"] if p["id"] == page["id"])
+    assert row["meta_unverified"] is False and row["meta_user_verified"] is True
+    # A hand edit is a new record of the user's own: no separate mark.
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {"title": "Edited"}})
+    assert "user_verified" not in r.json()["meta"]
+
+
+def test_verify_needs_a_record(guest):
+    page = make_page(guest, "Nothing to verify")
+    assert guest.post("/api/metadata/verify", json={"block_id": page["id"]}).status_code == 409
+    assert guest.post("/api/metadata/verify", json={"block_id": "nope"}).status_code == 404
+
+
 def test_fetch_kicks_search_indexing_for_the_paper(guest, monkeypatch):
     """Setting a paper up (metadata fetch) starts indexing its PDF in the
     background, so search and the AI document map don't wait for the first
