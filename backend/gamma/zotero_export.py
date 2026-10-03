@@ -13,7 +13,7 @@ The element shapes mirror what Zotero itself writes (and what
 *element* is an RDF/XML syntax term — Zotero's parser happens to tolerate one,
 verified live against Zotero 9, but strict parsers like rdflib reject the
 whole file, so it is never emitted), notes are ``bib:Memo`` HTML linked by
-``dcterms:isReferencedBy``, and folder labels become a ``z:Collection`` tree.
+``dcterms:isReferencedBy``, and folders become a ``z:Collection`` tree.
 
 The whole pipeline is verified against a real Zotero via its connector
 server's ``/connector/import`` (the same translator code path as the import
@@ -32,6 +32,7 @@ import html as html_mod
 import re
 import xml.etree.ElementTree as ET
 
+from .highlights import page_of
 from .text_box import box_page
 
 _NS = {
@@ -147,7 +148,7 @@ def highlight_memo_html(node, resolve_image=None) -> str:
     here — prefixed with the page and quote, so the note stays findable next
     to its annotation."""
     props = node.get("properties") or {}
-    page_no = props.get("pdf_page") or (props.get("pdf_position") or {}).get("pageNumber")
+    page_no = page_of(props)
     quote = re.sub(r"\s+", " ", props.get("quote") or "").strip()
     header = " — ".join(part for part in (
         f"p.{page_no}" if page_no else "",
@@ -173,9 +174,10 @@ def _person(seq, name: str):
 
 def build_rdf(items: list[dict]) -> str:
     """items: one dict per page —
-    ``{key, title, meta, tags, folders, pdf_path, notes}`` where ``pdf_path``
-    is the zip path relative to the .rdf (or None) and ``notes`` is a list of
-    HTML strings. → the .rdf document text."""
+    ``{key, title, meta, tags, folders, pdf_path, notes}`` where ``folders``
+    are the collection paths it is in (each a list of names from the top),
+    ``pdf_path`` is the zip path relative to the .rdf (or None) and
+    ``notes`` is a list of HTML strings. → the .rdf document text."""
     root = ET.Element(_q("rdf", "RDF"))
 
     folder_paths = set()
@@ -253,20 +255,19 @@ def build_rdf(items: list[dict]) -> str:
             _sub(memo, "rdf", "value", html)
 
         for path in item.get("folders") or []:
-            parts = [p for p in path.split("/") if p]
-            for i in range(len(parts)):
-                folder_paths.add("/".join(parts[: i + 1]))
+            for i in range(len(path)):
+                folder_paths.add(tuple(path[: i + 1]))
 
-    # Folder labels → the collection tree (hasPart links members AND children).
+    # Folders → the collection tree (hasPart links members AND children).
     ids = {path: f"#collection_{i}" for i, path in enumerate(sorted(folder_paths), 1)}
     for path in sorted(folder_paths):
         col = _sub(root, "z", "Collection", rdf_about=ids[path])
-        _sub(col, "dc", "title", path.rsplit("/", 1)[-1])
+        _sub(col, "dc", "title", path[-1])
         for other in sorted(folder_paths):
-            if other.rsplit("/", 1)[0] == path and other != path:
+            if other[:-1] == path:
                 _sub(col, "dcterms", "hasPart", rdf_resource=ids[other])
         for item in items:
-            if path in (item.get("folders") or []):
+            if path in {tuple(p) for p in item.get("folders") or []}:
                 _sub(col, "dcterms", "hasPart", rdf_resource=item["key"])
 
     ET.indent(root)

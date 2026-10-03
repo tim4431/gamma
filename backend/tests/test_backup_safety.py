@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 from gamma import backup_schedule as tasks
 from gamma import backups, config, integrity, migrations, notices, workspaces, ws_backup
 from gamma.db import SCHEMA_VERSION, connect_users_db, ws_dir, ws_uploads_dir
@@ -193,7 +193,7 @@ def test_step_2_resumes_into_the_recorded_workspace(data_dir, monkeypatch):
     with connect_users_db() as conn:
         homes = dict(conn.execute("SELECT username, default_workspace FROM users").fetchall())
         rows = {r[0] for r in conn.execute("SELECT id FROM workspaces")}
-        prefs = {(r[0], r[1]) for r in conn.execute("SELECT username, key FROM user_prefs")}
+        prefs = {(r[0], r[1]) for r in conn.execute("SELECT u.username, p.key FROM user_prefs p JOIN users u ON u.id = p.user_id")}
     for user, page in (("alice", "pageA"), ("bob", "pageB")):
         with closing(sqlite3.connect(str(data_dir / "workspaces" / homes[user] / "pages.db"))) as conn:
             assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page,)).fetchone(), user
@@ -303,7 +303,7 @@ def test_task_api_limits(task_store):
 def test_a_task_saved_before_the_limits_fails_with_the_reason(task_store):
     ws, _c = task_store
     at = datetime(2026, 9, 21, 4, tzinfo=timezone.utc)
-    legacy = dict(id="a" * 32, owner="bs_tasks", created_at=at.isoformat(), name="Every five minutes",
+    legacy = dict(id="a" * 32, owner=account_of("bs_tasks"), created_at=at.isoformat(), name="Every five minutes",
                   enabled=True, scope="selected", workspaces=[ws], cron="*/5 * * * *", uploads=False,
                   retention_mode="count", retention_value=3650, next_run=(at - timedelta(minutes=1)).isoformat(),
                   last_run=None, last_success=None, last_error=None, state="pending", requested=False)
@@ -312,10 +312,10 @@ def test_a_task_saved_before_the_limits_fails_with_the_reason(task_store):
     state = tasks.read(legacy["id"])
     assert state["state"] == "failed" and "once an hour" in state["last_error"]
     assert ws_backup.list_backups(ws) == []
-    assert any(n["id"] == "backup-failed" for n in notices.for_user("bs_tasks", False))
+    assert any(n["id"] == "backup-failed" for n in notices.for_user(account_of("bs_tasks"), False))
     # the owner can still pause it
     data = {k: legacy[k] for k in tasks_input_fields()}
-    assert tasks.save("bs_tasks", {**data, "enabled": False}, legacy["id"])["enabled"] is False
+    assert tasks.save(account_of("bs_tasks"), {**data, "enabled": False}, legacy["id"])["enabled"] is False
 
 
 def tasks_input_fields():
@@ -333,10 +333,10 @@ def test_scheduled_snapshots_respect_a_per_workspace_cap_and_the_free_disk_floor
     monkeypatch.setattr(ws_backup, "MIN_FREE_BYTES", 1 << 62)
     r = c.post(f"/api/workspaces/{ws}/backups", json={"label": "manual", "uploads": False})
     assert r.status_code == 400 and "free on the server's disk" in r.json()["detail"]
-    task = tasks.save("bs_tasks", {"name": "Hourly", "enabled": True, "scope": "selected", "workspaces": [ws],
+    task = tasks.save(account_of("bs_tasks"), {"name": "Hourly", "enabled": True, "scope": "selected", "workspaces": [ws],
                                    "cron": "0 * * * *", "uploads": False, "retention_mode": "count",
                                    "retention_value": 2})
-    tasks.mutate("bs_tasks", task["id"], "run")
+    tasks.mutate(account_of("bs_tasks"), task["id"], "run")
     tasks.run_due()
     state = tasks.read(task["id"])
     assert state["state"] == "failed" and "free on the server's disk" in state["last_error"]
@@ -386,8 +386,8 @@ def test_admins_check_every_database_on_demand():
         files = {f["file"]: f for f in r.json()["files"]}
         assert "users.db" in files and files["users.db"]["ok"]
         assert not files[rel]["ok"] and files[rel]["name"] == workspaces.get(ws)["name"]
-        assert notices.database_damage("bs_admin").fingerprint
-        assert "db-damage" not in [n["id"] for n in notices.for_user("bs_plain", False)]  # admins only
+        assert notices.database_damage(account_of("bs_admin")).fingerprint
+        assert "db-damage" not in [n["id"] for n in notices.for_user(account_of("bs_plain"), False)]  # admins only
     finally:
         path.write_bytes(good)
         integrity.record({rel: "ok"}, "test cleanup")
@@ -441,7 +441,7 @@ def test_a_delete_refused_after_its_final_copy_leaves_no_copy(monkeypatch):
     def copy_while_the_other_goes(ws, **kw):
         name = real(ws, **kw)
         monkeypatch.setattr(ws_backup, "keep_final_copy", real)
-        workspaces.delete(other, by="bs_race")
+        workspaces.delete(other, by=account_of("bs_race"))
         return name
 
     monkeypatch.setattr(ws_backup, "keep_final_copy", copy_while_the_other_goes)
@@ -477,14 +477,14 @@ def test_account_deletion_keeps_every_workspace_it_takes_all_or_nothing(monkeypa
 def test_guests_keep_no_final_copy_and_old_copies_expire(client):
     from gamma import guests
 
-    name = guests.new_guest()
-    gws = workspaces.default_workspace(name)
+    user_id, _name = guests.new_guest()
+    gws = workspaces.default_workspace(user_id)
     ws_backup.deleted_dir().mkdir(parents=True, exist_ok=True)
     stale = ws_backup.deleted_dir() / "stale-workspace-20200101-000000.zip"
     stale.write_bytes(b"old")
     old = time.time() - (ws_backup.DELETED_KEEP_DAYS + 1) * 86400
     os.utime(stale, (old, old))
-    assert workspaces.delete_account(name) == [gws]
+    assert workspaces.delete_account(user_id) == [gws]
     assert not list(ws_backup.deleted_dir().glob(f"{gws}-*.zip"))
     _ws, c = _account("bs_expiry")
     doomed = c.post("/api/workspaces", json={"name": "Short-lived"}).json()["id"]

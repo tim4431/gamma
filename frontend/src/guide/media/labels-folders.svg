@@ -1,7 +1,7 @@
 <svg viewBox="0 0 310 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
   <!-- One paper, never copied, filed in several folders at once, with its
        labels beside it. Folders and labels are drawn as the same chip with a
-       different glyph, because a folder is a label whose value is a path
+       different glyph, because a page is filed in both by id
        (guide/media.js, docs/dev/home_library.md). -->
   <style>
     [data-media="labels-folders"] .card { fill: var(--bg-card); stroke: var(--border); }

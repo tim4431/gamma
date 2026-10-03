@@ -44,8 +44,10 @@ def test_registry_scopes_and_permissions():
 
 
 def test_agent_system_mentions_scope_and_armed_tools():
-    text = agent_system(folder("readout"))
-    assert '"readout"' in text and "rename_page" in text
+    # A folder chat's folder is named by its path, as the builder put it in the scope, and its id.
+    text = agent_system({**folder("f1"), "folder_path": "readout / fast"})
+    assert 'the folder "readout / fast" (id f1)' in text and "rename_page" in text
+    assert "the root of their library" in agent_system(folder(""))
     page_text = agent_system({"type": "page", "page_id": "p1"},
                              {"search": False, "block_edit": False, "save": False})
     assert 'page_id "p1"' in page_text

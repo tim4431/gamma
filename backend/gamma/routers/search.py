@@ -1,19 +1,18 @@
 """Library-wide full-text search: notes (block_fts) and PDF contents (pdf_fts).
 
-Both indexes are SQLite FTS5 tables in the workspace's data.db. The PDF one is
-built here: each paper's text is extracted once, so searching ~1000 papers is
-a millisecond-range query instead of opening a thousand PDFs; missing papers
-are indexed lazily by a background job the first time a search runs, and
-the response reports how many are still pending so the UI can hint that
-results are incomplete. The notes index lives in gamma.block_index (rebuilt
-per page when a page changed since its last build: by the search itself for
-a moment, then in the background — this module registers its commit
-listener).
+Both indexes are SQLite FTS5 tables. The notes one is in the workspace's
+pages.db, kept current by triggers in every write's own transaction
+(gamma.block_index), so a note is found the moment its write commits. The
+PDF one is in data.db and built here: each paper's text is extracted once,
+so searching ~1000 papers is a millisecond-range query instead of opening a
+thousand PDFs; missing papers are indexed lazily by a background job the
+first time a search runs, and the response reports how many are still
+pending so the UI can hint that results are incomplete.
 
 Extraction prefers pypdfium2 (PDFium — proper word spacing and unicode) and
 falls back to PyPDF2. Text is stored in normalized form (see gamma.textnorm)
 so queries like "3000" hit "3,000-qubit"; queries are normalized the same way
-at search time. Bumping textnorm.INDEX_VERSION re-indexes everything lazily.
+at search time. Bumping textnorm.INDEX_VERSION re-extracts the PDFs lazily.
 
 Positions are deliberately NOT stored here: the frontend re-finds the matched
 text with pdf.js (the engine that renders the page) when a hit is opened, so
@@ -27,21 +26,17 @@ frontend still uses.
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from .. import block_index, jobs, ops, pdf_index, pdf_meta
+from .. import block_index, jobs, pdf_index, pdf_meta
 from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_ws
 from ..block_index import fts_query
-from ..blocks_store import root_pages
+from ..blocks_store import root_pages, write_lock
 from ..db import connect_data_db, connect_pages_db
 from ..logbuf import log
 from ..pdf_text import extract_pages
 from ..textnorm import normalize_text
 
 router = APIRouter(prefix="/api", tags=["search"])
-
-# Every committed page write re-indexes that page's notes in the background
-# once the page is quiet (block_index imports nothing of ops, which imports it).
-ops.commit_listeners.append(block_index.page_changed)
 
 _MAX_PAGE_CHARS = 20000   # per page
 
@@ -102,12 +97,17 @@ class ReindexRequest(BaseModel):
 def search_reindex(request: Request, payload: ReindexRequest | None = None):
     """Settings: re-extract papers into the FTS index. With doc_ids, just those
     papers (the Library pane's per-paper button — no global stale stamp);
-    without, the whole library. Either way the work is the workspace's
-    indexing job (Background tasks, GET /api/jobs)."""
+    without, the whole library, and the notes index is rebuilt from the
+    blocks too, here, in one write transaction. Either way the extraction
+    is the workspace's indexing job (Background tasks, GET /api/jobs)."""
     ws = require_ws(request, write=True)
+    wanted = [d for d in (payload.doc_ids if payload else []) if d]
     with connect_pages_db(ws) as conn:
         library = [info["doc_id"] for info in root_pages(conn).values() if info["doc_id"]]
-    wanted = [d for d in (payload.doc_ids if payload else []) if d]
+        if not wanted:
+            write_lock(conn)
+            block_index.rebuild(conn)
+            conn.commit()
     if wanted:
         doc_ids = [d for d in library if d in set(wanted)]  # only own papers
     else:
@@ -119,9 +119,6 @@ def search_reindex(request: Request, payload: ReindexRequest | None = None):
             conn.execute("UPDATE pdf_fts_docs SET ver = 0")
             conn.commit()
     started = doc_ids and _index_missing_async(ws, doc_ids)
-    if not wanted:
-        block_index.mark_all_dirty(ws)  # the notes rebuild in the background
-        block_index.schedule(ws)
     return {"scheduled": len(doc_ids) if started else 0,
             "busy": bool(doc_ids) and not started}
 
@@ -129,10 +126,12 @@ def search_reindex(request: Request, payload: ReindexRequest | None = None):
 @router.get("/search")
 def library_search(request: Request, q: str = "", limit: int = 20, scope: str = ""):
     """One search over the workspace's knowledge base: notes (block_fts) and the
-    text of PDF attachments (pdf_fts). Any member, like /pdf-search. Results
-    are notes first (bm25 order), then PDF hits, each capped at ``limit``;
-    ``indexing`` counts what is still being built (note pages the background
-    refresher hasn't reached + PDFs the background extractor hasn't)."""
+    text of PDF attachments (pdf_fts). Any member, like /pdf-search.
+    ``scope`` (a folder's id) keeps to the pages filed in that folder or
+    below it. Results are notes first (bm25 order), then PDF hits, each
+    capped at ``limit``;
+    ``indexing`` counts the PDFs the background extractor hasn't reached
+    (the notes index is never behind)."""
     ws = require_ws(request)
     q = (q or "").strip()
     limit = max(1, min(int(limit or 20), 100))
@@ -141,15 +140,12 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
     match = fts_query(q)
     with connect_pages_db(ws) as conn:
         pages = root_pages(conn, scope)
-        # Notes: rebuild what changed (for a moment; the rest in the background), then query.
-        pending = block_index.refresh(ws, conn, list(pages)) if pages else 0
+        results = [{"source": "notes", "block_id": block_id, "page_id": page_id,
+                    "title": pages[page_id]["title"], "snippet": snippet}
+                   for block_id, page_id, snippet in block_index.search_blocks(conn, match, limit, pages)]
     docs = {info["doc_id"]: page_id for page_id, info in pages.items() if info["doc_id"]}
-    results = []
     missing: list = []
     with connect_data_db(ws) as conn:
-        for block_id, page_id, snippet in block_index.search_blocks(conn, match, limit, pages):
-            results.append({"source": "notes", "block_id": block_id, "page_id": page_id,
-                            "title": pages[page_id]["title"], "snippet": snippet})
         if docs:
             missing = pdf_index.pdf_missing(conn, docs)
             if missing:
@@ -159,7 +155,7 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
                 results.append({"source": "pdf", "block_id": page_id, "page_id": page_id,
                                 "doc_id": doc_id, "title": pages[page_id]["title"],
                                 "page": page, "snippet": snippet})
-    return {"results": results, "indexing": pending + len(missing)}
+    return {"results": results, "indexing": len(missing)}
 
 
 @router.get("/pdf-search")

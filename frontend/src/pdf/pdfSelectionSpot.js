@@ -13,13 +13,14 @@ function boxOf(x0, y0, x1, y1, width, height) {
   return box[2] > box[0] && box[3] > box[1] ? box : null;
 }
 
-// A stored highlight's spot, from its position ({pageNumber, boundingRect:
-// {x1, y1, x2, y2, width, height}} in the page's render size at capture).
+// A stored highlight's spot, from its position ({pageNumber, width, height,
+// boundingRect: {x1, y1, x2, y2}}, the rect in the page's render size at
+// capture).
 export function highlightSpot(position) {
   const r = position?.boundingRect;
-  const page = position?.pageNumber || r?.pageNumber || 0;
+  const page = position?.pageNumber || 0;
   if (!page) return { page: 0, box: null };
-  return { page, box: r ? boxOf(r.x1, r.y1, r.x2, r.y2, r.width, r.height) : null };
+  return { page, box: r ? boxOf(r.x1, r.y1, r.x2, r.y2, position.width, position.height) : null };
 }
 
 // A live DOM selection's spot: the viewer page (`[data-page]`) its start

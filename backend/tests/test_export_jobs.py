@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import login, make_folder, make_page, make_user
 from gamma.markdown_export import slugify
 from test_pdf_export import _blank_pdf, _position
 
@@ -23,12 +23,12 @@ def user(client):
 def _pdf_page(c, title, folder, highlight=True):
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", _blank_pdf(pages=1) + title.encode(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], "folder": folder})
+    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+                         "folders": [make_folder(c, folder)]})
     if highlight:
         r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
             {"id": f"hl-{page['id']}", "content": "a note", "properties": {
-                "highlight_id": f"hl-{page['id']}", "quote": "q", "pdf_page": 1,
-                "color": "rgba(255, 226, 143, 0.65)", "pdf_position": _position()}, "children": []}]})
+                "quote": "q", "color": "rgba(255, 226, 143, 0.65)", "pdf_position": _position()}, "children": []}]})
         assert r.status_code == 200, r.text
     return page
 
@@ -52,9 +52,10 @@ def _download(c, job):
 def lab(user):
     """Folder "EJ lab": two PDF pages (one in a subfolder), a note page; one PDF page elsewhere."""
     pages = {
+        "folder": make_folder(user, "EJ lab"),
         "top": _pdf_page(user, "Top paper", "EJ lab"),
         "deep": _pdf_page(user, "Deep paper", "EJ lab/Sub"),
-        "note": make_page(user, "Just notes", {"folder": "EJ lab"}),
+        "note": make_page(user, "Just notes", {"folders": [make_folder(user, "EJ lab")]}),
         "outside": _pdf_page(user, "Outside paper", "EJ elsewhere"),
     }
     return pages
@@ -63,7 +64,7 @@ def lab(user):
 def test_a_folder_as_annotated_pdfs_in_one_zip(user, lab):
     from PyPDF2 import PdfReader
 
-    job = _export(user, folder="EJ lab", mode="annotated-pdf", highlights=True, notes=False)
+    job = _export(user, folder=lab["folder"], mode="annotated-pdf", highlights=True, notes=False)
     r = _download(user, job)
     assert job["artifact"]["name"] == "EJ lab-annotated.zip" and r.headers["content-type"] == "application/zip"
     z = zipfile.ZipFile(io.BytesIO(r.content))
@@ -75,7 +76,7 @@ def test_a_folder_as_annotated_pdfs_in_one_zip(user, lab):
     assert [(p["title"], p["reason"]) for p in job["result"]["skipped"]] == [("Just notes", "page has no PDF")]
     assert job["result"]["skipped"][0]["page_id"] == lab["note"]["id"]
     assert job["progress"] == {"phase": "packing", "unit": "files", "done": 2, "total": 2}  # the walk counted 3 pages
-    assert job["params"]["folder"] == "EJ lab" and job["params"]["mode"] == "annotated-pdf"
+    assert job["params"]["folder"] == lab["folder"] and job["params"]["name"] == "EJ lab" and job["params"]["mode"] == "annotated-pdf"
 
 
 def test_one_page_as_its_annotated_pdf(user, lab):
@@ -88,7 +89,7 @@ def test_one_page_as_its_annotated_pdf(user, lab):
 
 
 def test_the_folder_download_offers_annotated_pdfs_too(user, lab):
-    r = user.get("/api/folders/export", params={"name": "EJ lab", "mode": "annotated-pdf", "notes": 0})
+    r = user.get(f"/api/folders/{lab['folder']}/export", params={"mode": "annotated-pdf", "notes": 0})
     assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
     assert sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist()) == ["Sub/Deep paper.pdf", "Top paper.pdf"]
 
@@ -105,7 +106,7 @@ def test_every_format_exports_as_a_job(user, lab, mode, page_suffix, folder_suff
     page_job = _export(user, page_id=lab["note"]["id"], mode=mode)
     assert page_job["artifact"]["name"] == f"{slugify('Just notes', lab['note']['id'])}{page_suffix}"
     assert _download(user, page_job).content
-    folder_job = _export(user, folder="EJ lab", mode=mode)
+    folder_job = _export(user, folder=lab["folder"], mode=mode)
     assert folder_job["artifact"]["name"] == f"EJ lab{folder_suffix}"
     assert folder_job["result"] == {"pages": 3, "skipped": []}
     body = _download(user, folder_job).content
@@ -113,7 +114,7 @@ def test_every_format_exports_as_a_job(user, lab, mode, page_suffix, folder_suff
 
 
 def test_a_bundled_zotero_export_packs_the_pdf_files(user, lab):
-    job = _export(user, folder="EJ lab", mode="zotero-rdf", pdf=True, highlights=True)
+    job = _export(user, folder=lab["folder"], mode="zotero-rdf", pdf=True, highlights=True)
     names = zipfile.ZipFile(io.BytesIO(_download(user, job).content)).namelist()
     assert sum(name.endswith(".pdf") for name in names) == 2 and any(name.endswith(".rdf") for name in names)
 
@@ -131,7 +132,7 @@ def test_an_export_stops_between_pages(user, lab, monkeypatch):
         return real(self, n, rows, page)
 
     monkeypatch.setattr(export._AnnotatedPdfBuilder, "add_page", slow)
-    started = user.post("/api/jobs/export", json={"folder": "EJ lab", "mode": "annotated-pdf"}).json()
+    started = user.post("/api/jobs/export", json={"folder": lab["folder"], "mode": "annotated-pdf"}).json()
     assert reached.wait(10)
     assert user.post(f"/api/jobs/{started['id']}/cancel").json()["stopping"]
     release.set()
@@ -141,10 +142,10 @@ def test_an_export_stops_between_pages(user, lab, monkeypatch):
 
 
 def test_what_an_export_job_refuses(user, lab):
-    assert user.post("/api/jobs/export", json={"folder": "EJ lab", "mode": "pptx"}).status_code == 400
-    assert user.post("/api/jobs/export", json={"folder": "No such folder"}).status_code == 404
+    assert user.post("/api/jobs/export", json={"folder": lab["folder"], "mode": "pptx"}).status_code == 400
+    assert user.post("/api/jobs/export", json={"folder": "no-such-folder"}).status_code == 404
     assert user.post("/api/jobs/export", json={}).status_code == 400
     assert user.post("/api/jobs/export", json={"page_id": "nope"}).status_code == 404
-    gone = make_page(user, "Soon deleted", {"folder": "EJ trash"})
+    gone = make_page(user, "Soon deleted", {"folders": [make_folder(user, "EJ trash")]})
     assert user.delete(f"/api/blocks/{gone['id']}").status_code == 200
     assert user.post("/api/jobs/export", json={"page_id": gone["id"]}).status_code == 404

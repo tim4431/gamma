@@ -17,7 +17,7 @@ applied (the same box pdf.js measures its scale-1 viewport from, so a layout
 built from it is exact). It is derived data next to the PDF text index, so it
 is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
 backups harmlessly, and is purged with the index when no page carries the
-document any more (`block_index.purge_page_data`).
+document any more (`pdf_index.purge_unused`).
 
 Who writes it: `storage.store_pdf` (uploads, imports, file chips), the
 `/api/pdf` proxy's save path and `/api/clip` schedule it on a background

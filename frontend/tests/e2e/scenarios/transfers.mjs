@@ -345,12 +345,13 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
 
   await step("transfer: a folder's papers export as annotated PDFs in one zip, in the background, reopened from the tray", async () => {
     const folder = "E2E annotated";
+    const folderId = await alice.folder(folder);
     for (const [title, where] of [["Folder paper one", folder], ["Folder paper two", `${folder}/Sub`]]) {
       const up = await alice.upload("/api/uploads", makePdf([[title]]), `${title}.pdf`, "application/pdf");
       const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
-      await alice.api(`/api/blocks/${created.id}`, { method: "PUT", body: { properties: { ...created.properties, folder: where } } });
+      await alice.file(created.id, { folders: [where] });
     }
-    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder note page", properties: { folder } } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder note page", properties: { folders: [folderId] } } });
     const { ctx, page } = await setup();
     try {
       // The server's job is quick: its listing is held at "running" so the
@@ -360,14 +361,14 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
         const response = await route.fetch();
         const body = await response.json();
         for (const job of body.jobs || []) {
-          if (hold && job.kind === "export" && job.params.folder === folder) {
+          if (hold && job.kind === "export" && job.params.folder === folderId) {
             Object.assign(job, { state: "running", finished_at: "", artifact: null, stoppable: true,
               progress: { done: 1, total: 3, unit: "pages", item: "Folder paper two" } });
           }
         }
         await route.fulfill({ response, json: body });
       });
-      await page.goto(`${server.base}/?folder=${encodeURIComponent(folder)}&ws=${alice.ws}`);
+      await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
       await page.waitForSelector(".folderNewBtn");
       const view = page.locator('[data-popover="menu"] > button');
       await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
@@ -383,7 +384,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await choice(dialog, "Export").click();
       const job = await (await started).json();
       assertEq(job.params.mode, "annotated-pdf");
-      assertEq(job.params.folder, folder);
+      assertEq(job.params.folder, folderId);
       await dialog.getByRole("heading", { name: "Exporting…", exact: true }).waitFor();
       await dialog.getByText("1 of 3 pages · Folder paper two", { exact: true }).waitFor();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/export-running.png` });
@@ -439,12 +440,14 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   journal = {Notes},
   year = {1843}
 }`;
-      await alice.api(`/api/blocks/${made.id}`, { method: "PUT", body: { properties: { folder: where, meta, bibtex: entry } } });
+      await alice.api(`/api/blocks/${made.id}`, { method: "PUT", body: { properties: { meta, bibtex: entry } } });
+      await alice.file(made.id, { folders: [where] });
       pages[title] = made;
     }
     // A page with nothing to cite: the export leaves it out and says so.
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Bib note page" } })
-      .then((made) => alice.api(`/api/blocks/${made.id}`, { method: "PUT", body: { properties: { folder } } }));
+      .then((made) => alice.file(made.id, { folders: [folder] }));
+    const folderId = await alice.folder(folder);
     const ctx = await alice.context(browser, { permissions: ["clipboard-read", "clipboard-write"] });
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
     try {
@@ -477,7 +480,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await one.waitFor({ state: "detached" });
 
       // 3. Export the folder as one bibliography.
-      await page.goto(`${server.base}/?folder=${encodeURIComponent(folder)}&ws=${alice.ws}`);
+      await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
       await page.waitForSelector(".folderNewBtn");
       // A folder's dialog is named after it, so openDialog's exact "Export" misses.
       const view = page.locator('[data-popover="menu"] > button');

@@ -9,11 +9,13 @@ import json
 import sqlite3
 
 import pytest
-from conftest import make_page, workspace_of, guest_name
+from conftest import make_folder, make_label, make_page, workspace_of, guest_name
+from gamma.db import register_functions
 
 
-def _label(user, block_id, value):
-    """What PUT /api/blocks/{id} does: merge one key into the properties."""
+def _label(user, block_id, label_id):
+    """What PUT /api/blocks/{id} does: merge one key (the page's labels)
+    into the properties."""
     from gamma.db import ws_db_path
 
     with sqlite3.connect(ws_db_path(workspace_of(user), "pages.db")) as conn:
@@ -21,7 +23,7 @@ def _label(user, block_id, value):
             "SELECT properties FROM unified_blocks WHERE id = ?", (block_id,)
         ).fetchone()
         props = json.loads(row[0] or "{}")
-        props["category"] = value
+        props["labels"] = [label_id]
         conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
                      (json.dumps(props), block_id))
         conn.commit()
@@ -33,9 +35,9 @@ def label_during_lookup(monkeypatch):
     has read the properties but before it writes them back."""
     from gamma.routers import metadata
 
-    def arm(block_id, result):
+    def arm(block_id, result, label_id):
         def fake_fetch_arxiv(arxiv_id):
-            _label(guest_name(), block_id, "quantum")
+            _label(guest_name(), block_id, label_id)
             return result
         monkeypatch.setattr(metadata, "_fetch_arxiv", fake_fetch_arxiv)
     return arm
@@ -51,13 +53,14 @@ ARXIV_META = {
 def test_label_set_during_fetch_survives(guest, label_during_lookup):
     page = make_page(guest, "Racy page",
                      properties={"source_url": "https://arxiv.org/abs/2601.00001"})
-    label_during_lookup(page["id"], ARXIV_META)
+    quantum = make_label(guest, "quantum")
+    label_during_lookup(page["id"], ARXIV_META, quantum)
 
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 200, r.text
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert props["meta"]["title"] == "Fetched Title"
-    assert props["category"] == "quantum"          # not clobbered
+    assert props["labels"] == [quantum]            # not clobbered
     assert props["source_url"]                     # nor is anything else
 
 
@@ -65,13 +68,14 @@ def test_label_set_during_failed_fetch_survives(guest, label_during_lookup):
     """The negative-cache write is the same read-modify-write hazard."""
     page = make_page(guest, "Racy failing page",
                      properties={"source_url": "https://arxiv.org/abs/2601.00002"})
-    label_during_lookup(page["id"], None)  # lookup finds nothing, AI unconfigured
+    quantum = make_label(guest, "quantum")
+    label_during_lookup(page["id"], None, quantum)  # lookup finds nothing, AI unconfigured
 
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 404
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert props["meta_error"]["at"]
-    assert props["category"] == "quantum"
+    assert props["labels"] == [quantum]
 
 
 def test_fetch_clears_stale_markers(guest, label_during_lookup):
@@ -79,17 +83,18 @@ def test_fetch_clears_stale_markers(guest, label_during_lookup):
         "source_url": "https://arxiv.org/abs/2601.00003",
         "meta_error": {"at": "2026-01-01T00:00:00Z", "detail": "old failure"},
         "ppt_cite": "stale citation",
-        "folder": "reading",
+        "folders": [make_folder(guest, "reading")],
     })
-    label_during_lookup(page["id"], ARXIV_META)
+    quantum = make_label(guest, "quantum")
+    label_during_lookup(page["id"], ARXIV_META, quantum)
 
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"], "force": True})
     assert r.status_code == 200, r.text
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert "meta_error" not in props
     assert "ppt_cite" not in props
-    assert props["category"] == "quantum"
-    assert props["folder"] == "reading"
+    assert props["labels"] == [quantum]
+    assert props["folders"] == [make_folder(guest, "reading")]
 
 
 def test_label_set_during_cite_survives(guest, monkeypatch):
@@ -97,11 +102,12 @@ def test_label_set_during_cite_survives(guest, monkeypatch):
 
     page = make_page(guest, "Cited page",
                      properties={"meta": {"title": "T"}, "bibtex": "@article{t}"})
+    cited = make_label(guest, "cited")
     monkeypatch.setattr(metadata, "require_ai_runtime", lambda user: {"enabled": True})
     monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model: "m")
 
     def fake_call_ai(messages, system, model, rt, **kw):
-        _label(guest_name(), page["id"], "cited")
+        _label(guest_name(), page["id"], cited)
         return "Lovelace et al., 2026"
     monkeypatch.setattr(metadata, "_call_ai", fake_call_ai)
 
@@ -109,7 +115,7 @@ def test_label_set_during_cite_survives(guest, monkeypatch):
     assert r.status_code == 200, r.text
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert props["ppt_cite"] == "Lovelace et al., 2026"
-    assert props["category"] == "cited"
+    assert props["labels"] == [cited]
 
 
 def test_save_props_missing_page_404s(guest):
@@ -166,6 +172,7 @@ def test_rename_during_metadata_fetch_wins(guest, monkeypatch):
         # Same transaction effect as an explicit PUT /blocks/{id}: write the
         # user's title and clear the automatic-title compare-and-swap marker.
         with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+            register_functions(conn)  # the notes index's triggers call textnorm
             row = conn.execute(
                 "SELECT properties FROM unified_blocks WHERE id=?", (created["id"],)
             ).fetchone()
@@ -204,6 +211,7 @@ def test_fetch_reports_title_renamed_by_concurrent_lookup(guest, monkeypatch):
         # What the winning lookup's _save_props leaves behind: the paper's
         # title, marker cleared.
         with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+            register_functions(conn)  # the notes index's triggers call textnorm
             row = conn.execute(
                 "SELECT properties FROM unified_blocks WHERE id=?", (created["id"],)
             ).fetchone()

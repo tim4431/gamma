@@ -13,7 +13,8 @@ import re
 # aliased: _render_readable_block has a local ``quote`` (the highlight text)
 from urllib.parse import quote as urlquote
 
-from .blocks_store import block_to_dict
+from .blocks_store import block_to_dict, page_attachment
+from .highlights import is_highlight, page_of
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
 from .text_box import box_page
@@ -57,14 +58,17 @@ def build_tree(rows, root_id):
     return by_id.get(root_id)
 
 
-def _is_highlight(props):
-    return bool(props.get("highlight_id"))
-
-
 # --- readable rendering ------------------------------------------------------
 
+def front_matter_folder(names) -> str:
+    """A folder path (names from the top) as the front matter's ``folder:``
+    value: the names joined with "/", a "/" inside a name written as "-" so
+    the path reads back (markdown_zip_import) as one folder per name."""
+    return "/".join(name.replace("/", "-") for name in names)
+
+
 def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_file=None,
-                    folder_scope=None):
+                    folder=()):
     """Nested-bullet Markdown with a title, YAML front-matter and BibTeX block.
 
     ``highlights``/``notes`` are the export dialog's two switches: dropping
@@ -73,21 +77,20 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
     stay. ``resolve_ref`` (block id → {content, page_title, page_id} | None)
     and ``page_file`` (page id → exported filename | None) resolve [[refs]],
     ![[embeds]] and internal document links — see ``resolve_block_links``.
-    ``folder_scope`` is the folder a folder export was opened on: the page's
-    folder label is written relative to it (``folder:``), so importing the
-    zip into a folder rebuilds the same tree there.
+    ``folder`` is the page's folder path (names) below the folder a folder
+    export was opened on — from the top for one page — written as
+    ``folder:`` (``front_matter_folder``), so importing the zip into a
+    folder rebuilds the same tree there.
     """
     props = page.get("properties") or {}
     title = (page.get("content") or "").strip() or "Untitled"
 
     fm = [f"title: {title}"]
-    folders = [t.strip() for t in (props.get("folder") or "").split(",") if t.strip()]
-    if folder_scope:
-        folders = [f[len(folder_scope) + 1:] for f in folders if f.startswith(folder_scope + "/")]
-    if folders:
-        fm.append(f"folder: {folders[0]}")
-    if props.get("source_url"):
-        fm.append(f"source: {props['source_url']}")
+    if folder:
+        fm.append(f"folder: {front_matter_folder(folder)}")
+    attachment = page_attachment(props)
+    if attachment:
+        fm.append(f"source: {attachment['url']}")
     meta = props.get("meta")
     if isinstance(meta, dict):
         if meta.get("doi"):
@@ -176,7 +179,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
     # The two export switches. A highlight block carries both a PDF region and
     # (often) writing of your own, so dropping highlights keeps its text as a
     # plain bullet rather than losing the note with the quote.
-    if not highlights and (props.get("highlight_id") or props.get("link_url") or props.get("ink_url")):
+    if not highlights and (is_highlight(props) or props.get("link_url") or props.get("ink_url")):
         props = {}
     if not notes:
         content = ""
@@ -198,14 +201,14 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
             label = _link_label((ref or {}).get("content"), "")
         lines.append(f"{indent}- [{label or link_href}]({link_href})")
         emitted = True
-    elif _is_highlight(props):
+    elif is_highlight(props):
         quote = (props.get("quote") or "").strip()
         if quote:
             qlines = quote.split("\n")
             lines.append(f"{indent}- > {qlines[0]}")
             for q in qlines[1:]:
                 lines.append(f"{indent}  > {q}")
-            page_no = props.get("pdf_page")
+            page_no = page_of(props)
             if page_no is not None:
                 lines.append(f"{indent}  `p.{page_no}`")
             emitted = True
@@ -219,7 +222,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
     elif props.get("ink_url"):
         # A handwriting group: its picture (the builder renders the .ink file
         # to an SVG of the same stem — ink_svg_name) and the caption under it.
-        page_no = props.get("pdf_page")
+        page_no = page_of(props)
         label = f"Handwriting (p.{page_no})" if page_no else "Handwriting"
         lines.append(f"{indent}- ![{label}]({ink_svg_name(props['ink_url'])})")
         for c in content.split("\n") if content else []:

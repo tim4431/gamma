@@ -1,6 +1,6 @@
 """The page socket's access, and its room bookkeeping, at the edges the
 revalidation used to miss: a page refiled out of a shared folder by an op
-batch, an account deleted by an admin, a share stopped while a visitor's
+batch, a shared folder's subfolder moved out of it, an account deleted by an admin, a share stopped while a visitor's
 handshake is in flight; a client gone while the hello is sent; a peer
 dropped on a failed send (the others must hear it left)."""
 
@@ -11,8 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import login, make_page, make_user, recv
-from gamma import collab, workspaces
+from conftest import login, make_folder, make_page, make_user, recv, workspace_of
+from gamma import collab
 from gamma.app import app
 from gamma.db import connect_users_db
 from gamma.routers import collab as rcollab
@@ -39,9 +39,9 @@ def _closed(sock):
 def test_a_page_refiled_out_of_a_shared_folder_closes_the_folder_visitor():
     make_user("cag_folder", "cagfolderpw1")
     owner = login("cag_folder", "cagfolderpw1")
-    page = make_page(owner, "Filed page", {"folder": "Shared"})
-    token = owner.post("/api/share/folder", params={"name": "Shared"},
-                       json={"audience": "anyone", "role": "view"}).json()["token"]
+    shared, private = make_folder(owner, "Shared"), make_folder(owner, "Private")
+    page = make_page(owner, "Filed page", {"folders": [shared]})
+    token = owner.post(f"/api/share/folder/{shared}", json={"audience": "anyone", "role": "view"}).json()["token"]
     with TestClient(app, cookies=owner.cookies) as ow:
         anon = TestClient(app)
         anon.portal = ow.portal
@@ -51,7 +51,7 @@ def test_a_page_refiled_out_of_a_shared_folder_closes_the_folder_visitor():
             assert recv(o, "join", PRESENCE)["peer"]["client"] == "VIS"
             # the owner files the page elsewhere: the visitor leaves and is closed
             r = ow.post(f"/api/pages/{page['id']}/ops", json={"client": "OWN", "ops": [
-                {"op": "set", "id": page["id"], "props": {"folder": "Private"}}]})
+                {"op": "set", "id": page["id"], "props": {"folders": [private]}}]})
             assert r.status_code == 200, r.text
             assert recv(o, "leave", PRESENCE + ("ops",))["client"] == "VIS"
             with pytest.raises(WebSocketDisconnect) as closed:
@@ -62,6 +62,23 @@ def test_a_page_refiled_out_of_a_shared_folder_closes_the_folder_visitor():
             ow.post(f"/api/pages/{page['id']}/ops", json={"client": "OWN", "ops": [
                 {"op": "insert", "id": "cagA", "parent": page["id"], "content": "private now"}]}).raise_for_status()
             assert recv(o, "ops", PRESENCE)["ops"][0]["id"] == "cagA"
+
+
+def test_a_subfolder_moved_out_of_a_shared_folder_closes_the_folder_visitor():
+    owner = login("cag_folder", "cagfolderpw1")
+    top, sub = make_folder(owner, "Shared top"), make_folder(owner, "Shared top/sub")
+    page = make_page(owner, "Filed below", {"folders": [sub]})
+    token = owner.post(f"/api/share/folder/{top}", json={"audience": "anyone", "role": "view"}).json()["token"]
+    with TestClient(app, cookies=owner.cookies) as ow:
+        anon = TestClient(app)
+        anon.portal = ow.portal
+        with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
+            _hello(v)
+            # the folder holding the page leaves the shared one: one move on the tree
+            r = ow.post("/api/pages/folders/ops", json={"client": "OWN", "ops": [
+                {"op": "move", "id": sub, "parent": "folders"}]})
+            assert r.status_code == 200, r.text
+            assert _closed(v) == collab.CLOSE_REVOKED
 
 
 def test_deleting_an_account_closes_its_sockets_and_those_of_its_workspaces():
@@ -96,7 +113,7 @@ def test_deleting_an_account_closes_its_sockets_and_those_of_its_workspaces():
 def test_a_share_stopped_during_the_handshake_is_caught_after_the_join(monkeypatch):
     make_user("cag_hs", "caghspassw1")
     owner = login("cag_hs", "caghspassw1")
-    ws = workspaces.default_workspace("cag_hs")
+    ws = workspace_of("cag_hs")
     page = make_page(owner, "Handshake page")
     token = owner.post(f"/api/share/{page['id']}").json()["token"]
     owner.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone", "role": "view"}).raise_for_status()

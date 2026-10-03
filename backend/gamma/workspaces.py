@@ -29,6 +29,10 @@ workspace's pages only as a member or through public access.
 Requests pick their workspace with ``?ws=`` or the ``X-Gamma-Workspace``
 header (gamma/auth.py ``require_ws``); the frontend keeps the id in the URL.
 
+Accounts are named by their id (``users.id``) here as in storage — every
+helper below that takes an account takes its id; what goes back out to be
+shown (member lists, who created or invited) carries usernames.
+
 A shared workspace can also invite someone who has no account here yet, by
 their Gamma Cloud username (``invite_cloud``): the account server answers
 username → subject, and the invitation waits in ``pending_memberships``
@@ -46,7 +50,7 @@ import urllib.parse
 
 from . import collab, jobs
 from .config import WORKSPACES_DIR
-from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
+from .db import account_name, connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
 from .logbuf import log
 from .seed import create_workspace_files, seed_welcome
 
@@ -69,7 +73,9 @@ LEFTOVERS_EVERY_S = 3600
 REMOVE_TRIES = 10
 REMOVE_RETRY_S = 0.1
 
-_COLS = "id, name, created_by, created_at, kind, access, public_role, quota_mb"
+# A workspace row with its creator's username (``created_by`` holds the id).
+_COLS = "w.id, w.name, COALESCE(c.username, ''), w.created_at, w.kind, w.access, w.public_role, w.quota_mb"
+_FROM = "workspaces w LEFT JOIN users c ON c.id = w.created_by"
 
 
 class FinalCopyError(RuntimeError):
@@ -91,7 +97,7 @@ def _info(row) -> dict:
 
 
 def _row(conn, ws: str):
-    return conn.execute(f"SELECT {_COLS} FROM workspaces WHERE id = ?", (ws,)).fetchone()
+    return conn.execute(f"SELECT {_COLS} FROM {_FROM} WHERE w.id = ?", (ws,)).fetchone()
 
 
 def get(ws: str) -> dict | None:
@@ -102,18 +108,19 @@ def get(ws: str) -> dict | None:
 
 def _members_of(conn, ws: str) -> list[tuple]:
     return conn.execute(
-        "SELECT username, role FROM workspace_members WHERE workspace_id = ? ORDER BY added_at", (ws,)).fetchall()
+        "SELECT user_id, role FROM workspace_members WHERE workspace_id = ? ORDER BY added_at", (ws,)).fetchall()
 
 
 def _personal_owner(conn, ws: str) -> str:
     row = conn.execute(
-        "SELECT m.username FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
+        "SELECT m.user_id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
         "WHERE w.id = ? AND w.kind = 'personal' ORDER BY m.added_at LIMIT 1", (ws,)).fetchone()
     return row[0] if row else ""
 
 
 def personal_owner(ws: str) -> str:
-    """The account a personal workspace belongs to, or "" for a shared one."""
+    """The id of the account a personal workspace belongs to, or "" for a
+    shared one."""
     with connect_users_db() as conn:
         return _personal_owner(conn, ws)
 
@@ -126,33 +133,33 @@ def is_guest_workspace(ws: str) -> bool:
         return False
     with connect_users_db() as conn:
         owner = _personal_owner(conn, ws)
-        row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (owner,)).fetchone() if owner else None
+        row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (owner,)).fetchone() if owner else None
     return bool(row and row[0])
 
 
-def _personal_ids(conn, username: str) -> list[str]:
+def _personal_ids(conn, user_id: str) -> list[str]:
     return [r[0] for r in conn.execute(
         "SELECT w.id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
-        "WHERE w.kind = 'personal' AND m.username = ? ORDER BY w.created_at", (username,))]
+        "WHERE w.kind = 'personal' AND m.user_id = ? ORDER BY w.created_at", (user_id,))]
 
 
-def personal_workspaces(username: str) -> list[str]:
+def personal_workspaces(user_id: str) -> list[str]:
     """The account's personal workspace ids, oldest first."""
     with connect_users_db() as conn:
-        return _personal_ids(conn, username)
+        return _personal_ids(conn, user_id)
 
 
-def role_of(ws: str, username: str) -> str | None:
+def role_of(ws: str, user_id: str) -> str | None:
     """The account's role in the workspace: its membership, else the public
     role of a public workspace (any non-guest account), else None."""
-    if not ws or not username:
+    if not ws or not user_id:
         return None
     with connect_users_db() as conn:
         row = conn.execute(
             "SELECT m.role, w.access, w.public_role, u.is_guest FROM workspaces w "
-            "JOIN users u ON u.username = ? "
-            "LEFT JOIN workspace_members m ON m.workspace_id = w.id AND m.username = u.username "
-            "WHERE w.id = ?", (username, ws)).fetchone()
+            "JOIN users u ON u.id = ? "
+            "LEFT JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = u.id "
+            "WHERE w.id = ?", (user_id, ws)).fetchone()
     if not row:
         return None
     role, access, public_role, is_guest = row
@@ -163,16 +170,16 @@ def role_of(ws: str, username: str) -> str | None:
     return None
 
 
-def account_exists(username: str) -> bool:
+def account_exists(user_id: str) -> bool:
     with connect_users_db() as conn:
-        return bool(conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone())
+        return bool(conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone())
 
 
 def at_least(role: str | None, needed: str) -> bool:
     return bool(role) and RANK[role] >= RANK[needed]
 
 
-def list_for_user(username: str) -> list[dict]:
+def list_for_user(user_id: str) -> list[dict]:
     """Every workspace the account can open — its memberships plus, for a
     non-guest account, every public workspace: ``[{id, name, kind, role,
     access, public_role, created_by, created_at, members, personal,
@@ -186,18 +193,18 @@ def list_for_user(username: str) -> list[dict]:
     token, for the next publish) but is invisible: nothing is published."""
     with connect_users_db() as conn:
         me = conn.execute(
-            "SELECT default_workspace, is_guest FROM users WHERE username = ?", (username,)).fetchone()
+            "SELECT default_workspace, is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
         rows = conn.execute(
             f"SELECT {_COLS}, "
-            "(SELECT role FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?), "
+            "(SELECT role FROM workspace_members m WHERE m.workspace_id = w.id AND m.user_id = ?), "
             "(SELECT COUNT(*) FROM workspace_members x WHERE x.workspace_id = w.id), "
             "(SELECT remote_name FROM mirrors mi WHERE mi.workspace_id = w.id AND mi.mode != 'off' "
             "AND mi.page_filter IS NULL), "
             "EXISTS (SELECT 1 FROM mirrors mp WHERE mp.workspace_id = w.id AND mp.mode != 'off' "
             "AND mp.page_filter IS NOT NULL AND mp.page_filter != '[]') "
-            "FROM workspaces w WHERE w.access = 'public' "
-            "OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)",
-            (username, username)).fetchall()
+            f"FROM {_FROM} WHERE w.access = 'public' "
+            "OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.user_id = ?)",
+            (user_id, user_id)).fetchall()
     default, is_guest = (me[0], me[1]) if me else ("", 1)
     out = []
     for r in rows:
@@ -212,24 +219,26 @@ def list_for_user(username: str) -> list[dict]:
 
 
 def members(ws: str) -> list[dict]:
+    """``[{username, role, added_by, added_at}]`` — the people by name."""
     with connect_users_db() as conn:
         rows = conn.execute(
-            "SELECT username, role, added_by, added_at FROM workspace_members WHERE workspace_id = ? "
-            "ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END, username",
+            "SELECT u.username, m.role, COALESCE(a.username, ''), m.added_at FROM workspace_members m "
+            "JOIN users u ON u.id = m.user_id LEFT JOIN users a ON a.id = m.added_by WHERE m.workspace_id = ? "
+            "ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END, u.username",
             (ws,)).fetchall()
     return [{"username": r[0], "role": r[1], "added_by": r[2], "added_at": r[3]} for r in rows]
 
 
-def membership_count(username: str) -> int:
+def membership_count(user_id: str) -> int:
     """Count explicit memberships; public access consumes no membership slot."""
     with connect_users_db() as conn:
-        return conn.execute("SELECT COUNT(*) FROM workspace_members WHERE username = ?", (username,)).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM workspace_members WHERE user_id = ?", (user_id,)).fetchone()[0]
 
 
-def default_workspace(username: str) -> str:
+def default_workspace(user_id: str) -> str:
     with connect_users_db() as conn:
         row = conn.execute(
-            "SELECT default_workspace FROM users WHERE username = ?", (username,)).fetchone()
+            "SELECT default_workspace FROM users WHERE id = ?", (user_id,)).fetchone()
     return row[0] if row else ""
 
 
@@ -240,10 +249,10 @@ def _check_access(access: str, public_role: str) -> None:
         raise ValueError("the public role must be viewer or editor")
 
 
-def _check_account(conn, username: str) -> None:
-    row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
+def _check_account(conn, user_id: str) -> None:
+    row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
-        raise ValueError(f"unknown user: {username}")
+        raise ValueError("unknown account")
     if row[0]:
         raise ValueError("the guest account cannot join workspaces")
 
@@ -251,8 +260,9 @@ def _check_account(conn, username: str) -> None:
 def create(name: str, owner: str, *, kind: str = "personal", by: str | None = None,
            access: str = "private", public_role: str = "viewer", quota_mb: int | None = None,
            welcome: bool = False, ws_id: str | None = None) -> dict:
-    """A new workspace with its files, ``owner`` as its owner (``by`` — who
-    created it, default the owner — is recorded as ``created_by``). A
+    """A new workspace with its files, the account ``owner`` (an id) as its
+    owner (``by`` — who created it, default the owner — is recorded as
+    ``created_by``). A
     personal workspace ignores access and quota. ``welcome`` seeds the
     Welcome page (gamma/seed.py ``seed_welcome``) once the rows exist.
     Raises ValueError on an unknown owner or a bad setting (the guest may
@@ -268,15 +278,15 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
     _check_access(access, public_role)
     now = page_now()
     with connect_users_db() as conn:
-        account = conn.execute("SELECT is_guest FROM users WHERE username = ?", (owner,)).fetchone()
+        account = conn.execute("SELECT is_guest FROM users WHERE id = ?", (owner,)).fetchone()
     if not account:
-        raise ValueError(f"unknown user: {owner}")
+        raise ValueError("unknown account")
     create_workspace_files(ws_id)
     with connect_users_db() as conn:
         conn.execute(
             "INSERT INTO workspaces (id, name, created_by, created_at, kind, access, public_role, quota_mb) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (ws_id, name, by or owner, now, kind, access, public_role, quota_mb))
-        conn.execute("INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
+        conn.execute("INSERT INTO workspace_members (workspace_id, user_id, role, added_by, added_at) "
                      "VALUES (?, ?, 'owner', ?, ?)", (ws_id, owner, by or owner, now))
         conn.commit()
     if welcome:
@@ -284,34 +294,34 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
     return get(ws_id)
 
 
-def ensure_personal(username: str, *, welcome: bool = False) -> str:
-    """The account's default workspace id, created (and recorded on the
-    users row) when it has none or its files are gone. ``welcome``: a
-    workspace created (or recreated) here starts with the Welcome page —
-    what every account-creating path asks for (gamma/seed.py, guests.py);
-    an existing workspace is never seeded."""
+def ensure_personal(user_id: str, *, welcome: bool = False) -> str:
+    """The account's default workspace id, created (named after the
+    account, and recorded on the users row) when it has none or its files
+    are gone. ``welcome``: a workspace created (or recreated) here starts
+    with the Welcome page — what every account-creating path asks for
+    (gamma/seed.py, guests.py); an existing workspace is never seeded."""
     with connect_users_db() as conn:
         row = conn.execute(
-            "SELECT default_workspace, is_guest FROM users WHERE username = ?", (username,)).fetchone()
+            "SELECT default_workspace, is_guest, username FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
-        raise ValueError(f"no such user: {username}")
+        raise ValueError(f"no such account: {user_id}")
     ws_id = row[0]
     if ws_id and not (ws_dir(ws_id) / "pages.db").is_file():
         create_workspace_files(ws_id)  # repair a missing directory
         if welcome:
-            seed_welcome(ws_id, actor=username, guest=bool(row[1]))
+            seed_welcome(ws_id, actor=user_id, guest=bool(row[1]))
     if ws_id:
         return ws_id
-    ws_id = (personal_workspaces(username) or [None])[0] or create(username, username, welcome=welcome)["id"]
+    ws_id = (personal_workspaces(user_id) or [None])[0] or create(row[2], user_id, welcome=welcome)["id"]
     with connect_users_db() as conn:
-        conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws_id, username))
+        conn.execute("UPDATE users SET default_workspace = ? WHERE id = ?", (ws_id, user_id))
         conn.commit()
     return ws_id
 
 
-def set_default(username: str, ws: str) -> None:
+def set_default(user_id: str, ws: str) -> None:
     """Make one of the account's personal workspaces its default."""
-    update(ws, {}, default_for=username)
+    update(ws, {}, default_for=user_id)
 
 
 def rename(ws: str, name: str) -> dict:
@@ -371,10 +381,10 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
             owner = people[0][0] if people else ""
             others = [w for w in _personal_ids(conn, owner) if w != ws] if owner else []
             if owner and not others:
-                raise ValueError(f"this is {owner}'s only personal workspace")
-            if owner and conn.execute("SELECT 1 FROM users WHERE username = ? AND default_workspace = ?",
+                raise ValueError(f"this is {account_name(conn, owner)}'s only personal workspace")
+            if owner and conn.execute("SELECT 1 FROM users WHERE id = ? AND default_workspace = ?",
                                       (owner, ws)).fetchone():
-                conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (others[0], owner))
+                conn.execute("UPDATE users SET default_workspace = ? WHERE id = ?", (others[0], owner))
         info["kind"] = kind
         if "access" in changes or "public_role" in changes:
             if kind == "personal":
@@ -389,7 +399,7 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
         if default_for:
             if kind != "personal" or len(people) != 1 or people[0][0] != default_for:
                 raise ValueError("only one of your personal workspaces can be your default")
-            conn.execute("UPDATE users SET default_workspace = ? WHERE username = ?", (ws, default_for))
+            conn.execute("UPDATE users SET default_workspace = ? WHERE id = ?", (ws, default_for))
         conn.execute(
             "UPDATE workspaces SET name = ?, kind = ?, access = ?, public_role = ?, quota_mb = ? WHERE id = ?",
             (info["name"], kind, info["access"], info["public_role"], info["quota_mb"], ws))
@@ -397,10 +407,11 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
     return info
 
 
-def set_member(ws: str, username: str, role: str, by: str) -> None:
-    """Add or change one membership (shared workspaces). Raises ValueError
-    on a bad role, an unknown / guest account, a personal workspace, or
-    demoting the last owner."""
+def set_member(ws: str, user_id: str, role: str, by: str) -> None:
+    """Add or change one membership (shared workspaces) — ``user_id`` the
+    member, ``by`` who adds them. Raises ValueError on a bad role, an
+    unknown / guest account, a personal workspace, or demoting the last
+    owner."""
     if role not in ROLES:
         raise ValueError("role must be owner, editor or viewer")
     with connect_users_db() as conn:
@@ -409,17 +420,17 @@ def set_member(ws: str, username: str, role: str, by: str) -> None:
         conn.execute("BEGIN IMMEDIATE")
         if _personal_owner(conn, ws):
             raise ValueError("a personal workspace has no other members — share a page, or ask an admin for a shared workspace")
-        _check_account(conn, username)
-        if role != "owner" and _is_last_owner(conn, ws, username):
+        _check_account(conn, user_id)
+        if role != "owner" and _is_last_owner(conn, ws, user_id):
             raise ValueError("a workspace needs at least one owner")
         conn.execute(
-            "INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, username) DO UPDATE SET role = excluded.role",
-            (ws, username, role, by, page_now()))
+            "INSERT INTO workspace_members (workspace_id, user_id, role, added_by, added_at) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role",
+            (ws, user_id, role, by, page_now()))
         conn.commit()
 
 
-def remove_member(ws: str, username: str) -> None:
+def remove_member(ws: str, user_id: str) -> None:
     """Drop a membership (also "leave"). The last owner cannot go, a
     personal workspace has nobody to remove, and public access is not a
     membership — there is nothing to remove."""
@@ -427,13 +438,13 @@ def remove_member(ws: str, username: str) -> None:
         conn.execute("BEGIN IMMEDIATE")  # the last-owner check and the delete as one step
         if _personal_owner(conn, ws):
             raise ValueError("a personal workspace cannot be left; delete it instead")
-        if _is_last_owner(conn, ws, username):
+        if _is_last_owner(conn, ws, user_id):
             raise ValueError("a workspace needs at least one owner")
-        if not conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND username = ?",
-                            (ws, username)).fetchone():
-            raise ValueError(f"{username} is not a member of this workspace")
-        conn.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND username = ?",
-                     (ws, username))
+        if not conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                            (ws, user_id)).fetchone():
+            raise ValueError(f"{account_name(conn, user_id) or 'that account'} is not a member of this workspace")
+        conn.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                     (ws, user_id))
         conn.commit()
 
 
@@ -479,7 +490,7 @@ def lookup_with_token(issuer: str, access_token: str, name: str) -> dict | None:
 
 def _cloud_access_token(by: str) -> str:
     """An access token for the account server on behalf of ``by`` (the
-    inviting account): its own linked Gamma Cloud grant
+    inviting account's id): its own linked Gamma Cloud grant
     (``cloud_auth.access_token_for``). CloudLookupError when the inviter has
     no linked identity or the account server hands out no token."""
     from . import cloud_auth  # local: cloud_auth imports this module
@@ -517,7 +528,8 @@ def _check_shared(conn, ws: str) -> None:
 
 def invite_cloud(ws: str, name, role: str, by: str) -> dict:
     """Invite the Gamma Cloud account ``name`` to a shared workspace as
-    editor or viewer. When that person already has a local account linked
+    editor or viewer, on behalf of the account ``by`` (an id). When that
+    person already has a local account linked
     to their cloud identity, they become a member right away (``{"member":
     <local username>}``); otherwise the invitation waits for their first
     sign-in (``{"pending": {...}}``; inviting again changes its role).
@@ -539,19 +551,19 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
     with connect_users_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
         _check_shared(conn, ws)  # again: the lookup went over the network
-        linked = conn.execute("SELECT username FROM identities WHERE provider = ? AND subject = ?",
-                              (PROVIDER, subject)).fetchone()
+        linked = conn.execute("SELECT i.user_id, u.username FROM identities i JOIN users u ON u.id = i.user_id "
+                              "WHERE i.provider = ? AND i.subject = ?", (PROVIDER, subject)).fetchone()
         if linked:
-            local = linked[0]
+            local, local_name = linked
             _check_account(conn, local)
-            if conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND username = ?",
+            if conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
                             (ws, local)).fetchone():
-                raise ValueError(f"{username} is already a member of this workspace, as {local}")
-            conn.execute("INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
+                raise ValueError(f"{username} is already a member of this workspace, as {local_name}")
+            conn.execute("INSERT INTO workspace_members (workspace_id, user_id, role, added_by, added_at) "
                          "VALUES (?, ?, ?, ?, ?)", (ws, local, role, by, now))
             conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ? AND subject = ?", (ws, subject))
             conn.commit()
-            return {"member": local, "username": username}
+            return {"member": local_name, "username": username}
         waiting = conn.execute("SELECT COUNT(*) FROM pending_memberships WHERE workspace_id = ? AND subject != ?",
                                (ws, subject)).fetchone()[0]
         if waiting >= MAX_PENDING_PER_WORKSPACE:
@@ -562,16 +574,19 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
             "username = excluded.username, role = excluded.role, invited_by = excluded.invited_by",
             (ws, subject, username, role, by, now))
         conn.commit()
-    return {"pending": {"subject": subject, "username": username, "role": role, "invited_by": by, "created_at": now}}
+        inviter = account_name(conn, by)
+    return {"pending": {"subject": subject, "username": username, "role": role, "invited_by": inviter,
+                        "created_at": now}}
 
 
 def pending_invites(ws: str) -> list[dict]:
     """The workspace's invitations waiting for a first cloud sign-in:
-    ``[{subject, username, role, invited_by, created_at}]`` by username."""
+    ``[{subject, username, role, invited_by, created_at}]`` by username —
+    the cloud username invited, and the inviter's local one."""
     with connect_users_db() as conn:
         rows = conn.execute(
-            "SELECT subject, username, role, invited_by, created_at FROM pending_memberships "
-            "WHERE workspace_id = ? ORDER BY username", (ws,)).fetchall()
+            "SELECT p.subject, p.username, p.role, COALESCE(u.username, ''), p.created_at FROM pending_memberships p "
+            "LEFT JOIN users u ON u.id = p.invited_by WHERE p.workspace_id = ? ORDER BY p.username", (ws,)).fetchall()
     return [{"subject": r[0], "username": r[1], "role": r[2], "invited_by": r[3], "created_at": r[4]} for r in rows]
 
 
@@ -593,9 +608,9 @@ def cancel_invite(ws: str, subject: str) -> None:
         raise ValueError("no such invitation")
 
 
-def claim_pending_memberships(username: str, subject: str) -> list[str]:
+def claim_pending_memberships(user_id: str, subject: str) -> list[str]:
     """The cloud identity ``subject`` now signs in as the local account
-    ``username`` (created, claimed or linked): every invitation waiting for
+    ``user_id`` (created, claimed or linked): every invitation waiting for
     that subject becomes a membership with its role, and the pending rows
     go. An existing membership keeps its own role; an invitation into a
     workspace that is gone or no longer shared is dropped. Returns the
@@ -607,7 +622,7 @@ def claim_pending_memberships(username: str, subject: str) -> list[str]:
             "LEFT JOIN workspaces w ON w.id = p.workspace_id WHERE p.subject = ?", (subject,)).fetchall()
         if not rows:
             return []
-        account = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
+        account = conn.execute("SELECT is_guest, username FROM users WHERE id = ?", (user_id,)).fetchone()
         if not account or account[0]:
             return []
         now = page_now()
@@ -616,27 +631,27 @@ def claim_pending_memberships(username: str, subject: str) -> list[str]:
             if kind != "shared" or role not in INVITE_ROLES:
                 continue
             cur = conn.execute(
-                "INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
-                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, username) DO NOTHING",
-                (ws, username, role, by, now))
+                "INSERT INTO workspace_members (workspace_id, user_id, role, added_by, added_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, user_id) DO NOTHING",
+                (ws, user_id, role, by, now))
             if cur.rowcount:
                 joined.append(ws)
         conn.execute("DELETE FROM pending_memberships WHERE subject = ?", (subject,))
         conn.commit()
     if joined:
-        log.info(f"[workspaces] {username} joined {len(joined)} workspace(s) they were invited to by cloud username")
+        log.info(f"[workspaces] {account[1]} joined {len(joined)} workspace(s) they were invited to by cloud username")
     return joined
 
 
-def _is_last_owner(conn, ws: str, username: str) -> bool:
+def _is_last_owner(conn, ws: str, user_id: str) -> bool:
     owners = [r[0] for r in conn.execute(
-        "SELECT username FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
-    return owners == [username]
+        "SELECT user_id FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
+    return owners == [user_id]
 
 
 def keep_final_copies(ws_ids, *, by: str = "") -> list[str]:
-    """One final copy of each workspace about to be deleted
-    (``ws_backup.keep_final_copy``: a full backup zip in backups/deleted/),
+    """One final copy of each workspace about to be deleted, by the account
+    ``by`` (``ws_backup.keep_final_copy``: a full backup zip in backups/deleted/),
     all or none: when one cannot be written, the copies already made go
     again and FinalCopyError says which workspace, before anything is
     deleted. Returns the copies' file names ("" for a guest's workspace)."""
@@ -682,7 +697,7 @@ def delete(ws: str, *, by: str = "") -> dict:
             conn.execute("BEGIN IMMEDIATE")
             owner, others = _other_personal(conn, ws)
             if owner:
-                conn.execute("UPDATE users SET default_workspace = ? WHERE username = ? AND default_workspace = ?",
+                conn.execute("UPDATE users SET default_workspace = ? WHERE id = ? AND default_workspace = ?",
                              (others[0], owner, ws))
             _delete_rows(conn, ws)
             conn.commit()
@@ -708,6 +723,7 @@ def _delete_rows(conn, ws: str) -> None:
     conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
+    conn.execute("DELETE FROM share_users WHERE token IN (SELECT token FROM shares WHERE workspace_id = ?)", (ws,))
     conn.execute("DELETE FROM shares WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
@@ -715,7 +731,7 @@ def _delete_rows(conn, ws: str) -> None:
 
 def _retrying(fn, *args):
     """``fn(*args)``, tried again for about a second while it raises
-    OSError: on Windows a background pass (the notes index, the upload
+    OSError: on Windows a background pass (the PDF indexer, the upload
     check) may hold one of the workspace's files open for a moment."""
     for attempt in range(REMOVE_TRIES):
         try:
@@ -781,40 +797,40 @@ def remove_leftovers() -> list[str]:
     return gone
 
 
-def _deleted_with(conn, username: str) -> list[str]:
+def _deleted_with(conn, user_id: str) -> list[str]:
     """The workspaces that go with an account: its personal ones and the
     shared ones it alone owns."""
     deleted = []
-    for ws, in conn.execute("SELECT workspace_id FROM workspace_members WHERE username = ?",
-                            (username,)).fetchall():
+    for ws, in conn.execute("SELECT workspace_id FROM workspace_members WHERE user_id = ?",
+                            (user_id,)).fetchall():
         kind = conn.execute("SELECT kind FROM workspaces WHERE id = ?", (ws,)).fetchone()
-        owners = [r[0] for r in conn.execute(
-            "SELECT username FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
-        if (kind and kind[0] == "personal") or owners == [username]:
+        if (kind and kind[0] == "personal") or _is_last_owner(conn, ws, user_id):
             deleted.append(ws)
     return deleted
 
 
-def delete_account_workspaces(username: str) -> list[str]:
+def delete_account_workspaces(user_id: str) -> list[str]:
     """When an account goes: its personal workspaces are deleted; it leaves
-    every shared workspace, and the ones where it was the only owner are
-    deleted too (their other members lose them — the admin UI says so
-    before). Returns the deleted workspace ids."""
+    every shared workspace and every share that invited it, and the
+    workspaces where it was the only owner are deleted too (their other
+    members lose them — the admin UI says so before). Returns the deleted
+    workspace ids."""
     with connect_users_db() as conn:
-        deleted = _deleted_with(conn, username)
-        conn.execute("DELETE FROM workspace_members WHERE username = ?", (username,))
-        conn.execute("DELETE FROM integration_tokens WHERE username = ?", (username,))
-        conn.execute("DELETE FROM publisher_sessions WHERE username = ?", (username,))
+        deleted = _deleted_with(conn, user_id)
+        conn.execute("DELETE FROM workspace_members WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM share_users WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM publisher_sessions WHERE user_id = ?", (user_id,))
         for ws in deleted:
             _delete_rows(conn, ws)
-        conn.execute("DELETE FROM user_prefs WHERE username = ?", (username,))
+        conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
         conn.commit()
     for ws in deleted:
         remove_files(ws)
     return deleted
 
 
-def delete_account(username: str, *, release_now: bool = False, by: str = "") -> list[str]:
+def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> list[str]:
     """Delete an account and everything that is only its: sessions, the
     Gamma Cloud identity (its grant released — off the person's server
     list, refresh token revoked; in the background unless ``release_now``,
@@ -826,39 +842,39 @@ def delete_account(username: str, *, release_now: bool = False, by: str = "") ->
     keep nothing): FinalCopyError, and nothing deleted, when one cannot be.
     The one account deletion: the admin API, ``manage.py delete-user`` and
     the guest expiry (gamma/guests.py) all come here. Returns the deleted
-    workspace ids; [] for an unknown account. The callers check who may be
-    deleted."""
+    workspace ids; [] for an unknown account. ``user_id`` the account, ``by``
+    who deletes it. The callers check who may be deleted."""
     from . import cloud_auth, cloud_sync  # local: cloud_auth imports this module
 
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+        if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
             return []
-        doomed = _deleted_with(conn, username)
+        doomed = _deleted_with(conn, user_id)
     keep_final_copies(doomed, by=by)
-    subject, held = cloud_auth.grant_of(username)
+    subject, held = cloud_auth.grant_of(user_id)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM identities WHERE username = ?", (username,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM identities WHERE user_id = ?", (user_id,))
         conn.commit()
     if subject:
         (cloud_sync.release if release_now else cloud_sync.release_later)(subject, held)
-    deleted = delete_account_workspaces(username)
-    jobs.forget_account(username)
+    deleted = delete_account_workspaces(user_id)
+    jobs.forget_account(user_id)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
     # its open page sockets, and everyone's in the workspaces that went, close now
-    collab.revalidate_account(username, deleted)
+    collab.revalidate_account(user_id, deleted)
     return deleted
 
 
-def find_page(username: str, page_id: str) -> str | None:
+def find_page(user_id: str, page_id: str) -> str | None:
     """Which of the account's workspaces holds this page (a deep link
     without ``ws``); None when none does."""
     from .db import connect_pages_db  # local: keeps this module light for auth
 
-    for w in list_for_user(username):
+    for w in list_for_user(user_id):
         try:
             with connect_pages_db(w["id"]) as conn:
                 if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page_id,)).fetchone():
@@ -870,15 +886,16 @@ def find_page(username: str, page_id: str) -> str | None:
 
 def all_workspaces() -> list[dict]:
     """Admin listing: every workspace with its kind, access, members and
-    upload size; ``personal`` names the account a personal one belongs to
-    ("" when shared), ``default`` whether it is that account's default."""
+    upload size; ``personal`` names (by username) the account a personal
+    one belongs to ("" when shared), ``default`` whether it is that
+    account's default."""
     with connect_users_db() as conn:
-        rows = conn.execute(f"SELECT {_COLS} FROM workspaces ORDER BY created_at").fetchall()
+        rows = conn.execute(f"SELECT {_COLS} FROM {_FROM} ORDER BY w.created_at").fetchall()
         defaults = {r[0] for r in conn.execute("SELECT default_workspace FROM users")}
         owners = {}
         for ws, user in conn.execute(
-                "SELECT w.id, m.username FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
-                "WHERE w.kind = 'personal' ORDER BY m.added_at"):
+                "SELECT w.id, u.username FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
+                "JOIN users u ON u.id = m.user_id WHERE w.kind = 'personal' ORDER BY m.added_at"):
             owners.setdefault(ws, user)
     out = []
     for r in rows:

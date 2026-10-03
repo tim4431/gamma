@@ -134,8 +134,7 @@ per test module (the module's name is in the username), so the files never
 see each other's pages or provider entries.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
-`frontend/src/shared/lib/textnorm.js`), folder-label paths (`gamma/foldertags.py` ↔
-`frontend/src/library/libraryUtils.js`), published pages' slugs
+`frontend/src/shared/lib/textnorm.js`), published pages' slugs
 (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) and text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
 `tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) — are pinned by ONE

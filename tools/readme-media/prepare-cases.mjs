@@ -22,7 +22,7 @@ if (['metadata', 'download-and-chat', 'reference-links', 'agent'].some(n => requ
       || (requested.has('reference-links') && (arxiv === '0904.2557' || source.includes('0904.2557')))
       || (requested.has('download-and-chat') && (p.content === 'Attention Is All You Need' || source.includes('3f5ee243547dee91fbd053c1c4a845aa')));
     if (remove) await account.api(`/api/blocks/${p.id}`, { method: 'DELETE' });
-    else if (requested.has('agent')) await account.api(`/api/blocks/${p.id}`, { method: 'PUT', body: { properties: { folder: '' } } });
+    else if (requested.has('agent')) await account.api(`/api/blocks/${p.id}`, { method: 'PUT', body: { properties: { folders: null } } });
   }
   await account.api('/api/prefs/open-tabs', { method: 'PUT', body: { value: [] } });
   if (requested.has('agent') || requested.has('download-and-chat')) await account.api('/api/chats/home', { method: 'DELETE' });
@@ -34,7 +34,7 @@ if (requested.has('library') || requested.has('search')) {
   cases.qec = qec.id;
   fs.writeFileSync(file, JSON.stringify(cases, null, 2));
   for (const [id, folder] of [['fy0-h_BqOHcH', 'Quantum/Neutral atoms'], [cases.qec, 'Quantum/Error correction']]) {
-    await account.api(`/api/blocks/${id}`, { method: 'PUT', body: { properties: { folder } } });
+    await account.file(id, { folders: [folder] });   // the folders made where missing (harness.mjs Account.file)
   }
   await account.api('/api/prefs/recent-views', { method: 'PUT', body: { value: [] } });
 }
@@ -45,10 +45,10 @@ if (requested.has('search')) {
   await account.api('/api/prefs/profile', { method: 'PUT', body: { value: { ...profile, searchDetailsPaper: false } } });
   // Topic labels, for Ctrl+P to find one by name.
   const { children: roots } = await account.api('/api/blocks/root/children');
-  const topics = { 'fy0-h_BqOHcH': 'quantum computing, neutral atoms', [cases.qec]: 'quantum computing, error correction' };
+  const topics = { 'fy0-h_BqOHcH': ['quantum computing', 'neutral atoms'], [cases.qec]: ['quantum computing', 'error correction'] };
   for (const p of roots) {
-    const category = topics[p.id] || (p.content === 'Attention Is All You Need' ? 'machine learning' : null);
-    if (category) await account.api(`/api/blocks/${p.id}`, { method: 'PUT', body: { properties: { category } } });
+    const labels = topics[p.id] || (p.content === 'Attention Is All You Need' ? ['machine learning'] : null);
+    if (labels) await account.file(p.id, { labels });
   }
 }
 console.log('Prepared case pages:', cases);

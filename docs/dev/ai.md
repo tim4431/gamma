@@ -443,8 +443,8 @@ Every request re-sends the whole conversation (no wire keeps state:
 `store` stays off on the Responses API, and there is no
 `previous_response_id` — the conversation is Gamma's to keep). What makes
 that cheap is the providers' prefix caches, which every adapter now asks
-for. The chat sends `chat_key` (the bucket: a page id, `home`,
-`home:<folder>`); `_cache_key` in `routers/ai.py` hashes it with the
+for. The chat sends `chat_key` (the bucket: a page id, a folder id,
+`home`); `_cache_key` in `routers/ai.py` hashes it with the
 account and workspace into one opaque id per conversation that
 `ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
 
@@ -1325,19 +1325,17 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 
 ## Chat history buckets
 
-Focused page id in the paper view, `home` at the library root,
-`home:<folder path>` per folder — each folder keeps its own conversation, and
-switching folders re-scopes the next message. The
-`/api/chats/{block_id:path}` routes take the `:path` converter for the nested
-keys, and folder rename/move/delete calls `POST /api/folders/rename`
-(`chats.move_folder_buckets`; {src, dst}, dst "" for a delete) BEFORE rewriting the tags so the destination
-bucket exists when ChatDock reloads (a destination holding a real conversation
-stays active and the moved-in one is filed into its history; empty save-echo
-rows are overwritten) — folder conversations follow renames and moves. No
-conversation is ever dropped with a folder: a delete ("Keep pages" and
-"Delete pages too" alike) files each active one into its own bucket's
-history, which stays under the folder's key, so a page restored from
-Recently deleted brings its folder back with its chats.
+Focused page id in the paper view, `home` at the library root, the
+folder's own id per folder (folders are blocks,
+[home_library.md](home_library.md) "Folders and labels") — each folder keeps
+its own conversation, and switching folders re-scopes the next message. A
+bucket is always a block id or `home`, so a rename or a move of the folder
+changes nothing about its chat. No conversation is ever dropped with a
+folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
+pages too" alike) files the active conversation and the history of the
+folder and of every folder below it into the library chat's history
+(`home`, `chats.file_into_home`), where they stay findable. ChatDock's
+`chatKey` is the open page's id, else the open folder's id, else `home`.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1388,7 +1386,8 @@ and New chat starts over locally.
 
 ### Chat history
 
-Each bucket keeps its earlier conversations. `chats` (data.db) holds the
+Each bucket keeps its earlier conversations. `chats` (in the workspace's
+pages.db, beside the pages they are about) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
 plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
@@ -1425,8 +1424,12 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
     popover: closing it, or a search that hides a ticked row, drops them, so
     Delete never takes a row the user cannot see.
-- History follows its bucket: `POST /folders/rename` rewrites entry
-  buckets along with the active rows (a folder delete leaves them), and
-  `purge_page_data` drops the entries of a page deleted for good (a page in
-  Recently deleted keeps its chats). The gamma export/import and the account-merge path copy
-  only the active `chats` rows, not history.
+- History follows its bucket: a folder delete moves its entries into
+  `home`'s with the active rows, and `ops.delete_page` drops the active row
+  and the entries of a page deleted for good, in the deleting transaction
+  (a page in Recently deleted keeps its chats). A Gamma export carries its pages' buckets whole (the active
+  conversation and the history; on a folder export the folder views'
+  buckets too), and a backup merge or an import adds every conversation
+  the workspace lacks — a bucket's active one, an archived one by its id
+  (`db.copy_chats`); a replace restore brings the backup's chats with its
+  pages.

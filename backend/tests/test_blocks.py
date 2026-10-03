@@ -60,11 +60,12 @@ def test_block_search_reports_kinds(guest):
     page = make_page(guest, "Kinds page")
     guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a plaino note"})
     r = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a hilite quote"})
-    guest.put(f"/api/blocks/{r.json()['id']}", json={"properties": {"highlight_id": "h1"}})
+    guest.put(f"/api/blocks/{r.json()['id']}", json={"properties": {"pdf_position": {"pageNumber": 1}}})
     r = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a linky region"})
     guest.put(f"/api/blocks/{r.json()['id']}",
-              json={"properties": {"highlight_id": "h2", "link_page_id": page["id"]}})
-    # A text box on a PDF page has no quote, but it is a note, not a highlight.
+              json={"properties": {"pdf_position": {"pageNumber": 1}, "link_page_id": page["id"]}})
+    # A text box on a PDF page has no quote: a text box, not a highlight
+    # (the search panel lists it with the notes).
     guest.post("/api/blocks", json={"parent_id": page["id"], "content": "a boxy text",
                                     "properties": {"text_box": {"x": 10, "y": 20}, "pdf_page": 1}})
 
@@ -74,7 +75,7 @@ def test_block_search_reports_kinds(guest):
     assert kinds["a plaino note"] == "note"
     assert kinds["a hilite quote"] == "highlight"
     assert kinds["a linky region"] == "link"
-    assert kinds["a boxy text"] == "note"
+    assert kinds["a boxy text"] == "text_box"
 
 
 def test_delete_purges_chats(guest):

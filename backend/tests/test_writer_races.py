@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_user, recv, slowed, together, workspace_of
+from conftest import account_of, folder_names, label_names, login, make_user, recv, slowed, together, workspace_of
 from gamma import blocks_store
 from gamma.ai_context import notes_focus_section
 from gamma.ai_tools import _NOTE_SNIPPET, run_agent_tool
@@ -86,7 +86,7 @@ def test_embed_card_edit_merges_into_a_source_edited_elsewhere(owner):
 # --- an AI replace keeps what the user typed meanwhile ------------------------
 
 def _scope(page_id):
-    return {"type": "page", "page_id": page_id, "actor": USER, "can_write": True, "read_texts": {}}
+    return {"type": "page", "page_id": page_id, "actor": account_of(USER), "can_write": True, "read_texts": {}}
 
 
 def test_ai_replace_keeps_what_the_user_typed_while_it_wrote(owner):
@@ -179,7 +179,7 @@ def test_concurrent_get_or_create_makes_one_page_per_pdf(owner, monkeypatch):
 
     def create():
         with connect_pages_db(ws) as conn:
-            return blocks_store.get_or_create_doc_page(conn, doc_id, "Race paper", ws=ws, actor=USER)["id"]
+            return blocks_store.get_or_create_doc_page(conn, doc_id, "Race paper", ws=ws, actor=account_of(USER))["id"]
     ids = together(5, create)
     assert len(set(ids)) == 1
     assert _pages_carrying(ws, doc_id) == [ids[0]]
@@ -238,8 +238,9 @@ def test_page_for_doc_answers_the_oldest_page(owner):
                                  ("wrOlder", "2026-01-01T00:00:00.000000Z")):
             position = generate_key_between(blocks_store.last_child_position(conn, "root"), None)
             conn.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, "
-                         "created_at, updated_at) VALUES (?, 'root', ?, 't', ?, ?, ?)",
-                         (page_id, position, json.dumps({"doc_id": doc_id}), created, created))
+                         "created_at, updated_at, page_id) VALUES (?, 'root', ?, 't', ?, ?, ?, ?)",
+                         (page_id, position, json.dumps({"doc_id": doc_id}), created, created, page_id))
+            blocks_store.touch_page(conn, page_id, "")
         conn.commit()
         assert blocks_store.page_for_doc(conn, doc_id)[0] == "wrOlder"
 
@@ -272,7 +273,7 @@ def test_logseq_import_into_an_existing_page_tells_the_page_and_never_duplicates
         assert r.json()["block_id"] == page_id and r.json()["imported"] == 4
         assert recv(sock, "reload")
     batches = c.get(f"/api/pages/{page_id}/ops?since=0").json()["batches"]
-    assert batches[-1]["actor"] == USER and batches[-1]["ops"] == [{"op": "reload"}]
+    assert batches[-1]["actor"] == account_of(USER) and batches[-1]["ops"] == [{"op": "reload"}]
     children = [b["content"] for b in c.get(f"/api/blocks/{page_id}/children").json()["children"]]
     assert children.count("another thought") == 2  # a note written twice stays twice
     # A retry of the same files adds nothing.
@@ -294,11 +295,13 @@ def test_clip_of_a_saved_paper_files_it_through_the_page_room(owner):
     with TestClient(app, cookies=c.cookies) as sc, \
             sc.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=cl") as sock:
         recv(sock, "hello")
-        r = c.post("/api/clip", json={**body, "folder": "to-read", "labels": ["qec"]})
+        r = c.post("/api/clip", json={**body, "folder_path": "to-read", "labels": ["qec"]})
         assert r.status_code == 200 and r.json()["existed"], r.text
         msg = recv(sock, "ops")
-        assert msg["actor"] == USER
-        assert msg["ops"][0]["props"]["folder"] == "to-read"
+        assert msg["actor"] == account_of(USER)
+        props = msg["ops"][0]["props"]
+        assert [folder_names(c)[f] for f in props["folders"]] == [["to-read"]]
+        assert [label_names(c)[i] for i in props["labels"]] == ["qec"]
 
 
 def _annotated_pdf(ws, name, monkeypatch):
@@ -306,16 +309,16 @@ def _annotated_pdf(ws, name, monkeypatch):
     from PyPDF2 import PdfWriter
 
     import gamma.routers.imports as imports_mod
+    from gamma.highlights import position as highlight_position
     buf = io.BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)
     writer.write(buf)
     path = ws_uploads_dir(ws) / name
     path.write_bytes(buf.getvalue())
-    position = {"pageNumber": 1, "boundingRect": {"x1": 1, "y1": 1, "x2": 9, "y2": 9,
-                                                  "width": 200, "height": 200, "pageNumber": 1}, "rects": []}
+    position = highlight_position(1, 200, 200, [(1, 1, 9, 9)])
     monkeypatch.setattr(imports_mod, "_extract_pdf_annotations", lambda reader: [
-        {"key": "1:/Highlight:1:1:9", "page": 1, "content": "", "quote": "q",
+        {"key": "1:/Highlight:1:1:9", "content": "", "quote": "q",
          "color": "rgba(255, 226, 143, 0.65)", "position": position}])
     return path
 

@@ -5,8 +5,8 @@ bibliography, the notes typeset as a PDF document, or the annotated PDFs
 themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
 .bib, the notes PDF and one page's annotated PDF are single files. The same
 builders serve the downloads
-(``/pages/{id}/export``, ``/folders/export``: the share view, scripts) and
-the background job the web app starts (``POST /api/jobs/export``)."""
+(``/pages/{id}/export``, ``/folders/{id}/export``: the share view, scripts)
+and the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
 import json
@@ -28,13 +28,16 @@ from .. import ink as inkmod
 from .. import jobs, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
-    BLOCK_COLUMNS, TRASH, assert_block_in_scope, block_to_dict, fetch_subtree, page_root_id)
+    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES, assert_block_in_scope, block_to_dict,
+    fetch_subtree, filing, folder_path, folder_paths, folder_subtree_ids, label_names, page_root_id, pages_in_folder,
+    tree_rows)
 from ..db import connect_pages_db
 from ..db import (
     PAGES_SCHEMA,
-    connect_data_db,
+    copy_chats,
     page_now,
     pdf_upload_path,
+    register_functions,
     safe_doc_id,
     ws_uploads_dir,
 )
@@ -53,6 +56,7 @@ from ..markdown_export import (
     slugify,
 )
 from ..logbuf import log
+from ..highlights import is_highlight
 from ..storage import attachment_disposition, upload_refs
 from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
@@ -129,19 +133,15 @@ def _children_by_id(blocks) -> dict:
 
 
 def _collect_marks(blocks) -> list[dict]:
-    """Highlight blocks → annotate_pdf marks (position/color/popup note).
-    Skips annotations that came from the PDF itself and are STILL embedded in
-    it (``still_embedded``), and link regions (Gamma navigation aids, not
-    annotations)."""
+    """Highlight blocks (``kind`` ``highlight``: not the link regions,
+    Gamma navigation aids, nor ink) → annotate_pdf marks (position/color/popup
+    note). Skips annotations that came from the PDF itself and are STILL
+    embedded in it (``still_embedded``)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
-        if not props.get("highlight_id") or not props.get("pdf_position"):
-            continue
-        if still_embedded(props):
-            continue
-        if props.get("link_url") or props.get("link_page_id"):
+        if b["kind"] != "highlight" or still_embedded(props):
             continue
         marks.append({
             "position": props["pdf_position"],
@@ -149,7 +149,7 @@ def _collect_marks(blocks) -> list[dict]:
             "note": highlight_note_text(b, children_by_id),
             # For /Square annotations: the deterministic /NM key Zotero
             # requires before it will import an area annotation.
-            "id": props["highlight_id"],
+            "id": b["id"],
         })
     return marks
 
@@ -225,10 +225,44 @@ def _image_resolver(uploads_dir):
 # download, and ``save`` writes it. Adding an export format = adding a
 # builder here; the endpoints, the job and the zip writer stay untouched.
 
+class _Filing:
+    """The names an export writes for its pages' folders and labels, read
+    from the trees once. ``scope`` is the exported folder's id (None: a page
+    exported on its own): a page's folder paths are then the names below it,
+    and its folders outside it are left out; ``title`` is the exported
+    folder's path as people read it ("" for none)."""
+
+    def __init__(self, conn, scope):
+        paths = folder_paths(conn)
+        self.title = ""
+        if scope:
+            top = paths.get(scope, [])
+            self.title = PATH_SEP.join(top)
+            inside = folder_subtree_ids(conn, scope)
+            paths = {f: path[len(top):] for f, path in paths.items() if f in inside}
+        self.paths = paths
+        self.labels = label_names(conn)
+
+    def folders(self, props) -> list[list[str]]:
+        """The page's folder paths (names) below the exported folder — that
+        folder itself, the export's top, is none —, in the page's order."""
+        return [self.paths[f] for f in filing(props, FOLDERS) if self.paths.get(f)]
+
+    def folder(self, props) -> list[str]:
+        """The path a page's file goes under: its first folder below the
+        exported folder ([]: the export's top)."""
+        return next(iter(self.folders(props)), [])
+
+    def tags(self, props) -> list[str]:
+        """The names of the page's labels, in its order."""
+        return [self.labels[i] for i in filing(props, LABELS) if i in self.labels]
+
+
 class _Builder:
     """opts: {"pdf": bool, "highlights": bool, "notes": bool,
-    "folder_scope": path | None (None: one page is exported), "author": the
-    account exporting}."""
+    "folder_scope": the exported folder's id | None (None: one page is
+    exported), "author": the account exporting}. ``filing`` (``_Filing``)
+    names the pages' folders and labels once ``begin`` has run."""
     suffix = ".zip"  # appended to the base slug for the download name
     roots_only = False  # True: the driver hands over the page's own row, not its subtree
 
@@ -241,10 +275,12 @@ class _Builder:
         self.files, self.blobs = [], []
         self.walked, self.skipped = 0, []  # pages the driver fed in; {title, reason} left out
         self._spool = None
+        self.filing = None
 
     def begin(self, conn, root_ids):
         """Sees the whole export set before any page is walked (the DB
         connection is only open during the walk, not in ``save``)."""
+        self.filing = _Filing(conn, self.opts.get("folder_scope"))
 
     def add_page(self, n: int, rows, page):
         raise NotImplementedError
@@ -333,6 +369,7 @@ class _MarkdownBuilder(_Builder):
         self.resolve_ref = None
 
     def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
         # Every page's filename up front, so cross-page links can be written
         # while the first page renders.
         for rid in root_ids:
@@ -353,7 +390,7 @@ class _MarkdownBuilder(_Builder):
         md, page_assets = collect_and_rewrite(
             render_readable(page, highlights=self.opts["highlights"], notes=self.opts["notes"],
                             resolve_ref=self.resolve_ref, page_file=self.filenames.get,
-                            folder_scope=self.opts.get("folder_scope")),
+                            folder=self.filing.folder(page["properties"])),
             include_pdf=self.opts["pdf"])
         self.assets |= page_assets
         self.render_ink_svgs(page_assets)
@@ -372,7 +409,7 @@ class _MarkdownBuilder(_Builder):
 
 class _ObsidianBuilder(_Builder):
     """An Obsidian vault (``obsidian_export``): ``<dir>/<Title>.md`` per page
-    (directories = folder labels relative to the exported folder),
+    (directories = the folders below the exported folder, labels as tags),
     ``attachments/`` with the images and — with the bundle switch — the PDFs
     named after their page, wikilinks / ``^id`` anchors resolved against the
     export set, and an ``.obsidian/app.json`` that marks the folder as a
@@ -384,6 +421,7 @@ class _ObsidianBuilder(_Builder):
         self.ctx = None
 
     def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
         self.ctx = VaultContext(_block_ref_resolver(conn), include_pdf=self.opts["pdf"])
         pages = []
         for rid in root_ids:
@@ -395,8 +433,8 @@ class _ObsidianBuilder(_Builder):
                 props = json.loads(row[1] or "{}")
             except (TypeError, ValueError):
                 props = {}
-            pages.append((rid, row[0] or "", props.get("folder") or ""))
-        self.ctx.name_pages(pages, self.opts.get("folder_scope"))
+            pages.append((rid, row[0] or "", self.filing.folder(props)))
+        self.ctx.name_pages(pages)
         # Every block that something links to needs its ^anchor written, and
         # a page may be rendered before the page that links into it — so the
         # link-bearing blocks are scanned up front (links from outside the
@@ -422,8 +460,8 @@ class _ObsidianBuilder(_Builder):
 
     def add_page(self, n, rows, page):
         md, page_assets = collect_and_rewrite(
-            render_vault_page(page, self.ctx, highlights=self.opts["highlights"],
-                              notes=self.opts["notes"]),
+            render_vault_page(page, self.ctx, tags=self.filing.tags(page["properties"]),
+                              highlights=self.opts["highlights"], notes=self.opts["notes"]),
             include_pdf=self.opts["pdf"], prefix="attachments/")
         self.assets |= page_assets
         self.entries.append((self.ctx.page_file[page["id"]], md))
@@ -457,8 +495,8 @@ class _ZoteroBuilder(_Builder):
     """A Zotero RDF library: ``<base>/<base>.rdf`` + ``<base>/files/<n>/…``.
     Highlights travel embedded inside the PDF copies (annotate_pdf — Zotero's
     "Include Annotations" convention), notes become bib:Memo items with pasted
-    images embedded as data URIs, folder labels (confined to the exported
-    folder) the collection tree. Images referenced anywhere in a page also
+    images embedded as data URIs, the folders below the exported folder the
+    collection tree, labels tags. Images referenced anywhere in a page also
     ride as item attachments; annotation comments carry a plain "(image: …)"
     placeholder since they can't hold pictures."""
     suffix = "-zotero.zip"
@@ -517,7 +555,7 @@ class _ZoteroBuilder(_Builder):
             # nested under highlights instead travels in the annotation popups.
             for child in page["children"]:
                 cprops = child.get("properties") or {}
-                if cprops.get("highlight_id") or cprops.get("link_url"):
+                if is_highlight(cprops) or cprops.get("link_url"):
                     continue
                 html = note_html(child, resolve_image=self.resolve_image)
                 if html:
@@ -527,7 +565,7 @@ class _ZoteroBuilder(_Builder):
             # pictures embedded.
             for node in _walk_tree(page):
                 nprops = node.get("properties") or {}
-                if not nprops.get("highlight_id"):
+                if not is_highlight(nprops):
                     continue
                 if not any(MD_IMAGE_RE.search(d.get("content") or "")
                            for d in _walk_tree(node)):
@@ -536,10 +574,6 @@ class _ZoteroBuilder(_Builder):
                 if html:
                     note_htmls.append(html)
 
-        folders = [p.strip() for p in (props.get("folder") or "").split(",") if p.strip()]
-        scope = self.opts.get("folder_scope")
-        if scope:
-            folders = [p for p in folders if p == scope or p.startswith(scope + "/")]
         arxiv = (meta or {}).get("arxiv_id") or ""
         self.items.append({
             # Real Zotero keys are "#item_<n>" — a distinct prefix for generated
@@ -548,8 +582,8 @@ class _ZoteroBuilder(_Builder):
                    or (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"#gamma_item_{n}"),
             "title": title,
             "meta": meta or {},
-            "tags": [t.strip() for t in (props.get("category") or "").split(",") if t.strip()],
-            "folders": folders,
+            "tags": self.filing.tags(props),
+            "folders": self.filing.folders(props),
             "pdf_path": pdf_arc,
             "images": images,
             "notes": note_htmls,
@@ -572,31 +606,42 @@ class _ZoteroBuilder(_Builder):
 
 class _GammaBuilder(_Builder):
     """A scoped account backup in the ``gamma-backup-1`` layout (/api/export's
-    format): a pages.db holding just the selected page subtrees verbatim, a
-    data.db with their AI chats (plus, on a folder export, the folder view's
-    own chat buckets), and uploads/ with just the files they reference. Any
-    Gamma imports it through the existing ``/api/import-data?mode=merge`` —
-    additive, deduped by block id / doc id / content hash, so re-importing
-    adds nothing. Lossless by construction, which is why the dialog's three
-    switches don't apply to this format."""
+    format): a pages.db holding just the selected page subtrees verbatim
+    with their AI chats, each bucket's active conversation and its history,
+    and the folder and label blocks they are filed under (every folder a
+    page is in with the folders above it, every label it carries) — plus,
+    on a folder export, the exported folder's whole subtree (empty
+    subfolders too) with the folders above it and the chats of the folder
+    views in it —, and uploads/ with just the files they reference — no
+    data.db, which holds nothing that is not rebuilt. Any Gamma imports it
+    through the existing ``/api/import-data?mode=merge`` — additive, deduped
+    by block id / doc id / conversation / content hash, its folders mapped
+    onto the workspace's at the same path (``ws_backup._merge_trees``), so
+    re-importing adds nothing. Lossless by construction, which is why the
+    dialog's three switches don't apply to this format."""
     suffix = "-gamma.zip"
 
     def __init__(self, ws, base, opts):
         super().__init__(ws, base, opts)
         self.db = sqlite3.connect(":memory:")
+        register_functions(self.db)
         for stmt in PAGES_SCHEMA:
             self.db.execute(stmt)
         self.page_ids = []
+        self.filed = set()  # the folder and label ids the pages carry
         self.upload_names = set()
+
+    def _put(self, row):
+        """Copy a block row, less its generated ``kind``; one met twice (a
+        shared subtree) is kept once."""
+        self.db.execute(f"INSERT OR IGNORE INTO unified_blocks ({STORED_COLUMNS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(row[:-1]))
 
     def add_page(self, n, rows, page):
         self.page_ids.append(page["id"])
+        self.filed.update(*(filing(page["properties"], tree) for tree in TREES))
         for row in rows:
-            # A page can sit in several exported folders only once — roots are
-            # distinct — but keep the guard for shared subtrees.
-            self.db.execute(
-                f"INSERT OR IGNORE INTO unified_blocks ({BLOCK_COLUMNS}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)", tuple(row))
+            self._put(row)
             # Referenced uploads: any /api/uploads/<file> in content or
             # properties (source_url, pasted images), plus a doc_id's PDF —
             # the one reference rule (storage.upload_refs) the orphan
@@ -604,35 +649,26 @@ class _GammaBuilder(_Builder):
             self.upload_names |= upload_refs(row[3] or "", row[4] or "{}")
 
     def finish(self):
+        scope = self.opts.get("folder_scope")
+        with connect_pages_db(self.ws) as src:
+            subtree = folder_subtree_ids(src, scope) if scope else set()
+            parents = {r[0]: r[1] for tree in TREES for r in tree_rows(src, tree)}
+            blocks = set(subtree)
+            for block_id in self.filed | ({scope} if scope else set()):
+                while block_id in parents:  # the block and the folders above it
+                    blocks.add(block_id)
+                    block_id = parents[block_id]
+            for row in src.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks "
+                                   "WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(sorted(blocks)),)):
+                self._put(row)
+            # the pages' chats, and on a folder export its folder views'
+            copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
+                       [json.dumps(self.page_ids + sorted(subtree))])
         self.db.commit()
         pages_bytes = self.db.serialize()
         self.db.close()
 
-        chat_keys = list(self.page_ids)
-        scope = self.opts.get("folder_scope")
-        data_bytes = None
-        with connect_data_db(self.ws) as src:
-            marks = ",".join("?" for _ in chat_keys)
-            rows = src.execute(
-                f"SELECT block_id, messages, updated_at FROM chats WHERE block_id IN ({marks})",
-                chat_keys).fetchall() if chat_keys else []
-            if scope:
-                rows += src.execute(
-                    "SELECT block_id, messages, updated_at FROM chats "
-                    "WHERE block_id = ? OR substr(block_id, 1, ?) = ?",
-                    (f"home:{scope}", len(f"home:{scope}/"), f"home:{scope}/")).fetchall()
-        if rows:
-            out = sqlite3.connect(":memory:")
-            out.execute("CREATE TABLE chats (block_id TEXT PRIMARY KEY, "
-                        "messages TEXT NOT NULL, updated_at TEXT NOT NULL)")
-            out.executemany("INSERT OR IGNORE INTO chats VALUES (?, ?, ?)", rows)
-            out.commit()
-            data_bytes = out.serialize()
-            out.close()
-
         self.blobs.append(("pages.db", pages_bytes))
-        if data_bytes:
-            self.blobs.append(("data.db", data_bytes))
         self.blobs.append(("manifest.json", json.dumps({
             "format": "gamma-backup-1",  # what import-data validates
             "scope": {"folder": scope, "pages": len(self.page_ids)},
@@ -718,7 +754,7 @@ class _AnnotatedPdfBuilder(_Builder):
     annotations and, with the notes switch, its notes printed on the page
     (``annotated_page_pdf``: what /pages/{id}/export-pdf downloads). One
     page: that PDF itself. A folder: a zip of them, ``<dir>/<Title>.pdf``,
-    the directories mirroring the folder labels below the exported folder
+    the directories mirroring the folders below the exported folder
     (``obsidian_export.page_dir``). A page with sheets of paper and no PDF
     is exported as its sheets; a page with neither is left out, and the
     result lists it."""
@@ -737,7 +773,7 @@ class _AnnotatedPdfBuilder(_Builder):
         except HTTPException as e:
             self.skip(page, str(e.detail))
             return
-        directory = page_dir((page.get("properties") or {}).get("folder"), self.opts.get("folder_scope"))
+        directory = page_dir(self.filing.folder(page["properties"]))
         stem = vault_name(page.get("content") or "") or "Untitled"
         name, count = stem, 1
         while f"{directory}{name}.pdf".lower() in self.used:
@@ -803,7 +839,7 @@ class _BibtexBuilder(_Builder):
 
     def text(self) -> str:
         """The .bib file itself."""
-        return bibtex_mod.bibliography(self.keyed_records(), self.opts.get("folder_scope") or "")
+        return bibtex_mod.bibliography(self.keyed_records(), self.filing.title)
 
     def preview(self) -> dict:
         """What the export dialog reviews (GET /api/bibliography): a record per
@@ -899,8 +935,8 @@ def page_markdown(ws: str, page_id: str, *, highlights=True, notes=True) -> tupl
         page = build_tree(fetch_subtree(conn, page_id), page_id) if page_root_id(conn, page_id) else None
         if page is None:
             raise HTTPException(status_code=404, detail="page not found")
-        md = render_readable(page, highlights=highlights, notes=notes,
-                             resolve_ref=_block_ref_resolver(conn))
+        md = render_readable(page, highlights=highlights, notes=notes, resolve_ref=_block_ref_resolver(conn),
+                             folder=_Filing(conn, None).folder(page["properties"]))
     return md, f"{slugify(page.get('content'), page_id)}.md"
 
 
@@ -1037,36 +1073,29 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     )
 
 
-def _page_in_folder(props: dict, name: str) -> bool:
-    raw = props.get("folder") or ""
-    for path in (p.strip() for p in raw.split(",")):
-        if path and (path == name or path.startswith(name + "/")):
-            return True
-    return False
+def _export_folder(conn, folder_id: str, scope=None) -> list[str]:
+    """The path (names from the top) of the folder ``folder_id`` an export
+    is asked for: 403 when a share-scoped request (``scope``; a page share
+    never reaches a folder, a folder share its own folder and the ones below
+    it) reaches outside it, 404 when it is no folder."""
+    if scope is not None and not scope.allows_folder(conn, folder_id):
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    path = folder_path(conn, folder_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="folder not found")
+    return path
 
 
-def _folder_name(name: str) -> str:
-    name = (name or "").strip().strip("/")
-    if not name:
-        raise HTTPException(status_code=400, detail="folder name required")
-    return name
+def _folder_base(path: list[str]) -> str:
+    return slugify("-".join(path), "")
 
 
-def _folder_pages(conn, name: str) -> list[str]:
-    """The ids of the pages filed in folder ``name`` or below it."""
-    roots = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root'").fetchall()
-    return [b["id"] for b in (block_to_dict(r) for r in roots) if _page_in_folder(b["properties"], name)]
-
-
-def _folder_base(name: str) -> str:
-    return slugify(name.replace("/", "-"), "")
-
-
-@router.get("/folders/export")
-def export_folder(request: Request, name: str, mode: str = "readable", pdf: int = 1,
+@router.get("/folders/{folder_id}/export")
+def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf: int = 1,
                   highlights: int = 1, notes: int = 1):
-    """Every page tagged into folder ``name`` (or a subfolder of it), in any
-    export format (see the _Builder classes): ``readable`` (one .md per page +
+    """Every page filed in the folder ``folder_id`` (or a folder below it),
+    in any export format (see the _Builder classes): ``readable`` (one .md
+    per page +
     a shared assets/ folder), ``obsidian`` (a vault: subfolders as
     directories, attachments/), ``notes-pdf`` (every page's notes in one PDF
     document, each starting on a fresh sheet), ``annotated-pdf`` (each
@@ -1077,20 +1106,18 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
     via /api/import-data?mode=merge). The web app exports through a job
     instead (``POST /api/jobs/export``); this is the share view's and the
     scripts' download — with a folder share token, a ``mode=bibtex`` URL is
-    the stable bibliography link a LaTeX editor refreshes from."""
-    name = _folder_name(name)
-    # A page share never reaches a whole folder; a folder share exports its
-    # own folder or a subfolder of it.
+    the stable bibliography link a LaTeX editor refreshes from. 404 for an
+    id that is no folder or a folder without pages, 403 for a folder outside
+    the request's share."""
     scope = share_scope(request)
-    if scope is not None and not scope.allows_folder(name):
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
-    opts = _export_opts(pdf, highlights, notes, folder_scope=name, author=request.state.user or "")
+    opts = _export_opts(pdf, highlights, notes, folder_scope=folder_id, author=request.state.user or "")
     with connect_pages_db(ws) as conn:
-        ids = _folder_pages(conn, name)
+        path = _export_folder(conn, folder_id, scope)
+        ids = pages_in_folder(conn, folder_id)
         if not ids:
             raise HTTPException(status_code=404, detail="no pages in that folder")
-        builder = _run_export(conn, ws, mode, ids, _folder_base(name), opts)
+        builder = _run_export(conn, ws, mode, ids, _folder_base(path), opts)
     return builder.response()
 
 
@@ -1101,18 +1128,16 @@ def bibliography_preview(request: Request, page_id: str = "", folder: str = ""):
     per citable page — its page id and title, the citation key the file will
     use, whether that key is pinned on the page, and the entry itself),
     ``skipped`` (the pages left out, with the reason) and ``text`` (the file).
-    Name a ``page_id`` or a ``folder``. Same builder as the download, so the
-    review is what the file will be; page properties are all it reads, so a
-    whole library answers in one query per page."""
+    Name a ``page_id`` or a ``folder`` (a folder id). Same builder as the
+    download, so the review is what the file will be; page properties are
+    all it reads, so a whole library answers in one query per page."""
     scope = share_scope(request)
     ws = resolve_ws(request)
     if folder:
-        name = _folder_name(folder)
-        if scope is not None and not scope.allows_folder(name):
-            raise HTTPException(status_code=403, detail="not accessible via this share link")
-        opts = _export_opts(folder_scope=name)
+        opts = _export_opts(folder_scope=folder)
         with connect_pages_db(ws) as conn:
-            builder = _run_export(conn, ws, "bibtex", _folder_pages(conn, name), _folder_base(name), opts)
+            path = _export_folder(conn, folder, scope)
+            builder = _run_export(conn, ws, "bibtex", pages_in_folder(conn, folder), _folder_base(path), opts)
     elif page_id:
         builder = page_builder(ws, page_id, "bibtex", _export_opts(), scope)
     else:
@@ -1122,7 +1147,7 @@ def bibliography_preview(request: Request, page_id: str = "", folder: str = ""):
 
 class ExportJob(BaseModel):
     page_id: str = ""   # a page …
-    folder: str = ""    # … or a folder label path (its pages and its subfolders')
+    folder: str = ""    # … or a folder id (its pages and its subfolders')
     mode: str = "readable"
     pdf: bool = True
     highlights: bool = True
@@ -1142,13 +1167,13 @@ def start_export_job(payload: ExportJob, request: Request):
     mode = payload.mode
     if mode not in _BUILDERS:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
-    folder = _folder_name(payload.folder) if payload.folder else ""
-    page_id = payload.page_id
+    folder, page_id = payload.folder, payload.page_id
     with connect_pages_db(ws) as conn:
         if folder:
-            if not _folder_pages(conn, folder):
+            path = _export_folder(conn, folder)
+            if not pages_in_folder(conn, folder):
                 raise HTTPException(status_code=404, detail="no pages in that folder")
-            title, base = folder, _folder_base(folder)
+            title, base = PATH_SEP.join(path), _folder_base(path)
         elif page_id:
             row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
             if row is None or page_root_id(conn, page_id) is None:  # none, or in Recently deleted
@@ -1160,7 +1185,7 @@ def start_export_job(payload: ExportJob, request: Request):
 
     def run(job):
         with connect_pages_db(ws) as conn:
-            ids = _folder_pages(conn, folder) if folder else [page_id]
+            ids = pages_in_folder(conn, folder) if folder else [page_id]
             if not ids:
                 raise HTTPException(status_code=404, detail="the folder holds no pages any more")
             if not folder and page_root_id(conn, page_id) is None:
@@ -1170,7 +1195,7 @@ def start_export_job(payload: ExportJob, request: Request):
         job.set_artifact(name, media_type)
         return builder.summary()
 
-    return jobs.start("export", owner=user, ws=ws, run=run, artifact=True, title=f"Export of {title}",
+    return jobs.start("export", owner=request.state.user_id, ws=ws, run=run, artifact=True, title=f"Export of {title}",
                       params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
                               "notes": payload.notes})

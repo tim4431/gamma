@@ -6,7 +6,7 @@ import io
 import zipfile
 
 import pytest
-from conftest import guest_name
+from conftest import folder_names, guest_name, label_names, make_folder
 
 
 def _annotated_pdf(text=b"Attention is all you need, says the paper."):
@@ -127,11 +127,12 @@ def test_zotero_import_full(guest):
 
     block = guest.get(f"/api/blocks/{paper['id']}").json()
     props = block["properties"]
-    assert props["doc_id"] and props["source_url"].startswith("/api/uploads/")
+    assert props["doc_id"] and "source_url" not in props  # the stored copy, derived from doc_id
     assert props["zotero_key"] == "https://www.nature.com/articles/s41586-000-00000-0"
-    # nested collection → folder path; tags (incl. AutomaticTag) → flat labels
-    assert props["folder"] == "ML/Transformers"
-    assert props["category"] == "transformers, attention"
+    # nested collection → nested folders; tags (incl. AutomaticTag) → labels by name
+    assert [folder_names(guest)[f] for f in props["folders"]] == [["ML", "Transformers"]]
+    assert [label_names(guest)[i] for i in props["labels"]] == ["transformers", "attention"]
+    assert paper["folders"] == [["ML", "Transformers"]]
     meta = props["meta"]
     assert meta["source"] == "zotero" and meta["year"] == "2017"
     assert meta["authors"] == ["Ashish Vaswani"]
@@ -167,18 +168,30 @@ def test_zotero_import_idempotent(guest):
     assert d["annotations_imported"] == 0
     # same page ids as before — matched by doc_id / zotero_key, not duplicated
     assert {p["id"] for p in d["pages"]} == {p["id"] for p in first["pages"]}
+    # and the folders and labels are the same blocks, not made twice
+    assert list(folder_names(guest).values()).count(["ML", "Transformers"]) == 1
+    assert list(label_names(guest).values()).count("attention") == 1
 
 
 def test_zotero_import_folder_prefix(guest):
-    r = _post(guest, folder="zotero")
+    """Into a destination folder: the collections are made below it, and a
+    page merged into keeps its own folders first (the pages exist from the
+    tests above, filed in ML/Transformers)."""
+    dest = make_folder(guest, "zotero")
+    r = _post(guest, folder=dest)
     assert r.status_code == 200, r.text
     d = r.json()
     by_title = {p["title"]: p for p in d["pages"]}
     paper = guest.get(f"/api/blocks/{by_title['Attention is all you need']['id']}").json()
-    assert "zotero/ML/Transformers" in paper["properties"]["folder"]
-    # an item in no collection lands at the prefix root
+    paths = folder_names(guest)
+    assert [paths[f] for f in paper["properties"]["folders"]] == [["ML", "Transformers"],
+                                                                  ["zotero", "ML", "Transformers"]]
+    assert by_title["Attention is all you need"]["folders"] == [["ML", "Transformers"],
+                                                                ["zotero", "ML", "Transformers"]]
+    # an item in no collection lands in the destination itself
     pre = guest.get(f"/api/blocks/{by_title['Proximal Policy Optimization']['id']}").json()
-    assert "zotero" in [t.strip() for t in pre["properties"]["folder"].split(",")]
+    assert pre["properties"]["folders"] == [dest]
+    assert _post(guest, folder="no-such-folder").status_code == 400
 
 
 def test_zotero_import_rejects_junk(guest):
@@ -215,15 +228,17 @@ def test_preview_is_read_only_and_predicts_upgrade(guest):
     rdf = RDF.replace("s41586-000-00000-0", "preview-upgrade").replace("Attention is all you need", "Preview upgrade")
     missing = _custom_zip(rdf, {"files/3/": b""})
     ws = workspace_of(guest_name())
+    research = make_folder(guest, "Research")
     with connect_pages_db(ws) as conn:
         before = conn.execute("SELECT * FROM unified_blocks ORDER BY id").fetchall()
     uploads_before = set(ws_uploads_dir(ws).glob("*"))
-    response = _send(guest, missing, preview=True, folder="Research")
+    response = _send(guest, missing, preview=True, folder=research)
     assert response.status_code == 200, response.text
     plan = response.json()
     page = next(p for p in plan["pages"] if p["title"] == "Preview upgrade")
     assert page["kind"] == "page" and page["action"] == "create"
-    assert page["folders"] == ["Research/ML/Transformers"]
+    assert page["folders"] == [["Research", "ML", "Transformers"]]  # no folder made
+    assert plan["folder"] == research
     assert any("PDF missing" in w["reason"] for w in plan["warnings"])
     assert any(e["directory"] for e in plan["entries"])
     with connect_pages_db(ws) as conn:
@@ -281,7 +296,7 @@ def test_standalone_inline_and_additional_pdfs(guest):
     plan = _send(guest, data, preview=True).json()
     assert sum(p["kind"] == "pdf" for p in plan["pages"]) == 3
     supplement = next(p for p in plan["pages"] if p["source_path"] == "export/files/4/supplement")
-    assert supplement["folders"] == ["ML/Transformers"] and supplement["notes"] == 0
+    assert supplement["folders"] == [["ML", "Transformers"]] and supplement["notes"] == 0
     result = _send(guest, data).json()
     assert sum(p["kind"] == "pdf" for p in result["pages"]) == 3
     assert result["skipped"] == []
@@ -325,7 +340,7 @@ def test_preview_collapses_same_pdf_into_one_destination(guest):
     preview = _send(guest, data, preview=True).json()
     pdf_pages = [p for p in preview["pages"] if p["kind"] == "pdf"]
     assert len(pdf_pages) == 1
-    assert pdf_pages[0]["folders"] == ["ML/Transformers", "Copies"]
+    assert pdf_pages[0]["folders"] == [["ML", "Transformers"], ["Copies"]]
     assert pdf_pages[0]["action"] == "create"
     result = _send(guest, data).json()
     assert len({p["id"] for p in result["pages"] if p["kind"] == "pdf"}) == 1
@@ -352,8 +367,10 @@ def test_one_export_imported_twice_at_once_makes_each_page_once(guest, monkeypat
     pdf = _annotated_pdf(b"Imported twice at once")
     data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": pdf})
     store_pdf(ws, pdf)  # stored before: the race under test is the page's, not the file's
-    slowed(monkeypatch, imports, "_zotero_folders", 0.3)  # between the lookup and the insert
-    results = at_once([lambda c=c: _send(c, data) for c in (TestClient(app, cookies=guest.cookies) for _ in range(2))])
+    dest = make_folder(guest, "raced")
+    slowed(monkeypatch, imports, "existing_in", 0.3)  # between the lookup and the insert
+    results = at_once([lambda c=c: _send(c, data, folder=dest)
+                       for c in (TestClient(app, cookies=guest.cookies) for _ in range(2))])
     assert [r.status_code for r in results] == [200, 200], results
     bodies = [r.json() for r in results]
     assert sum(b["pages_created"] for b in bodies) == 2 and sum(b["pages_merged"] for b in bodies) == 2
@@ -379,3 +396,20 @@ def test_better_bibtex_citation_key_is_kept(guest):
     r = guest.get(f"/api/pages/{paper['id']}/export", params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
     assert "@article{vaswani2017attention," in r.text
+
+
+def test_zotero_filing_refines_like_any_refiling(guest):
+    """A merged page filed into a subfolder of one of its own folders leaves
+    the folder above (blocks_store.refiled), in the preview and for real; a
+    folder elsewhere stays."""
+    ml, elsewhere = make_folder(guest, "ML"), make_folder(guest, "Elsewhere")
+    pages = guest.get("/api/blocks/root/children").json()["children"]
+    paper = next(p for p in pages if p["content"] == "Attention is all you need")
+    guest.put(f"/api/blocks/{paper['id']}", json={"properties": {"folders": [ml, elsewhere]}})
+    preview = _send(guest, _export_zip(), preview=True).json()
+    planned = next(p for p in preview["pages"] if p["title"] == "Attention is all you need")
+    assert planned["folders"] == [["Elsewhere"], ["ML", "Transformers"]]
+    assert _send(guest, _export_zip()).status_code == 200
+    props = guest.get(f"/api/blocks/{paper['id']}").json()["properties"]
+    paths = folder_names(guest)
+    assert [paths[f] for f in props["folders"]] == [["Elsewhere"], ["ML", "Transformers"]]

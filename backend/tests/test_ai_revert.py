@@ -7,20 +7,20 @@ import re
 
 import pytest
 
+from conftest import make_folder
 from gamma.ai_context import build_messages
 from gamma.ai_tools import run_agent_tool
 from gamma.db import connect_pages_db
 
 from ai_fixtures import children, folder, org, payload, props  # noqa: F401  (fixtures)
 
-SANDBOX = folder("sandbox")
-
 
 def _page(c, title):
+    """A page filed in the folder "sandbox", the tests' folder chat."""
     r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {}})
     assert r.status_code == 200, r.text
     page = r.json()["id"]
-    assert c.put(f"/api/blocks/{page}", json={"properties": {"folder": "sandbox"}}).status_code == 200
+    assert c.put(f"/api/blocks/{page}", json={"properties": {"folders": [make_folder(c, "sandbox")]}}).status_code == 200
     return page
 
 
@@ -39,11 +39,11 @@ def notes(org):
                                         "before": before})
         assert r.status_code == 200, r.text
         made[key] = r.json()["id"]
-    return c, {**ids, "page": page, **made}
+    return c, {**ids, "page": page, **made, "sandbox": make_folder(c, "sandbox")}
 
 
 def _edit(ids, block_id, **args):
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "edit_block", {"block_id": block_id, **args})
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "edit_block", {"block_id": block_id, **args})
     assert text.startswith("ok"), text
     return action
 
@@ -114,7 +114,7 @@ def test_an_edit_of_a_deleted_note_is_gone(notes):
 
 def test_a_new_note_reverts_unless_it_was_filled_in(notes):
     c, ids = notes
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "create_block",
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "create_block",
                                   {"parent_id": ids["page"], "content": "from the AI"})
     new_id = re.search(r"\[([^\]]+)\]", text).group(1)
     assert action["revert"]["after"] == "from the AI" and action["revert"]["parent"] == ids["page"]
@@ -122,7 +122,7 @@ def test_a_new_note_reverts_unless_it_was_filled_in(notes):
     assert new_id not in children(c, ids["page"])
     assert _revert(c, action).json()["noop"] is True  # gone already
     # Typed in since: the revert says so, with what deleting it would lose.
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "create_block",
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "create_block",
                                   {"parent_id": ids["page"], "content": "from the AI"})
     new_id = re.search(r"\[([^\]]+)\]", text).group(1)
     _type(c, new_id, "from the AI, then mine")
@@ -136,7 +136,7 @@ def test_a_new_note_reverts_unless_it_was_filled_in(notes):
 def test_a_move_reverts_to_its_old_place(notes):
     c, ids = notes
     order = children(c, ids["page"])
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                                   {"block_id": ids["other"], "parent_id": ids["top"]})
     assert text.startswith("ok"), text
     assert action["revert"]["parent"] == ids["page"] and action["revert"]["to_parent"] == ids["top"]
@@ -144,8 +144,8 @@ def test_a_move_reverts_to_its_old_place(notes):
     assert children(c, ids["page"]) == order
     assert _revert(c, action).json()["noop"] is True
     # Moved on by the user since: asked first.
-    run_agent_tool(ids["ws"], SANDBOX, "move_block", {"block_id": ids["other"], "parent_id": ids["top"]})
-    _, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+    run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block", {"block_id": ids["other"], "parent_id": ids["top"]})
+    _, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                                {"block_id": ids["other"], "parent_id": ids["child"]})
     r = c.post(f"/api/pages/{ids['page']}/ops", json={"client": "tab", "ops": [
         {"op": "move", "id": ids["other"], "parent": ids["page"]}]})
@@ -158,7 +158,7 @@ def test_a_move_reverts_to_its_old_place(notes):
 
 def test_a_move_whose_old_parent_is_gone_cannot_revert(notes):
     c, ids = notes
-    _, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+    _, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                                {"block_id": ids["child"], "parent_id": ids["other"]})
     assert c.delete(f"/api/blocks/{ids['top']}").status_code == 200
     r = _revert(c, action, force=True)
@@ -168,7 +168,7 @@ def test_a_move_whose_old_parent_is_gone_cannot_revert(notes):
 def test_a_move_across_pages_reverts_across(notes):
     c, ids = notes
     other_page = _page(c, "second page")
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                                   {"block_id": ids["top"], "parent_id": other_page})
     assert text.startswith("ok"), text
     assert ids["top"] in children(c, other_page)
@@ -217,7 +217,7 @@ def test_a_redo_over_a_rewrite_asks_before_forcing(notes):
 
 def test_a_reverted_new_note_comes_back_in_its_place(notes):
     c, ids = notes
-    text, action = run_agent_tool(ids["ws"], SANDBOX, "create_block",
+    text, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "create_block",
                                   {"parent_id": ids["page"], "content": "from the AI", "after_id": ids["top"]})
     new_id = re.search(r"\[([^\]]+)\]", text).group(1)
     order = children(c, ids["page"])
@@ -229,7 +229,7 @@ def test_a_reverted_new_note_comes_back_in_its_place(notes):
     assert props(c, new_id)["content"] == "from the AI"
     assert _revert(c, action, redo=True).json()["noop"] is True
     # Its parent gone, there is nowhere to put it.
-    _, nested = run_agent_tool(ids["ws"], SANDBOX, "create_block", {"parent_id": ids["other"], "content": "x"})
+    _, nested = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "create_block", {"parent_id": ids["other"], "content": "x"})
     assert _revert(c, nested).status_code == 200
     assert c.delete(f"/api/blocks/{ids['other']}").status_code == 200
     r = _revert(c, nested, redo=True)
@@ -238,7 +238,7 @@ def test_a_reverted_new_note_comes_back_in_its_place(notes):
 
 def test_a_reverted_move_redoes_unless_moved_since(notes):
     c, ids = notes
-    _, action = run_agent_tool(ids["ws"], SANDBOX, "move_block",
+    _, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",
                                {"block_id": ids["other"], "parent_id": ids["top"]})
     assert action["revert"]["to_position"]
     assert _revert(c, action).status_code == 200

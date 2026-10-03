@@ -24,7 +24,7 @@ def token_digest(token: str) -> str:
 SCOPES = ("read", "write")
 
 
-def create_token(username: str, ws: str, name: str, days: int, *, oauth_resource: str | None = None,
+def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource: str | None = None,
                  scope: str = "read") -> dict:
     if scope not in SCOPES:
         raise HTTPException(400, "scope must be read or write")
@@ -35,13 +35,13 @@ def create_token(username: str, ws: str, name: str, days: int, *, oauth_resource
     with connect_users_db() as conn:
         # Serialize count + insert, including concurrent requests.
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM integration_tokens WHERE username = ? AND expires_at <= ?", (username, now))
-        count = conn.execute("SELECT COUNT(*) FROM integration_tokens WHERE username = ?", (username,)).fetchone()[0]
+        conn.execute("DELETE FROM integration_tokens WHERE user_id = ? AND expires_at <= ?", (user_id, now))
+        count = conn.execute("SELECT COUNT(*) FROM integration_tokens WHERE user_id = ?", (user_id,)).fetchone()[0]
         if count >= 20:
             raise HTTPException(400, "Revoke an existing connection before creating another (limit 20).")
-        conn.execute("INSERT INTO integration_tokens (id, token_hash, username, workspace_id, name, "
+        conn.execute("INSERT INTO integration_tokens (id, token_hash, user_id, workspace_id, name, "
                      "created_at, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                     (item["id"], token_digest(token), username, ws, name, item["created_at"],
+                     (item["id"], token_digest(token), user_id, ws, name, item["created_at"],
                       item["expires_at"], scope))
         if oauth_resource:
             conn.execute("INSERT INTO mcp_oauth VALUES ('access', ?, ?, ?)",
@@ -50,16 +50,16 @@ def create_token(username: str, ws: str, name: str, days: int, *, oauth_resource
 
 
 def resolve_token(token: str, resource: str | None = None) -> tuple[str, str] | None:
-    """``(username, workspace_id)`` for a live token whose account still has
+    """``(user_id, workspace_id)`` for a live token whose account still has
     access to its workspace, else None. ``resource`` is the MCP URL an OAuth
     token must be bound to."""
     found = resolve_token_scope(token, resource)
-    return found[:2] if found else None
+    return (found[0], found[2]) if found else None
 
 
-def resolve_token_scope(token: str, resource: str | None = None) -> tuple[str, str, str] | None:
-    """Like ``resolve_token`` plus the token's scope: ``(username,
-    workspace_id, scope)``."""
+def resolve_token_scope(token: str, resource: str | None = None) -> tuple[str, str, str, str] | None:
+    """Like ``resolve_token`` plus the account's username and the token's
+    scope: ``(user_id, username, workspace_id, scope)``."""
     if not token.startswith("gamma_") or len(token) > 128:
         return None
     with connect_users_db() as conn:
@@ -69,10 +69,10 @@ def resolve_token_scope(token: str, resource: str | None = None) -> tuple[str, s
             if not audience or json.loads(audience[0]).get("resource") != resource:
                 return None
         row = conn.execute(
-            "SELECT t.username, t.workspace_id, t.scope FROM integration_tokens t "
-            "JOIN users u ON u.username = t.username "
+            "SELECT t.user_id, u.username, t.workspace_id, t.scope FROM integration_tokens t "
+            "JOIN users u ON u.id = t.user_id "
             "WHERE t.token_hash = ? AND t.expires_at > ? AND u.is_guest = 0",
             (token_digest(token), int(time.time()))).fetchone()
-    if not row or not role_of(row[1], row[0]):
+    if not row or not role_of(row[2], row[0]):
         return None
-    return row[0], row[1], row[2] if row[2] in SCOPES else "read"
+    return row[0], row[1], row[2], row[3] if row[3] in SCOPES else "read"

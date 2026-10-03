@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_user
+from conftest import account_of, login, make_folder, make_user, workspace_of
 from test_cloud_auth import ISSUER, FakeAccountServer
 
 from gamma import cloud_auth, cloud_sync, publish, sync_engine, workspaces
@@ -136,11 +136,13 @@ def pdf_page(client, name="paper.pdf"):
 def test_a_filtered_mirror_moves_only_its_pages():
     make_user("pf_remote", "pw")
     make_user("pf_local", "pw")
-    remote = bound(login("pf_remote", "pw"), workspaces.default_workspace("pf_remote"))
-    local_ws = workspaces.default_workspace("pf_local")
+    remote = bound(login("pf_remote", "pw"), workspace_of("pf_remote"))
+    local_ws = workspace_of("pf_local")
     local = bound(login("pf_local", "pw"), local_ws)
     shown, doc = pdf_page(local)                                         # in the filter, with its PDF
     insert(local, shown["id"], "pf_a1", "published note")
+    filed = make_folder(local, "pf/private folder")                      # the trees stay here
+    ops(local, shown["id"], [{"op": "set", "id": shown["id"], "props": {"folders": [filed]}}])
     hidden = local.post("/api/pages", json={"title": "Private"}).json()  # outside it
     img = local.post("/api/upload-file", files={"file": ("pic.png", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"q" * 90),
                                                                    "image/png")}).json()
@@ -149,8 +151,8 @@ def test_a_filtered_mirror_moves_only_its_pages():
     # the same id on both sides, outside the filter: neither side's deletion may travel
     twin = local.post("/api/pages", json={"title": "Twin"}).json()
     assert remote.post("/api/pages", json={"id": twin["id"], "title": "Twin there"}).status_code == 200
-    token = create_token("pf_remote", remote.headers["X-Gamma-Workspace"], "mirror", 30, scope="write")["token"]
-    mirror = sync_engine.create_mirror("pf_local", HOST, token, workspace_id=local_ws, adopt="mine",
+    token = create_token(account_of("pf_remote"), remote.headers["X-Gamma-Workspace"], "mirror", 30, scope="write")["token"]
+    mirror = sync_engine.create_mirror(account_of("pf_local"), HOST, token, workspace_id=local_ws, adopt="mine",
                                        page_filter=[shown["id"]])
     assert mirror["page_filter"] == [shown["id"]]
     assert local.get(f"/api/mirrors/{local_ws}").json()["page_filter"] == [shown["id"]]
@@ -158,6 +160,14 @@ def test_a_filtered_mirror_moves_only_its_pages():
     sync(local_ws)
     remote_ws = remote.headers["X-Gamma-Workspace"]
     assert texts(remote, shown["id"]) == {"pf_a1": "published note"}
+    # the page's filing goes along as ids that name nothing there; nothing comes back unfiled
+    assert remote.get(f"/api/blocks/{shown['id']}").json()["properties"]["folders"] == [filed]
+    assert remote.get("/api/blocks/folders/subtree").json()["block"]["children"] == []
+    refiled = make_folder(local, "pf/another")
+    ops(local, shown["id"], [{"op": "set", "id": shown["id"], "props": {"folders": [filed, refiled]}}])
+    sync(local_ws)
+    assert local.get(f"/api/blocks/{shown['id']}").json()["properties"]["folders"] == [filed, refiled]
+    assert remote.get(f"/api/blocks/{shown['id']}").json()["properties"]["folders"] == [filed, refiled]
     assert (ws_uploads_dir(remote_ws) / f"{doc}.pdf").read_bytes() == PDF
     assert hidden["id"] not in page_ids(remote) and theirs["id"] not in page_ids(local)
     assert not (ws_uploads_dir(remote_ws) / img["url"].rsplit("/", 1)[1]).exists()
@@ -222,24 +232,24 @@ def test_the_exchange_provisions_and_mints_one_token_per_server(cloud, monkeypat
     first = exchange(access)
     assert first.status_code == 200, first.text
     out = first.json()
-    ws = workspaces.default_workspace("px_new")
+    ws = workspace_of("px_new")
     assert out["username"] == "px_new" and out["workspace_id"] == ws and out["url"] == HOST
-    assert resolve_token(out["token"]) == ("px_new", ws)
+    assert resolve_token(out["token"]) == (account_of("px_new"), ws)
     with connect_users_db() as conn:
         assert conn.execute("SELECT password_hash FROM users WHERE username = 'px_new'").fetchone() == ("",)
-        assert conn.execute("SELECT username FROM identities WHERE subject = 'sub-px_new'").fetchone() == ("px_new",)
+        assert conn.execute("SELECT user_id FROM identities WHERE subject = 'sub-px_new'").fetchone() == (account_of("px_new"),)
     # the same calling server again: the old token dies, one row stays
     again = exchange(access).json()
-    assert resolve_token(out["token"]) is None and resolve_token(again["token"]) == ("px_new", ws)
+    assert resolve_token(out["token"]) is None and resolve_token(again["token"]) == (account_of("px_new"), ws)
     other = exchange(access, "Desktop").json()
     assert resolve_token(again["token"]) and resolve_token(other["token"])
     with connect_users_db() as conn:
-        names = [r[0] for r in conn.execute("SELECT name FROM integration_tokens WHERE username = 'px_new'")]
+        names = [r[0] for r in conn.execute("SELECT name FROM integration_tokens WHERE user_id = ?", (account_of("px_new"),))]
     assert sorted(names) == ["Published pages from Desktop", "Published pages from Laptop"]
     # an unconfirmed e-mail is refused, and no account is made
     cloud.person_of("sub-px_unverified", "px_unverified", verified=False)
     assert exchange(cloud.access_for("sub-px_unverified")).status_code == 403
-    assert not workspaces.default_workspace("px_unverified")
+    assert not workspace_of("px_unverified")
     # the switch off: refused before the account server is asked
     monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "0")
     asked = len(cloud.calls)
@@ -269,9 +279,9 @@ def linked(cloud, username):
     refresh = f"rt-{username}"
     cloud.live[refresh] = subject
     with connect_users_db() as conn:
-        cloud_auth.link(conn, username, {"sub": subject, "preferred_username": username}, refresh)
+        cloud_auth.link(conn, account_of(username), {"sub": subject, "preferred_username": username}, refresh)
         conn.commit()
-    local_ws = workspaces.create("Laptop library", username)["id"]
+    local_ws = workspaces.create("Laptop library", account_of(username))["id"]
     return bound(login(username, "pw"), local_ws), local_ws
 
 
@@ -284,7 +294,7 @@ def publishing(cloud, monkeypatch):
 
 def test_publish_end_to_end(publishing, monkeypatch):
     local, local_ws = linked(publishing, "pb_ann")
-    host_ws = workspaces.default_workspace("pb_ann")
+    host_ws = workspace_of("pb_ann")
     host = bound(login("pb_ann", "pw"), host_ws)
     page, doc = pdf_page(local)
     insert(local, page["id"], "pb_n1", "my note")
@@ -355,7 +365,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
 
     # the mirror's token revoked on the share host: the next publish exchanges a new one
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM integration_tokens WHERE username = 'pb_ann'")
+        conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (account_of("pb_ann"),))
         conn.commit()
     r = local.post(f"/api/pages/{page['id']}/publish", json={"audience": "users"})
     assert r.status_code == 200, r.text
@@ -364,7 +374,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
 
 def test_publish_needs_a_cloud_identity_and_a_home_of_its_own(publishing, monkeypatch):
     make_user("pb_plain", "pw")
-    plain = bound(login("pb_plain", "pw"), workspaces.default_workspace("pb_plain"))
+    plain = bound(login("pb_plain", "pw"), workspace_of("pb_plain"))
     page = plain.post("/api/pages", json={"title": "Draft"}).json()
     r = plain.post(f"/api/pages/{page['id']}/publish")
     assert r.status_code == 409 and r.json()["detail"] == "Sign in with Gamma Cloud to publish."
@@ -372,8 +382,8 @@ def test_publish_needs_a_cloud_identity_and_a_home_of_its_own(publishing, monkey
     # a workspace that is a copy of another server publishes from there
     local, local_ws = linked(publishing, "pb_lab")
     make_user("pb_nas", "pw")
-    token = create_token("pb_nas", workspaces.default_workspace("pb_nas"), "mirror", 30, scope="write")["token"]
-    sync_engine.create_mirror("pb_lab", HOST, token, workspace_id=local_ws)
+    token = create_token(account_of("pb_nas"), workspace_of("pb_nas"), "mirror", 30, scope="write")["token"]
+    sync_engine.create_mirror(account_of("pb_lab"), HOST, token, workspace_id=local_ws)
     publishing.share_host = "https://share.example.org"
     cloud_auth._discovery_cache.clear()
     page = local.post("/api/pages", json={"title": "Lab notes"}).json()
@@ -398,7 +408,7 @@ CAP_DETAIL = "Free plan: up to 5 published pages. Unpublish one, or upgrade your
 
 def test_the_share_host_caps_published_pages_by_plan(publishing, monkeypatch):
     local, local_ws = linked(publishing, "pbcap")
-    host_ws = workspaces.default_workspace("pbcap")
+    host_ws = workspace_of("pbcap")
     host = bound(login("pbcap", "pw"), host_ws)
     pages = [local.post("/api/pages", json={"title": f"Paper {n}"}).json() for n in range(7)]
     for page in pages[:5]:
@@ -456,7 +466,7 @@ def test_the_share_host_caps_published_pages_by_plan(publishing, monkeypatch):
     # GAMMA_FREE_PAGE_LIMIT sets the free plan's number
     publishing.people["sub-pbcap"]["plan"] = "free"
     with connect_users_db() as conn:
-        cloud_auth.link(conn, "pbcap", publishing.people["sub-pbcap"])
+        cloud_auth.link(conn, account_of("pbcap"), publishing.people["sub-pbcap"])
         conn.commit()
     monkeypatch.setenv("GAMMA_FREE_PAGE_LIMIT", "10")
     assert host.get("/api/publish/limit").json() == {"used": 7, "max": 10, "plan": "free"}
@@ -543,7 +553,7 @@ def test_the_resolver_opens_a_shared_page_by_its_pretty_address(monkeypatch):
     ):
         assert resolve(miss_host, path).status_code == 404, (miss_host, path)
     # only the account's default personal workspace is served
-    other_ws = workspaces.create("Second", "pbresolve")["id"]
+    other_ws = workspaces.create("Second", account_of("pbresolve"))["id"]
     second = bound(login("pbresolve", "pw"), other_ws)
     other = second.post("/api/pages", json={"title": "Elsewhere"}).json()
     second.post(f"/api/share/{other['id']}")
@@ -581,7 +591,7 @@ def test_a_round_queued_behind_an_unpublish_sees_the_page_gone(publishing, monke
     the mirror once it holds the lock: the page is out of the filter, so it
     is not pushed back to the share host as an unshared copy."""
     local, local_ws = linked(publishing, "pb_queue")
-    host = bound(login("pb_queue", "pw"), workspaces.default_workspace("pb_queue"))
+    host = bound(login("pb_queue", "pw"), workspace_of("pb_queue"))
     page = local.post("/api/pages", json={"title": "Queued"}).json()
     assert local.post(f"/api/pages/{page['id']}/publish").status_code == 200
     assert page["id"] in page_ids(host)
@@ -595,7 +605,7 @@ def test_a_round_queued_behind_an_unpublish_sees_the_page_gone(publishing, monke
             lock.acquire()
             if first[0]:
                 first[0] = False
-                publish.unpublish("pb_queue", local_ws, page["id"])  # in this thread: the lock is re-entrant here
+                publish.unpublish(account_of("pb_queue"), local_ws, page["id"])  # in this thread: the lock is re-entrant here
 
         def __exit__(self, *exc):
             lock.release()

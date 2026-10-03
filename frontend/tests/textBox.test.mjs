@@ -38,9 +38,9 @@ test("a PDF page's boxes key by pdf_page, in document order, wherever they sit i
   const moved = box("moved", { pdf_page: 2 });
   const tree = [
     b1,
-    note("hl", { pdf_page: 2, highlight_id: "h1" }, [moved]), // moved under a highlight: still on its page
+    note("hl", { pdf_position: { pageNumber: 2 } }, [moved]), // moved under a highlight: still on its page
     b2,
-    note("ink", { pdf_page: 1, ink_url: "/api/uploads/a.ink" }),
+    note("ink", { pdf_position: { pageNumber: 1 }, ink_url: "/api/uploads/a.ink" }),
     box("loose"), // no page, no sheet: on no surface
     box("bad", { pdf_page: "3" }),
     box("zero", { pdf_page: 0 }),

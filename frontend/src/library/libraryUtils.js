@@ -1,34 +1,113 @@
 // Pure application-domain helpers. Keeping these outside App makes the rules
 // usable by dialogs, home views, and future tests without coupling them to React.
 
+import { generateKeyBetween } from "fractional-indexing";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 
-export function parseFolderTags(raw) {
-  return (raw || "").split(",").map((value) => value.trim()).filter(Boolean);
-}
+// How a folder's path reads: its names from the top, joined (the server's
+// blocks_store.PATH_SEP). A name may hold any character, "/" and ","
+// included, so a path is only ever shown, never split.
+export const PATH_SEP = " / ";
 
 // The library's "pages without a label" view is a pseudo-label: this sentinel
-// stands in for it wherever a label name flows (categoryFilter, the label
-// tiles, the per-view sort/kind pref keys). A real label can never contain a
-// comma — parseFolderTags splits on it — so it cannot collide with one.
-export const NO_LABEL = ",none";
+// stands in for it wherever a label id flows (labelFilter, the label tiles,
+// the per-view sort/kind pref keys). "~" is no block-id character
+// (blocks_store.BLOCK_ID_RE), so no label can have it.
+export const NO_LABEL = "~none";
 export const NO_LABEL_TITLE = t("No label");
-export const labelTitle = (name) => (name === NO_LABEL ? NO_LABEL_TITLE : name);
 
-export function cleanFolderSegment(name) {
-  return (name || "").replace(/[,/]/g, " ").replace(/\s+/g, " ").trim();
+// Folders and labels are blocks of two trees beside the pages
+// (docs/dev/home_library.md "Folders and labels"); the library listing
+// carries both (GET /blocks/root/children's `folders` / `labels`: block
+// dicts with their `children`, in order). As lookups:
+//   folders  Map id → {id, name, parent ("" at the top), position, pinned,
+//            path: [names from the top], children: [ids, in order]}
+//   labels   Map id → {id, name}, in order
+//   top      the top-level folder ids, in order
+// A folder share's listing has the shared folder as its one top folder.
+export function libraryTree({ folders, labels } = {}) {
+  const tree = { folders: new Map(), labels: new Map(), top: [] };
+  const walk = (nodes, parent, path) => nodes.map((node) => {
+    const name = node.content || "";
+    const folder = { id: node.id, name, parent, position: node.position || "",
+      pinned: node.properties?.pinned || "", path: [...path, name], children: [] };
+    tree.folders.set(node.id, folder);
+    folder.children = walk(node.children || [], node.id, folder.path);
+    return node.id;
+  });
+  tree.top = walk(folders?.children || [], "", []);
+  for (const node of labels?.children || []) tree.labels.set(node.id, { id: node.id, name: node.content || "" });
+  return tree;
+}
+export const EMPTY_TREE = libraryTree();
+
+// The folders right inside `parent` ("" = the top level), in order.
+export const childFolders = (tree, parent) => (parent ? tree.folders.get(parent)?.children || [] : tree.top);
+// The folder blocks right inside `parent`, in order.
+export const siblingFolders = (tree, parent) => childFolders(tree, parent).map((id) => tree.folders.get(id));
+// A folder's path as it reads ("" for an id the tree lacks).
+export const folderPath = (tree, id) => tree.folders.get(id)?.path.join(PATH_SEP) || "";
+// A label's name, the "No label" pseudo-label's title included.
+export const labelName = (tree, id) => (id === NO_LABEL ? NO_LABEL_TITLE : tree.labels.get(id)?.name || "");
+
+// The folders from the top down to `id`, ids; [] when it is no folder.
+export function folderChain(tree, id) {
+  const chain = [];
+  for (let folder = tree.folders.get(id); folder; folder = tree.folders.get(folder.parent)) chain.unshift(folder.id);
+  return chain;
+}
+// Whether `id` is the folder `ancestor` or one below it.
+export const inFolder = (tree, id, ancestor) => folderChain(tree, id).includes(ancestor);
+// `id` and every folder below it.
+export function folderSubtree(tree, id) {
+  const ids = new Set();
+  const add = (fid) => { ids.add(fid); for (const child of tree.folders.get(fid)?.children || []) add(child); };
+  if (tree.folders.has(id)) add(id);
+  return ids;
 }
 
-// Normalize a typed folder path: "cs229/" → "cs229", " cs229 / hw " → "cs229/hw".
-export function cleanFolderPath(path) {
-  return (path || "").split("/").map(cleanFolderSegment).filter(Boolean).join("/");
+// A page's filing (`properties.folders` / `labels`) as the ids a block of
+// the tree has: an id whose block is gone, or not synced here yet, names
+// nothing and is passed by — and goes with the page's next refiling, which
+// always writes from this.
+export const filedIn = (map, ids) => (Array.isArray(ids) ? ids.filter((id) => map.has(id)) : []);
+// The path of the first folder a page is filed in ("" when none).
+export const firstFolderPath = (tree, ids) => folderPath(tree, filedIn(tree.folders, ids)[0]);
+
+// A page's folders and labels as chips, {id, name} — a folder named by its
+// path — from its properties: what a card, a row and a lookup show and match.
+export function filingChips(tree, properties) {
+  return {
+    folders: filedIn(tree.folders, properties?.folders).map((id) => ({ id, name: folderPath(tree, id) })),
+    labels: filedIn(tree.labels, properties?.labels).map((id) => ({ id, name: tree.labels.get(id).name })),
+  };
 }
 
-// Add a folder path to a page's folder tags (a soft link — other tags are
-// kept). The only tag removed is an ancestor of the new path: refining
-// "readout" into "readout/nondestructive" shouldn't leave both levels.
-export function addFolderTag(tags, path) {
-  return [...tags.filter((t) => t !== path && !path.startsWith(t + "/")), path];
+// A page's folders after filing it into `folder` — a soft link, its other
+// folders kept, except one above the new one: refining "readout" into
+// "readout / nondestructive" shouldn't leave both levels.
+export function addToFolder(tree, ids, folder) {
+  const above = new Set(folderChain(tree, folder));
+  return [...filedIn(tree.folders, ids).filter((id) => !above.has(id)), folder];
+}
+
+// The folder or label a typed name means among `items` ({id, name}): the
+// one called that exactly, else ignoring case — the server's
+// blocks_store.named. Null when none is.
+export function findNamed(items, name) {
+  const want = name.trim(), list = [...items];
+  return list.find((it) => it.name.trim() === want)
+    || list.find((it) => it.name.trim().toLowerCase() === want.toLowerCase()) || null;
+}
+
+// The position (a fractional key) for a folder put among `parent`'s
+// folders before `before`, else last; `moving` is the folder itself when it
+// is already among them.
+export function folderPosition(tree, parent, before = "", moving = "") {
+  const siblings = siblingFolders(tree, parent).filter((folder) => folder.id !== moving);
+  const at = siblings.findIndex((folder) => folder.id === before);
+  const idx = at < 0 ? siblings.length : at;
+  return generateKeyBetween(siblings[idx - 1]?.position || null, siblings[idx]?.position || null);
 }
 
 // A stored timestamp → a Date (a bare one is UTC, as the server writes it).
@@ -80,18 +159,15 @@ export function formatFullDate(iso) {
 // `source_url` / `original_filename`). Every "what does this page carry"
 // decision (layout, card badge, gating, copy) reads THIS, never the raw
 // properties, so a later `properties.attachments` list is a drop-in
-// (docs/dev/block_centric.md). Null for a page that is only blocks.
+// (docs/dev/block_centric.md). Null for a page that is only blocks. `url` is
+// where the file is fetched from: the stored source_url, else the stored copy
+// by hash — a page stores no source_url that is its own doc_id's
+// (gamma/blocks_store.py page_attachment, the twin).
 export function pageAttachment(block) {
   const p = block?.properties || {};
   if (!p.doc_id && !p.source_url) return null;
-  return { kind: "pdf", id: p.doc_id || "", url: p.source_url || "", name: p.original_filename || "" };
-}
-
-// Where the attachment's file is fetched from: its source URL (a local
-// upload already points at /api/uploads/…), else the stored copy by hash.
-export function attachmentSource(attachment) {
-  if (!attachment) return "";
-  return attachment.url || (attachment.id ? `/api/uploads/${attachment.id}.pdf` : "");
+  return { kind: "pdf", id: p.doc_id || "", url: p.source_url || `/api/uploads/${p.doc_id}.pdf`,
+    name: p.original_filename || "" };
 }
 
 // What a card/row says a page is: the attachment kind, else just a page.

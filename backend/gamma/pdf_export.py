@@ -4,7 +4,8 @@ highlights as /Highlight, area notes (Ctrl+drag rectangles, position carries
 annotation popups) in Acrobat, SumatraPDF, Preview, browsers, etc.
 
 Coordinate round-trip: the viewer stores rects in top-left-origin page-render
-pixels together with the render size (``width``/``height``), i.e. effectively
+pixels together with the render size (the position's ``width``/``height``,
+gamma/highlights.py), i.e. effectively
 normalized coordinates in pdf.js viewport space. pdf.js viewports are based on
 the crop box and apply /Rotate, so the inverse mapping here must too. This is
 the exact reverse of what routers/imports.py does when reading embedded
@@ -123,10 +124,10 @@ def display_size(crop, rotation):
     return (ch, cw) if rotation in (90, 270) else (cw, ch)
 
 
-def _viewer_rect_to_pdf(rect, rotation, crop):
-    """One stored viewer rect → (x1, y1, x2, y2) in PDF user space."""
-    w = float(rect.get("width") or 0) or 1.0
-    h = float(rect.get("height") or 0) or 1.0
+def _viewer_rect_to_pdf(rect, size, rotation, crop):
+    """One stored viewer rect, in a frame of ``size`` (the position's
+    width, height), → (x1, y1, x2, y2) in PDF user space."""
+    w, h = (float(v or 0) or 1.0 for v in size)
     (ax, ay), (bx, by) = (viewer_point_to_pdf(float(vx) / w, float(vy) / h, rotation, crop)
                           for vx, vy in ((rect["x1"], rect["y1"]), (rect["x2"], rect["y2"])))
     return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
@@ -301,9 +302,9 @@ def _highlight_annotation(rects, color, note, author):
 _ZOTERO_KEY_CHARS = "23456789ABCDEFGHIJKLMNPQRSTUVWXZ"
 
 
-def zotero_annot_key(highlight_id: str) -> str:
-    """Deterministic 8-char Zotero-style key for a highlight block id."""
-    digest = hashlib.sha1((highlight_id or "").encode("utf-8")).digest()
+def zotero_annot_key(block_id: str) -> str:
+    """Deterministic 8-char Zotero-style key for a block id."""
+    digest = hashlib.sha1((block_id or "").encode("utf-8")).digest()
     return "".join(_ZOTERO_KEY_CHARS[b & 31] for b in digest[:8])
 
 
@@ -347,7 +348,7 @@ def _square_appearance(writer, box, color):
     return writer._add_object(stream)
 
 
-def _square_annotation(writer, rects, color, note, author, highlight_id=""):
+def _square_annotation(writer, rects, color, note, author, block_id=""):
     """Area note → /Square over the bounding box of the rects, with an
     appearance stream for the viewer's look (``_square_appearance``). The
     /NM id is what makes Zotero import it (see module docstring)."""
@@ -366,8 +367,8 @@ def _square_annotation(writer, rects, color, note, author, highlight_id=""):
             NameObject("/N"): _square_appearance(writer, box, color),
         }),
     })
-    if highlight_id:
-        annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(highlight_id)}")
+    if block_id:
+        annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(block_id)}")
     return _finish_annotation(annot, color, note, author)
 
 
@@ -577,19 +578,19 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             written += 1
     for h in highlights:
         pos = h.get("position") or {}
-        page_num = pos.get("pageNumber") or (pos.get("boundingRect") or {}).get("pageNumber")
+        page_num = pos.get("pageNumber")
         if not page_num or page_num < 1 or page_num > len(writer.pages):
             continue
-        viewer_rects = pos.get("rects") or ([pos["boundingRect"]] if pos.get("boundingRect") else [])
-        viewer_rects = [r for r in viewer_rects if r and r.get("x1") is not None]
+        viewer_rects = [r for r in pos.get("rects") or [] if r and r.get("x1") is not None]
         if not viewer_rects:
             continue
         crop, rotation = page_frame(writer.pages[page_num - 1])
-        pdf_rects = [_viewer_rect_to_pdf(r, rotation, crop) for r in viewer_rects]
+        size = (pos.get("width"), pos.get("height"))
+        pdf_rects = [_viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
         color = parse_css_color(h.get("color"))
         if pos.get("area"):
             annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
-                                       author, highlight_id=h.get("id") or "")
+                                       author, block_id=h.get("id") or "")
         else:
             annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author)
         writer.add_annotation(page_number=page_num - 1, annotation=annot)

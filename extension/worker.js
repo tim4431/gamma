@@ -4,7 +4,7 @@
 // blocked fetch to. State lives in chrome.storage.session so it survives the
 // worker being put to sleep.
 
-import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
+import { api, ApiError, checkedDefaultFolder, getSettings, rememberFolder, serverOrigin, whoAmI } from "./api.js";
 import {
   NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, needsYouMessage, nextToOpen,
   sameWork, siteOf,
@@ -611,8 +611,12 @@ async function uploadBlob(tabId, blob, url, expectedOrigin) {
   return up.doc_id;
 }
 
-async function savePaper({ tabId, candidate, folder, labels, title, source_url }) {
+async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
   const settings = await getSettings();
+  // The popup names the folder (an id, or a typed new one's path); the
+  // shortcut and the context menu save into the default one, if the
+  // library still has it (checkedDefaultFolder: a deleted one is forgotten).
+  const filing = folder != null ? { folder, folder_path: folder_path || "" } : await checkedDefaultFolder(settings);
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   // A PDF tab has no title of its own; the registry record previewed for the
   // popup names the page right away (auto_title — the metadata lookup may
@@ -623,7 +627,7 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
     source_url: cand.source_url || source_url || "",
     pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
     title: title != null ? title : (cand.title || previewTitle),
-    folder: folder != null ? folder : settings.folder,
+    ...filing,
     labels: labels != null ? labels : settings.labels,
     allow_oa: settings.allowOa, save_copy: settings.saveCopy,
   };
@@ -657,6 +661,9 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       if (tabId != null) await progress(tabId, "saving to your library…");
       out = await api("/clip", { json: payload, expectedOrigin: settings.server });
     }
+    // The folder saved into becomes the default; labels are per-paper, so they
+    // are not remembered (each popup starts from the options-page defaults).
+    await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
     if (tabId != null && await serverOrigin() === settings.server) await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server });
     return out;
   } catch (err) {

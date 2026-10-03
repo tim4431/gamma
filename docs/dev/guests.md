@@ -24,7 +24,7 @@ Every guest login is a throwaway account of its own. `POST /api/login-guest`
   visitor starts from the admin's sample library. A seed that cannot be
   restored is logged as a warning and skipped; the visitor keeps the
   welcome page;
-- a normal session row (`guest_date` = the creation date). The response is
+- a normal session row. The response is
   `{"ok": true, "username": ...}`.
 
 The endpoint is a sync `def` because it writes files. It is refused on a
@@ -60,7 +60,7 @@ existing guests at once. Two places enforce it:
   grant check's rounds), deletes the expired guest accounts nobody came
   back for.
 
-Both call `workspaces.delete_account(username)`, the one account deletion:
+Both call `workspaces.delete_account(user_id)`, the one account deletion:
 sessions, identities and the cloud grant, integration tokens, publisher
 sessions, the account's workspaces, its usage rows and prefs, the users
 row. `DELETE /api/admin/users/{name}` and `manage.py delete-user` use it
@@ -70,8 +70,7 @@ A guest's `POST /api/logout` deletes the account right away, since nothing
 can sign into it again. For a guest, the account menu's Log out asks first
 ("Log out and delete").
 
-`sessions.guest_date` stays in the schema, written with the creation date
-and read by nothing. Migration step `guest_accounts` (v20) deletes the
+Migration step `guest_accounts` (v20) deletes the
 legacy shared `guest` account and its workspace. It also turns every other
 `is_guest` row (older builds made one for `manage.py create-user` without a
 password) into a normal password-less account, which is what `create-user`

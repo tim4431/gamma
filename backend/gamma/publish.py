@@ -34,7 +34,7 @@ from urllib.parse import unquote, urlsplit
 from . import cloud_auth, config, integrations, ratelimit, sync_engine, workspaces
 from .auth import SHARE_AUDIENCES, SHARE_ROLES
 from .cloud_auth import CloudAuthError
-from .db import connect_pages_db, connect_users_db
+from .db import account_name, connect_pages_db, connect_users_db
 from .logbuf import log
 from .sync_engine import Remote, RemoteError
 
@@ -234,16 +234,16 @@ def exchange(access_token: str, caller: str, base_url: str) -> dict:
     # the account server's claims only: the internal "_link_user" / "_refresh_token" keys never come from it
     claims = {k: v for k, v in claims.items() if not str(k).startswith("_")}
     try:
-        username = cloud_auth.resolve_account(claims)
+        user_id, username = cloud_auth.resolve_account(claims)
     except CloudAuthError as e:
         raise PublishError(403, str(e)) from e
-    ws = workspaces.ensure_personal(username)
+    ws = workspaces.ensure_personal(user_id)
     name = token_name(caller)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM integration_tokens WHERE username = ? AND name = ? AND scope = 'write'",
-                     (username, name))
+        conn.execute("DELETE FROM integration_tokens WHERE user_id = ? AND name = ? AND scope = 'write'",
+                     (user_id, name))
         conn.commit()
-    item = integrations.create_token(username, ws, name, TOKEN_DAYS, scope="write")
+    item = integrations.create_token(user_id, ws, name, TOKEN_DAYS, scope="write")
     log.info(f"share host: {username} got a publishing token for {name[len('Published pages from '):]}")
     return {"token": item["token"], "workspace_id": ws, "username": username, "url": base_url}
 
@@ -278,34 +278,42 @@ def _require_page(ws: str, page_id: str) -> None:
         raise PublishError(400, "only pages can be published")
 
 
-def _check_mirror(mirror: dict, host: str, user: str) -> None:
+def _check_owner(mirror: dict, user_id: str) -> None:
+    """A publication's mirror is published through its owner's account: 409
+    for anyone else (``user_id``, an account id)."""
+    if mirror["owner"] != user_id:
+        with connect_users_db() as conn:
+            owner = account_name(conn, mirror["owner"]) or "another account"
+        raise PublishError(409, f"This workspace publishes through {owner}'s Gamma Cloud account.")
+
+
+def _check_mirror(mirror: dict, host: str, user_id: str) -> None:
     """The workspace's mirror must be its publication to ``host``, owned by
-    ``user``, two-way."""
+    ``user_id``, two-way."""
     if not _same(mirror["remote_url"], host):
         raise PublishError(409, f"This workspace is a copy of {mirror['remote_name'] or 'a workspace'} on "
                                 f"{_host_of(mirror['remote_url'])}; publish from there.")
-    if mirror["owner"] != user:
-        raise PublishError(409, f"This workspace publishes through {mirror['owner']}'s Gamma Cloud account.")
+    _check_owner(mirror, user_id)
     if mirror["mode"] == "off":
         raise PublishError(409, "Publishing is detached for this workspace; reattach it first.")
     if mirror["mode"] != "two-way":
         raise PublishError(409, "This workspace only receives from the share host; set it to two-way first.")
 
 
-def _publish_mirrors(user: str, host: str) -> list[dict]:
+def _publish_mirrors(user_id: str, host: str) -> list[dict]:
     """The caller's filtered two-way mirrors of the share host (one per
     local workspace that publishes), with their tokens."""
-    return [sync_engine.get_mirror(m["workspace_id"], with_token=True) for m in sync_engine.list_mirrors(user)
+    return [sync_engine.get_mirror(m["workspace_id"], with_token=True) for m in sync_engine.list_mirrors(user_id)
             if m["page_filter"] is not None and _same(m["remote_url"], host) and m["mode"] == "two-way"]
 
 
-def _exchange(user: str, host: str, server_name: str) -> str:
+def _exchange(user_id: str, host: str, server_name: str) -> str:
     """A write token on the person's share-host workspace, for the cloud
-    identity linked to ``user``. The share host replaces the token it made
+    identity linked to ``user_id``. The share host replaces the token it made
     for this server before, so every publishing mirror of the account gets
     the new one."""
-    subject, _ = cloud_auth.grant_of(user)
-    access = cloud_auth.access_token_for(user)
+    subject, _ = cloud_auth.grant_of(user_id)
+    access = cloud_auth.access_token_for(user_id)
     if not access:
         raise PublishError(409, SIGN_IN)
     try:
@@ -318,7 +326,7 @@ def _exchange(user: str, host: str, server_name: str) -> str:
     token = (out or {}).get("token") or ""
     if not token.startswith("gamma_"):
         raise PublishError(502, "The share host answered no token.")
-    for other in _publish_mirrors(user, host):
+    for other in _publish_mirrors(user_id, host):
         sync_engine.replace_token(other["workspace_id"], token)
     return token
 
@@ -333,24 +341,24 @@ def _token_ok(host: str, token: str) -> bool:
         raise PublishError(502, f"Cannot reach the share host: {e}") from e
 
 
-def _mirror_for(user: str, ws: str, page_id: str, host: str, server_name: str) -> dict:
+def _mirror_for(user_id: str, ws: str, page_id: str, host: str, server_name: str) -> dict:
     """The workspace's publishing mirror with ``page_id`` in its filter,
     made on the first publication (``adopt: mine``: the page here wins over
     anything the share host holds without a base)."""
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if mirror:
-        _check_mirror(mirror, host, user)
+        _check_mirror(mirror, host, user_id)
         if not _token_ok(host, mirror["token"]):
             # an expired or revoked token: a new one for this mirror and the account's other publishing ones
-            sync_engine.replace_token(ws, _exchange(user, host, server_name))
+            sync_engine.replace_token(ws, _exchange(user_id, host, server_name))
         with sync_engine.round_lock(ws):
             # a full mirror of the share host moves every page already
             return sync_engine.filter_add(ws, page_id, adopt="mine" if mirror["page_filter"] is not None else "")
-    others = _publish_mirrors(user, host)
+    others = _publish_mirrors(user_id, host)
     token = others[0]["token"] if others and _token_ok(host, others[0]["token"]) else ""
-    token = token or _exchange(user, host, server_name)
+    token = token or _exchange(user_id, host, server_name)
     try:
-        return sync_engine.create_mirror(user, host, token, name=MIRROR_NAME, mode="two-way", workspace_id=ws,
+        return sync_engine.create_mirror(user_id, host, token, name=MIRROR_NAME, mode="two-way", workspace_id=ws,
                                          adopt="mine", page_filter=[page_id])
     except ValueError as e:
         raise PublishError(409, str(e)) from e
@@ -412,7 +420,7 @@ def _cap_error(limit: dict, detail: str = "") -> PublishError:
     return PublishError(409, detail or cap_message(limit["plan"], limit["max"]), {"limit": limit})
 
 
-def _check_cap(user: str, ws: str, page_id: str, host: str, server_name: str) -> None:
+def _check_cap(user_id: str, ws: str, page_id: str, host: str, server_name: str) -> None:
     """Before a page goes to the share host for the first time: refuse it
     (409, the cap message, ``limit``) when the person's workspace there is
     full, taking it back out of the filter. The share host's plan is the
@@ -424,7 +432,7 @@ def _check_cap(user: str, ws: str, page_id: str, host: str, server_name: str) ->
     limit = _read_limit(_remote(mirror))
     if limit and limit["max"] is not None and limit["used"] >= limit["max"]:
         try:
-            _exchange(user, host, server_name)  # hands every publishing mirror of the account the new token
+            _exchange(user_id, host, server_name)  # hands every publishing mirror of the account the new token
             limit = _read_limit(_remote(sync_engine.get_mirror(ws, with_token=True))) or limit
         except PublishError:
             pass
@@ -451,7 +459,7 @@ def _mirror_view(mirror: dict) -> dict:
             "pending_local": sync_engine.pending_local(mirror)}
 
 
-def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, role: str | None = None,
+def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None, role: str | None = None,
             server_name: str = "") -> dict:
     """Publish ``page_id``: into the filtered mirror (made when missing),
     one round now, then the share on the share host (default anyone / view;
@@ -465,11 +473,11 @@ def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, ro
     if publishing_blocked():
         raise PublishError(409, IS_SHARE_HOST)
     _require_page(ws, page_id)
-    if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user)[1]:
+    if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         raise PublishError(409, SIGN_IN)
     host = share_host()
-    _mirror_for(user, ws, page_id, host, server_name)
-    _check_cap(user, ws, page_id, host, server_name)
+    _mirror_for(user_id, ws, page_id, host, server_name)
+    _check_cap(user_id, ws, page_id, host, server_name)
     status = sync_engine.sync_workspace(ws)
     # A first push cut short leaves the bare page's base (so _synced holds) and the page on the retry list.
     if not _synced(ws, page_id) or page_id in (status.get("retry") or {}):
@@ -495,7 +503,7 @@ def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, ro
     return {**_addresses(mirror, ws, page_id, share["token"]), "share": share, "mirror": _mirror_view(mirror)}
 
 
-def unpublish(user: str, ws: str, page_id: str) -> dict:
+def unpublish(user_id: str, ws: str, page_id: str) -> dict:
     """Stop the share on the share host, delete the copy there and drop the
     page from the filter, under the round lock so no round sees the copy's
     deletion as the page's. The page here is untouched. Nothing changes
@@ -503,8 +511,7 @@ def unpublish(user: str, ws: str, page_id: str) -> dict:
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if not mirror or (mirror["page_filter"] is not None and page_id not in mirror["page_filter"]):
         raise PublishError(409, "This page is not published.")
-    if mirror["owner"] != user:
-        raise PublishError(409, f"This workspace publishes through {mirror['owner']}'s Gamma Cloud account.")
+    _check_owner(mirror, user_id)
     remote = _remote(mirror)
     with sync_engine.round_lock(ws):
         try:
@@ -518,7 +525,7 @@ def unpublish(user: str, ws: str, page_id: str) -> dict:
     return {"published": False, "mirror": _mirror_view(mirror)}
 
 
-def state(user: str, ws: str, page_id: str) -> dict:
+def state(user_id: str, ws: str, page_id: str) -> dict:
     """``{published, can_publish, reason?, url?, public_url?, share?,
     status?, mirror?, limit?, error?}``: whether the page is published (in
     the filter of the workspace's mirror of the share host), its live share
@@ -532,20 +539,20 @@ def state(user: str, ws: str, page_id: str) -> dict:
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if publishing_blocked():
         reason = IS_SHARE_HOST
-    elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user)[1]:
+    elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         reason = SIGN_IN
     else:
         try:
             host = share_host()
             if mirror:
-                _check_mirror(mirror, host, user)
+                _check_mirror(mirror, host, user_id)
         except PublishError as e:
             reason = e.message
     if reason:
         out.update(can_publish=False, reason=reason)
     else:
         # the cap there, through this workspace's publishing token or another of the account's
-        lender = mirror if mirror and mirror["page_filter"] is not None else next(iter(_publish_mirrors(user, host)), None)
+        lender = mirror if mirror and mirror["page_filter"] is not None else next(iter(_publish_mirrors(user_id, host)), None)
         limit = _read_limit(_remote(lender)) if lender else None
         if limit:
             out["limit"] = limit

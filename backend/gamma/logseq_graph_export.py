@@ -20,16 +20,18 @@ File-based Logseq ("OG") reads this directly (drop into a graph / open as one);
 the DB version converts it — hls pages and EDN included — via its built-in
 "File to DB graph" importer, so this one format serves both apps.
 
-Highlight UUIDs are uuid5 of the Gamma highlight id, so re-exports are stable.
-Positions transfer verbatim: Gamma's ``pdf_position`` uses the same
-rects/bounding model as Logseq's EDN (see ``logseq_import.edn_highlight_position``,
-which maps them 1:1 on the way in).
+Highlight UUIDs are uuid5 of the highlight's block id, so re-exports are stable.
+Positions transfer as they are: Gamma's ``pdf_position`` uses the same
+rects/bounding model as Logseq's EDN, its page size stored once where the EDN
+repeats it in every rect (see ``logseq_import.edn_highlight_position``, the
+way in).
 """
 
 import struct
 import uuid
 import zlib
 
+from .highlights import is_highlight, page_of
 from .markdown_export import _RGBA_TO_NAME
 
 CONFIG_EDN = "{:meta/version 1}\n"
@@ -37,8 +39,8 @@ CONFIG_EDN = "{:meta/version 1}\n"
 _UUID_NS = uuid.uuid5(uuid.NAMESPACE_URL, "gamma-logseq-highlight")
 
 
-def hl_uuid(highlight_id):
-    return uuid.uuid5(_UUID_NS, str(highlight_id))
+def hl_uuid(block_id):
+    return uuid.uuid5(_UUID_NS, str(block_id))
 
 
 def hl_stamp(u):
@@ -60,18 +62,17 @@ def collect_highlights(page):
 
     def walk(node):
         props = node.get("properties") or {}
-        if props.get("highlight_id") and not (props.get("link_url") or props.get("link_page_id")):
-            u = hl_uuid(props["highlight_id"])
-            pos = props.get("pdf_position")
-            area = bool(pos and (pos.get("area") or (pos.get("boundingRect") or {}).get("area")))
+        if is_highlight(props) and not (props.get("link_url") or props.get("link_page_id")):
+            u = hl_uuid(node["id"])
+            pos = props["pdf_position"]
             quote = (props.get("quote") or "").strip()
             out.append({
                 "uuid": u,
                 "quote": quote,
                 "color": color_name(props.get("color")),
-                "page": props.get("pdf_page") or (pos or {}).get("pageNumber") or 1,
+                "page": page_of(props) or 1,
                 "position": pos,
-                "area": area or (not quote and bool(pos)),
+                "area": bool(pos.get("area")) or (not quote and "boundingRect" in pos),
                 "stamp": hl_stamp(u),
             })
         for child in node.get("children", []):
@@ -113,9 +114,11 @@ def _edn_scalar(v):
     return f'"{s}"'
 
 
-def _edn_rect(r):
+def _edn_rect(r, pos):
+    """One rect as the EDN has it: the position's page size in every rect."""
+    values = {**r, "width": pos.get("width", 0), "height": pos.get("height", 0)}
     keys = ("x1", "y1", "x2", "y2", "width", "height")
-    return "{" + " ".join(f":{k} {_edn_scalar((r or {}).get(k, 0))}" for k in keys) + "}"
+    return "{" + " ".join(f":{k} {_edn_scalar(values.get(k, 0))}" for k in keys) + "}"
 
 
 def render_edn(highlights):
@@ -124,7 +127,7 @@ def render_edn(highlights):
         pos = h["position"]
         if not pos or not pos.get("boundingRect"):
             continue  # geometry unknown (e.g. imported without EDN) — md-only
-        rects = " ".join(_edn_rect(r) for r in (pos.get("rects") or [pos["boundingRect"]]))
+        rects = " ".join(_edn_rect(r, pos) for r in pos.get("rects") or [])
         content = f':text {_edn_scalar(h["quote"])}'
         if h["area"]:
             content = f':text "[:span]" :image {h["stamp"]}'
@@ -132,7 +135,7 @@ def render_edn(highlights):
             "{"
             f':id #uuid "{h["uuid"]}" '
             f':page {h["page"]} '
-            f':position {{:bounding {_edn_rect(pos["boundingRect"])} :rects [{rects}] :page {h["page"]}}} '
+            f':position {{:bounding {_edn_rect(pos["boundingRect"], pos)} :rects [{rects}] :page {h["page"]}}} '
             f":content {{{content}}} "
             f':properties {{:color "{h["color"]}"}}'
             "}"
@@ -173,9 +176,9 @@ def _render_block(node, depth, lines, has_pdf):
     if props.get("link_url"):
         label = content or (props.get("quote") or "").strip() or props["link_url"]
         lines.append(f"{tabs}- [{_oneline(label)}]({props['link_url']})")
-    elif props.get("highlight_id") and not props.get("link_page_id"):
+    elif is_highlight(props) and not props.get("link_page_id"):
         if has_pdf:
-            bullet = f"(({hl_uuid(props['highlight_id'])}))"
+            bullet = f"(({hl_uuid(node['id'])}))"
         else:
             # No PDF asset in the graph → no hls page to point at; keep the
             # quote itself so the note still reads.
@@ -250,10 +253,11 @@ def _render_areas(pdfium, pdf_path, stem, areas, scale, out):
                     W, H, stride, nch = bitmap.width, bitmap.height, bitmap.stride, bitmap.n_channels
                 finally:
                     bitmap.close()
-                br = h["position"]["boundingRect"]
+                pos = h["position"]
+                br = pos["boundingRect"]
                 # br coords are relative to a capture-time render of size
                 # width×height — rescale into this bitmap's pixel grid.
-                sx, sy = W / (br.get("width") or W), H / (br.get("height") or H)
+                sx, sy = W / (pos.get("width") or W), H / (pos.get("height") or H)
                 x1, x2 = sorted((int(br["x1"] * sx), int(br["x2"] * sx)))
                 y1, y2 = sorted((int(br["y1"] * sy), int(br["y2"] * sy)))
                 x1, y1 = max(0, x1), max(0, y1)

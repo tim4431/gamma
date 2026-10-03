@@ -83,8 +83,9 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import actor_of, can_write, require_personal_user, require_user, require_ws
-from ..db import connect_data_db, page_now
+from ..auth import actor_of, can_write, require_personal_user_id, require_user_id, require_ws
+from ..blocks_store import PATH_SEP, folder_path
+from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
@@ -119,8 +120,8 @@ class AIChatRequest(BaseModel):
     doc_id: str = ""
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model") from /ai/models
-    # The conversation's key (the chat bucket: a page id, "home" or
-    # "home:<folder>"), hashed with the account and workspace into the
+    # The conversation's key (the chat bucket: a page id, a folder id or
+    # "home"), hashed with the account and workspace into the
     # provider's prompt-cache routing hint — never sent as it is.
     chat_key: str = ""
     # PDF passages the user selected — focus the answer on them:
@@ -156,8 +157,8 @@ class AIChatRequest(BaseModel):
     files: list = Field(default_factory=list)  # uploaded PDFs as {name, data} data URLs
     stream: bool = False  # NDJSON stream of {"delta": …} lines instead of one JSON body
     # Agent chat (gamma/ai_tools.py): agent_scope declares what this chat's
-    # tools reach — "folder" (the home/folder view; `folder` is the path,
-    # "" = library root) or "page" (the per-page chat; `page_id` is the
+    # tools reach — "folder" (the home/folder view; `folder` is the folder's
+    # id, "" = library root) or "page" (the per-page chat; `page_id` is the
     # focused page — read tools + note editors). "" = plain chat (page_id
     # still names the context page). Every tool call comes back as an
     # {"action": …} NDJSON line alongside the text deltas.
@@ -367,15 +368,15 @@ CITE_PROMPT = (
 # Sync def: ai_runtime may refresh a ChatGPT token (a network round trip).
 @router.get("/ai/models")
 def ai_models(request: Request):
-    user = require_user(request)
-    rt = ai_runtime(user)
+    user_id = require_user_id(request)
+    rt = ai_runtime(user_id)
     return {
         "enabled": rt["enabled"],
         "models": rt["models"],             # [{id: "<pid>:<model>", provider, provider_name, model}, ...]
         "default": rt["default"]["id"] if rt["default"] else "",
         # Set-up machine-translation engines [{id: "engine:<id>", label}] —
         # the translation picker offers them next to the models.
-        "translate_engines": translate_engines.configured(user),
+        "translate_engines": translate_engines.configured(user_id),
         # Offered for a model whose own levels are unknown (/ai/model-info);
         # omitted from a request unless picked.
         "efforts": FALLBACK_EFFORTS,
@@ -401,11 +402,11 @@ def ai_models(request: Request):
 # entries (managed under /api/admin/ai-providers*) follow as read-only rows.
 
 def _masked_settings(request: Request) -> dict:
-    user = request.state.user
-    own = [mask_entry(e) for e in own_entries(user)]
+    user_id = request.state.user_id
+    own = [mask_entry(e) for e in own_entries(user_id)]
     # Shared rows: only an admin sees their key hint.
     shared = [{**mask_entry(e, hint=request.state.is_admin), "shared": True}
-              for e in server_entries_for(user)]
+              for e in server_entries_for(user_id)]
     return {
         "providers": own + shared,
         # Feeds the "Add provider" dropdown and the form placeholders
@@ -416,23 +417,23 @@ def _masked_settings(request: Request) -> dict:
     }
 
 
-def _saved_entry(request: Request, user: str, provider_id: str) -> dict | None:
+def _saved_entry(request: Request, user_id: str, provider_id: str) -> dict | None:
     """A saved entry by the id the client knows it by: the account's own,
     or, for an admin only, one of the server's shared entries."""
     if is_server_id(provider_id):
         if not request.state.is_admin:
             return None
         return next((e for e in load_server_ai()["providers"] if e.get("id") == provider_id), None)
-    return next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
+    return next((e for e in load_provider_entries(user_id) if e.get("id") == provider_id), None)
 
 
 def _require_editor(request: Request) -> str:
-    user = require_user(request)
+    user_id = require_user_id(request)
     if request.state.is_guest:
         # A guest account is a throwaway anyone can mint (docs/dev/guests.md):
         # it keeps nothing, keys included, and uses the shared entries only.
         raise HTTPException(status_code=403, detail="guest accounts cannot store API keys")
-    return user
+    return user_id
 
 
 class AIProviderRequest(BaseModel):
@@ -452,27 +453,27 @@ def ai_usage_summary(request: Request):
     model. Calls through the server's shared entries count here too, and
     ``allowance`` is their 24-hour allowance ({limit, used, exhausted}; None
     when no shared entry applies — ai_settings.shared_allowance)."""
-    user = require_user(request)
-    return {**ai_usage.summary(user), "allowance": shared_allowance(user)}
+    user_id = require_user_id(request)
+    return {**ai_usage.summary(user_id), "allowance": shared_allowance(user_id)}
 
 
 @router.delete("/ai/usage")
 def ai_usage_reset(request: Request):
     """Forget the account's usage rows (Settings → AI → Usage → Reset) —
     except the last 24 hours on shared entries, which the allowance counts."""
-    user = require_user(request)
-    return {"ok": True, "deleted": ai_usage.clear(user)}
+    user_id = require_user_id(request)
+    return {"ok": True, "deleted": ai_usage.clear(user_id)}
 
 
 @router.get("/ai/settings")
 def ai_settings_get(request: Request):
-    require_user(request)
+    require_user_id(request)
     return _masked_settings(request)
 
 
 @router.post("/ai/providers")
 def ai_provider_add(payload: AIProviderRequest, request: Request):
-    user = _require_editor(request)
+    user_id = _require_editor(request)
     if _is_oauth_protocol(payload.protocol):
         raise HTTPException(status_code=400,
                             detail="sign-in connections are created by signing in — use the Connect button")
@@ -482,7 +483,7 @@ def ai_provider_add(payload: AIProviderRequest, request: Request):
         if len(entries) >= MAX_PROVIDERS:
             raise HTTPException(status_code=400, detail="too many providers")
         entries.append(entry)
-    update_provider_entries(user, add)
+    update_provider_entries(user_id, add)
     return _masked_settings(request)
 
 
@@ -497,18 +498,18 @@ def _own_entry(entries: list, provider_id: str) -> dict:
 def ai_provider_update(provider_id: str, payload: AIProviderRequest, request: Request):
     # A sign-in entry stays a sign-in entry (name/models remain editable
     # here); shared entries are edited under /api/admin/ai-providers.
-    user = _require_editor(request)
-    update_provider_entries(user, lambda entries: update_entry(_own_entry(entries, provider_id), payload))
+    user_id = _require_editor(request)
+    update_provider_entries(user_id, lambda entries: update_entry(_own_entry(entries, provider_id), payload))
     return _masked_settings(request)
 
 
 @router.delete("/ai/providers/{provider_id}")
 def ai_provider_delete(provider_id: str, request: Request):
-    user = _require_editor(request)
+    user_id = _require_editor(request)
 
     def drop(entries):
         entries[:] = [e for e in entries if e.get("id") != provider_id]
-    update_provider_entries(user, drop)
+    update_provider_entries(user_id, drop)
     return _masked_settings(request)
 
 
@@ -530,7 +531,7 @@ def _probe_model(entry: dict, fallback: str = "") -> str:
             or next(iter(entry_models(entry)), ""))
 
 
-def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
+def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
@@ -542,8 +543,8 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
     # stale token (``retry`` False: not this caller's to reset).
     if retry:
-        clear_refresh_backoff(user, provider_id)
-    rt = ai_runtime(user)
+        clear_refresh_backoff(user_id, provider_id)
+    rt = ai_runtime(user_id)
     if provider_id not in rt["providers"]:
         return _no_credential(entry)
     model = _probe_model(entry, fallback_model)
@@ -574,11 +575,11 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     The probe result comes back in-body — a failed probe is a successful test,
     not an HTTP error. A shared entry (``server:<id>``) is an admin's to
     test; its tokens count on the admin's account."""
-    user = _require_editor(request)
-    entry = _saved_entry(request, user, provider_id)
+    user_id = _require_editor(request)
+    entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    return _probe_entry(user, entry, payload.model if payload else "")
+    return _probe_entry(user_id, entry, payload.model if payload else "")
 
 
 # Sync def: this read-only account call runs in FastAPI's threadpool.
@@ -590,9 +591,9 @@ def ai_provider_usage(provider_id: str, request: Request):
     gateways and Anthropic-style services all expose different billing/admin
     APIs. Report that honestly instead of presenting token counts as quota.
     """
-    user = _require_editor(request)
+    user_id = _require_editor(request)
     # A shared sign-in (``server:<id>``) is an admin's to ask about.
-    entry = _saved_entry(request, user, provider_id)
+    entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
     proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
@@ -600,8 +601,8 @@ def ai_provider_usage(provider_id: str, request: Request):
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
 
-    clear_refresh_backoff(user, provider_id)
-    conf = ai_runtime(user)["providers"].get(provider_id)
+    clear_refresh_backoff(user_id, provider_id)
+    conf = ai_runtime(user_id)["providers"].get(provider_id)
     if not conf:
         return {"available": False, "auth": True, "reason": "Sign in again to query usage."}
     try:
@@ -623,11 +624,11 @@ def ai_provider_usage(provider_id: str, request: Request):
             "reason": "" if usage["windows"] else "The provider returned no usage windows."}
 
 
-def _signed_in_conf(user: str, provider_id: str, proto) -> dict:
+def _signed_in_conf(user_id: str, provider_id: str, proto) -> dict:
     """A sign-in protocol's model list is account-gated: the named connected
     entry's, else (the pre-connect "Add" form has no entry yet) any
     connected entry's of that protocol. There is no fallback list."""
-    providers = ai_runtime(user)["providers"]
+    providers = ai_runtime(user_id)["providers"]
     conf = providers.get(provider_id)
     if not conf or conf.get("protocol") != proto.id:
         conf = next((c for c in providers.values() if c.get("protocol") == proto.id), None)
@@ -651,17 +652,17 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     typed key or the saved entry's, a sign-in protocol with a connected
     entry's token. An admin editing a shared entry names it by its
     ``server:<id>``."""
-    user = _require_editor(request)
+    user_id = _require_editor(request)
     entry = {}
     protocol = payload.protocol
     if payload.provider_id:
-        entry = _saved_entry(request, user, payload.provider_id) or {}
+        entry = _saved_entry(request, user_id, payload.provider_id) or {}
         protocol = protocol or entry.get("protocol")
     proto = ai_protocols.PROTOCOLS.get(protocol)
     if not proto:
         raise HTTPException(status_code=400, detail="unknown protocol")
     if proto.auth == "oauth":
-        conf = _signed_in_conf(user, payload.provider_id, proto)
+        conf = _signed_in_conf(user_id, payload.provider_id, proto)
     else:
         key = (payload.api_key or "").strip() or (entry.get("api_key") or "").strip()
         if not key:
@@ -692,7 +693,7 @@ def ai_model_info(request: Request, model: str = ""):
     lowest first ([] = no effort control, null = unknown — the chat offers
     /ai/models' efforts); speeds are the service tiers it may run at,
     cheapest first ([] = no speed control)."""
-    rt = ai_runtime(require_user(request))
+    rt = ai_runtime(require_user_id(request))
     m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
     conf = rt["providers"].get(m["provider"]) if m else None
     if not conf:
@@ -724,8 +725,8 @@ def ai_health(payload: AIHealthRequest, request: Request):
     completion as the Test button (through the entry's test model). Always
     answers in-body: {configured, ok, auth?, error?, ...}. The entries are
     the ones the account can use: its own, then the server's shared ones."""
-    user = require_user(request)
-    entries = own_entries(user) + server_entries_for(user)
+    user_id = require_user_id(request)
+    entries = own_entries(user_id) + server_entries_for(user_id)
     entry = (next((e for e in entries if e.get("id") == payload.provider_id), None)
              or (entries[0] if entries else None))
     if not entry:
@@ -738,10 +739,10 @@ def ai_health(payload: AIHealthRequest, request: Request):
     # retried once per login.
     retry = request.state.is_admin or not is_server_id(entry.get("id"))
     if payload.mode == "test":
-        return {**result, **_probe_entry(user, entry, payload.model, retry=retry)}
+        return {**result, **_probe_entry(user_id, entry, payload.model, retry=retry)}
     if retry:
-        clear_refresh_backoff(user, entry.get("id"))
-    conf = ai_runtime(user)["providers"].get(entry.get("id"))
+        clear_refresh_backoff(user_id, entry.get("id"))
+    conf = ai_runtime(user_id)["providers"].get(entry.get("id"))
     if not conf:
         return {**result, **_no_credential(entry)}
     try:
@@ -856,7 +857,7 @@ class WatchedStream(StreamingResponse):
 # --- PDF translation ----------------------------------------------------------
 # Backs the viewer's translated view: the frontend segments a page into
 # paragraph blocks (frontend/src/pdf/pdfTranslate.js) and sends their TEXT here;
-# geometry never leaves the client. Translations are cached per (user, target
+# geometry never leaves the client. Translations are cached per (user_id, target
 # language, model, source text) — IN MEMORY only, deliberately: nothing is
 # persisted to disk, the cache just makes retries, re-shows and halted-job
 # resumes free until the server restarts.
@@ -918,12 +919,12 @@ class AITranslateRequest(BaseModel):
     stream: bool = False
 
 
-def _translate_key(user: str, lang: str, model: str, text: str) -> str:
+def _translate_key(user_id: str, lang: str, model: str, text: str) -> str:
     # Keyed on the bare model NAME (not the registry id): registry ids embed
     # the provider-entry id, which changes when a key is re-added — the cached
-    # translation shouldn't die with it. The username scopes the shared
+    # translation shouldn't die with it. The account id scopes the shared
     # in-memory dict per account.
-    return hashlib.sha256(f"{user}\x00{lang}\x00{model}\x00{text}".encode()).hexdigest()
+    return hashlib.sha256(f"{user_id}\x00{lang}\x00{model}\x00{text}".encode()).hexdigest()
 
 
 def _parse_translation_array(reply: str, n: int) -> list:
@@ -942,7 +943,7 @@ def _parse_translation_array(reply: str, n: int) -> list:
 # Sync def: the AI call runs in the threadpool.
 @router.post("/ai/translate")
 def ai_translate(payload: AITranslateRequest, request: Request):
-    user = require_user(request)
+    user_id = require_user_id(request)
     lang = payload.lang
     if lang not in TRANSLATE_LANGS:
         raise HTTPException(status_code=400, detail="unsupported target language")
@@ -958,14 +959,14 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     # no AI provider; anything else resolves to a chat model.
     engine = translate_engines.engine_of(payload.model)
     if engine:
-        engine_conf = translate_engines.credentials(user, engine)
+        engine_conf = translate_engines.credentials(user_id, engine)
         model_id = model_name = translate_engines.MODEL_PREFIX + engine
     else:
-        rt = require_ai_runtime(user)
+        rt = require_ai_runtime(user_id)
         entry = _resolve_model(rt, payload.model)
         model_id, model_name = entry["id"], entry["model"]
 
-    keys = [_translate_key(user, lang, model_name, t) for t in texts]
+    keys = [_translate_key(user_id, lang, model_name, t) for t in texts]
     # hits: key → translation, for every paragraph that won't need the model.
     # Filled from the cache now and from the provider reply below; the final
     # response reads texts the map doesn't cover (whitespace-only paragraphs)
@@ -1007,7 +1008,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # One engine call per batch limit, no streaming: the reply is aligned
         # by the API, so there is nothing to salvage either.
         try:
-            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang, user)
+            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang, user_id)
         except translate_engines.EngineError as e:
             log.warning(f"[ai_translate] {e}")
             raise HTTPException(status_code=502, detail=f"translation failed: {e}")
@@ -1085,7 +1086,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     # refuse (a used-up shared allowance, too many open at once) is refused
     # here, while it can still be an HTTP 429.
     _check_allowance(rt["providers"][entry["provider"]])
-    _check_call_slot(user)
+    _check_call_slot(user_id)
     # Element j of the batch reply belongs to every request index sharing
     # its key (duplicates were collapsed into one upstream element).
     slots = {}
@@ -1135,22 +1136,22 @@ class TranslateEngineTestRequest(BaseModel):
 
 @router.get("/translate/engines")
 def translate_engines_get(request: Request):
-    user = require_user(request)
-    return translate_engines.masked(user, can_edit=not request.state.is_guest)
+    user_id = require_user_id(request)
+    return translate_engines.masked(user_id, can_edit=not request.state.is_guest)
 
 
 @router.put("/translate/engines/{engine}")
 def translate_engine_save(engine: str, payload: TranslateEngineRequest, request: Request):
-    user = _require_editor(request)
-    translate_engines.save(user, engine, payload.fields)
-    return translate_engines.masked(user, can_edit=True)
+    user_id = _require_editor(request)
+    translate_engines.save(user_id, engine, payload.fields)
+    return translate_engines.masked(user_id, can_edit=True)
 
 
 @router.delete("/translate/engines/{engine}")
 def translate_engine_remove(engine: str, request: Request):
-    user = _require_editor(request)
-    translate_engines.remove(user, engine)
-    return translate_engines.masked(user, can_edit=True)
+    user_id = _require_editor(request)
+    translate_engines.remove(user_id, engine)
+    return translate_engines.masked(user_id, can_edit=True)
 
 
 # Sync def: the engine call runs in the threadpool.
@@ -1158,13 +1159,13 @@ def translate_engine_remove(engine: str, request: Request):
 def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, request: Request):
     """Translate one short sentence with the stored credentials: {ok, text}
     or {ok: false, error} (in the body, like the AI provider test)."""
-    user = _require_editor(request)
-    conf = translate_engines.credentials(user, engine)
+    user_id = _require_editor(request)
+    conf = translate_engines.credentials(user_id, engine)
     lang = payload.lang if payload.lang in TRANSLATE_LANGS else "zh-CN"
     sample = ("Le vif renard brun saute par-dessus le chien paresseux." if lang == "en"
               else "The quick brown fox jumps over the lazy dog.")
     try:
-        text = translate_engines.translate(engine, conf, [sample], lang, user)[0]
+        text = translate_engines.translate(engine, conf, [sample], lang, user_id)[0]
     except translate_engines.EngineError as e:
         return {"ok": False, "error": str(e)}
     return {"ok": True, "text": text}
@@ -1184,29 +1185,29 @@ class SearchEngineRequest(BaseModel):
 
 @router.get("/ai/search-services")
 def search_services_get(request: Request):
-    user = require_user(request)
-    return search_services.masked(user, can_edit=not request.state.is_guest)
+    user_id = require_user_id(request)
+    return search_services.masked(user_id, can_edit=not request.state.is_guest)
 
 
 @router.put("/ai/search-services/engine")
 def search_engine_set(payload: SearchEngineRequest, request: Request):
-    user = _require_editor(request)
-    search_services.set_engine(user, payload.engine)
-    return search_services.masked(user, can_edit=True)
+    user_id = _require_editor(request)
+    search_services.set_engine(user_id, payload.engine)
+    return search_services.masked(user_id, can_edit=True)
 
 
 @router.put("/ai/search-services/{service}")
 def search_service_save(service: str, payload: SearchServiceRequest, request: Request):
-    user = _require_editor(request)
-    search_services.save(user, service, payload.fields)
-    return search_services.masked(user, can_edit=True)
+    user_id = _require_editor(request)
+    search_services.save(user_id, service, payload.fields)
+    return search_services.masked(user_id, can_edit=True)
 
 
 @router.delete("/ai/search-services/{service}")
 def search_service_remove(service: str, request: Request):
-    user = _require_editor(request)
-    search_services.remove(user, service)
-    return search_services.masked(user, can_edit=True)
+    user_id = _require_editor(request)
+    search_services.remove(user_id, service)
+    return search_services.masked(user_id, can_edit=True)
 
 
 # Sync def: the service call runs in the threadpool.
@@ -1214,8 +1215,8 @@ def search_service_remove(service: str, request: Request):
 def search_service_test(service: str, request: Request):
     """One small search with the stored settings: {ok, text} or {ok: false,
     error}, in the body like the AI provider test."""
-    user = _require_editor(request)
-    return search_services.test(user, service)
+    user_id = _require_editor(request)
+    return search_services.test(user_id, service)
 
 
 # --- Voice dictation ----------------------------------------------------------
@@ -1237,10 +1238,10 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     chat's current model-registry id, so dictation billing follows the chat's
     provider when that entry speaks the OpenAI protocol. `model` and
     `language` (ISO-639-1, "" = auto-detect) come from Settings → AI chat."""
-    user = require_user(request)
+    user_id = require_user_id(request)
     # Needs an OpenAI credential, not chat models: an entry with none picked
     # still transcribes.
-    rt = ai_runtime(user)
+    rt = ai_runtime(user_id)
     # The entry that surely transcribes (Protocol.transcription: OpenAI
     # itself) before one that may (a compatible server), the chat's own entry
     # first within each.
@@ -1362,12 +1363,12 @@ def reconnect_chatgpt_entry(entry: dict, oauth: dict, name: str, models: str) ->
         entry["models"] = models.strip()[:MAX_MODELS_LEN]
 
 
-def seeded_chatgpt_models(user: str, entry_id: str) -> str:
+def seeded_chatgpt_models(user_id: str, entry_id: str) -> str:
     """A new sign-in's first models, asked live from the account through
-    ``user``'s runtime (the tokens must be stored first); "" when the
+    ``user_id``'s runtime (the tokens must be stored first); "" when the
     listing fails — they are then picked in the entry's form."""
     try:
-        live = [m["id"] for m in ai_catalog.list_models(ai_runtime(user)["providers"][entry_id])]
+        live = [m["id"] for m in ai_catalog.list_models(ai_runtime(user_id)["providers"][entry_id])]
     except Exception:
         live = []
     return ", ".join(live[:2])[:MAX_MODELS_LEN]
@@ -1396,8 +1397,8 @@ class ChatGPTAuthComplete(BaseModel):
 # Sync def: the code exchange and the model listing are network round trips.
 @router.post("/ai/oauth/chatgpt/complete")
 def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
-    user = _require_editor(request)
-    oauth = redeem_chatgpt_signin(user, payload.state, payload.callback)
+    user_id = _require_editor(request)
+    oauth = redeem_chatgpt_signin(user_id, payload.state, payload.callback)
     # Every write below is a read-modify-write of the list as it is THEN
     # (update_provider_entries): a key added in another tab during the
     # network calls stays.
@@ -1407,7 +1408,7 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
             if entry.get("protocol") != "chatgpt":
                 raise HTTPException(status_code=404, detail="provider not found")
             reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
-        update_provider_entries(user, reconnect)
+        update_provider_entries(user_id, reconnect)
         return _masked_settings(request)
     entry = new_chatgpt_entry(new_provider_id(), oauth, payload.name, payload.models)
 
@@ -1415,17 +1416,17 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
         if len(entries) >= MAX_PROVIDERS:
             raise HTTPException(status_code=400, detail="too many providers")
         entries.append(entry)
-    update_provider_entries(user, add)
+    update_provider_entries(user_id, add)
     if not entry["models"]:
         # Seed the model list live from the account (the tokens stored
         # first: the listing reads them back through ai_runtime).
-        models = seeded_chatgpt_models(user, entry["id"])
+        models = seeded_chatgpt_models(user_id, entry["id"])
         if models:
             def seed(entries):
                 for e in entries:
                     if e.get("id") == entry["id"] and not e.get("models"):
                         e["models"] = models
-            update_provider_entries(user, seed)
+            update_provider_entries(user_id, seed)
     return _masked_settings(request)
 
 
@@ -1438,12 +1439,12 @@ _NATIVE_PDF_REJECTED: set = set()
 _WINDOW_RESERVE = 8192 + 2048
 
 
-def _cache_key(user: str, ws: str, payload) -> str:
+def _cache_key(user_id: str, ws: str, payload) -> str:
     """One opaque id per conversation for the providers' prompt caches: the
     chat bucket under the account and workspace, hashed so neither reaches
     the provider."""
     bucket = payload.chat_key or payload.page_id or "home"
-    return hashlib.sha256(f"{user}\0{ws}\0{bucket}".encode()).hexdigest()[:32]
+    return hashlib.sha256(f"{user_id}\0{ws}\0{bucket}".encode()).hexdigest()[:32]
 
 
 def _next_drop(drop: int, history: int) -> int:
@@ -1452,29 +1453,37 @@ def _next_drop(drop: int, history: int) -> int:
     return min(history, max(drop + 2, drop * 2))
 
 
-def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, effort: str = "",
+def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, entry=None, effort: str = "",
                 can_ask: bool = True) -> dict:
     """The tool scope of a chat request: what its tools reach and what the
-    agent prompt names. ``runtime`` / ``entry`` are the connection the chat
-    answers on (absent for a context export): search_web may search through
-    it (gamma/search_services.py). ``permissions`` is the state of every
-    tool permission for this request (ai_tools.tool_states): asking tools
-    are armed only when the request can show an approval card (``can_ask``:
-    a streamed chat of a signed-in account), and the tool loop turns an
-    ask into allow once the user allows it for the chat."""
-    states = tool_states(payload.permissions, granted=payload.granted, can_ask=can_ask and bool(user))
+    agent prompt names — a folder chat's folder by id, with its path as it
+    reads (404 when the id is no folder of ``ws``). ``runtime`` /
+    ``entry`` are the connection the chat answers on (absent for a context
+    export): search_web may search through it (gamma/search_services.py).
+    ``permissions`` is the state of every tool permission for this request
+    (ai_tools.tool_states): asking tools are armed only when the request
+    can show an approval card (``can_ask``: a streamed chat of a signed-in
+    account), and the tool loop turns an ask into allow once the user
+    allows it for the chat."""
+    names = []
+    if payload.agent_scope == "folder" and payload.folder:
+        with connect_pages_db(ws) as conn:
+            names = folder_path(conn, payload.folder)
+        if not names:
+            raise HTTPException(404, "That folder no longer exists")
+    states = tool_states(payload.permissions, granted=payload.granted, can_ask=can_ask and bool(user_id))
     web = {}
     if states.get("web_search") != "off":
-        engine = search_services.web_engine(user, runtime, entry)
+        engine = search_services.web_engine(user_id, runtime, entry)
         web["web_engine"] = engine
         if engine == "ai":
             web["ai_search"] = {"runtime": runtime, "entry": entry, "effort": effort}
     # The person behind the request, when it is their own: a guest or a share
     # link has no browser to hand a blocked fetch to and no publisher
     # sign-ins. Only a live reply can wait on the card a handoff shows.
-    personal = (user if not request.state.is_guest
+    personal = (user_id if not request.state.is_guest
                 and not request.query_params.get("share") else None)
-    return {**web, "type": payload.agent_scope, "folder": payload.folder,
+    return {**web, "type": payload.agent_scope, "folder": payload.folder, "folder_path": PATH_SEP.join(names),
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "permissions": states,
             "context_pages": list(payload.pages),
@@ -1484,7 +1493,7 @@ def _chat_scope(request: Request, user: str, payload, runtime=None, entry=None, 
             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
             # What edit_block mode "selection" rewrites (labels S1, S2…).
             "note_selections": request_note_selections(payload),
-            "actor": user, "can_write": can_write(request),
+            "actor": user_id, "can_write": can_write(request),
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             # Journal sign-ins are on or off (a part of fetching, not a call to approve).
@@ -1560,7 +1569,7 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     approval of theirs waits under that id: answered already, timed out,
     or its chat was stopped."""
     require_ws(request)
-    if not ai_permissions.answer(approval_id, request.state.user or "", payload.decision, payload.note):
+    if not ai_permissions.answer(approval_id, request.state.user_id or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}
 
@@ -1594,7 +1603,7 @@ def ai_revert_change(payload: AIRevert, request: Request):
 
 class ResearchJob(BaseModel):
     question: str = Field(max_length=paper_research.MAX_QUESTION)
-    folder: str = ""   # where the report page is filed (the viewed folder)
+    folder: str = ""   # the folder (an id) it reads and files the report in: the viewed one
     model: str = ""    # the connection to answer on; "" = the account's default
     read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
 
@@ -1607,9 +1616,9 @@ def start_research_job(payload: ResearchJob, request: Request):
     It needs an editor's workspace (it creates that page) and a personal
     account (it answers on the account's own AI connection)."""
     ws = require_ws(request, write=True)
-    user = require_personal_user(request, "Background research needs a personal Gamma account")
+    user_id = require_personal_user_id(request, "Background research needs a personal Gamma account")
     try:
-        return paper_research.start(user=user, ws=ws, question=payload.question,
+        return paper_research.start(user_id=user_id, ws=ws, question=payload.question,
                                     folder=payload.folder, model=payload.model,
                                     read_chars=payload.read_char_limit)
     except ValueError as e:
@@ -1627,14 +1636,14 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     composer as the last one. PDFs go as their extracted text (a file to
     read or paste elsewhere); no provider is called, none needs to be set up."""
     ws = require_ws(request)  # a token too: the chat reads its workspace
-    user = request.state.user
+    user_id = request.state.user_id
     try:  # the connection decides whether search_web rides along
-        rt = require_ai_runtime(user)
+        rt = require_ai_runtime(user_id)
         entry = _resolve_model(rt, payload.model)
     except HTTPException:
         rt = entry = None
     # As the live chat sees it: a streamed chat, whose asking tools are armed.
-    scope = _chat_scope(request, user, payload, rt, entry, can_ask=True)
+    scope = _chat_scope(request, ws, user_id, payload, rt, entry, can_ask=True)
     tools = _chat_tools(payload, scope)
     _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
     text = context_markdown(payload.title, system, messages, tools, coverage,
@@ -1652,9 +1661,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # every write endpoint applies). A token reaches the chat through its
     # workspace (require_ws), never the account's provider settings.
     ws = require_ws(request)
-    user = request.state.user
+    user_id = request.state.user_id
     try:
-        rt = require_ai_runtime(user)
+        rt = require_ai_runtime(user_id)
     except HTTPException as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e))
 
@@ -1663,14 +1672,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
     speed = _resolve_speed(payload.speed)
     images = _parse_images(payload.images)
     # Only a streamed reply can show an approval card and wait for it.
-    scope = _chat_scope(request, user, payload, rt, entry, effort, can_ask=payload.stream)
+    scope = _chat_scope(request, ws, user_id, payload, rt, entry, effort, can_ask=payload.stream)
     # Set once the client is gone (Stop, a dropped connection; WatchedStream):
     # a tool call waiting on its approval card gives up, and nothing runs for it.
     stopped = threading.Event()
     # The conversation the agent loop grows across tool rounds (agent mode).
     state = {"drop": 0}
     count_usage = ai_usage.recorder("chat", entry, rt)
-    cache_key = _cache_key(user, ws, payload)
+    cache_key = _cache_key(user_id, ws, payload)
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
     conf = rt["providers"].get(entry["provider"]) or {}
     window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
@@ -1773,7 +1782,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             read_events=lambda resp: _sse_events(resp, proto),
             on_usage=count_usage,
             max_rounds=payload.tool_rounds,
-            gate=ApprovalGate(ws, scope, user, stopped),
+            gate=ApprovalGate(ws, scope, user_id, stopped),
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
         )
         return loop.run(first_resp)

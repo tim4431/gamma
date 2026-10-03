@@ -23,7 +23,7 @@ import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
-import { pageAttachment } from "../library/libraryUtils";
+import { filedIn, filingChips, folderPath, folderSubtree, pageAttachment } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -39,7 +39,7 @@ export function MarkedText({ text, query, opts, lead = 0 }) {
 
 export default function SearchPanel({
   open, onOpenChange,
-  focusedBlockId, homeBlocks, allFolderPaths,
+  focusedBlockId, homeBlocks, tree,
   openBlock, pendingBlockScrollRef,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
   onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
@@ -77,46 +77,38 @@ export default function SearchPanel({
   useEffect(() => { setSugIdx(0); }, [query]);
   useEffect(() => { setFindIndex(0); }, [pdfMatches]);
 
-  // ---- filter chips (standard labels = exact match, folder labels = prefix)
-  const chipOptions = useMemo(() => {
-    const seen = new Map(); // kind:lowercase → option
-    for (const b of homeBlocks) {
-      for (const t of (b.properties?.category || "").split(",").map((s) => s.trim()).filter(Boolean)) {
-        if (!seen.has(`l:${t.toLowerCase()}`)) seen.set(`l:${t.toLowerCase()}`, { name: t, kind: "label" });
-      }
-    }
-    for (const f of allFolderPaths) {
-      if (!seen.has(`f:${f.toLowerCase()}`)) seen.set(`f:${f.toLowerCase()}`, { name: f, kind: "folder" });
-    }
-    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [homeBlocks, allFolderPaths]);
+  // ---- filter chips (a label = the pages carrying it, a folder = the pages
+  // filed in it or below), {kind, id, name} — a folder named by its path
+  const chipOptions = useMemo(() => [
+    ...[...tree.labels.values()].map((l) => ({ kind: "label", id: l.id, name: l.name })),
+    ...[...tree.folders.keys()].map((id) => ({ kind: "folder", id, name: folderPath(tree, id) })),
+  ].sort((a, b) => a.name.localeCompare(b.name)), [tree]);
   const suggestions = useMemo(() => {
     const qq = q.toLowerCase();
     if (!qq) return [];
-    const picked = new Set(labels.map((l) => `${l.kind}:${l.name.toLowerCase()}`));
-    return chipOptions.filter((o) => !picked.has(`${o.kind}:${o.name.toLowerCase()}`) && o.name.toLowerCase().includes(qq)).slice(0, 6);
+    const picked = new Set(labels.map((l) => `${l.kind}:${l.id}`));
+    return chipOptions.filter((o) => !picked.has(`${o.kind}:${o.id}`) && o.name.toLowerCase().includes(qq)).slice(0, 6);
   }, [q, chipOptions, labels]);
   function confirmLabel(opt) {
-    setLabels((prev) => (prev.some((l) => l.kind === opt.kind && l.name.toLowerCase() === opt.name.toLowerCase()) ? prev : [...prev, opt]));
+    setLabels((prev) => (prev.some((l) => l.kind === opt.kind && l.id === opt.id) ? prev : [...prev, opt]));
     setQuery("");
   }
   const titleScoreOf = useMemo(() => createTitleScorer(q, { caseSensitive, wholeWord }),
     [q, caseSensitive, wholeWord, homeBlocks]);
   const labelMatches = useMemo(() => {
     if (!labels.length) return [];
+    const below = new Map(labels.filter((c) => c.kind === "folder").map((c) => [c.id, folderSubtree(tree, c.id)]));
     const members = homeBlocks.filter((b) => {
-      const cats = (b.properties?.category || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-      const folders = (b.properties?.folder || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-      return labels.every((c) => {
-        const n = c.name.toLowerCase();
-        return c.kind === "folder" ? folders.some((t) => t === n || t.startsWith(n + "/")) : cats.includes(n);
-      });
+      const pageLabels = filedIn(tree.labels, b.properties?.labels);
+      const pageFolders = filedIn(tree.folders, b.properties?.folders);
+      return labels.every((c) => (c.kind === "folder"
+        ? pageFolders.some((id) => below.get(c.id).has(id)) : pageLabels.includes(c.id)));
     });
     // With a query typed, float its matches to the top of the folder/label
     // listing; ties (and everything at score 0) keep library order.
     if (titleScoreOf) members.sort((a, b) => titleScoreOf(b) - titleScoreOf(a));
     return members;
-  }, [labels, homeBlocks, titleScoreOf]);
+  }, [labels, homeBlocks, titleScoreOf, tree]);
   // With chips active, text results only count inside the matching pages.
   const labelPageIds = useMemo(() => (
     labels.length ? new Set(labelMatches.map((b) => b.id)) : null
@@ -129,13 +121,7 @@ export default function SearchPanel({
     setFindIndex(idx);
     const m = list[idx];
     setPdfHidden(false);
-    scrollToRef.current?.({
-      position: {
-        pageNumber: m.page,
-        boundingRect: { ...m.rects[0], width: m.pageW, height: m.pageH, pageNumber: m.page },
-        rects: [],
-      },
-    });
+    scrollToRef.current?.({ position: { pageNumber: m.page, width: m.pageW, height: m.pageH, boundingRect: m.rects[0] } });
   }
 
   // Match highlights for the PDF viewer (multi-rect: a match spanning text
@@ -220,13 +206,7 @@ export default function SearchPanel({
     if (r.block_id === focusedBlockId) {
       const idx = pdfMatches.findIndex((m) => m.page === r.page);
       if (idx >= 0) gotoFind(idx);
-      else scrollToRef.current?.({
-        position: {
-          pageNumber: r.page,
-          boundingRect: { x1: 0, y1: 0, x2: 1, y2: 1, width: 1, height: 1, pageNumber: r.page },
-          rects: [],
-        },
-      });
+      else scrollToRef.current?.({ position: { pageNumber: r.page } });
       return;
     }
     pendingFindRef.current = { page: r.page, sinceNonce: docNonce };
@@ -236,13 +216,7 @@ export default function SearchPanel({
         if (!pendingFindRef.current) return; // the exact-match jump already happened
         if (scrollToRef.current && document.querySelector("[data-page]")) {
           cancelCoarseRestoreRef?.current?.();
-          scrollToRef.current({
-            position: {
-              pageNumber: r.page,
-              boundingRect: { x1: 0, y1: 0, x2: 1, y2: 1, width: 1, height: 1, pageNumber: r.page },
-              rects: [],
-            },
-          });
+          scrollToRef.current({ position: { pageNumber: r.page } });
         } else if (tries++ < 40) setTimeout(go, 200);
       };
       setTimeout(go, 600); // let the session-restore scroll settle first
@@ -269,7 +243,7 @@ export default function SearchPanel({
   const inPage = (r) => focusedBlockId && (r.page_root_id === focusedBlockId || r.id === focusedBlockId);
   const titlesExtra = scopedNotes.filter((r) => r.kind === "page"); // regex-mode / non-home pages
   const notesHere = scopedNotes.filter((r) => r.kind !== "page" && inPage(r));
-  const notesElsewhere = scopedNotes.filter((r) => r.kind === "note" || r.kind === "highlight").filter((r) => !inPage(r));
+  const notesElsewhere = scopedNotes.filter((r) => r.kind !== "page" && r.kind !== "link" && !inPage(r));
   const linkHits = scopedNotes.filter((r) => r.kind === "link" && !inPage(r));
   const libElsewhere = libHits.filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
   const showPdfMatches = inScope(focusedBlockId);
@@ -323,6 +297,11 @@ export default function SearchPanel({
       <span className="searchResultText">{marked(plainSnippet(r.content), markOpts, 50)}</span>
     </button>
   );
+  // A title row's line under it: the page's labels, then its folders.
+  const filingLine = (b) => {
+    const chips = filingChips(tree, b.properties);
+    return [...chips.labels, ...chips.folders].map((c) => c.name).join(", ");
+  };
   const titleRow = (b, subtitle) => (
     <button
       key={`title-${b.id}`}
@@ -364,7 +343,7 @@ export default function SearchPanel({
             </button>
             <div className="searchInputWrap">
               {labels.map((l) => (
-                <span key={`${l.kind}:${l.name}`} className="categoryBadge searchChip">
+                <span key={`${l.kind}:${l.id}`} className="categoryBadge searchChip">
                   {l.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
                   {l.name}
                   <button
@@ -402,7 +381,7 @@ export default function SearchPanel({
                 <div className="categorySuggestions searchLabelSuggest">
                   {suggestions.map((s, i) => (
                     <button
-                      key={`${s.kind}:${s.name}`}
+                      key={`${s.kind}:${s.id}`}
                       className={`categorySuggestionItem${i === sugIdx ? " selected" : ""}`}
                       onMouseDown={(e) => { e.preventDefault(); confirmLabel(s); }}
                       onMouseEnter={() => setSugIdx(i)}
@@ -453,11 +432,11 @@ export default function SearchPanel({
                     <div className="searchSection">{t("Filters:")} {labels.map((c) => c.name).join(" + ")}</div>
                     {labelMatches.length === 0 ? (
                       <div className="searchHint">{t("No pages carry {which}.", { which: labels.length === 1 ? t("this label") : t("all these labels") })}</div>
-                    ) : labelMatches.map((b) => titleRow(b, b.properties?.category || b.properties?.folder || ""))}
+                    ) : labelMatches.map((b) => titleRow(b, filingLine(b)))}
                   </>
                 ) : null}
                 {titleMatches.length || titlesExtra.length ? section(t("Titles"), titleMatches.length + titlesExtra.length) : null}
-                {titleMatches.map((b) => titleRow(b, [b.properties?.category, b.properties?.folder].filter(Boolean).join(", ")))}
+                {titleMatches.map((b) => titleRow(b, filingLine(b)))}
                 {titlesExtra.map(noteRow)}
                 {notesHere.length ? section(t("Notes on this page"), notesHere.length) : null}
                 {notesHere.map(noteRow)}

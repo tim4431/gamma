@@ -22,12 +22,15 @@ the export once a page has five highlights of the user's own
 
 `/api/import/pdf-annotations` converts annotations embedded in the PDF file
 (SumatraPDF/Acrobat/Gamma-export highlights, and /Square//Circle → area
-highlights) into highlight blocks — idempotent via `properties.imported_annot`
+highlights) into highlight blocks — each a `pdf_position` in the page's
+points (the page box once, the quads as bare rects, `area: true` for a
+/Square or /Circle; [api.md](api.md) "The highlight shape") under a block
+id of its own, which is the highlight's id — idempotent via `properties.imported_annot`
 keys; opacity honors the annotation's `/CA` so a Gamma export → re-import
 round-trips exact colors; PyPDF2 dict access returns `IndirectObject`s, always
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
-upload (`gamma/ink.py`), the block gets `ink_url` / `pdf_page` /
+upload (`gamma/ink.py`), the block gets `ink_url` / `ink_strokes` /
 `pdf_position`; a Gamma export's private `/GammaInk` key restores pressure
 and time, foreign ink is polylines at the annotation's width
 ([handwriting.md](handwriting.md)). `/FreeText` (typed text) and `/Text`
@@ -63,7 +66,11 @@ The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
 the write lock like every lookup by attachment. Highlights already on the
 page are skipped by their quote and notes by their text (a note written
 twice in the .md stays twice), so running it again adds nothing. Into an
-existing page it logs one `reload` under the importing account.
+existing page it logs one `reload` under the importing account. An EDN
+position keeps the page size in every rect; the import stores it once
+(`logseq_import.edn_highlight_position`, `highlights.from_scaled`), and an
+annotation of the .md the EDN has no box for keeps its `hl-page` as a
+position of its page alone.
 
 Because imported annotations would otherwise render twice (pdf.js paints them
 into the canvas AND the blocks draw as overlays), the Settings → Reading &
@@ -107,7 +114,9 @@ Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs and Gamma exports
 share one review flow: Upload → Review → Import → Summary.
 
 - `POST /api/import/review` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `gamma`), an optional `folder` and `strip`.
+  `markdown-zip`, `markdown-file`, `gamma`), an optional `folder` (the
+  destination folder's id, `""` the library's top; 400 when it is no
+  folder, `import_review.destination`) and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
   plus a `review_id`; `DELETE` discards it.
 - The import itself is a background job ([tasks.md](tasks.md)):
@@ -152,8 +161,9 @@ accept `.md` / `.markdown` alongside PDFs, and the Import dialog's "Markdown
 notes" source takes one `.md` too. `POST /api/import/markdown` decodes
 UTF-8 (5 MB cap), reduces any browser-supplied relative upload path to its
 filename leaf, uses a YAML-frontmatter `title` or that filename's stem as the
-note-page title (a front-matter `folder:` files the page below the upload's
-folder), and converts the document into nested Gamma blocks through
+note-page title (the form's `folder`, a folder id, files the page there; a
+front-matter `folder:` path files it in the folder at that path below it,
+made where missing in the page's own transaction), and converts the document into nested Gamma blocks through
 `gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
 paragraphs, fenced code, math and other Markdown stay as raw block content for
 the normal editor renderer. Lines indented under a list item continue that
@@ -162,7 +172,8 @@ item's text. That is how the Markdown export writes a multi-line block, and a
 fence or `$$` opened that way swallows its lines, blank ones included. Text
 indented deeper after a blank line becomes a child block, which is how Notion
 exports a toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
-receive the same subfolder labels; unsupported files are skipped.
+are filed in the same subfolders; unsupported files are skipped.
+`POST /api/import/markdown` answers the page's `folders` (ids).
 
 ## Markdown zips: Obsidian vaults, Notion exports, Gamma exports, zipped notes
 
@@ -182,11 +193,17 @@ folder of notes, because they only differ in naming and link conventions
   Notion's `Title <32-hex id>` suffix removed. In an Obsidian vault
   (recognised by its `.obsidian/` folder) the filename is the title, as in
   Obsidian itself, and the H1 stays in the body unless it repeats the title.
-- **Folders**: directories become folder labels, ids stripped. Notion puts
-  a page's subpages (and its images) in a folder named after the page, so
-  the Notion page tree becomes the folder tree. A front-matter `folder:`
-  wins over the directory; the dialog's target folder (the open library
-  folder) prefixes everything. One common root directory (a zipped folder)
+- **Folders**: directories become folders, each directory name a folder
+  name as written (Notion's id suffix stripped), made below the import's
+  destination folder (the form's `folder`, an id: the dialog's target, the
+  open library folder) where missing and reused by name where there
+  (`ops.ensure_filing`, matched as `blocks_store.named`: exactly, else
+  ignoring case). Notion puts a page's subpages (and its images) in a
+  folder named after the page, so the Notion page tree becomes the folder
+  tree. A front-matter `folder:` path wins over the directory. The folders
+  and labels the chosen new notes need are made once, before any page is
+  written (one committed batch per tree): an import that stops keeps them.
+  A preview makes none. One common root directory (a zipped folder)
   and Notion's `Export-<uuid>/` wrappers are dropped; Notion's `Part-N.zip`
   members (big exports) are read in place; `.obsidian/`, `.trash/` and
   `.canvas` files are skipped (a canvas is a warning).
@@ -209,7 +226,8 @@ folder of notes, because they only differ in naming and link conventions
   `![|300](url)` size form, other pipe text the alt. Links that resolve to
   nothing stay as typed (so a Gamma `[[id]]` is never touched).
 - **Obsidian specifics**: front-matter `tags` (list, flow list or comma
-  string; `tag` too) become labels in `properties.category`, `aliases`
+  string; `tag` too) become labels, label blocks made by name where missing
+  (a name keeps its `/` and `,`), `aliases`
   are kept in `properties.aliases`; `> [!type]+`/`-` fold markers are
   dropped (in `md_to_blocks`, so pasted text loses them too);
   `%%comments%%` are removed in a vault (inline or block, never inside
@@ -221,8 +239,10 @@ folder of notes, because they only differ in naming and link conventions
   the row pages' `Property: value` lines stay as text.
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
   is bundled (`assets/<sha>.pdf`, or the vault export's quoted
-  `"[[Paper.pdf]]"` → `doc_id`/`source_url`, the page becomes a paper
-  again) or the remote URL when it isn't; `doi`/`authors`/`year` →
+  `"[[Paper.pdf]]"` → `doc_id`, the page becomes a paper again) or the
+  remote URL (`source_url`) when it isn't; the export writes the page's
+  attachment URL there, derived from `doc_id` for a stored copy
+  (`page_attachment`); `doi`/`authors`/`year` →
   `properties.meta` (`source: manual`; `authors` as a YAML list or a comma
   string), the ```` ```bibtex ```` block → `properties.bibtex`. Highlights come back as their quote blocks, not as
   positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
@@ -233,8 +253,8 @@ folder of notes, because they only differ in naming and link conventions
 - **In short batches**: a page's bundled files are stored while its links
   are rewritten, outside any transaction. Its rows then wait with the next
   ones, and every `PAGES_PER_COMMIT` (50) pages go in as one short
-  transaction: `insert_note_page` takes the write lock, the batch's roots
-  are stamped again right before it commits. Other writers are never shut
+  transaction: `insert_note_page` takes the write lock and touches each
+  page in the change log. Other writers are never shut
   out for the length of an import, the change feed lists each batch as it
   lands ([collab.md](collab.md) "The change feed"), and an import that
   fails half way keeps the batches it finished. (A transaction per page
@@ -247,9 +267,18 @@ mode parses notes and checks assets without writing uploads or blocks; optional
 selection limits page creation and associated assets. Links to unselected new
 notes remain as written, with warnings. A selected note may still link to an
 already imported note. To make the round trip work the
-Markdown export writes the page's folder label into the front matter
+Markdown export writes the page's folder path into the front matter
 (`folder:`), relative to the exported folder — a folder export's root pages
 carry none — so importing the zip into a folder rebuilds the same tree there.
+The path is the names joined with `/`, a `/` inside a name written as `-`
+(so "TCP/IP" re-imports as one folder, "TCP-IP"); the importer splits the
+value on `/` (`blocks_store.split_path`).
+
+The review and the report list each page's `folders` as paths, each a list
+of names from the library's top (`[["Imports", "Notes"]]`: names may hold
+`/`): a new page's are the destination's path and its own, an existing
+(skipped or merged) page's its current ones. The report's `folder` is the
+destination's id.
 
 ## Zotero library import
 
@@ -261,15 +290,20 @@ DOI, collections, tags, HTML notes) and tolerant zip-name lookup
 uploads PDFs (dedup + quota per file, over-quota items are skipped not fatal),
 upserts pages keyed by file hash then `properties.zotero_key` (re-exports
 change bytes — Zotero re-embeds annotations at export time), maps
-collections→folder labels (optional `folder` prefix form field),
-tags→`category`, notes→child blocks (`properties.zotero_note`), then runs the
+collections→folders, nested as in Zotero, made below the destination
+folder (the optional `folder` form field, a folder id) where missing — an
+item in no collection lands in the destination itself —,
+tags→labels (by name, made where missing), notes→child blocks
+(`properties.zotero_note`), then runs the
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
-Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
+Merging only fills gaps: existing meta/bibtex/files are kept, the folders
+and labels union (the page's own ids first, those that still exist —
+`existing_in`).
 Each item's PDF is stored first, outside any transaction
 (`_zotero_prepare`). New pages and their notes then go in
 `ZOTERO_PAGES_PER_COMMIT` (50) at a time, in one short transaction under
-the write lock, their roots stamped at its commit (`_zotero_write_new`);
+the write lock, each page touched in the change log (`_zotero_write_new`);
 an item that merges writes the new pages before it first, so the report
 keeps the export's order. Each new page is looked for again once the lock
 is held: when another import of the same item made it meanwhile (a
@@ -284,7 +318,7 @@ A re-import that changes nothing writes nothing.
 Choosing the ZIP opens the shared import review dialog. Its two trees show
 the archive (including empty directories and unused files) and the destination
 library (PDF/page, new/update, collection paths, notes). The active library
-folder becomes the import prefix. `POST /api/import/zotero/preview` accepts
+folder becomes the import's destination (its id). `POST /api/import/zotero/preview` accepts
 the same `file` and `folder`, requires workspace write access, and writes no
 pages or uploads. Both endpoints use `plan_zotero_archive`, so attachment
 resolution and warnings agree. The staged review flow reuses the upload,
@@ -307,14 +341,16 @@ rechecks the current library, and leaves actual results and warnings in the dial
 
 The import's exact inverse (`gamma/zotero_export.py`, endpoint branches in
 `routers/export.py`): `?mode=zotero-rdf` on `/pages/{id}/export` and
-`/folders/export` builds a `<slug>/<slug>.rdf` + `<slug>/files/<n>/<name>.pdf`
+`/folders/{id}/export` builds a `<slug>/<slug>.rdf` + `<slug>/files/<n>/<name>.pdf`
 zip that Zotero's File → Import reads (unzipped) and Gamma's own
 `/api/import/zotero` accepts as-is. Element shapes mirror what Zotero itself
 writes and `parse_zotero_rdf` reads: venue/volume/DOI on a standalone
 `bib:Journal` referenced by `dcterms:isPartOf`, notes as `bib:Memo` HTML
 (top-level non-highlight subtrees, one note each — the inverse of the import's
-notes→child-blocks mapping), folder labels as the `z:Collection` tree (a folder
-export confines them to paths under the exported folder), tags as `dc:subject`,
+notes→child-blocks mapping), the page's folders as the `z:Collection` tree
+(paths below the exported folder on a folder export — a page filed in the
+exported folder itself is in no collection —, the whole path for one page),
+its labels' names as `dc:subject`,
 `properties.zotero_key` reused as `rdf:about` so keys survive a round trip.
 Attachment paths live in `z:path` like Zotero's own export — never an
 `rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
@@ -339,8 +375,12 @@ text boxes; a text box is a Memo ([below](#text-boxes-in-the-exports)).
 ## The export framework
 
 The export job (`POST /api/jobs/export`, what the Export dialog starts),
-`/pages/{id}/export` and `/folders/export` share one driver (`_run_export`
-in `routers/export.py`). It walks the selected pages exactly once (subtree
+`/pages/{id}/export` and `/folders/{id}/export` share one driver (`_run_export`
+in `routers/export.py`). A folder export names its folder by id (the job's
+`folder`, the route's path); `_Filing` reads the folder and label trees
+once per export — a page's folder paths below the exported folder (its
+folders outside it left out), its labels' names — for the builders that
+write directories, collections or tags. It walks the selected pages exactly once (subtree
 fetch, `build_tree`, a progress report) and feeds each page to a per-format
 `_Builder` keyed by the mode: `_MarkdownBuilder`, `_ObsidianBuilder`,
 `_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_LogseqBuilder`,
@@ -363,7 +403,8 @@ highlights, handwriting and text boxes as standard annotations and, with
 the notes switch, its notes printed on the page (`annotated_page_pdf`, what
 `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
-folder labels below the exported folder (`obsidian_export.page_dir`). A
+page's first folder path below the exported folder (`_Filing`,
+`obsidian_export.page_dir`). A
 page with sheets of paper and no PDF is exported as its sheets. A page with
 neither is left out, and the finished export lists it. A folder with no
 PDF at all fails with the reason.
@@ -380,14 +421,27 @@ routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 
 `?mode=gamma` (`_GammaBuilder`): a *scoped account backup* in the same
 `gamma-backup-1` layout as `/api/export` (`gamma/ws_backup.py`) — a `pages.db` holding just the
-selected page subtrees verbatim (same block ids), a `data.db` with their AI
-chats (plus the folder view's own `home:<path>` chat buckets on a folder
-export), `uploads/` with just the referenced files (`storage.upload_refs`,
-the reference rule the orphan check uses: doc_id PDFs + `/api/uploads/…`
-in content/properties), and a `manifest.json`. **There is no new import code**: any Gamma
-imports it through the existing `/api/import-data?mode=merge` — additive,
-deduped by block id / doc id / content hash, so re-importing adds nothing.
-A page it adds comes in whole and stamped now (the change feed sees it); a
+selected page subtrees verbatim (same block ids), the folder and label
+blocks they are filed under — every folder a page is in with the folders
+above it, every label it carries, and on a folder export the exported
+folder's whole subtree (empty subfolders too) with the folders above it —,
+and their AI chats — each page's bucket whole, the active conversation and
+its history, plus on a folder export the folder views' own buckets, the
+folder's and its subfolders' ids (`db.copy_chats`) — `uploads/` with just the referenced
+files (`storage.upload_refs`, the reference rule the orphan check uses:
+doc_id PDFs + `/api/uploads/…` in content/properties), and a
+`manifest.json`. No `data.db`: everything in it is rebuilt (since schema
+version 28; an older export carries its chats in one, and the import moves
+them as a restore does). **There is no new import code**: any Gamma
+imports it through the existing `/api/import-data?mode=merge` — additive
+(the folders and labels join the workspace's trees: a block it has by id is
+that block, else the one at the same path, or a label of the same name, else
+it is added there; the pages are filed under the workspace's ids for them
+and the folder chats follow — `ws_backup._merge_trees`, `_refiled`; a
+reviewed import brings only the folders and labels its chosen pages need),
+deduped by block id / doc id / conversation / content hash, so re-importing
+adds nothing.
+A page it adds comes in whole and touched now (the change feed sees it); a
 block whose id the workspace already uses on another page gets a fresh id
 ([workspaces.md](workspaces.md) "Export and backups"). The
 ⋮ Import dialog's "Gamma export (.zip)" source reviews the zip like the
@@ -484,7 +538,7 @@ The switches mean, per endpoint:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
 highlight block's own text as a plain bullet; the front matter carries the
-page's folder label relative to the exported folder so the zip re-imports
+page's folder path relative to the exported folder so the zip re-imports
 into the same tree; image sizes export in the
 Obsidian dialect — `obsidian_image_sizes` rewrites any legacy `{:width N}`
 to `![alt|N](url)`. Block links resolve against the export set
@@ -562,7 +616,7 @@ bundling, nothing generated at export time that is not already on the page.
 
 ### The review step
 
-`GET /api/bibliography?page_id=|folder=` answers what the export *would*
+`GET /api/bibliography?page_id=|folder=` (a folder id) answers what the export *would*
 write, as data: `entries` (per citable page: `page_id`, the page `title`, the
 `key` the file will use, `pinned`, and the entry `text`), `skipped` (the
 pages left out, with the reason) and `text` (the file). It runs the same
@@ -588,7 +642,7 @@ The export endpoint answers the *current* bibliography on every request and
 accepts a share token, so a folder share link doubles as a fixed URL:
 
 ```
-<origin>/api/folders/export?name=<folder>&mode=bibtex&share=<token>
+<origin>/api/folders/<folder id>/export?mode=bibtex&share=<token>
 ```
 
 That is what Overleaf's Upload → From External URL (and its Refresh button),
@@ -611,14 +665,14 @@ attachments work inside the app (what Obsidian expects and why:
 one page.
 
 - **Files**: `<dir>/<Title>.md`, the directory tree = the page's first folder
-  label relative to the exported folder (a single page keeps its whole
-  label). `vault_name` strips what Obsidian refuses in a name
+  path relative to the exported folder (a single page keeps its whole
+  path), one directory per folder name. `vault_name` strips what Obsidian refuses in a name
   (`* " \ / < > : | ? # ^ [ ]`, leading dots); same-named pages in one
   directory get ` 2`, ` 3` suffixes. No `# Title` H1 — the filename is the
   title, and a `title:` property is written only when the name had to be
   sanitised. `.obsidian/app.json` (attachment folder = `attachments/`) marks
   the zip as a vault, which is also how the importer recognises it.
-- **Front matter**: `tags` (the `category` labels), `aliases`, `source`
+- **Front matter**: `tags` (the page's labels by name), `aliases`, `source`
   (the bundled PDF as a quoted wikilink `"[[Paper.pdf]]"`, else the URL),
   `doi`, `authors` (list), `year`; then the BibTeX fence as in the readable
   export.
@@ -699,7 +753,8 @@ x offset because wrapping drops spaces at the start of a line.
 
 A text box ([text_boxes.md](text_boxes.md)) is the user's writing placed on
 a page, so every text export writes it as a note, and none takes it for a
-highlight: it has no `highlight_id`. A box on a PDF page also says which
+highlight: it has no `pdf_position` (`highlights.is_highlight` refuses a
+box even with one). A box on a PDF page also says which
 page (`text_box.box_page`); a box on a sheet says nothing more, and neither
 does a box on no page. The nearest sheet wins, as on screen: the recursive
 writers pass down whether they walked through a sheet, so a box under one
@@ -717,8 +772,8 @@ annotated PDF writes them with either switch on (below).
   into it; in a list it is a line under the bullet.
 - **Logseq graph** (`logseq_graph_export.py`): a plain block with no page.
   Logseq keeps a page (`hl-page`) only on annotation blocks, and
-  `collect_highlights` needs `highlight_id`, so a box never reaches the
-  hls page, the EDN file or the area crops.
+  `collect_highlights` takes highlights only (`is_highlight`), so a box
+  never reaches the hls page, the EDN file or the area crops.
 - **Zotero RDF** (`zotero_export.py`): a note (`bib:Memo`). A box on a PDF
   page opens with a bold "Text box on p.N" line, as a highlight's memo
   opens with its page. The bundled PDF copies carry highlights only, so a
@@ -762,7 +817,8 @@ alpha under a 2pt border — because a viewer synthesizing the box from
 regenerates from it would fill at the full `/CA` and hide the figure.
 
 Every writer here maps through the page's view box (`page_frame`), the frame
-the viewer stores positions in: the crop box clipped to the media box, as
+the viewer stores positions in (scaled by the position's `width` /
+`height`, the page as measured when it was taken): the crop box clipped to the media box, as
 pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
 meet. `pdf_notes` places its notes in the same frame. A popup's text
 (`highlight_note_text`) is the annotation's comment and the notes under it.

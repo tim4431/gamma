@@ -176,20 +176,21 @@ function BibtexSteps({ url, folder }) {
 
 // `job`: the export job this dialog shows (then only its last step, with
 // fetchJob / onDownload / onStop / onRetry); otherwise the choice of format
-// and options, and onExport(payload) starts the export.
+// and options, and onExport(payload) starts the export. `folder` is the
+// exported folder's id (null for a page), `folderName` its path for the titles.
 // `onLeaveJob` lets the last step's breadcrumb walk back into the setup: the
 // job itself goes on in Background tasks, as closing the window would leave it.
 export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, ...setup }) {
   const [resume, setResume] = React.useState(0);
   if (job) {
-    return <ExportJobStep job={job} folder={setup.folder} fetchJob={fetchJob} onClose={setup.onCancel}
+    return <ExportJobStep job={job} folder={setup.folder} folderName={setup.folderName} fetchJob={fetchJob} onClose={setup.onCancel}
       onDownload={onDownload} onStop={onStop} onRetry={onRetry}
       onBack={onLeaveJob ? (step) => { setResume(step); onLeaveJob(); } : undefined} />;
   }
   return <ExportSetup {...setup} startStep={resume} />;
 }
 
-function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder, startStep = 0, onCancel, onExport }) {
+function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder, folderName, startStep = 0, onCancel, onExport }) {
   const [step, setStep] = React.useState(startStep);
   const context = { hasPdf, pdfStored, hasMeta, folder };
   const resolved = resolveExport(opts, context);
@@ -220,7 +221,7 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
   // while the format cards are still up, so Next must not be held there.
   const bibNotReady = isBibtex && step === 1 && (bib.loading || !!bib.error || !entries.length);
 
-  return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folder }) : t("Export")} step={step} setStep={setStep}
+  return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} step={step} setStep={setStep}
     firstTitle={t("Choose a format")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
     onCancel={onCancel} actionLabel={t("Export")} action={() => onExport(payload)} finalTitle={t("Export")}
     secondaryAction={copyAction} wide={isBibtex && step === 1} busy={bibNotReady}>
@@ -282,7 +283,7 @@ const EXPORT_HEADINGS = { queued: T("Exporting…"), running: T("Exporting…"),
 // runs and once it ended — the file to download, the pages left out, what
 // to do next. The dialog can close any time: the job goes on in Background
 // tasks, where the row opens this step again.
-function ExportJobStep({ job, folder, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
+function ExportJobStep({ job, folder, folderName, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
   const [full, setFull] = React.useState(null); // the ended job with its result
   const head = React.useRef(null);
   const ended = isFinished(job);
@@ -298,7 +299,7 @@ function ExportJobStep({ job, folder, fetchJob, onClose, onDownload, onStop, onR
   const params = job.params || {};
   const reviewed = hasReviewStep(format); // the formats with a step of their own had one
   const total = reviewed ? 3 : 2;
-  return <SubDialog title={folder ? t("Export “{folder}”", { folder }) : t("Export")} onClose={onClose} className="transferModal">
+  return <SubDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} onClose={onClose} className="transferModal">
     <nav className="transferProgress" aria-label={t("Step {step} of {total}", { step: total, total })}>
       {/* Walking back is allowed even once the file is ready: the export is
           done (or goes on in the tray) and picking another format is a

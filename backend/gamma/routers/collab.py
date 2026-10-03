@@ -1,7 +1,8 @@
 """Collaboration endpoints: the op batch write, the op-log catch-up read,
-and the per-page websocket (presence + fan-out). See gamma/ops.py for the
-op vocabulary and gamma/collab.py for the rooms; docs/dev/collab.md for the
-whole picture."""
+and the per-page websocket (presence + fan-out) — for the pages and for the
+pseudo-pages ``folders`` / ``labels`` (the folder and label trees; members
+only). See gamma/ops.py for the op vocabulary and gamma/collab.py for the
+rooms; docs/dev/collab.md for the whole picture."""
 
 import json
 import secrets
@@ -14,6 +15,7 @@ from .. import collab
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
                     share_lookup, share_scope, workspace_access)
+from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
@@ -77,9 +79,7 @@ def get_ops(page_id: str, request: Request, since: int = 0):
     ws = resolve_ws(request)
     _scope_page(request, ws, page_id)
     with connect_pages_db(ws) as conn:
-        row = conn.execute(
-            "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not row or row[0] != "root":
+        if not is_op_page(conn, page_id):
             raise HTTPException(status_code=404, detail="page not found")
         batches, pruned = ops_since(conn, page_id, since)
         seq = latest_seq(conn, page_id)
@@ -98,9 +98,10 @@ def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | N
     account shows under the display name in ``?name=`` (else Anonymous).
     Reads users.db and pages.db: the handshake runs it in a worker thread."""
     sess = session_lookup(sock.cookies.get(SESSION_COOKIE))
-    sock.state.user = sess[0] if sess else None
-    sock.state.is_guest = bool(sess and sess[1])
-    sock.state.is_admin = bool(sess and sess[2])
+    sock.state.user_id = sess[0] if sess else None
+    sock.state.user = sess[1] if sess else None
+    sock.state.is_guest = bool(sess and sess[2])
+    sock.state.is_admin = bool(sess and sess[3])
     token = sock.query_params.get("share") or ""
     if token:
         share = share_lookup(token)
@@ -111,18 +112,19 @@ def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | N
                 pass  # the socket is closed either way
             return None
         ws = share["workspace_id"]
-    elif sock.state.user:
-        ws, _role = workspace_access(sock.state.user, requested_ws(sock), sess[3])
+    elif sock.state.user_id:
+        ws, _role = workspace_access(sock.state.user_id, requested_ws(sock), sess[4])
     else:
         return None
-    account, is_guest = sock.state.user or "", sock.state.is_guest
+    account, is_guest = sock.state.user_id or "", sock.state.is_guest
     can_edit = collab.peer_access(ws, page_id, account, is_guest, token)
     if can_edit is None:
         return None
     if is_link_visitor(sock):
         user, name = "", link_name(sock.query_params.get("name", ""))
     else:
-        user, name = account, account or ANONYMOUS_NAME
+        user = sock.state.user or ""
+        name = user or ANONYMOUS_NAME
     return ws, collab.Peer(ws=sock, client="", user=user, name=name, color=0, can_edit=can_edit,
                            account=account, is_guest=is_guest, token=token)
 

@@ -1,6 +1,7 @@
 """search_library: notes hits before PDF hits, scope rules, the legacy
 search_pdfs name, and what a page-scoped chat can reach."""
 
+from conftest import make_folder
 from gamma.ai_tools import agent_tools, run_agent_tool
 
 from ai_fixtures import folder, indexed_pdf, org, props  # noqa: F401 (fixtures)
@@ -8,20 +9,21 @@ from ai_fixtures import folder, indexed_pdf, org, props  # noqa: F401 (fixtures)
 
 def test_search_library_scoped_snippets(org, indexed_pdf):
     c, ids = org
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "search_library",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "search_library",
                                   {"query": "error correction"})
     assert action["kind"] == "search" and "1 hit" in action["summary"]
     assert 'PDF "' in text and "p.3" in text and "cat qubits" in text
     assert "not indexed" not in text  # everything in scope is stamped current
     # A folder whose pages carry no PDF is searched by notes alone.
+    textonly = make_folder(c, "textonly")
     r = c.post("/api/blocks", json={"parent_id": "root", "content": "text only",
-                                    "properties": {"folder": "textonly"}})
+                                    "properties": {"folders": [textonly]}})
     assert r.status_code == 200
-    text, _ = run_agent_tool(ids["ws"], folder("textonly"), "search_library", {"query": "cat"})
+    text, _ = run_agent_tool(ids["ws"], folder(textonly), "search_library", {"query": "cat"})
     assert text.startswith("No notes or PDF text match") and "not answer from your own knowledge" in text
     c.delete(f"/api/blocks/{r.json()['id']}")
     # A folder with no pages at all says so.
-    text, _ = run_agent_tool(ids["ws"], folder("nowhere"), "search_library", {"query": "cat"})
+    text, _ = run_agent_tool(ids["ws"], folder(make_folder(c, "nowhere")), "search_library", {"query": "cat"})
     assert text == "No pages are reachable from this chat."
 
 
@@ -35,7 +37,7 @@ def test_search_library_finds_notes_and_pdf_text(org, indexed_pdf):
                                     "content": "cat qubits need bias-preserving gates"})
     assert r.status_code == 200
     note_block = r.json()["id"]
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "search_library",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "search_library",
                                   {"query": "cat qubits"})
     assert action["kind"] == "search" and "2 hits" in action["summary"]
     lines = [l for l in text.splitlines() if l.startswith("- ")]
@@ -48,9 +50,9 @@ def test_search_library_finds_notes_and_pdf_text(org, indexed_pdf):
     assert f"[{note_block}]" in text and "p.3" not in text
     # Editing the note re-indexes it on the next search.
     assert c.put(f"/api/blocks/{note_block}", json={"content": "zebra crossings"}).status_code == 200
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "search_library", {"query": "zebra"})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "search_library", {"query": "zebra"})
     assert f"[{note_block}]" in text
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "search_library",
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "search_library",
                              {"query": "bias-preserving"})
     assert f"[{note_block}]" not in text
     c.delete(f"/api/blocks/{note_block}")
@@ -60,7 +62,7 @@ def test_deprecated_search_pdfs_still_dispatches(org, indexed_pdf):
     """Old chats saved `search_pdfs` calls; a model copying that name out of
     the replayed history is served by search_library, under the new name."""
     c, ids = org
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "search_pdfs",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "search_pdfs",
                                   {"query": "cat qubits"})
     assert action["tool"] == "search_library" and action["kind"] == "search"
     assert "p.3" in text

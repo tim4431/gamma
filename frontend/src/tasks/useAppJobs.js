@@ -76,7 +76,7 @@ export function useAppJobs({
       setExportOpen(false);
       const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0, notes: body.notes ? 1 : 0 });
       await downloadExport(exportFolder
-        ? `/folders/export?name=${encodeURIComponent(exportFolder)}&${query}` : `/pages/${pageId}/export?${query}`, "export");
+        ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
       return;
     }
     if (exportStartingRef.current) return;

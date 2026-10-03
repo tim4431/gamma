@@ -36,12 +36,22 @@ other; deleted-and-edited pages come back.
 Files travel by content hash: uploads a page references are fetched when
 missing here and uploaded when missing there, so a re-run never duplicates.
 
+The folder and label trees travel as two more pages, the pseudo-pages
+``folders`` / ``labels`` (gamma/blocks_store.py ``TREES``): the feeds list
+them, a round reconciles each three ways like a page, and before the pages,
+so a page filed in a new folder never arrives before its folder. They are
+never created or deleted (both sides always have them), and never one
+side's whole under a link's or a force's policy: the pages on each side are
+filed in its own folders, so both sides' blocks are kept.
+
 A mirror may carry a page filter (``page_filter``, a list of page ids; NULL
 = every page): a round then looks only at those pages, in both feeds, moves
-only their files, and a page outside it never travels either way. A listed
-page with no saved base is "new" whatever the feeds say, which is how a page
-added to the filter goes over at the next round. Publishing a page to the
-share host is such a filtered mirror (gamma/publish.py).
+only their files, and a page outside it never travels either way — nor do
+the trees: a page's filing goes along as ids that name nothing there, which
+every read passes by. A listed page with no saved base is "new" whatever
+the feeds say, which is how a page added to the filter goes over at the
+next round. Publishing a page to the share host is such a filtered mirror
+(gamma/publish.py).
 
 Writes on the remote carry the mirror's write-scope integration token
 (``Authorization: Bearer``), so they land under the account that made the
@@ -65,7 +75,8 @@ import urllib.request
 from . import config, ops, pdf_meta, textmerge, workspaces
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
-from .blocks_store import create_page, fetch_subtree, last_child_position, page_root_id
+from .auth import MIRROR_ACTOR
+from .blocks_store import FOLDERS, LABELS, TREES, create_page, fetch_subtree, last_child_position, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
 from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
@@ -78,7 +89,7 @@ from .text_box import normalize_text_box
 
 SYNC_LOG_KEEP = 500        # rows of sync_log kept per mirror
 CLIENT = "sync"            # the op-log client of every local write the engine makes
-ACTOR = "mirror"           # ...and its actor (the remote's per-op authors are not carried over)
+ACTOR = MIRROR_ACTOR       # ...and its actor (the remote's per-op authors are not carried over)
 MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors, bases) is kept, no round runs
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
@@ -377,9 +388,9 @@ def _check_remote(remote_url: str, token: str, mode: str, fetch) -> tuple[str, d
 def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mode: str = "two-way",
                   fetch=None, workspace_id: str = "", adopt: str = "theirs",
                   page_filter: list[str] | None = None) -> dict:
-    """Make a local workspace of ``owner``'s that mirrors the remote
-    workspace the token belongs to — or link ``workspace_id``, an existing
-    personal workspace of the owner's (an imported backup, a copy detached
+    """Make a local workspace of ``owner``'s (an account id) that mirrors
+    the remote workspace the token belongs to — or link ``workspace_id``, an
+    existing personal workspace of the owner's (an imported backup, a copy detached
     and forgotten): its pages that exist on both sides have no common base,
     so the first round adopts ``adopt``'s version of each and records what
     differed as ``diverged`` conflicts. Talks to the remote first
@@ -890,7 +901,7 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 def _local_snapshot(conn, page_id: str) -> dict | None:
     rows = fetch_subtree(conn, page_id)
-    if not rows or rows[0][1] != "root":
+    if not rows or not (rows[0][1] == "root" or (rows[0][1] is None and page_id in TREES)):
         return None
     return snapshot_from_rows(rows)
 
@@ -1192,7 +1203,7 @@ def _box_again(mine, base, now):
 
 # An ink group's drawing and what is derived from it (gamma/ink.py): they
 # change together, so a resend sends them together.
-INK_KEYS = ("ink_url", "ink_strokes", "pdf_position", "pdf_page")
+INK_KEYS = ("ink_url", "ink_strokes", "pdf_position")
 
 
 def _confirm_push(ws: str, remote: Remote, page_id: str, state: dict, *, resend: bool, report: dict) -> dict:
@@ -1457,8 +1468,8 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
     place in the library when no page here holds that key."""
     _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
     with connect_pages_db(ws) as conn:
-        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], block_id=page_id,
-                    position=_free_page_key(conn, remote_tree[page_id]["position"]))
+        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR,
+                    block_id=page_id, position=_free_page_key(conn, remote_tree[page_id]["position"]))
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: remote_tree[page_id]})
     _apply_local(ws, page_id, diff({page_id: remote_tree[page_id]}, remote_tree, page_id, with_base=False),
                  remote_tree)
@@ -1558,6 +1569,13 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         # copy removed) — what the winner has comes over whole, and a page
         # only the loser has is deleted there (the two branches below)
         local_gone = remote_gone = False
+    tree = page_id in TREES
+    if tree:
+        # the folder or label tree: never created or deleted, never one side's
+        # whole under a link's or a force's policy — the pages on each side are
+        # filed in its own folders, so both sides' blocks are kept (merged)
+        local_gone = remote_gone = prune = False
+        adopt = None
 
     # --- page-level: one side deleted it
     if remote_gone and not local_gone:
@@ -1613,7 +1631,10 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         remote_tree, seq = _remote_tree(remote, page_id)
     else:
         remote_tree, seq = base, state["remote_seq"]
-    if remote_tree is None:
+    if remote_tree is None or (tree and local is None):
+        if tree:
+            log.info(f"[mirror] {ws}: {page_id} is not on both sides; left as it is")
+            return
         if state is None and local is not None and prune and adopt == "theirs":
             # a force pull: a page the original does not have goes (its text waits in a conflict)
             with connect_pages_db(ws) as conn:
@@ -1802,13 +1823,17 @@ def _lock(ws: str) -> threading.Lock:
 
 def _feed_all(remote: Remote, cursor: str) -> tuple[dict, dict, str]:
     """Walk the remote feed to the end: ``({page_id: seq}, {page_id:
-    deleted_at}, cursor)``."""
+    deleted_at}, cursor)``. The feed lists in the order of the change log,
+    so a page listed again (written again while the walk went on) is what
+    its last entry says."""
     pages, deleted = {}, {}
     for _ in range(200):
         out = remote.get(f"/api/sync/changes?since={urllib.parse.quote(cursor)}&limit=1000")
         for p in out["pages"]:
+            deleted.pop(p["id"], None)
             pages[p["id"]] = p["seq"]
         for d in out["deleted"]:
+            pages.pop(d["id"], None)
             deleted[d["id"]] = d["deleted_at"]
         cursor = out["cursor"]
         if not out["more"]:
@@ -1817,12 +1842,18 @@ def _feed_all(remote: Remote, cursor: str) -> tuple[dict, dict, str]:
 
 
 def _local_feed_all(ws: str, cursor: str) -> tuple[set, set, str]:
+    """``_feed_all`` over this server's own feed: ``(pages, deleted,
+    cursor)``."""
     pages, deleted = set(), set()
     with connect_pages_db(ws) as conn:
         for _ in range(200):
             out = local_changes(conn, cursor, 1000)
-            pages.update(p["id"] for p in out["pages"])
-            deleted.update(d["id"] for d in out["deleted"])
+            for p in out["pages"]:
+                deleted.discard(p["id"])
+                pages.add(p["id"])
+            for d in out["deleted"]:
+                pages.discard(d["id"])
+                deleted.add(d["id"])
             cursor = out["cursor"]
             if not out["more"]:
                 break
@@ -1893,19 +1924,22 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
             # receive only, or read-only on the remote for now: the local feed is not walked and
             # its cursor stays put, so the first round that may push finds every edit made here
             local_pages, local_deleted, local_cursor = set(), set(), mirror["local_cursor"]
-        todo = {}
-        for page_id in set(remote_pages) | set(remote_deleted) | local_pages | local_deleted:
-            todo[page_id] = {"seq": remote_pages.get(page_id),
-                             "remote_gone": page_id in remote_deleted and page_id not in remote_pages,
-                             "local_gone": page_id in local_deleted and page_id not in local_pages}
         # pages a previous round could not finish come back with the flags they had then
-        # (the cursors have moved past them, so the feeds alone would not list them again)
-        for page_id, flags in (mirror["status"].get("retry") or {}).items():
-            todo.setdefault(page_id, flags)
+        # (the cursors have moved past them, so the feeds alone would not list them again):
+        # each side's say is its feed's when the feed lists the page again, else the retry's
+        retry = mirror["status"].get("retry") or {}
+        todo = {}
+        for page_id in set(remote_pages) | set(remote_deleted) | local_pages | local_deleted | set(retry):
+            then = retry.get(page_id) or {"seq": None, "remote_gone": False, "local_gone": False}
+            there = page_id in remote_pages or page_id in remote_deleted
+            here = page_id in local_pages or page_id in local_deleted
+            todo[page_id] = {"seq": remote_pages.get(page_id) if there else then["seq"],
+                             "remote_gone": page_id in remote_deleted if there else then["remote_gone"],
+                             "local_gone": page_id in local_deleted if here else then["local_gone"]}
         if mirror["page_filter"] is not None:
             todo = _filtered(ws, mirror["page_filter"], todo, force=report["prune"])
         failed = {}
-        order = sorted(todo)
+        order = sorted(todo, key=lambda p: (p not in TREES, p))  # the trees first: the pages are filed in them
         for n, page_id in enumerate(order):
             flags = todo[page_id]
             if _stored_mode(ws) == "off":
@@ -2002,7 +2036,7 @@ def _filtered(ws: str, page_filter: list[str], todo: dict, *, force: bool) -> di
 def _title_of(ws: str, page_id: str) -> str:
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    return ((row[0] if row else "") or "")[:120]
+    return ((row[0] if row else "") or {FOLDERS: "Folders", LABELS: "Labels"}.get(page_id, ""))[:120]
 
 
 def sync_in_background(ws: str) -> None:

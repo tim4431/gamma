@@ -18,7 +18,7 @@ export function bibliographyPreview({ pageId = "", folder = "" } = {}) {
 // one: publishing stays the share popover's decision, with its audience.
 export async function shareToken({ pageId = "", folder = "" } = {}) {
   const url = folder
-    ? `${API}/share-settings/folder?name=${encodeURIComponent(folder)}`
+    ? `${API}/share-settings/folder/${encodeURIComponent(folder)}`
     : `${API}/share-settings/${encodeURIComponent(pageId)}`;
   try {
     return (await apiJson(url))?.token || "";

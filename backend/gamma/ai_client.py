@@ -76,30 +76,30 @@ _open_calls: dict[str, int] = {}
 _open_calls_lock = threading.Lock()
 
 
-def _take_call_slot(user: str) -> None:
+def _take_call_slot(user_id: str) -> None:
     with _open_calls_lock:
-        n = _open_calls.get(user, 0)
+        n = _open_calls.get(user_id, 0)
         if n >= MAX_OPEN_CALLS:
             raise TooManyCalls(MAX_OPEN_CALLS)
-        _open_calls[user] = n + 1
+        _open_calls[user_id] = n + 1
 
 
-def check_call_slot(user: str) -> None:
-    """Refuse up front (TooManyCalls) when ``user`` already has every slot
+def check_call_slot(user_id: str) -> None:
+    """Refuse up front (TooManyCalls) when ``user_id`` already has every slot
     in use: for a route whose call opens later, inside its stream, where a
     refusal could no longer be an HTTP 429."""
     with _open_calls_lock:
-        if _open_calls.get(user, 0) >= MAX_OPEN_CALLS:
+        if _open_calls.get(user_id, 0) >= MAX_OPEN_CALLS:
             raise TooManyCalls(MAX_OPEN_CALLS)
 
 
-def _free_call_slot(user: str) -> None:
+def _free_call_slot(user_id: str) -> None:
     with _open_calls_lock:
-        n = _open_calls.get(user, 0) - 1
+        n = _open_calls.get(user_id, 0) - 1
         if n > 0:
-            _open_calls[user] = n
+            _open_calls[user_id] = n
         else:
-            _open_calls.pop(user, None)
+            _open_calls.pop(user_id, None)
 
 
 class _OpenCall:
@@ -108,8 +108,8 @@ class _OpenCall:
     closes it when the reply ends or fails, a stream's also when its client
     goes away), or, for a response dropped unread, when it is collected."""
 
-    def __init__(self, response, user: str):
-        self._response, self._user = response, user or None
+    def __init__(self, response, user_id: str):
+        self._response, self._user_id = response, user_id or None
 
     def __getattr__(self, name):
         return getattr(self._response, name)
@@ -124,12 +124,12 @@ class _OpenCall:
         self.close()
 
     def close(self):
-        user, self._user = self._user, None
+        user_id, self._user_id = self._user_id, None
         try:
             self._response.close()
         finally:
-            if user:
-                _free_call_slot(user)
+            if user_id:
+                _free_call_slot(user_id)
 
     def __del__(self):
         if "_response" in self.__dict__:
@@ -253,20 +253,20 @@ def open_ai(
     wire = ai_protocols.of(conf).wire(conf, tools)
     request = wire.request(conf, messages, system, entry["model"], pdf_b64s,
                            effort, max_tokens, images, stream, tools, cache_key, speed)
-    user = runtime.get("user") or ""
-    if user:
-        _take_call_slot(user)
+    user_id = runtime.get("user") or ""
+    if user_id:
+        _take_call_slot(user_id)
     try:
         response = urllib.request.urlopen(request, timeout=timeout)
     except BaseException as error:
-        if user:
-            _free_call_slot(user)
+        if user_id:
+            _free_call_slot(user_id)
         if isinstance(error, urllib.error.HTTPError):
             detail = upstream_detail(error)
             log.warning(f"[ai] {detail}")
             raise UpstreamError(error.code, detail)
         raise
-    return _OpenCall(response, user)
+    return _OpenCall(response, user_id)
 
 
 def normalize_usage(raw, provider_protocol) -> dict | None:

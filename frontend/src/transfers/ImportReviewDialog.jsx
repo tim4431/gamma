@@ -20,7 +20,9 @@ const STEPS = [T("Upload"), T("Review"), T("Import"), T("Summary")];
 const PHASE_STEP = { upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
 const PHASE_LABEL = { upload: t("Uploading for review"), scanning: t("Checking files and library destinations") };
 
-export default function ImportReviewDialog({ source, file, strip, folder = "", jobId: openedJob = null, tasks, onClose }) {
+// `folder`: the destination folder's id ("" = the library root);
+// `folderPath(id)` names it, for a review opened again from its job too.
+export default function ImportReviewDialog({ source, file, strip, folder = "", folderPath, jobId: openedJob = null, tasks, onClose }) {
   const reopened = Boolean(openedJob);
   const [jobId, setJobId] = React.useState(openedJob);
   const job = jobId ? tasks.byId(jobId) : null;
@@ -105,7 +107,8 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", j
   };
   const percent = progress.total ? Math.min(100, Math.floor(progress.loaded / progress.total * 100)) : null;
   const title = result ? t("Import complete") : t("Review {label} import", { label: t(format.label) });
-  const destinationLabel = `${t("Library")}${(plan?.folder || params.folder) ? ` / ${plan?.folder || params.folder}` : " / All pages"}`;
+  const destinationFolder = folderPath(plan?.folder || params.folder || "");
+  const destinationLabel = `${t("Library")} / ${destinationFolder || t("All pages")}`;
   const libraryColumn = (
     <section aria-label={t("Library after import")}><h3>{result ? t("Imported to library") : t("Library after import")}</h3>
       <p className="importDestination">{destinationLabel}</p>

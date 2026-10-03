@@ -68,7 +68,7 @@ const EXPORT_FORMATS = [
     hint: T("A complete copy for another Gamma library"), editable: [], fixed: { highlights: true, notes: true, bundle: true } },
 ];
 
-// The bibliography endpoint for a page or a folder (routers/export.py
+// The bibliography endpoint for a page or a folder (its id; routers/export.py
 // ?mode=bibtex). `base` is the API root the URL is relative to: the app's own
 // `/api` for a fetch, or `<origin>/api` for a link someone pastes into
 // Overleaf. With `share` it carries a share token, which names the workspace
@@ -76,7 +76,7 @@ const EXPORT_FORMATS = [
 export function bibliographyUrl(base, { pageId = "", folder = "", share = "" } = {}) {
   const token = share ? `&share=${encodeURIComponent(share)}` : "";
   return folder
-    ? `${base}/folders/export?name=${encodeURIComponent(folder)}&mode=bibtex${token}`
+    ? `${base}/folders/${encodeURIComponent(folder)}/export?mode=bibtex${token}`
     : `${base}/pages/${encodeURIComponent(pageId)}/export?mode=bibtex${token}`;
 }
 
@@ -175,7 +175,7 @@ const IMPORT_SOURCES = [
     instructions: T("Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
   { id: "zotero", label: T("Zotero library (.zip)"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, actionLabel: T("Choose .zip…") },
   { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), actionLabel: T("Choose file…"),
-    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folder labels, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
+    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
   { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), actionLabel: T("Choose .zip…"),

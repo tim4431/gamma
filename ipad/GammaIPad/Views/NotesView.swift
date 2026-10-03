@@ -100,7 +100,7 @@ struct NotesView: View {
                     label = "Page \(sheets)"
                 } else if props["ink_url"] != nil {
                     kind = "ink"
-                    let page = props.int("pdf_page").map { " · p. \($0)" } ?? ""
+                    let page = props.dict("pdf_position").int("pageNumber").map { " · p. \($0)" } ?? ""
                     label = "Handwriting\(page), \(props.int("ink_strokes") ?? 0) strokes"
                 } else {
                     kind = "note"

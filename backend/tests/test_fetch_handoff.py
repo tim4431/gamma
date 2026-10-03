@@ -14,7 +14,7 @@ import pytest
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
 from ai_fixtures import FakeResp, folder
-from conftest import login, make_user
+from conftest import account_of, login, make_folder, make_user
 from gamma import ai_web, fetch_handoff, net_guard
 from gamma import publisher_sessions as sessions
 from gamma.ai_tools import agent_system, run_agent_tool
@@ -54,11 +54,13 @@ def web(transport, monkeypatch):
 
 @pytest.fixture
 def fetch(accounts):
-    """fetch_paper in a chat of USER's (the scope a personal account's chat gets)."""
+    """fetch_paper in a chat of USER's (the scope a personal account's chat
+    gets); ``user``: the account named, None for a chat with no handoff."""
     ws = make_user(USER, "handoff-password")
 
     def run(source, user=USER, **scope):
-        return run_agent_tool(ws, {**folder(""), "read_chars": 20000, "handoff_user": user, **scope},
+        handoff_user = account_of(user) if user else None
+        return run_agent_tool(ws, {**folder(""), "read_chars": 20000, "handoff_user": handoff_user, **scope},
                               "fetch_paper", {"source": source})
     return run
 
@@ -79,7 +81,7 @@ def test_cloudflare_challenge_opens_a_handoff_card_and_retries_reuse_it(web, fet
     assert "a CAPTCHA or bot check at www.science.example" in text
     assert "end your reply" in text and "do not retry this source" in text
     assert 'fetch_paper(source="doi:10.5555/cf-test") returns it' in text
-    req = fetch_handoff.get(USER, handoff["id"])
+    req = fetch_handoff.get(account_of(USER), handoff["id"])
     assert req["url"] == landing and req["status"] == "waiting"
 
     # The model retrying (in another spelling) gets the same card, not a new one.
@@ -99,7 +101,7 @@ def test_pdf_behind_sign_in_redirect_opens_the_paper_not_the_login_page(web, fet
                           b"<html><title>Sign in</title><form><input type=password name=p></form></html>")
     text, action = fetch(pdf)
     assert action["handoff"]["wall"] == "login" and "a sign-in page" in text
-    assert fetch_handoff.get(USER, action["handoff"]["id"])["url"] == pdf
+    assert fetch_handoff.get(account_of(USER), action["handoff"]["id"])["url"] == pdf
 
 
 def test_article_page_only_is_read_and_offers_the_full_text(web, fetch):
@@ -117,7 +119,7 @@ def test_article_page_only_is_read_and_offers_the_full_text(web, fetch):
     # The page's other PDF links, for the model to try; the advertised one met the wall already.
     assert "PDF links on the page (1; fetch_paper can read them):\n" in text
     assert ": https://journals.example.org/suppl/wall-si.pdf\n" in text and "/pdf/wall\n" not in text
-    req = fetch_handoff.get(USER, action["handoff"]["id"])
+    req = fetch_handoff.get(account_of(USER), action["handoff"]["id"])
     assert (req["wall"], req["url"], req["pdf_url"]) == ("abstract", landing, pdf)
 
 
@@ -134,7 +136,7 @@ def test_access_wall_ignores_a_widget_on_a_real_article():
 
 def test_card_endpoints_deliver_watch_dismiss_and_privacy(accounts, web, fetch):
     alice, bob = accounts
-    req = fetch_handoff.open_request(USER, "doi:10.5555/deliver", wall="captcha",
+    req = fetch_handoff.open_request(account_of(USER), "doi:10.5555/deliver", wall="captcha",
                                      url="https://www.science.example/doi/10.5555/deliver",
                                      pdf_url="https://www.science.example/doi/pdf/10.5555/deliver")
     rid = req["id"]
@@ -163,20 +165,20 @@ def test_card_endpoints_deliver_watch_dismiss_and_privacy(accounts, web, fetch):
         text, action = fetch(source)
         assert PDF_TEXT in text and action["summary"].endswith("from your browser")
         assert "fetched this PDF in their own browser" in text
-    assert fetch_handoff.delivered(OTHER, "doi:10.5555/deliver") is None
+    assert fetch_handoff.delivered(account_of(OTHER), "doi:10.5555/deliver") is None
 
-    other = fetch_handoff.open_request(USER, "doi:10.5555/other", wall="denied", url="https://a.example/x")
+    other = fetch_handoff.open_request(account_of(USER), "doi:10.5555/other", wall="denied", url="https://a.example/x")
     assert alice.delete(f"/api/ai/handoffs/{other['id']}").json()["status"] == "dismissed"
     r = alice.post(f"/api/ai/handoffs/{other['id']}/pdf", files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))})
     assert r.status_code == 409
     assert alice.get("/api/ai/handoffs/not-a-request").status_code == 404
     with pytest.raises(ValueError):
-        fetch_handoff.open_request(USER, "x", wall="denied", url="javascript:alert(1)")
+        fetch_handoff.open_request(account_of(USER), "x", wall="denied", url="javascript:alert(1)")
 
 
 def test_the_connector_says_where_the_tab_is_and_what_waits_for_the_user(accounts, web):
     alice, _ = accounts
-    rid = fetch_handoff.open_request(USER, "doi:10.5555/bg", wall="captcha", url="https://a.example/bg")["id"]
+    rid = fetch_handoff.open_request(account_of(USER), "doi:10.5555/bg", wall="captcha", url="https://a.example/bg")["id"]
     view = alice.get(f"/api/ai/handoffs/{rid}").json()
     assert view["background"] is False and view["held"] is False
     # Opened out of sight (the card's background setting): the card says so.
@@ -191,7 +193,7 @@ def test_the_connector_says_where_the_tab_is_and_what_waits_for_the_user(account
 def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts, web, fetch):
     alice, bob = accounts
     source = "doi:10.5555/keep"
-    rid = fetch_handoff.open_request(USER, source, wall="login", url="https://journals.example.org/keep")["id"]
+    rid = fetch_handoff.open_request(account_of(USER), source, wall="login", url="https://journals.example.org/keep")["id"]
     assert alice.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "nothing delivered yet"
     pdf = _text_pdf([PDF_TEXT])
     r = alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", pdf)},
@@ -208,8 +210,9 @@ def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts
     assert stored["source_url"] == f"/api/uploads/{stored['doc_id']}.pdf"
     out = alice.post("/api/clip", json={"doc_id": stored["doc_id"], "doi": "10.5555/keep",
                                         "source_url": "https://doi.org/10.5555/keep", "title": "Kept paper",
-                                        "folder": "Chat finds", "fetch_metadata": False}).json()
-    assert (out["doc_id"], out["title"], out["existed"], out["folder"]) == (stored["doc_id"], "Kept paper", False, "Chat finds")
+                                        "folder_path": "Chat finds", "fetch_metadata": False}).json()
+    assert (out["doc_id"], out["title"], out["existed"], out["folders"]) == (
+        stored["doc_id"], "Kept paper", False, [make_folder(alice, "Chat finds")])
     assert alice.get("/api/library/lookup", params={"doi": "10.5555/keep"}).json()["block_id"] == out["block_id"]
     # Storing twice adds nothing: the upload is content-hashed.
     assert alice.post(f"/api/ai/handoffs/{rid}/store").json()["already_existed"] is True
@@ -219,25 +222,25 @@ def test_held_pdfs_are_capped_but_their_text_stays(accounts, web, monkeypatch):
     alice, _ = accounts
     pdf = _text_pdf([PDF_TEXT])
     monkeypatch.setattr(fetch_handoff, "MAX_HELD_BYTES", len(pdf) + 10)
-    first, second = (fetch_handoff.open_request(USER, f"doi:10.5555/held{i}", wall="denied",
+    first, second = (fetch_handoff.open_request(account_of(USER), f"doi:10.5555/held{i}", wall="denied",
                                                 url="https://a.example/x")["id"] for i in range(2))
     for rid in (first, second):
         assert alice.post(f"/api/ai/handoffs/{rid}/pdf", files={"file": ("p.pdf", pdf)}).status_code == 200
-    assert fetch_handoff.held_pdf(USER, first) is None and fetch_handoff.held_pdf(USER, second)
+    assert fetch_handoff.held_pdf(account_of(USER), first) is None and fetch_handoff.held_pdf(account_of(USER), second)
     assert alice.get(f"/api/ai/handoffs/{first}").json()["held"] is False
-    assert fetch_handoff.delivered(USER, "doi:10.5555/held0"), "the chat still reads it"
+    assert fetch_handoff.delivered(account_of(USER), "doi:10.5555/held0"), "the chat still reads it"
     assert alice.post(f"/api/ai/handoffs/{first}/store").status_code == 404
 
 
 def test_card_endpoints_need_a_personal_account(accounts, guest, anon):
-    rid = fetch_handoff.open_request(USER, "doi:10.5555/g", wall="denied", url="https://a.example/g")["id"]
+    rid = fetch_handoff.open_request(account_of(USER), "doi:10.5555/g", wall="denied", url="https://a.example/g")["id"]
     assert anon.get(f"/api/ai/handoffs/{rid}").status_code == 401
     assert guest.get(f"/api/ai/handoffs/{rid}").status_code == 403
 
 
 def test_go_page_redirects_its_owner_and_asks_everyone_else(accounts, anon):
     alice, bob = accounts
-    rid = fetch_handoff.open_request(USER, "doi:10.5555/go", wall="login",
+    rid = fetch_handoff.open_request(account_of(USER), "doi:10.5555/go", wall="login",
                                      url="https://journals.example.org/a?x=1&y=\"2\"")["id"]
     page = alice.get(f"/api/ai/handoffs/{rid}/go")
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
@@ -251,13 +254,13 @@ def test_go_page_redirects_its_owner_and_asks_everyone_else(accounts, anon):
 
 def test_requests_expire_and_are_capped_per_account(accounts, monkeypatch):
     fetch_handoff.clear()
-    ids = [fetch_handoff.open_request(USER, f"doi:10.5555/cap{i}", wall="denied",
+    ids = [fetch_handoff.open_request(account_of(USER), f"doi:10.5555/cap{i}", wall="denied",
                                       url="https://a.example/x")["id"]
            for i in range(fetch_handoff.MAX_PER_ACCOUNT + 2)]
-    assert fetch_handoff.get(USER, ids[0]) is None and fetch_handoff.get(USER, ids[-1])
+    assert fetch_handoff.get(account_of(USER), ids[0]) is None and fetch_handoff.get(account_of(USER), ids[-1])
     now = time.time()
     monkeypatch.setattr(fetch_handoff.time, "time", lambda: now + fetch_handoff.TTL + 1)
-    assert fetch_handoff.get(USER, ids[-1]) is None and fetch_handoff.target(ids[-1]) is None
+    assert fetch_handoff.get(account_of(USER), ids[-1]) is None and fetch_handoff.target(ids[-1]) is None
 
 
 # ------------------------------------------------------ the chat loop
@@ -301,10 +304,11 @@ def blocked_chat(accounts, web, monkeypatch):
 
 
 def _await_request(user=USER, timeout=5.0):
-    """The id of the request the reply is waiting on, once it opened one."""
+    """The id of the request the reply of the account named ``user`` is
+    waiting on, once it opened one."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        waiting = fetch_handoff.waiting(user)
+        waiting = fetch_handoff.waiting(account_of(user))
         if waiting:
             return waiting[0]["id"]
         time.sleep(0.02)
@@ -360,7 +364,7 @@ def test_a_waiting_request_is_listed_in_background_tasks(accounts, blocked_chat,
     (row,) = rows
     assert row["title"] == "www.science.example" and row["readonly"] is True
     assert row["progress"]["phase"] == "browser"   # nobody has taken the tab yet
-    assert row["params"]["request"] == fetch_handoff.waiting(USER)[0]["id"]
+    assert row["params"]["request"] == fetch_handoff.waiting(account_of(USER))[0]["id"]
     # Another account never sees it, and a settled request drops off.
     assert not [r for r in bob.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
     alice.request("DELETE", f"/api/ai/handoffs/{row['params']['request']}")
@@ -374,7 +378,7 @@ def test_an_unanswered_card_lets_the_reply_carry_on(accounts, blocked_chat, monk
     action, = [line["action"] for line in lines if "action" in line]
     assert "nothing arrived" in action["result"] and "carry on" in action["result"]
     # The card stays: the user can still finish it from Background tasks.
-    assert len(fetch_handoff.waiting(USER)) == 1
+    assert len(fetch_handoff.waiting(account_of(USER))) == 1
 
 
 def test_a_chat_that_does_not_wait_ends_with_the_card(accounts, blocked_chat):
@@ -413,7 +417,7 @@ def test_connected_host_gets_its_browsers_user_agent(accounts, transport, monkey
     url, other = f"https://{host}/prl/pdf/10.1103/ua", "https://elsewhere.example/x.pdf"
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36"
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM publisher_sessions WHERE username=?", (USER,))
+        conn.execute("DELETE FROM publisher_sessions WHERE user_id = ?", (account_of(USER),))
         conn.commit()
     for u in (url, other):
         routes[u] = (200, {"Content-Type": "application/pdf"}, b"%PDF-1.4")
@@ -430,7 +434,7 @@ def test_connected_host_gets_its_browsers_user_agent(accounts, transport, monkey
         return out
 
     monkeypatch.setattr(net_guard._BrowserAgent, "https_request", spy)
-    token = sessions.current_user.set(USER)
+    token = sessions.current_user.set(account_of(USER))
     try:
         net_guard.guarded_urlopen(Request(url, headers=pdf_mod.BROWSER_HEADERS)).read()
         net_guard.guarded_urlopen(Request(other, headers=pdf_mod.BROWSER_HEADERS)).read()
@@ -505,7 +509,7 @@ def test_meta_refresh_landing_is_followed_to_the_refusing_publisher(web, fetch):
     routes[article] = (403, {"Content-Type": "text/html"}, b"<html><title>Access denied</title></html>")
     text, action = fetch("doi:10.1016/0031-9163(62)91369-0")
     assert action["handoff"]["host"] == "www.sciencedirect.com"
-    assert fetch_handoff.get(USER, action["handoff"]["id"])["url"] == article
+    assert fetch_handoff.get(account_of(USER), action["handoff"]["id"])["url"] == article
 
 
 def test_bot_check_host_opens_the_page_it_guards(web, fetch):
@@ -520,7 +524,7 @@ def test_bot_check_host_opens_the_page_it_guards(web, fetch):
     routes[check] = (200, {"Content-Type": "text/html"}, b"<html><body>" + b"<p>Please verify.</p>" * 200 + b"</body></html>")
     text, action = fetch("doi:10.1088/1361-6633/aa7e1a")
     assert action["handoff"]["wall"] == "captcha" and action["handoff"]["host"] == "iopscience.iop.org"
-    assert fetch_handoff.get(USER, action["handoff"]["id"])["url"] == article
+    assert fetch_handoff.get(account_of(USER), action["handoff"]["id"])["url"] == article
 
 
 def test_arxiv_refusal_falls_back_to_its_export_host(web, fetch):

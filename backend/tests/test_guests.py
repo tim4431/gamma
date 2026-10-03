@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_page, make_user
+from conftest import account_of, login, make_page, make_user
 
 
 def _new_client():
@@ -72,16 +72,16 @@ def test_a_guest_login_mints_an_account_with_its_own_workspace():
     c, name = _guest_client()
     assert name.startswith("guest-") and len(name) == 14
     with connect_users_db() as conn:
-        is_guest, pwhash, created, guest_date = conn.execute(
-            "SELECT u.is_guest, u.password_hash, u.created_at, s.guest_date FROM users u "
-            "JOIN sessions s ON s.username = u.username WHERE u.username = ?", (name,)).fetchone()
-    assert is_guest == 1 and pwhash == "" and guest_date == created[:10]
+        is_guest, pwhash, created, sessions = conn.execute(
+            "SELECT u.is_guest, u.password_hash, u.created_at, COUNT(s.token) FROM users u "
+            "JOIN sessions s ON s.user_id = u.id WHERE u.username = ?", (name,)).fetchone()
+    assert is_guest == 1 and pwhash == "" and sessions == 1
     s = c.get("/api/session").json()
     assert s["user"] == name and s["is_guest"] is True and s["is_admin"] is False
     assert len(s["workspaces"]) == 1 and s["workspaces"][0]["id"] == s["default_workspace"]
     assert s["guest_expires_at"] == guests.expires_at(created, 24)
     ws = s["default_workspace"]
-    assert workspaces.is_guest_workspace(ws) and workspaces.personal_owner(ws) == name
+    assert workspaces.is_guest_workspace(ws) and workspaces.personal_owner(ws) == account_of(name)
     # the welcome page, naming the lifetime
     children = c.get("/api/blocks/root/children").json()["children"]
     welcome = next(b for b in children if b["content"] == "Welcome")
@@ -107,9 +107,10 @@ def test_expired_guest_is_signed_out_and_deleted():
     from gamma.db import ws_dir
 
     c, name = _guest_client()
-    ws = workspaces.default_workspace(name)
+    user_id = account_of(name)
+    ws = workspaces.default_workspace(user_id)
     token = c.cookies.get("session")
-    assert auth.session_lookup(token)[0] == name  # the websocket handshake's view
+    assert auth.session_lookup(token)[:2] == (user_id, name)  # the websocket handshake's view
     _backdate(name, 25)
     assert auth.session_lookup(token) is None     # an expired guest opens no socket either
     r = c.get("/api/session")
@@ -154,21 +155,22 @@ def test_delete_account_takes_everything_that_is_only_the_accounts():
     from gamma import guests, workspaces
     from gamma.db import connect_users_db, page_now, ws_dir
 
-    name = guests.new_guest()
-    ws = workspaces.default_workspace(name)
+    user_id, name = guests.new_guest()
+    ws = workspaces.default_workspace(user_id)
     with connect_users_db() as conn:
-        conn.execute("INSERT INTO ai_usage (username, at, kind) VALUES (?, ?, 'chat')", (name, page_now()))
-        conn.execute("INSERT INTO user_prefs VALUES (?, '', 'profile', '{}', ?)", (name, page_now()))
-        conn.execute("INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)",
-                     (f"tok-{name}", name, page_now()))
+        conn.execute("INSERT INTO ai_usage (user_id, at, kind) VALUES (?, ?, 'chat')", (user_id, page_now()))
+        conn.execute("INSERT INTO user_prefs VALUES (?, '', 'profile', '{}', ?)", (user_id, page_now()))
+        conn.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+                     (f"tok-{name}", user_id, page_now()))
         conn.commit()
-    assert workspaces.delete_account(name) == [ws]
+    assert workspaces.delete_account(user_id) == [ws]
     with connect_users_db() as conn:
-        for table in ("users", "ai_usage", "user_prefs", "sessions", "workspace_members"):
-            assert not conn.execute(f"SELECT 1 FROM {table} WHERE username = ?", (name,)).fetchone(), table
+        assert not conn.execute("SELECT 1 FROM users WHERE id = ? OR username = ?", (user_id, name)).fetchone()
+        for table in ("ai_usage", "user_prefs", "sessions", "workspace_members"):
+            assert not conn.execute(f"SELECT 1 FROM {table} WHERE user_id = ?", (user_id,)).fetchone(), table
         assert not conn.execute("SELECT 1 FROM workspaces WHERE id = ?", (ws,)).fetchone()
     assert not ws_dir(ws).exists()
-    assert workspaces.delete_account(name) == []  # unknown account: nothing to do
+    assert workspaces.delete_account(user_id) == []  # unknown account: nothing to do
 
 
 def test_logout_deletes_the_guest():
@@ -193,15 +195,15 @@ def test_guest_logins_are_rate_limited_per_ip(monkeypatch):
     made = []
 
     def fake_new_guest():  # the account row only: this test counts requests
-        name = guests._insert_account()
-        made.append(name)
-        return name
+        account = guests._insert_account()
+        made.append(account[0])
+        return account
     monkeypatch.setattr(guests, "new_guest", fake_new_guest)
     c = _new_client()
     codes = [c.post("/api/login-guest").status_code for _ in range(11)]
     assert codes == [200] * 10 + [429]
-    for name in made:
-        workspaces.delete_account(name)
+    for user_id in made:
+        workspaces.delete_account(user_id)
 
 
 def test_seed_library_is_restored_into_every_new_guest(tmp_path, monkeypatch):
@@ -223,7 +225,7 @@ def test_seed_library_is_restored_into_every_new_guest(tmp_path, monkeypatch):
 def test_guest_workspace_rails():
     from gamma import workspaces
     c, name = _guest_client()
-    ws = workspaces.default_workspace(name)
+    ws = workspaces.default_workspace(account_of(name))
     assert workspaces.is_guest_workspace(ws) and not workspaces.is_guest_workspace("no-such-ws")
     assert c.post(f"/api/workspaces/{ws}/backups", json={}).status_code == 403
     assert c.get("/api/export-all").status_code == 403

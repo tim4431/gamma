@@ -48,7 +48,7 @@ from .. import cloud_sync
 from ..ai_settings import AI_SETTINGS_PREF_KEY
 from ..search_services import PREF_KEY as SEARCH_PREF_KEY
 from ..translate_engines import ENGINES_PREF_KEY
-from ..auth import require_user, require_ws
+from ..auth import require_user_id, require_ws
 from ..db import (
     PROFILE_BASE_PREF_KEY,
     PROFILE_PREF_KEY,
@@ -88,34 +88,34 @@ class ProfilePatchRequest(BaseModel):
 
 @router.patch("/prefs/profile")
 def write_profile_entries(payload: ProfilePatchRequest, request: Request):
-    user = require_user(request)
-    if len(json.dumps({**get_profile(user)[0], **payload.set})) > MAX_VALUE_BYTES:
+    user_id = require_user_id(request)
+    if len(json.dumps({**get_profile(user_id)[0], **payload.set})) > MAX_VALUE_BYTES:
         raise HTTPException(status_code=413, detail="pref value too large")
-    value, updated_at = patch_profile(user, payload.set)
+    value, updated_at = patch_profile(user_id, payload.set)
     return {"key": PROFILE_PREF_KEY, "value": value, "updated_at": updated_at}
 
 
 @router.get("/prefs/{key}")
 def read_pref(key: str, request: Request):
-    user = require_user(request)
+    user_id = require_user_id(request)
     _check_key(key)
     out = {"key": key}
     if key == PROFILE_PREF_KEY:
-        cloud_sync.sync_if_stale(user)
-        out["cloud_choice"] = cloud_sync.profile_status(user)["state"] == "choose"
-    value, updated_at = get_pref(user, key, "" if key in USER_PREF_KEYS else require_ws(request))
+        cloud_sync.sync_if_stale(user_id)
+        out["cloud_choice"] = cloud_sync.profile_status(user_id)["state"] == "choose"
+    value, updated_at = get_pref(user_id, key, "" if key in USER_PREF_KEYS else require_ws(request))
     return {**out, "value": value, "updated_at": updated_at}
 
 
 @router.put("/prefs/{key}")
 def write_pref(key: str, payload: PrefWriteRequest, request: Request):
-    user = require_user(request)
+    user_id = require_user_id(request)
     _check_key(key)
     if len(json.dumps(payload.value)) > MAX_VALUE_BYTES:
         raise HTTPException(status_code=413, detail="pref value too large")
     if key == PROFILE_PREF_KEY and not isinstance(payload.value, dict):
         raise HTTPException(status_code=400, detail="the profile is a JSON object")
-    updated_at = set_pref(user, key, payload.value, "" if key in USER_PREF_KEYS else require_ws(request))
+    updated_at = set_pref(user_id, key, payload.value, "" if key in USER_PREF_KEYS else require_ws(request))
     return {"key": key, "updated_at": updated_at}
 
 

@@ -1,15 +1,16 @@
-"""Search: GET /api/search — one query over the notes index (block_fts,
-gamma/block_index.py) and the PDF index (pdf_fts): result shape, ordering,
-folder scope, and the lazy per-page rebuild that follows every kind of block
-write — plus the PDF index itself: /api/pdf-search hits and separator
-tolerance, stale index versions, the reindex endpoint, the indexing job."""
+"""Search: GET /api/search — one query over the notes index (block_fts in
+pages.db, gamma/block_index.py) and the PDF index (pdf_fts): result shape,
+ordering, folder scope, and a search right after every kind of block write
+finding what it wrote (the triggers, tests/test_notes_index.py) — plus the
+PDF index itself: /api/pdf-search hits and separator tolerance, stale index
+versions, the reindex endpoint, the indexing job."""
 
 import sqlite3
 
-from conftest import login, make_page, make_user, workspace_of
-from gamma.db import connect_data_db, ws_db_path
+from conftest import login, make_folder, make_page, make_user, workspace_of
+from gamma.db import connect_data_db, connect_pages_db
 from gamma.pdf_index import store_doc
-from gamma.textnorm import INDEX_VERSION, normalize_text
+from gamma.textnorm import normalize_text
 
 
 def _index_pdf(user, doc_id, pages):
@@ -32,22 +33,16 @@ def _search(c, q, **params):
     return r.json()
 
 
-def _meta(user, page_id):
-    with sqlite3.connect(ws_db_path(workspace_of(user), "data.db")) as conn:
-        return conn.execute("SELECT updated_at, ver FROM block_fts_meta WHERE page_id = ?",
-                            (page_id,)).fetchone()
-
-
 def test_search_mixes_notes_and_pdf_hits():
     make_user("searcher", "pw")
     c = login("searcher", "pw")
-    paper = make_page(c, "Wombat paper", properties={"doc_id": "srchdoc001", "folder": "zoo"})
+    paper = make_page(c, "Wombat paper", properties={"doc_id": "srchdoc001", "folders": [make_folder(c, "zoo")]})
     _index_pdf("searcher", "srchdoc001", [(4, "the wombat considered superconducting qubits")])
-    notes = make_page(c, "Field notes", properties={"folder": "zoo/trips"})
+    notes = make_page(c, "Field notes", properties={"folders": [make_folder(c, "zoo/trips")]})
     top = _block(c, notes["id"], "saw a wombat at dusk")
     nested = _block(c, top, "the wombat was digging")
     hl = _block(c, paper["id"], "wombat highlight note",
-                {"highlight_id": "h1", "quote": "unrelated quoted passage"})
+                {"pdf_position": {"pageNumber": 1}, "quote": "unrelated quoted passage"})
 
     body = _search(c, "wombat")
     assert body["indexing"] == 0
@@ -85,35 +80,30 @@ def test_search_folder_scope():
     c = login("searcher", "pw")
     all_hits = _search(c, "wombat")["results"]
     assert {r["source"] for r in all_hits} == {"notes", "pdf"}
-    trips = _search(c, "wombat", scope="zoo/trips")["results"]
+    trips = _search(c, "wombat", scope=make_folder(c, "zoo/trips"))["results"]  # the scope is a folder id
     assert trips and all(r["title"] == "Field notes" for r in trips)
-    zoo = _search(c, "wombat", scope="zoo")["results"]  # a folder includes its subfolders
+    zoo = _search(c, "wombat", scope=make_folder(c, "zoo"))["results"]  # a folder includes its subfolders
     assert {r["title"] for r in zoo} == {"Field notes", "Wombat paper"}
-    assert _search(c, "wombat", scope="elsewhere")["results"] == []
+    assert _search(c, "wombat", scope=make_folder(c, "elsewhere"))["results"] == []
+    assert _search(c, "wombat", scope="zoo")["results"] == []  # a path names no folder
 
 
-def test_dirty_page_reindex_follows_every_write():
-    """Each block writer leaves the page stale for the next search — edits,
-    creates, deletes, subtree replacement, cross-page moves, and the page
-    root's own updated_at (the editor's autosave) — and only that page is
-    rebuilt."""
+def test_a_search_finds_every_write_at_once():
+    """Whatever wrote the blocks — edits, creates, deletes, subtree
+    replacement, cross-page moves, trashing and restoring the page — the
+    next search reads what it left: nothing is rebuilt, nothing is pending."""
     c = login("searcher", "pw")
     page = make_page(c, "Dirty page")
     other = make_page(c, "Other page")
     a = _block(c, page["id"], "alpha lorem")
     b = _block(c, other["id"], "beta lorem")
-    assert {r["block_id"] for r in _search(c, "lorem")["results"]} == {a, b}
-    stamp_other = _meta("searcher", other["id"])
-    assert stamp_other and stamp_other[1] == INDEX_VERSION
+    body = _search(c, "lorem")
+    assert {r["block_id"] for r in body["results"]} == {a, b} and body["indexing"] == 0
 
     # PUT /blocks/{id}: the old text is gone, the new one found.
     assert c.put(f"/api/blocks/{a}", json={"content": "gamma ipsum"}).status_code == 200
-    # Stale, not yet rebuilt: the op stamped the page root past the fingerprint.
-    assert _meta("searcher", page["id"])[0] != c.get(f"/api/blocks/{page['id']}").json()["updated_at"]
     assert [r["block_id"] for r in _search(c, "gamma ipsum")["results"]] == [a]
     assert a not in {r["block_id"] for r in _search(c, "alpha")["results"]}
-    assert _meta("searcher", page["id"]) is not None
-    assert _meta("searcher", other["id"]) == stamp_other  # untouched page: no rebuild
 
     # PUT /blocks/{id}/children (autosave): whole subtree replaced.
     r = c.put(f"/api/blocks/{page['id']}/children",
@@ -133,18 +123,17 @@ def test_dirty_page_reindex_follows_every_write():
     (hit,) = _search(c, "beta")["results"]
     assert hit["block_id"] == b and hit["page_id"] == page["id"] and hit["title"] == "Dirty page"
 
-    # A page in Recently deleted is out of the search; deleted for good, its rows go.
+    # A page in Recently deleted is out of the search, back when restored;
+    # deleted for good, its rows go.
     assert c.delete(f"/api/blocks/{page['id']}").status_code == 200
     assert _search(c, "delta")["results"] == [] and _search(c, "beta")["results"] == []
+    assert c.post(f"/api/trash/{page['id']}/restore").status_code == 200
+    assert [h["block_id"] for h in _search(c, "beta")["results"]] == [b]
+    assert c.delete(f"/api/blocks/{page['id']}").status_code == 200
     assert c.delete(f"/api/trash/{page['id']}").status_code == 200
-    assert _meta("searcher", page["id"]) is None
-
-    # A stale index version rebuilds lazily too (what search-reindex stamps).
-    from gamma.block_index import mark_all_dirty
-    mark_all_dirty(workspace_of("searcher"))
-    assert _meta("searcher", other["id"])[1] == 0
+    with connect_pages_db(workspace_of("searcher")) as conn:
+        assert not conn.execute("SELECT 1 FROM block_fts WHERE block_fts MATCH 'delta OR beta'").fetchone()
     assert _search(c, "lorem")["results"] == []  # other's only block moved away
-    assert _meta("searcher", other["id"])[1] == INDEX_VERSION
 
 
 def test_pdf_search_and_block_search_unchanged():

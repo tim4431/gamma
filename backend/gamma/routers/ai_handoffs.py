@@ -14,19 +14,19 @@ from pydantic import BaseModel, Field
 
 from .. import fetch_handoff as handoff
 from ..ai_web import FETCH_MAX_BYTES, FetchError
-from ..auth import require_personal_user, require_ws
-from ..storage import is_pdf, store_pdf
+from ..auth import require_personal_user_id, require_ws
+from ..storage import is_pdf, pdf_url, store_pdf
 
 router = APIRouter(prefix="/api/ai/handoffs", tags=["ai"])
 
 GONE = "This request has expired — ask the chat again"
 
 
-def _user(request: Request) -> str:
-    user = require_personal_user(request, "Fetching in your browser needs a personal Gamma account")
+def _user_id(request: Request) -> str:
+    user_id = require_personal_user_id(request, "Fetching in your browser needs a personal Gamma account")
     if request.query_params.get("share"):
         raise HTTPException(403, "Fetching in your browser needs a personal Gamma account")
-    return user
+    return user_id
 
 
 def _found(req: dict | None) -> dict:
@@ -37,7 +37,7 @@ def _found(req: dict | None) -> dict:
 
 @router.get("/{rid}")
 def status(rid: str, request: Request):
-    return _found(handoff.get(_user(request), rid))
+    return _found(handoff.get(_user_id(request), rid))
 
 
 class WatchNote(BaseModel):
@@ -48,7 +48,7 @@ class WatchNote(BaseModel):
 @router.post("/{rid}/watch")
 def watch(rid: str, request: Request, payload: WatchNote | None = None):
     payload = payload or WatchNote()
-    return _found(handoff.watch(_user(request), rid, payload.note, payload.background))
+    return _found(handoff.watch(_user_id(request), rid, payload.note, payload.background))
 
 
 class SkipNote(BaseModel):
@@ -60,14 +60,14 @@ class SkipNote(BaseModel):
 @router.delete("/{rid}")
 def dismiss(rid: str, request: Request, payload: SkipNote | None = None):
     payload = payload or SkipNote()
-    return _found(handoff.dismiss(_user(request), rid, payload.note))
+    return _found(handoff.dismiss(_user_id(request), rid, payload.note))
 
 
 # Sync def: reading the spooled upload and extracting its text run in the
 # threadpool.
 @router.post("/{rid}/pdf")
 def deliver(rid: str, request: Request, file: UploadFile = File(...), url: str = Form("")):
-    user = _user(request)
+    user_id = _user_id(request)
     data = file.file.read(FETCH_MAX_BYTES + 1)
     if len(data) > FETCH_MAX_BYTES:
         raise HTTPException(413, f"The PDF is larger than {FETCH_MAX_BYTES // 1_000_000} MB")
@@ -75,7 +75,7 @@ def deliver(rid: str, request: Request, file: UploadFile = File(...), url: str =
         raise HTTPException(400, "Not a PDF (the site may have sent a sign-in page instead)")
     from_url = url if url.startswith(("https://", "http://")) and len(url) <= 2048 else ""
     try:
-        return _found(handoff.deliver(user, rid, data, from_url))
+        return _found(handoff.deliver(user_id, rid, data, from_url))
     except FetchError as e:
         raise HTTPException(400, str(e)) from None
     except handoff.Settled as e:
@@ -89,14 +89,14 @@ def store(rid: str, request: Request):
     (content-hash deduped, like ``POST /api/uploads``), for ``POST
     /api/clip`` to make the library page from — the chat's "Save to
     library" for a paper only the user's browser could get."""
-    user = _user(request)
+    user_id = _user_id(request)
     ws = require_ws(request, write=True)
-    held = handoff.held_pdf(user, rid)
+    held = handoff.held_pdf(user_id, rid)
     if held is None:
         raise HTTPException(404, "The PDF is no longer held here — save it from your browser instead")
     data, url = held
-    doc_id, source_url, existed = store_pdf(ws, data)
-    return {"doc_id": doc_id, "source_url": source_url, "already_existed": existed, "url": url}
+    doc_id, existed = store_pdf(ws, data)
+    return {"doc_id": doc_id, "source_url": pdf_url(doc_id), "already_existed": existed, "url": url}
 
 
 _PAGE = """<!doctype html>
@@ -134,7 +134,7 @@ def go(rid: str, request: Request):
         return HTMLResponse(_PAGE.format(refresh="", title="This link has expired",
                                          text="Ask the chat again to get a new one.", link=""), 404)
     url, host = html.escape(found["url"], quote=True), html.escape(found["host"] or found["url"])
-    owner = (request.state.user == found["user"] and not request.state.is_guest)
+    owner = (request.state.user_id == found["user_id"] and not request.state.is_guest)
     link = f'<a href="{url}">Continue to {host}</a>'
     if owner:
         return HTMLResponse(_PAGE.format(

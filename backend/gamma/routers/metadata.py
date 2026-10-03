@@ -799,7 +799,7 @@ class MetaFetchRequest(BaseModel):
 @router.post("/metadata/fetch")
 def metadata_fetch(payload: MetaFetchRequest, request: Request):
     ws = require_ws(request, write=True)
-    return fetch_page_metadata(ws, payload.block_id, request.state.user, prompt=payload.prompt, model=payload.model,
+    return fetch_page_metadata(ws, payload.block_id, request.state.user_id, prompt=payload.prompt, model=payload.model,
                                force=payload.force, context_char_limit=payload.context_char_limit,
                                cite_prompt=payload.cite_prompt, cite_model=payload.cite_model)
 
@@ -810,8 +810,8 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
                         cite_prompt: str = "", cite_model: str = "") -> dict:
     """The lookup behind POST /api/metadata/fetch, callable off-request (the
     extension's /api/clip runs it in a background thread). ``actor`` is the
-    account on whose behalf it runs — its AI providers do the AI part, its
-    name goes on the op. doi/arxiv_id are
+    id of the account on whose behalf it runs — its AI providers do the AI
+    part, the op is logged under it. doi/arxiv_id are
     caller-supplied hints — the extension's detector reads them off the
     publisher page's own meta tags, so they are trusted like URL-derived ids.
     A successful lookup also generates the slide citation (when AI is
@@ -1021,7 +1021,7 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     stale = ("ppt_cite", "meta_error")
     if not any(v for k, v in meta.items() if k != "source"):
         _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
-                    actor=request.state.user)
+                    actor=request.state.user_id)
         return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
     # An unsent cite_key leaves the page's pin as it is; "" unpins.
     cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
@@ -1031,7 +1031,7 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     if cite_key:
         updates["cite_key"] = cite_key
     _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
-                actor=request.state.user)
+                actor=request.state.user_id)
     return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": "manual", "cached": False}
 
 
@@ -1048,7 +1048,7 @@ def metadata_cite(payload: CiteRequest, request: Request):
     _, props = _load_page(ws, payload.block_id)
     if props.get("ppt_cite") and not payload.force:
         return {"citation": props["ppt_cite"], "cached": True}
-    rt = require_ai_runtime(request.state.user)
+    rt = require_ai_runtime(request.state.user_id)
     meta = props.get("meta")
     bibtex = props.get("bibtex", "")
     if not meta and not bibtex:
@@ -1060,5 +1060,5 @@ def metadata_cite(payload: CiteRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
     # cache alongside the rest of the metadata
-    _save_props(ws, payload.block_id, {"ppt_cite": citation}, actor=request.state.user)
+    _save_props(ws, payload.block_id, {"ppt_cite": citation}, actor=request.state.user_id)
     return {"citation": citation, "cached": False}

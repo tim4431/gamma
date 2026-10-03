@@ -33,7 +33,7 @@ def account(org):
     for service in search_services.SERVICES:
         c.delete(f"/api/ai/search-services/{service}")
     c.put("/api/ai/search-services/engine", json={"engine": "auto"})
-    return c, ids["user"]
+    return c, ids["user_id"]
 
 
 # ------------------------------------------------------------- settings

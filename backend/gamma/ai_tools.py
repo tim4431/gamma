@@ -2,8 +2,10 @@
 
 Every chat has a *scope* deciding what its tools can touch:
 
-- ``{"type": "folder", "folder": path}`` — the home/folder chat; tools reach
-  the pages in that folder ("" = the whole library).
+- ``{"type": "folder", "folder": id}`` — the home/folder chat; tools reach
+  the pages filed in that folder or below it ("" = the whole library).
+  Builders that write the prompt add ``folder_path``, the folder's path as
+  it reads (``agent_system``).
 - ``{"type": "page", "page_id": id}`` — the per-page chat; tools reach only
   that page.
 
@@ -38,9 +40,12 @@ scope/permission lines are appended mechanically.  Renamed tools stay
 callable under their old name (``ai_context.DEPRECATED_TOOLS``) so saved
 chats replay.
 
-Folder semantics mirror ``frontend/src/library/libraryUtils.js``: ``properties.folder``
-is a comma-separated list of ``/``-nested paths, folders exist only through the
-tags in use, and ``properties.category`` holds the flat labels.
+Folders and labels are blocks of the ``folders`` and ``labels`` trees
+(``blocks_store``; a folder may be empty), and a page is filed by their ids
+(``properties.folders`` / ``properties.labels``). The model never sees the
+filing ids alone: a folder reads as its path — the names from the top joined
+with ``PATH_SEP``, "Physics / QEC" — with its id beside it where it may pass
+one back, and a label as its name.
 """
 
 import json
@@ -56,12 +61,14 @@ from fractional_indexing import generate_key_between
 from . import bibtex as bibtex_mod
 from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         handwriting_label, page_report_section, pdf_path, render_area_crops,
-                         text_box_label, under_sheet)
-from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages, write_lock
+                         handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
+                         render_area_crops, text_box_label, under_sheet)
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, descend, existing_in, fetch_subtree, filing,
+                           folder_paths, folder_subtree_ids, label_by_name, label_names,
+                           page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
+                           write_lock)
 from .db import connect_data_db, connect_pages_db
-from .ops import after_commit, apply_ops, move_across_pages
-from .foldertags import add_tag, clean_path, parse_tags, path_within
+from .ops import after_commit, apply_ops, ensure_filing, move_across_pages
 from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
@@ -104,9 +111,9 @@ _RELAX_MAX_TERMS = 3
 AGENT_PROMPT = (
     "You are also the user's library agent in Gamma, their knowledge base of pages: "
     "each page is an outline of notes, and some pages carry a PDF attachment (a "
-    "paper, a book, lecture notes). Pages carry nested folder paths ('/' nests; a "
-    "page may be in several folders) and flat labels; folders appear the moment a "
-    "page is filed into them. Never guess page ids. Use the reading tools to answer "
+    "paper, a book, lecture notes). Pages are filed in folders, which nest (a page "
+    "may be in several; a folder may be empty), and carry flat labels; a folder's "
+    "path reads 'Physics / QEC', its names from the top. Never guess page ids. Use the reading tools to answer "
     "questions about the pages themselves — their notes as much as their PDFs — "
     "e.g. to compare papers or write a summary; cite a PDF by its page number and "
     "say when something comes from the user's own notes. When asked to organize, "
@@ -176,41 +183,102 @@ def ensure_tally(scope: dict) -> Tally:
     return tally
 
 
-# --- scope (folder rules: gamma/foldertags.py) ---------------------------------
+# --- scope ---------------------------------------------------------------------
+# A folder chat names its folder by id and reaches the pages filed in it or
+# below it. The model names folders by path or by the ids list_folders shows;
+# _resolve_folder reads either inside the chat's folder.
 
 def _scope_folder(scope: dict) -> str:
-    return clean_path(scope.get("folder") or "")
+    """A folder chat's folder id; "" at the library root and in a page chat."""
+    return str(scope.get("folder") or "") if scope.get("type") == "folder" else ""
 
 
-def _in_scope_folder(scope: dict, raw) -> str:
-    """A folder argument resolved inside the scope's folder: a path already
-    within it stays, any other path is taken as its subfolder, and an empty
-    one is the scope's folder itself."""
-    path = _scope_folder(scope)
-    target = clean_path(str(raw or ""))
-    if not target:
-        return path
-    return f"{path}/{target}" if path and not path_within(target, path) else target
+def _reach(conn, scope: dict) -> set[str] | None:
+    """The folders a folder chat reaches: its folder and every folder below
+    it — None at the library root, which reaches every page."""
+    folder = _scope_folder(scope)
+    return folder_subtree_ids(conn, folder) if folder else None
 
 
-def _filed_in_scope(scope: dict, tags: list[str]) -> bool:
-    """A folder chat reaches what is filed under its folder — everything at
-    the library root."""
-    path = _scope_folder(scope)
-    return not path or any(path_within(t, path) for t in tags)
+def _filed_in(reach: set[str] | None, folders: list[str]) -> bool:
+    """Whether a page filed in ``folders`` (ids) is within ``reach``."""
+    return reach is None or any(f in reach for f in folders)
 
 
-def _page_in_scope(scope: dict, page_id: str, tags: list[str]) -> bool:
+def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
+    """The folder a tool's ``folder`` argument names: a folder id, or a path
+    as the tools show it ("Physics / QEC"; "Physics/QEC" too, where that is
+    no folder's name). A folder chat reads it inside its folder — a path
+    that starts with the folder's own path from there, any other as a path
+    below it — and "" is the chat's folder itself; a page chat reads it from
+    the top, "" being the library root. Each name matches exactly, else
+    ignoring case (``blocks_store.named``).
+
+    Returns ``(target, error)``: ``{"id", "path"}`` for a folder that exists
+    (id "" = the library root), ``{"id": "", "path", "under", "names"}``
+    for one that does not — ``names`` below the folder ``under``, what
+    ``_made`` makes. ``error`` refuses a folder outside the chat's folder
+    and a path several folders share, naming their ids."""
+    base = _scope_folder(scope)
+    kids, paths = tree_children(conn, FOLDERS), folder_paths(conn)
+    text = str(raw or "").strip()
+    if not text:
+        return {"id": base, "path": PATH_SEP.join(paths.get(base, []))}, None
+    if text in paths:  # an id, as list_folders shows them
+        if not _filed_in(_reach(conn, scope), [text]):
+            return None, "error: that folder is outside this chat's folder"
+        return {"id": text, "path": PATH_SEP.join(paths[text])}, None
+    own = [name.casefold() for name in paths.get(base, [])]
+    missing = []
+    for names in dict.fromkeys(tuple(n.strip() for n in text.split(sep) if n.strip())
+                               for sep in (PATH_SEP, "/")):
+        if own and [n.casefold() for n in names[:len(own)]] == own:
+            names = names[len(own):]  # the chat's own path, then below it
+        level, rest = descend(kids, base or FOLDERS, names)
+        if len(level) > 1:
+            return None, (f'error: "{text}" names {len(level)} folders — pass the one you mean by its id: '
+                          + ", ".join(f'{f} ("{PATH_SEP.join(paths[f])}")' for f in level))
+        if not rest:
+            return {"id": "" if level[0] == FOLDERS else level[0],
+                    "path": PATH_SEP.join(paths.get(level[0], []))}, None
+        missing.append({"id": "", "under": level[0], "names": rest,
+                        "path": PATH_SEP.join([*paths.get(level[0], []), *rest])})
+    # Nothing there: a spaced path makes its names, a bare "a/b" nests.
+    return missing[0 if PATH_SEP in text else -1], None
+
+
+def _find_folder(conn, scope: dict, raw) -> tuple[tuple | None, str | None]:
+    """``_resolve_folder`` for a read: ``((folder id, path), None)`` for a
+    folder that exists ("" = the library root), else ``(None, error)``."""
+    target, error = _resolve_folder(conn, scope, raw)
+    if not error and target.get("names"):
+        error = f'error: there is no folder "{target["path"]}" — list_folders shows the folders and their ids'
+    return (None, error) if error else ((target["id"], target["path"]), None)
+
+
+def _made(ws: str, conn, scope: dict, target: dict) -> str:
+    """The id of ``target``'s folder (``_resolve_folder``), made first when
+    it is missing (``ops.ensure_filing``: one committed batch on the folder
+    tree)."""
+    if not target.get("names"):
+        return target["id"]
+    made, _ = ensure_filing(ws, conn, paths=[target["names"]], under=target["under"],
+                            actor=scope.get("actor", ""))
+    return made[tuple(target["names"])]
+
+
+def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str]) -> bool:
     if page_id in (scope.get("context_pages") or []):
         return True
     if scope.get("type") == "page":
         return page_id == scope.get("page_id")
-    return _filed_in_scope(scope, tags)
+    return _filed_in(_reach(conn, scope), folders)
 
 
 def _load_scoped_page(conn, scope: dict, args: dict):
     """Fetch the target page and enforce the scope. Returns
-    ``((page_id, title, props, tags), error)`` — exactly one side is set."""
+    ``((page_id, title, props, folders), error)`` — ``folders`` the ids it
+    is filed in; exactly one side is set."""
     page_id = str(args.get("page_id") or "").strip()
     row = conn.execute(
         "SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?",
@@ -219,10 +287,10 @@ def _load_scoped_page(conn, scope: dict, args: dict):
     if not row or row[0] != "root":
         return None, "error: no such page — use exact page ids"
     props = json.loads(row[2] or "{}")
-    tags = parse_tags(props.get("folder"))
-    if not _page_in_scope(scope, page_id, tags):
+    folders = filing(props, FOLDERS)
+    if not _page_in_scope(conn, scope, page_id, folders):
         return None, "error: page is outside this chat's scope"
-    return (page_id, row[1] or "Untitled", props, tags), None
+    return (page_id, row[1] or "Untitled", props, folders), None
 
 
 def _scope_pages(conn, scope: dict) -> dict:
@@ -314,20 +382,31 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
 # chat message, for every successful call (reads included); errors carry None.
 # A change also names what changed, so the chat can list it without parsing
 # the summary: rename/move_page carry `title` (the page's title before the
-# call) and `from` / `to` (old and new title, old and new folder path — ""
-# is the library root); the note tools carry `title` (their page's title).
+# call) and `from` / `to` (old and new title, the old folder paths and the
+# new one as they read — "" is the library root); the note tools carry
+# `title` (their page's title).
 
 def _run_list_pages(conn, ws: str, scope: dict, args: dict):
-    path = _scope_folder(scope)
+    reach = _reach(conn, scope)
+    paths, names = folder_paths(conn), label_names(conn)
+    path = PATH_SEP.join(paths.get(_scope_folder(scope), []))
     # Optional filters, so "papers labeled X" is one small call instead of a
     # full dump the model has to sift by eye.
-    label = str(args.get("label") or "").strip().lower()
+    label = str(args.get("label") or "").strip()
+    wanted = set(label_by_name(conn, label)) if label else None
     title_q = str(args.get("title_contains") or "").strip().lower()
-    sub = clean_path(str(args.get("folder") or ""))
-    if path and sub and not path_within(sub, path):
-        sub = f"{path}/{sub}"  # relative folder filters resolve inside the scope
+    sub, below = "", None
+    if str(args.get("folder") or "").strip():
+        found, error = _find_folder(conn, scope, args["folder"])
+        if error:
+            return error, None
+        if found[0]:
+            sub, below = found[1], folder_subtree_ids(conn, found[0])
     want_labels = bool(args.get("list_labels"))
-    label_counts: dict[str, int] = {}
+    # Labels exist on their own: the library's every label counts, a
+    # folder's only those its pages carry.
+    label_counts: dict[str, int] = dict.fromkeys(names, 0) if reach is None else {}
+    context = scope.get("context_pages") or []
     lines = []
     for page_id, content, props_raw, updated in conn.execute(
             "SELECT id, content, properties, updated_at FROM unified_blocks "
@@ -336,17 +415,17 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
             props = json.loads(props_raw or "{}")
         except ValueError:
             props = {}
-        tags = parse_tags(props.get("folder"))
-        if not _page_in_scope(scope, page_id, tags):
+        folders = [f for f in filing(props, FOLDERS) if f in paths]
+        if page_id not in context and not _filed_in(reach, folders):
             continue
-        page_labels = parse_tags(props.get("category"))
+        page_labels = [lab for lab in filing(props, LABELS) if lab in names]
         if want_labels:
             for lab in page_labels:
                 label_counts[lab] = label_counts.get(lab, 0) + 1
             continue
-        if label and label not in (lab.lower() for lab in page_labels):
+        if wanted is not None and not wanted.intersection(page_labels):
             continue
-        if sub and not any(path_within(t, sub) for t in tags):
+        if below is not None and not below.intersection(folders):
             continue
         if title_q and title_q not in (content or "Untitled").lower():
             continue
@@ -354,10 +433,10 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
         bits = [f"id={page_id}",
                 f'title="{(content or "Untitled")[:120]}"',
                 f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
-        if tags:
-            bits.append("folders=[" + ", ".join(tags) + "]")
+        if folders:
+            bits.append("folders=" + json.dumps(paths_text(paths, folders), ensure_ascii=False))
         if page_labels:
-            bits.append("labels=[" + ", ".join(page_labels) + "]")
+            bits.append("labels=" + json.dumps([names[lab] for lab in page_labels], ensure_ascii=False))
         meta = props.get("meta") or {}
         authors = [a for a in (meta.get("authors") or []) if str(a).strip()]
         if authors or meta.get("year") or meta.get("venue"):
@@ -370,8 +449,8 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
         lines.append("- " + " | ".join(bits))
     where = f"“{path}”" if path else "the library"
     if want_labels:
-        out_lines = [f'- label "{lab}": {n} page{"s" if n != 1 else ""}'
-                     for lab, n in sorted(label_counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+        out_lines = [f'- label "{names[lab]}": {n} page{"s" if n != 1 else ""}'
+                     for lab, n in sorted(label_counts.items(), key=lambda kv: (-kv[1], names[kv[0]]))]
         action = {"kind": "list", "summary": f"Listed {len(label_counts)} labels in {where}"}
         if not out_lines:
             return "No labels in scope (folders: list_folders).", action
@@ -391,10 +470,17 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
 
 
 def _run_list_folders(conn, ws: str, scope: dict, args: dict):
-    """The folder tree below the scope's folder (or the `folder` asked for):
-    every path the pages' tags name plus their implied parents, each with
-    the pages filed directly in it and the pages anywhere below it."""
-    root = _in_scope_folder(scope, args.get("folder"))
+    """The folder tree from the chat's folder (or the `folder` asked for)
+    down, that folder included and empty folders too: each folder's id,
+    its full path, the pages filed directly in it and the pages anywhere
+    below it. At the library root, also how many pages are in no folder."""
+    found, error = _find_folder(conn, scope, args.get("folder"))
+    if error:
+        return error, None
+    root, root_path = found
+    parent_of = tree_parents(conn, FOLDERS)
+    paths = folder_paths(conn)
+    shown = folder_subtree_ids(conn, root) if root else set(parent_of)
     here: dict[str, set] = {}
     below: dict[str, set] = {}
     unfiled = 0
@@ -404,28 +490,26 @@ def _run_list_folders(conn, ws: str, scope: dict, args: dict):
             props = json.loads(props_raw or "{}")
         except ValueError:
             props = {}
-        tags = parse_tags(props.get("folder"))
-        if not _page_in_scope(scope, page_id, tags):
-            continue
-        if not tags:
+        folders = [f for f in filing(props, FOLDERS) if f in parent_of]
+        if not folders:
             unfiled += 1
-        for tag in tags:
-            if root and not path_within(tag, root):
-                continue
-            here.setdefault(tag, set()).add(page_id)
-            parts = tag.split("/")
-            for depth in range(1, len(parts) + 1):
-                folder_path = "/".join(parts[:depth])
-                if not root or path_within(folder_path, root):
-                    below.setdefault(folder_path, set()).add(page_id)
+        for folder_id in folders:
+            if folder_id in shown:
+                here.setdefault(folder_id, set()).add(page_id)
+            while folder_id in shown:  # it and the folders above it, up to the listing's top
+                below.setdefault(folder_id, set()).add(page_id)
+                folder_id = parent_of[folder_id]
+    top = len(paths[root]) if root else 1
     lines = []
-    for folder_path in sorted(below, key=lambda p: p.split("/")):
-        n_here, n_below = len(here.get(folder_path, ())), len(below[folder_path])
-        counts = (f"{n_here} page{'s' if n_here != 1 else ''}" if n_here == n_below
-                  else f"{n_here} here, {n_below} with subfolders")
-        depth = folder_path.count("/") - root.count("/")
-        lines.append("  " * depth + f'- "{folder_path}" ({counts})')
-    where = f"“{root}”" if root else "the library"
+    for folder_id in parent_of:  # tree order
+        if folder_id not in shown:
+            continue
+        n_here, n_below = len(here.get(folder_id, ())), len(below.get(folder_id, ()))
+        counts = ("no pages" if not n_below else f"{n_here} page{'s' if n_here != 1 else ''}"
+                  if n_here == n_below else f"{n_here} here, {n_below} with subfolders")
+        lines.append("  " * (len(paths[folder_id]) - top)
+                     + f'- [{folder_id}] "{PATH_SEP.join(paths[folder_id])}" ({counts})')
+    where = f"“{root_path}”" if root else "the library"
     action = {"kind": "list",
               "summary": f"Listed {len(lines)} folder{'s' if len(lines) != 1 else ''} in {where}"}
     loose = (f"\n{unfiled} page{'s are' if unfiled != 1 else ' is'} in no folder."
@@ -433,9 +517,10 @@ def _run_list_folders(conn, ws: str, scope: dict, args: dict):
     if not lines:
         return f"No folders in {where}." + loose, action
     more = f"\n(+{len(lines) - _LIST_CAP} more not shown)" if len(lines) > _LIST_CAP else ""
-    return (f"Folders in {where} (full paths, subfolders indented):\n" + "\n".join(lines[:_LIST_CAP])
-            + more + loose
-            + '\nList a folder\'s pages with list_pages(folder="<path>"), then read one with read_page.'), action
+    return (f"Folders in {where} (id in brackets, then the full path; subfolders indented):\n"
+            + "\n".join(lines[:_LIST_CAP]) + more + loose
+            + '\nList a folder\'s pages with list_pages(folder="<path or id>"), then read one with '
+              "read_page."), action
 
 
 def _read_cap(value) -> int:
@@ -726,9 +811,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
 
 def _chat_bucket(conn, scope: dict, args: dict):
     """The AI chat a read_chats call names, under ChatDock's bucket keys: a
-    page's (its id; in a page chat the page by default) or a folder's
-    (``home:<path>``, ``home`` at the library root). Returns
-    ``({bucket, label, name, page_id}, error)`` — exactly one side is set."""
+    page's (its id; in a page chat the page by default) or a folder's (its
+    id, ``home`` at the library root). Returns ``({bucket, label, name,
+    page_id}, error)`` — exactly one side is set."""
     if scope.get("type") == "page" and args.get("folder") and not args.get("page_id"):
         return None, "error: folder chats are outside this chat's scope"
     page_id = args.get("page_id") or (scope.get("page_id") if scope.get("type") == "page" else "")
@@ -739,10 +824,12 @@ def _chat_bucket(conn, scope: dict, args: dict):
         page_id, title, _, _ = loaded
         return {"bucket": page_id, "label": f"page “{title[:80]}” (page_id {page_id})",
                 "name": f"“{title[:60]}”", "page_id": page_id}, None
-    folder = _in_scope_folder(scope, args.get("folder"))
-    name = f"folder “{folder}”" if folder else "the library root"
-    return {"bucket": f"home:{folder}" if folder else "home", "label": name,
-            "name": name, "page_id": ""}, None
+    found, error = _find_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
+    folder, path = found
+    name = f"folder “{path}”" if folder else "the library root"
+    return {"bucket": folder or "home", "label": name, "name": name, "page_id": ""}, None
 
 
 def _chat_entry(n: int, message) -> str:
@@ -783,20 +870,19 @@ def _run_read_chats(conn, ws: str, scope: dict, args: dict):
         start = max(1, int(args.get("start") or 1))
     except (TypeError, ValueError):
         start = 1
-    with connect_data_db(ws) as database:
-        if current:
-            row = database.execute("SELECT title, messages, updated_at FROM chats WHERE block_id = ?",
-                                   (target["bucket"],)).fetchone()
-            history = database.execute(
-                "SELECT id, title, messages, updated_at FROM chat_history WHERE bucket = ? "
-                "ORDER BY updated_at DESC LIMIT ?", (target["bucket"], _LIST_CAP + 1)).fetchall()
-        else:
-            row = database.execute("SELECT title, messages, updated_at FROM chat_history "
-                                   "WHERE id = ? AND bucket = ?", (chat_id, target["bucket"])).fetchone()
-            history = []
-            if not row:
-                return (f"error: no conversation {chat_id} in the AI chat of {target['label']} — "
-                        "use a chat_id this tool listed"), None
+    if current:
+        row = conn.execute("SELECT title, messages, updated_at FROM chats WHERE bucket = ?",
+                           (target["bucket"],)).fetchone()
+        history = conn.execute(
+            "SELECT id, title, messages, updated_at FROM chat_history WHERE bucket = ? "
+            "ORDER BY updated_at DESC LIMIT ?", (target["bucket"], _LIST_CAP + 1)).fetchall()
+    else:
+        row = conn.execute("SELECT title, messages, updated_at FROM chat_history "
+                           "WHERE id = ? AND bucket = ?", (chat_id, target["bucket"])).fetchone()
+        history = []
+        if not row:
+            return (f"error: no conversation {chat_id} in the AI chat of {target['label']} — "
+                    "use a chat_id this tool listed"), None
     messages = json.loads(row[1] or "[]") if row else []
     action = {"kind": "read", "summary": f"Read the AI chat of {target['name']}"}
     if target["page_id"]:
@@ -1237,9 +1323,9 @@ def cross_page_refusal(conn, block_id: str) -> str:
     The agent's move_block and the user's revert of one (gamma/ai_revert.py)
     both ask."""
     rows = fetch_subtree(conn, block_id)
-    # Highlight blocks anchor to a PDF region of their own paper; on
-    # another page that anchor points into the wrong document.
-    if any("highlight_id" in (row[4] or "") for row in rows):
+    # Highlights and link regions anchor to a PDF region of their own
+    # paper; on another page that anchor points into the wrong document.
+    if any(row[8] in ("highlight", "link") for row in rows):
         return "highlight blocks are anchored to their paper — they can only move within the same page"
     # So is a text box's place, on its PDF page or its sheet, unless the
     # sheet it is on moves along.
@@ -1317,14 +1403,12 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
 
 
 def _run_search_library(conn, ws: str, scope: dict, args: dict):
-    """FTS snippets from the in-scope pages: their notes (block_fts; changed
-    pages are rebuilt first for up to block_index.REFRESH_BUDGET_S, the rest
-    by the background refresher) and the text of their PDF attachments
-    (pdf_fts — same index and query rules as /api/search). Notes hits come
-    first, with block ids the note tools take; PDF hits carry page numbers.
-    Un-indexed PDFs are kicked to the background indexer; they and the note
-    pages still waiting are reported, so the model knows results may be
-    incomplete."""
+    """FTS snippets from the in-scope pages: their notes (block_fts, current
+    with every write) and the text of their PDF attachments (pdf_fts — same
+    index and query rules as /api/search). Notes hits come first, with block
+    ids the note tools take; PDF hits carry page numbers. Un-indexed PDFs
+    are kicked to the background indexer and reported, so the model knows
+    results may be incomplete."""
     query = str(args.get("query") or "").strip()
     if not query:
         return "error: empty query", None
@@ -1342,17 +1426,15 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
         if info["doc_id"]:
             doc_pages.setdefault(info["doc_id"], []).append(page_id)
     # Local import: keep gamma.* module load free of the routers package.
-    from .block_index import fts_query, refresh, search_blocks
+    from .block_index import fts_query, search_blocks
     from .routers.search import _index_missing_async
-
-    pending = refresh(ws, conn, list(pages))
 
     def fts(database, text):
         match = fts_query(text)
         found = []
         if not match:
             return found
-        for block_id, page_id, snippet in search_blocks(database, match, limit, pages):
+        for block_id, page_id, snippet in search_blocks(conn, match, limit, pages):
             found.append(f'- note [{block_id}] in "{pages[page_id]["title"][:80]}" '
                          f"(page_id {page_id}): {snippet}")
         for doc_id, page, snippet in search_pdf(database, match, limit, docs):
@@ -1399,8 +1481,6 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
     if missing:
         out += (f"\n({len(missing)} PDF(s) not indexed yet — indexing started, "
                 "search again shortly for complete results)")
-    if pending:
-        out += f"\n({pending} page(s) of notes still indexing — search again shortly)"
     about = "≈" if relaxed else ""
     return out, {"kind": "search",
                  "summary": f"Searched library for “{query[:60]}” — "
@@ -1556,16 +1636,16 @@ def _run_search_web(conn, ws: str, scope: dict, args: dict):
             + "\n".join(lines)), action
 
 
-def _open_handoff(user, source: str, wall: str, url: str, pdf_url: str, detail: str) -> dict | None:
+def _open_handoff(user_id, source: str, wall: str, url: str, pdf_url: str, detail: str) -> dict | None:
     """Hand a blocked fetch to the user's browser (gamma/fetch_handoff.py):
     the ``handoff`` the chat renders as a card, or None where there is no
     personal account to hand it to (a guest, a share link)."""
     from . import fetch_handoff
 
-    if not user or not url:
+    if not user_id or not url:
         return None
     try:
-        req = fetch_handoff.open_request(user, source, wall=wall, url=url, pdf_url=pdf_url,
+        req = fetch_handoff.open_request(user_id, source, wall=wall, url=url, pdf_url=pdf_url,
                                          detail=detail[:300])
     except ValueError:
         return None
@@ -1609,13 +1689,13 @@ _WAIT_OR_SEARCH = ("Unless the user asked for this exact copy, you may first run
                    "blocked and end your reply — do not retry this source or answer from memory.")
 
 
-def _fetch_failure(e, source: str, user, can_search: bool = False) -> tuple[str, dict | None]:
+def _fetch_failure(e, source: str, user_id, can_search: bool = False) -> tuple[str, dict | None]:
     from .ai_web import WALLS
 
     if not e.wall:
         return (f"error: {e}. If the user can open it in their browser, ask them to drop "
                 "the PDF onto Gamma and read it with read_page.", None)
-    handoff = _open_handoff(user, source, e.wall, e.open_url, e.pdf_url, str(e))
+    handoff = _open_handoff(user_id, source, e.wall, e.open_url, e.pdf_url, str(e))
     if handoff:
         return (f"error: {e}. No document text was retrieved: {WALLS[e.wall]} at {handoff['host']} "
                 "stopped this server. Gamma now shows the user a card under your reply to open "
@@ -1834,27 +1914,27 @@ def _run_read_paper(conn, ws: str, scope: dict, args: dict):
 MAX_SAVES = 20  # papers one message may save: each is a download into the library
 
 
-def _save_folder(conn, scope: dict, raw) -> str:
-    """Where save_paper files a paper: a folder chat resolves the argument
-    inside its folder (move_page's rule); a page chat takes it as given,
-    else the open page's first folder — where the reply's Save to library
-    files it."""
-    if scope.get("type") == "folder":
-        return _in_scope_folder(scope, raw)
-    target = clean_path(str(raw or ""))
-    if target:
-        return target
+def _save_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
+    """Where save_paper files a paper (``_resolve_folder``'s answer): a
+    folder chat reads the argument inside its folder (move_page's rule); a
+    page chat from the top, else the open page's first folder — where the
+    reply's Save to library files it."""
+    if scope.get("type") == "folder" or str(raw or "").strip():
+        return _resolve_folder(conn, scope, raw)
     loaded, _ = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
-    return loaded[3][0] if loaded and loaded[3] else ""
+    paths = folder_paths(conn)
+    first = next((f for f in (loaded[3] if loaded else []) if f in paths), "")
+    return {"id": first, "path": PATH_SEP.join(paths.get(first, []))}, None
 
 
 def _plan_save_paper(conn, scope: dict, args: dict):
-    """``(plan, None)``: the clip request for the paper (``payload``, the
-    folder it files the paper in included), the ``source`` it came from, its
-    ``title`` as far as it is known, and the page that holds the paper
-    already (``page``, else None) with the folders it is in (``filed``).
-    ``(None, answer)`` for a call that cannot save anything, or finds the
-    paper filed there already."""
+    """``(plan, None)``: the clip request for the paper (``payload``), the
+    folder it files the paper in (``target``, ``_resolve_folder``'s — one
+    still to be made goes in the payload when the run makes it), the
+    ``source`` it came from, its ``title`` as far as it is known, and the
+    page that holds the paper already (``page``, else None) with the ids of
+    the folders it is in (``filed``). ``(None, answer)`` for a call that
+    cannot save anything, or finds the paper filed there already."""
     from .ai_web import identifier
     from .routers.clip import ClipRequest, find_page, norm_arxiv, norm_doi
 
@@ -1868,22 +1948,24 @@ def _plan_save_paper(conn, scope: dict, args: dict):
     if ensure_tally(scope).count("saves") >= MAX_SAVES:
         return None, (f"error: {MAX_SAVES} papers is the most one message may save — tell the user "
                       "which are left")
-    folder = _save_folder(conn, scope, args.get("folder"))
+    target, error = _save_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
     title = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:300]
     doi, arxiv = (ident if kind == "doi" else ""), (ident if kind == "arxiv" else "")
     # The source kept on the page, as the reply's Save to library keeps it
     # (chat/chatPapers.js paperPage): the DOI or arXiv page, else the URL.
     page_url = (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"https://doi.org/{doi}" if doi else url)
     page = find_page(conn, norm_doi(doi), norm_arxiv(arxiv), (page_url,))
-    filed = parse_tags(page["properties"].get("folder")) if page else []
-    if page and (not folder or folder in filed):
+    filed = filing(page["properties"], FOLDERS) if page else []
+    if page and not target.get("names") and (not target["id"] or target["id"] in filed):
         return None, (f"ok — [{page['content']}](/?page={page['id']}) is already in the library"
-                      + (f' in "{folder}"' if folder else "") + "; nothing changed")
+                      + (f' in "{target["path"]}"' if target["id"] else "") + "; nothing changed")
     # A URL is also the address to resolve a PDF from; an identifier is
     # resolved as itself. The Reading choices left out are ClipRequest's (on).
     payload = ClipRequest(source_url=page_url, pdf_url="" if kind else url, doi=doi, arxiv_id=arxiv,
-                          title=title, folder=folder, **scope.get("paper_save", {}))
-    return {"payload": payload, "source": source, "page": page, "filed": filed,
+                          title=title, folder=target["id"], **scope.get("paper_save", {}))
+    return {"payload": payload, "target": target, "source": source, "page": page, "filed": filed,
             "title": title or (page["content"] if page else "") or source}, None
 
 
@@ -1891,7 +1973,7 @@ def _preview_save_paper(conn, scope: dict, args: dict):
     plan, answer = _plan_save_paper(conn, scope, args)
     if not plan:
         return None, answer
-    preview = {"title": plan["title"], "to": plan["payload"].folder, "diff": [["ctx", plan["source"]]]}
+    preview = {"title": plan["title"], "to": plan["target"]["path"], "diff": [["ctx", plan["source"]]]}
     if plan["page"]:
         preview.update(page_id=plan["page"]["id"], existed=True)
     return preview, None
@@ -1914,8 +1996,9 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
     if not plan:
         return answer, None
     ensure_tally(scope).take("saves", MAX_SAVES)
-    payload = plan["payload"]
-    folder, title, source = payload.folder, payload.title, plan["source"]
+    payload, path = plan["payload"], plan["target"]["path"]
+    payload.folder = folder = _made(ws, conn, scope, plan["target"])
+    title, source = payload.title, plan["source"]
     account = scope.get("handoff_user")
     doc = fetch_handoff.delivered(account, source)
     held = fetch_handoff.held_pdf(account, doc["request"]) if doc and doc.get("request") else None
@@ -1930,7 +2013,7 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
     finally:
         publisher_sessions.current_user.reset(token)
     page_id, name = out["block_id"], out.get("title") or title or source
-    where = f'"{folder}"' if folder else "the library root"
+    where = f'"{path}"' if folder else "the library root"
     link = f"[{name}](/?page={page_id})"
     if out.get("existed") and (not folder or folder in plan["filed"]):
         return f"ok — {link} is already in the library" + (f" in {where}" if folder else "") + "; nothing changed", None
@@ -1946,9 +2029,9 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
     if scope.get("type") == "page":
         text += (". The new page is outside this chat's reach (a page chat reads only its own "
                  "page); read the paper with fetch_paper")
-    return text + ".", {"kind": "save", "page_id": page_id, "title": name, "to": folder,
+    return text + ".", {"kind": "save", "page_id": page_id, "title": name, "to": path if folder else "",
                         "existed": bool(out.get("existed")), "pdf": bool(out.get("doc_id")),
-                        "summary": f"Saved “{name[:60]}” to {folder or 'the library root'}"}
+                        "summary": f"Saved “{name[:60]}” to {path if folder else 'the library root'}"}
 
 
 def _plan_rename_page(conn, scope: dict, args: dict):
@@ -1987,43 +2070,50 @@ def _run_rename_page(conn, ws: str, scope: dict, args: dict):
 
 
 def _plan_move_page(conn, scope: dict, args: dict):
-    """``((page_id, title, tags, target, new_tags), None)``: the page's
-    folder paths now, the folder it goes to (``""`` = the library root) and
-    the paths it ends with. ``(None, answer)`` for a call that changes
+    """``((page_id, title, folders, target, kept), None)``: the folders
+    the page is in now (ids), the folder it goes to (``_resolve_folder``'s
+    target; id "" = the library root) and the folders it keeps — those
+    outside the chat's folder. ``(None, answer)`` for a call that changes
     nothing."""
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
         return None, error
-    page_id, title, _, tags = loaded
-    path = _scope_folder(scope)
-    target = _in_scope_folder(scope, args.get("folder"))  # relative paths land inside the scope
-    kept = [t for t in tags if path and not path_within(t, path)]
-    new_tags = add_tag(kept, target) if target else kept
-    if new_tags == tags:
+    page_id, title, _, folders = loaded
+    target, error = _resolve_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
+    folders = existing_in(conn, FOLDERS, folders)
+    reach = _reach(conn, scope)
+    kept = [f for f in folders if reach is not None and f not in reach]
+    if not target.get("names") and set(refiled(conn, kept, target["id"])) == set(folders):
         return None, "ok — page is already there"
-    return (page_id, title, tags, target, new_tags), None
+    return (page_id, title, folders, target, kept), None
 
 
 def _preview_move_page(conn, scope: dict, args: dict):
     plan, answer = _plan_move_page(conn, scope, args)
     if not plan:
         return None, answer
-    page_id, title, tags, target, _ = plan
-    return {"page_id": page_id, "title": title, "from": ", ".join(tags), "to": target}, None
+    page_id, title, folders, target, _ = plan
+    return {"page_id": page_id, "title": title,
+            "from": ", ".join(paths_text(folder_paths(conn), folders)), "to": target["path"]}, None
 
 
 def _run_move_page(conn, ws: str, scope: dict, args: dict):
+    """File the page into the target folder — made first when it is
+    missing — as one ``set`` of the page's ``folders``."""
     plan, answer = _plan_move_page(conn, scope, args)
     if not plan:
         return answer, None
-    page_id, title, tags, target, new_tags = plan
+    page_id, title, folders, target, kept = plan
+    was = ", ".join(paths_text(folder_paths(conn), folders))
+    folder_id = _made(ws, conn, scope, target)
     after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "set", "id": page_id, "props": {"folder": ", ".join(new_tags)}}],
+        conn, page_id, [{"op": "set", "id": page_id, "props": {FOLDERS: refiled(conn, kept, folder_id)}}],
         actor=scope.get("actor", ""), client="ai"))
-    where = target or "the library root"
-    return (f'ok — moved to "{where}"',
-            {"kind": "move", "page_id": page_id, "title": title,
-             "from": ", ".join(tags), "to": target,
+    where = target["path"] or "the library root"
+    return (f'ok — moved to "{where}"' + (" (a new folder)" if target.get("names") else ""),
+            {"kind": "move", "page_id": page_id, "title": title, "from": was, "to": target["path"],
              "summary": f"Moved “{title}” → {where}"})
 
 
@@ -2032,17 +2122,19 @@ def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
     reaches — the pages that were filed under it — the last deleted first,
     with the folders a restore puts each page back in."""
     query = str(args.get("title_contains") or "").strip().lower()
-    pages = [p for p in list_trash(conn) if _filed_in_scope(scope, parse_tags(p["folder"]))
+    reach = _reach(conn, scope)
+    pages = [p for p in list_trash(conn) if _filed_in(reach, p["folders"])
              and (not query or query in p["title"].lower())]
-    path = _scope_folder(scope)
+    paths = folder_paths(conn)
+    path = PATH_SEP.join(paths.get(_scope_folder(scope), []))
     where = f' from "{path}"' if path else ""
     action = {"kind": "list", "summary": f"Listed Recently deleted{where} — "
                                          f"{len(pages)} page{'s' if len(pages) != 1 else ''}"}
     if not pages:
         return (f"Recently deleted holds no pages{where}"
                 + (f' with "{query}" in the title' if query else "") + ".", action)
-    lines = [f'- id={p["id"]} | "{p["title"]}" | was in {p["folder"] or "no folder"} | deleted '
-             f'{p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
+    lines = [f'- id={p["id"]} | "{p["title"]}" | was in {quoted_paths(paths, p["folders"]) or "no folder"} '
+             f'| deleted {p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
              + f' | gone for good after {p["purge_at"][:10]}' for p in pages[:_LIST_CAP]]
     more = f"\n(+{len(pages) - _LIST_CAP} more not shown)" if len(pages) > _LIST_CAP else ""
     return (f"Recently deleted{where} ({len(pages)}, the last deleted first; a page is deleted for "
@@ -2061,7 +2153,7 @@ def _plan_restore_page(conn, scope: dict, args: dict):
                         (page_id,)).fetchone():
             return None, "ok — that page is not deleted; it is in the library"
         return None, "error: no such page in Recently deleted — use ids from list_deleted"
-    if not _filed_in_scope(scope, parse_tags(page["folder"])):
+    if not _filed_in(_reach(conn, scope), page["folders"]):
         return None, "error: that page was not filed in this chat's folder — restore it from the library root"
     return page, None
 
@@ -2070,7 +2162,7 @@ def _preview_restore_page(conn, scope: dict, args: dict):
     page, answer = _plan_restore_page(conn, scope, args)
     if not page:
         return None, answer
-    return {"title": page["title"], "to": page["folder"]}, None
+    return {"title": page["title"], "to": ", ".join(paths_text(folder_paths(conn), page["folders"]))}, None
 
 
 def _run_restore_page(conn, ws: str, scope: dict, args: dict):
@@ -2083,12 +2175,14 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
     if not page:
         return answer, None
     try:
-        restore_page(ws, conn, page["id"], client="ai")
+        restore_page(ws, conn, page["id"], actor=scope.get("actor", ""), client="ai")
     except OpError as e:
         return f"error: {e.detail}", None
-    where = f'"{page["folder"]}"' if page["folder"] else "the library root"
+    paths = folder_paths(conn)
+    where = quoted_paths(paths, page["folders"]) or "the library root"
     return (f'ok — restored [{page["title"]}](/?page={page["id"]}) (page_id {page["id"]}) to {where}',
-            {"kind": "restore", "page_id": page["id"], "title": page["title"], "to": page["folder"],
+            {"kind": "restore", "page_id": page["id"], "title": page["title"],
+             "to": ", ".join(paths_text(paths, page["folders"])),
              "summary": f"Restored “{page['title'][:60]}”"})
 
 
@@ -2108,15 +2202,16 @@ TOOLS = [
             "description": (
                 "List the pages in the folder the user is viewing, one per line: id, "
                 "title, attachments (`[pdf]` when the page carries a PDF, `[]` for a "
-                "text-only page), folder paths, labels, cached paper metadata (first "
-                "author, year, venue) and last-update date. Call this "
+                "text-only page), the paths of its folders, its labels, cached paper "
+                "metadata (first author, year, venue) and last-update date. Call this "
                 "before any other tool — never guess page ids. Prefer the filters over "
-                "listing everything: `label` (exact label, case-insensitive), `folder` "
-                "(a folder path — its pages and its subfolders'), `title_contains` "
-                "(title substring). `list_labels: true` instead returns every label in "
-                "scope with page counts — use it to answer questions about the labels "
-                "themselves or to find a label's exact spelling; the folders are "
-                "list_folders'."),
+                "listing everything: `label` (a label's name — exact, else ignoring "
+                "case), `folder` (a folder's path or id — its pages and its "
+                "subfolders'), `title_contains` (title substring). `list_labels: true` "
+                "instead returns the labels with page counts (at the library root every "
+                "label, unused ones too; in a folder those its pages carry) — use it to "
+                "answer questions about the labels themselves or to find a label's exact "
+                "spelling; the folders are list_folders'."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2134,17 +2229,20 @@ TOOLS = [
         "spec": {
             "name": "list_folders",
             "description": (
-                "Show how the pages are organized: the folder tree below the current "
-                "folder, or below `folder` (a path), one full path per line with its "
-                "subfolders indented under it, and per folder the pages filed directly "
-                "in it and in total with its subfolders. Folders nest with '/' and a "
-                "page may be in several. At the library root it also counts the pages "
-                "in no folder. Walk a folder with list_pages(folder=…), then open a "
-                "page with read_page."),
+                "Show how the pages are organized: the folder tree from the current "
+                "folder, or from `folder` (a path or id), down — one folder per line, "
+                "its id in brackets and its full path (the names from the top joined "
+                "with ' / ', e.g. \"Physics / QEC\"), subfolders indented under it, and "
+                "per folder the pages filed directly in it and in total with its "
+                "subfolders. Folders exist on their own, so an empty one is listed too; "
+                "a page may be in several, and a name may hold any character. At the "
+                "library root it also counts the pages in no folder. Walk a folder with "
+                "list_pages(folder=…), then open a page with read_page."),
             "parameters": {
                 "type": "object",
                 "properties": {"folder": {"type": "string",
-                                          "description": "the folder to start from (default: the current one)"}},
+                                          "description": "the folder to start from, a path or id "
+                                                         "(default: the current one)"}},
                 "required": [],
             },
         },
@@ -2207,7 +2305,7 @@ TOOLS = [
             "name": "read_chats",
             "description": (
                 "Read the AI chat the user keeps with a page (`page_id`) or a folder "
-                "(`folder`, a path; neither = the chat of the current page or folder): "
+                "(`folder`, a path or id; neither = the chat of the current page or folder): "
                 "its current conversation as a numbered transcript — each message's "
                 "text, what the user attached, and the tools each reply used — and the "
                 "list of earlier conversations with their `chat_id`. Pass a `chat_id` "
@@ -2488,10 +2586,11 @@ TOOLS = [
                 "doi:/arXiv: string, or the address fetch_paper read). Its PDF is fetched and "
                 "stored when one is reachable (else the page keeps the paper's web address), its "
                 "metadata is looked up, and a paper already in the library is never duplicated — "
-                "it is only filed. `folder` files it (a path; in a folder chat relative to the "
-                "current folder, which is the default; in a page chat, default the open page's "
-                "first folder). Pass `title` when you know the paper's exact title. Save only "
-                "what the user asked to add, save or keep."),
+                "it is only filed. `folder` files it (a path or id, read like move_page's; in a "
+                "folder chat inside the current folder, which is the default; in a page chat "
+                "from the top, default the open page's first folder); a folder that does not "
+                "exist yet is made. Pass `title` when you know the paper's exact title. Save "
+                "only what the user asked to add, save or keep."),
             "parameters": {
                 "type": "object",
                 "properties": {"source": {"type": "string"},
@@ -2521,12 +2620,15 @@ TOOLS = [
         "spec": {
             "name": "move_page",
             "description": (
-                'File a page into a folder. `folder` is a path like '
-                '"readout/nondestructive" — \'/\' nests and a new path creates the '
-                "folder. Paths outside the current folder are resolved as its "
-                'subfolders; "" moves the page to the current folder itself (at the '
-                "library root: out of every folder). Folder memberships outside the "
-                "current folder are kept — folders are labels, a page can be in several."),
+                "File a page into a folder. `folder` is the folder's id or its path as "
+                'list_folders shows it ("readout / nondestructive"; "readout/nondestructive" '
+                "works too where no name holds a '/'); a path that names no folder makes "
+                "it. A path is read inside the current folder: one that does not start with "
+                'the current folder\'s path is taken as a subfolder of it, and "" files the '
+                "page in the current folder itself (at the library root: out of every "
+                "folder). Folder memberships outside the current folder are kept — a page "
+                "can be in several folders. When several folders share the path the call "
+                "fails naming their ids: pass the id."),
             "parameters": {
                 "type": "object",
                 "properties": {**_PAGE_ID_ARG, "folder": {"type": "string"}},
@@ -2766,8 +2868,9 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += (f'This chat is about one page (page_id "{scope.get("page_id")}") — '
                  "the tools reach it and the explicitly attached context pages below.\n")
     else:
-        path = _scope_folder(scope)
-        where = f'the folder "{path}"' if path else "the root of their library"
+        folder = _scope_folder(scope)
+        where = (f'the folder "{scope.get("folder_path", "")}" (id {folder})' if folder
+                 else "the root of their library")
         text += f"The user is viewing {where}; tools reach its pages and the explicitly attached context pages below.\n"
     references = scope.get("context_pages") or []
     if references:

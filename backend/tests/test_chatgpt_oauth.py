@@ -10,11 +10,10 @@ import time
 import urllib.error
 import urllib.request
 
-import bcrypt
 import pytest
-from fastapi.testclient import TestClient
 
 import gamma.chatgpt_oauth as co
+from conftest import account_of
 from gamma import ai_catalog
 from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
 from gamma.routers.ai import _sse_deltas
@@ -42,21 +41,10 @@ def _fake_tokens(exp=None, email="tim@example.com", account="acct-123"):
 @pytest.fixture(scope="module")
 def erin(client):
     """A non-guest user (guests may not store credentials)."""
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma import workspaces
+    from conftest import login, make_user
 
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'erin'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                ("erin", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    workspaces.ensure_personal("erin")
-    c = TestClient(app)
-    r = c.post("/api/login", json={"username": "erin", "password": "pw"})
-    assert r.status_code == 200, r.text
+    make_user("erin", "pw")
+    c = login("erin", "pw")
     return c
 
 
@@ -141,18 +129,18 @@ def test_connect_flow_creates_masked_entry_and_models(erin, monkeypatch):
 def test_expired_token_is_refreshed_lazily(erin, monkeypatch):
     from gamma.ai_settings import ai_runtime, load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10  # force expiry
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     monkeypatch.setattr(co, "_token_request", lambda form: fresh)
-    rt = ai_runtime("erin")
+    rt = ai_runtime(account_of("erin"))
     conf = rt["providers"][entry["id"]]
     assert conf["api_key"] == fresh["access_token"]
     # …and the refreshed token was persisted for the next request
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
 
 
@@ -163,11 +151,11 @@ def test_concurrent_requests_refresh_once(erin, monkeypatch):
     import threading
     from gamma.ai_settings import ai_runtime, load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10
     entry["oauth"].pop("refresh_failed_at", None)
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     calls = []
@@ -180,14 +168,14 @@ def test_concurrent_requests_refresh_once(erin, monkeypatch):
     monkeypatch.setattr(co, "_token_request", slow_refresh)
     keys = []
     threads = [threading.Thread(target=lambda: keys.append(
-        ai_runtime("erin")["providers"][entry["id"]]["api_key"])) for _ in range(5)]
+        ai_runtime(account_of("erin"))["providers"][entry["id"]]["api_key"])) for _ in range(5)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert len(calls) == 1
     assert keys == [fresh["access_token"]] * 5
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
 
 
@@ -210,11 +198,11 @@ def test_provider_test_retries_a_backed_off_refresh(erin, monkeypatch):
     import gamma.routers.ai as ai_mod
     from gamma.ai_settings import load_provider_entries, save_provider_entries
 
-    entries = load_provider_entries("erin")
+    entries = load_provider_entries(account_of("erin"))
     entry = next(e for e in entries if e.get("protocol") == "chatgpt")
     entry["oauth"]["expires_at"] = int(time.time()) - 10
     entry["oauth"]["refresh_failed_at"] = int(time.time())  # inside the backoff window
-    save_provider_entries("erin", entries)
+    save_provider_entries(account_of("erin"), entries)
 
     fresh = _fake_tokens(exp=int(time.time()) + 7200)
     monkeypatch.setattr(co, "_token_request", lambda form: fresh)
@@ -222,7 +210,7 @@ def test_provider_test_retries_a_backed_off_refresh(erin, monkeypatch):
     r = erin.post(f"/api/ai/providers/{entry['id']}/test")
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
-    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    saved = next(e for e in load_provider_entries(account_of("erin")) if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
     assert "refresh_failed_at" not in saved["oauth"]
 
@@ -244,14 +232,14 @@ class _FakeResp:
 def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
     from gamma.ai_settings import load_provider_entries
 
-    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    entry = next(e for e in load_provider_entries(account_of("erin")) if e.get("protocol") == "chatgpt")
     # A crafted settings request must not redirect an OAuth bearer token.
     edited = erin.put(f"/api/ai/providers/{entry['id']}", json={
         "base_url": "https://attacker.example/codex",
         "api_key": "stolen-on-next-call",
     })
     assert edited.status_code == 200
-    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    entry = next(e for e in load_provider_entries(account_of("erin")) if e.get("protocol") == "chatgpt")
     assert entry.get("base_url") != "https://attacker.example/codex"
     assert entry.get("api_key") != "stolen-on-next-call"
     seen = {}

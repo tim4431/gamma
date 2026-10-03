@@ -442,10 +442,10 @@ class ApprovalGate:
     plan without asking anybody.
     """
 
-    def __init__(self, ws: str, scope: dict, user: str, stopped: threading.Event | None = None):
+    def __init__(self, ws: str, scope: dict, user_id: str, stopped: threading.Event | None = None):
         self.ws = ws
         self.scope = scope
-        self.user = user
+        self.user_id = user_id
         self.stopped = stopped
 
     def asks(self, name: str) -> bool:
@@ -460,7 +460,7 @@ class ApprovalGate:
         preview, answer = approval_preview(self.ws, self.scope, name, args)
         if answer is not None:
             return answer, settled_action(name, args, answer)
-        approval_id = ai_permissions.open_approval(self.user)
+        approval_id = ai_permissions.open_approval(self.user_id)
         decision, note = "expired", ""
         if approval_id:
             yield ("approval", {"id": approval_id, "call_id": call.get("id") or "", "tool": name,
@@ -496,10 +496,10 @@ class PaperWait:
     unanswered, it hears what blocked the paper and carries on.
     """
 
-    def __init__(self, ws: str, scope: dict, user: str, stopped: threading.Event | None = None):
+    def __init__(self, ws: str, scope: dict, user_id: str, stopped: threading.Event | None = None):
         self.ws = ws
         self.scope = scope
-        self.user = user
+        self.user_id = user_id
         self.stopped = stopped
 
     def settle(self, items: list):
@@ -507,14 +507,14 @@ class PaperWait:
 
         blocked = [item for item in items if item.action.get("handoff", {}).get("id")]
         waiting = [item for item in blocked
-                   if (fetch_handoff.get(self.user, item.action["handoff"]["id"]) or {}).get("status") == "waiting"]
+                   if (fetch_handoff.get(self.user_id, item.action["handoff"]["id"]) or {}).get("status") == "waiting"]
         if not waiting:
             return items
         for item in waiting:
             handoff = item.action["handoff"]
             yield ("handoff", {**handoff, "call_id": item.id,
                                "timeout": int(fetch_handoff.IDLE_TIMEOUT)})
-        outcomes = fetch_handoff.wait_for_all(self.user, [item.action["handoff"]["id"] for item in waiting],
+        outcomes = fetch_handoff.wait_for_all(self.user_id, [item.action["handoff"]["id"] for item in waiting],
                                               stopped=self.stopped)
         if self.stopped is not None and self.stopped.is_set():
             return None

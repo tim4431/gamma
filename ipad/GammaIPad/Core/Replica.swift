@@ -78,8 +78,13 @@ final class Replica {
         return (try? pure("pageView", [snapshot, pageId])) as? [String: Any]
     }
 
+    /// The library's rows (views.js libraryRows): every page with its folders
+    /// named as paths and its labels as names, read off the `folders` and
+    /// `labels` snapshots — two more snapshots the rounds keep like pages,
+    /// either missing until a round brings it.
     func libraryRows() -> [[String: Any]] {
-        guard let roots = try? store.roots(), let rows = try? pure("libraryRows", [roots]) as? [[String: Any]] else { return [] }
+        let trees = ["folders": store.snapshot("folders"), "labels": store.snapshot("labels")].compactMapValues { $0 }
+        guard let roots = try? store.roots(), let rows = try? pure("libraryRows", [roots, trees]) as? [[String: Any]] else { return [] }
         return rows
     }
 

@@ -244,9 +244,14 @@ try {
     const headers = { Cookie: `session=${SESSION}`, ...(process.env.MEDIA_WORKSPACE ? { 'X-Gamma-Workspace': process.env.MEDIA_WORKSPACE } : {}) };
     const { children } = await (await fetch(`${BASE}/api/blocks/root/children`, { headers })).json();
     const saved = children.find(p => (p.properties?.meta?.doi || '').toLowerCase() === DOI.toLowerCase() || (p.properties?.source_url || '').includes(DOI));
+    // The page is filed by folder and label ids; the library's trees name them.
+    const trees = await (await fetch(`${BASE}/api/library/folders`, { headers })).json();
+    const folderPath = id => (trees.folders.find(f => f.id === id)?.path || []).join('/');
+    const labelName = id => trees.labels.find(l => l.id === id)?.name || '';
     const verified = {
       saved: !!saved, pdf: !!saved?.properties?.doc_id,
-      folder: saved?.properties?.folder || '', labels: saved?.properties?.category || '',
+      folder: (saved?.properties?.folders || []).map(folderPath).join(', '),
+      labels: (saved?.properties?.labels || []).map(labelName).join(', '),
       title: saved?.content || '', elapsed: (Date.now() - startB) / 1000,
     };
     if (!verified.saved || !verified.pdf || !verified.folder.includes('Neutral atoms') || !verified.labels.includes(LABEL)) {

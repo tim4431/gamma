@@ -101,7 +101,7 @@ function viewportTransform(box, rotation) {
 
 const PURE = {
   pageView: (snapshot, pageId) => views.pageView(snapshot, pageId),
-  libraryRows: (roots) => views.libraryRows(roots),
+  libraryRows: (roots, trees) => views.libraryRows(roots, trees ?? {}),
   tree: (snapshot, pageId) => treeOf(snapshot, pageId),
   newInk: (page, w, h) => ink.newInk(page, w, h),
   newCanvasInk: (w, h) => ink.newCanvasInk(w, h),

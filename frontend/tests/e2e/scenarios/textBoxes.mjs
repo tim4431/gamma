@@ -129,7 +129,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     }, { what: "the box's block, text and measured size on the server" });
     firstId = box.id;
     assertEq(box.properties.pdf_page, 1, "on PDF page 1");
-    assert(!box.properties.highlight_id && !box.properties.pdf_position, "no highlight keys");
+    assert(!("pdf_position" in box.properties), "no position: not a highlight");
     const tb = box.properties.text_box;
     assertEq(tb.auto, true, "a click makes an auto-width box");
     assertEq(tb.size, 12, "the default size");

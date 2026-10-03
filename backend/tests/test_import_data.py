@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from conftest import login as _login, make_page, make_user as _make_user
+from conftest import account_of, login as _login, make_page, make_user as _make_user
 
 
 @pytest.fixture(scope="module")
@@ -211,10 +211,11 @@ def test_merge_skips_pages_with_same_doc_id(mdonor, mreceiver):
 def test_merge_never_touches_prefs(mdonor, mreceiver):
     from gamma.db import get_pref, set_pref
 
-    set_pref("mdonor", "open-tabs", ["donor-tab"])
-    set_pref("mreceiver", "open-tabs", ["receiver-tab"])
+    receiver = account_of("mreceiver")
+    set_pref(account_of("mdonor"), "open-tabs", ["donor-tab"])
+    set_pref(receiver, "open-tabs", ["receiver-tab"])
     backup = mdonor.get("/api/export")
     r = mreceiver.post("/api/import-data?mode=merge",
                        files={"file": ("b.zip", backup.content, "application/zip")})
     assert r.status_code == 200, r.text
-    assert get_pref("mreceiver", "open-tabs")[0] == ["receiver-tab"]
+    assert get_pref(receiver, "open-tabs")[0] == ["receiver-tab"]

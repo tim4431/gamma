@@ -159,8 +159,8 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 
 | Tool | Content |
 | --- | --- |
-| `list_folders` | The folder tree, each folder with its direct and total page counts; pages in no folder |
-| `list_pages` | Page IDs/titles, folders, labels, attachment metadata; filters by folder, label, title |
+| `list_folders` | The folder tree, each folder with its id, its path ("a / b") and its direct and total page counts (empty folders too); pages in no folder |
+| `list_pages` | Page IDs/titles, folders (paths), labels, attachment metadata; filters by folder (a path or an id), label, title |
 | `search_library` | Full-text note and PDF matches, with source locations |
 | `read_page` | Notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
@@ -218,10 +218,13 @@ block or share link. The assistant keeps that reference as context until another
 is supplied; it does not track the user's active tab or PDF scroll position.
 
 A folder-share link (a `?share=` token naming a folder, [api.md](api.md)
-"Shares") resolves to the folder and answers with `list_pages` over it — the
-pages the share view lists, with the page URL template for citing them. With
-`&page=` beside the token it reads that page instead, refused unless the page
-is filed in the folder.
+"Shares") resolves to the folder — by its id, the reference carrying the
+folder's path as its `title` and a `?ws=…&folder=<id>` URL — and answers
+with `list_pages` over it (scope `{"type": "folder", "folder": <id>}`): the
+pages the share view lists, with the page URL template for citing them. A
+share whose folder is gone fails as unavailable. With `&page=` beside the
+token it reads that page instead, refused unless the page is filed in the
+folder or below it.
 
 Links never grant extra MCP access. Share tokens resolve only inside the already
 authorized workspace, including restricted shares whose workspace the user can

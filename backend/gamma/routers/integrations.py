@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from ..auth import require_personal_user, require_ws, ws_role
+from ..auth import require_personal_user_id, require_ws, ws_role
 from ..db import connect_users_db
 from ..integrations import create_token
 from ..mcp_oauth import public_base
@@ -14,11 +14,11 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 
 def _owner(request: Request) -> tuple[str, str]:
-    username = require_personal_user(request, "Sign in with a personal account to connect an assistant.")
+    user_id = require_personal_user_id(request, "Sign in with a personal account to connect an assistant.")
     origin = request.headers.get("origin")
     if origin and urlsplit(origin).netloc != request.url.netloc:
         raise HTTPException(403, "Cross-origin token management is not allowed.")
-    return username, require_ws(request)
+    return user_id, require_ws(request)
 
 
 class TokenCreate(BaseModel):
@@ -29,7 +29,7 @@ class TokenCreate(BaseModel):
 
 @router.get("/tokens")
 def list_tokens(request: Request, response: Response):
-    username, ws = _owner(request)
+    user_id, ws = _owner(request)
     response.headers["Cache-Control"] = "no-store"
     try:
         base = public_base(request)
@@ -39,7 +39,7 @@ def list_tokens(request: Request, response: Response):
         oauth_error = str(exc.detail)
     with connect_users_db() as conn:
         rows = conn.execute("SELECT id, name, created_at, expires_at, scope FROM integration_tokens "
-                            "WHERE username = ? AND workspace_id = ? ORDER BY created_at DESC", (username, ws))
+                            "WHERE user_id = ? AND workspace_id = ? ORDER BY created_at DESC", (user_id, ws))
         return {"tokens": [dict(zip(("id", "name", "created_at", "expires_at", "scope"), r)) for r in rows],
                 "workspace_id": ws, "mcp_url": base + "/mcp", "oauth_available": oauth_error is None,
                 "oauth_error": oauth_error}
@@ -47,20 +47,20 @@ def list_tokens(request: Request, response: Response):
 
 @router.post("/tokens", status_code=201)
 def new_token(payload: TokenCreate, request: Request, response: Response):
-    username, ws = _owner(request)
+    user_id, ws = _owner(request)
     name = payload.name.strip()
     if not name:
         raise HTTPException(422, "Give the connection a name.")
     response.headers["Cache-Control"] = "no-store"
     if payload.scope == "write" and ws_role(request) == "viewer":
         raise HTTPException(403, "You can only view this workspace, so a write token cannot be made for it.")
-    return create_token(username, ws, name, payload.expires_in_days, scope=payload.scope)
+    return create_token(user_id, ws, name, payload.expires_in_days, scope=payload.scope)
 
 
 @router.delete("/tokens/{token_id}")
 def revoke_token(token_id: str, request: Request):
-    username, ws = _owner(request)
+    user_id, ws = _owner(request)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM integration_tokens WHERE id = ? AND username = ? AND workspace_id = ?",
-                     (token_id, username, ws))
+        conn.execute("DELETE FROM integration_tokens WHERE id = ? AND user_id = ? AND workspace_id = ?",
+                     (token_id, user_id, ws))
     return {"ok": True}

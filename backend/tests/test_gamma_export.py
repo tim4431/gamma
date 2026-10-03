@@ -1,14 +1,19 @@
 """Gamma-to-Gamma export: mode=gamma produces a scoped account backup
 (gamma-backup-1 layout) that /api/import-data?mode=merge on any Gamma imports
-additively — pages with their whole block trees, referenced uploads, chats."""
+additively — pages with their whole block trees, the folders and labels they
+are filed under, referenced uploads, chats."""
 
 import io
 import json
+import sqlite3
+import tempfile
 import zipfile
+from contextlib import closing
 
 import pytest
 
-from conftest import login as _login, make_page, make_user as _make_user, workspace_of
+from conftest import (folder_names, label_names, login as _login, make_folder, make_label, make_page,
+                      make_user as _make_user, workspace_of)
 
 
 @pytest.fixture(scope="module")
@@ -36,51 +41,105 @@ def _blank_pdf_bytes(width=612):
 
 
 def _donor_library(gdonor):
+    """The donor's folder "gxtop / gxfolder" (exported): a paper in its
+    subfolder "sub" and in "gxfolderish" outside it, labelled "gxtag"; a note
+    page in the folder itself; an empty subfolder "empty"."""
     up = gdonor.post("/api/uploads", files={"file": ("g.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
+    folders = {path: make_folder(gdonor, path) for path in (
+        "gxtop/gxfolder", "gxtop/gxfolder/sub", "gxtop/gxfolder/empty", "gxfolderish")}
+    label = make_label(gdonor, "gxtag")
     paper = make_page(gdonor, "Gx paper", properties={
         "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-        "folder": "gxfolder/sub", "category": "gxtag",
+        "folders": [folders["gxtop/gxfolder/sub"], folders["gxfolderish"]], "labels": [label],
         "meta": {"title": "Gx paper", "authors": ["Ada"], "year": "2024"},
     })
-    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 612.0, "height": 792.0}
+    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
     r = gdonor.put(f"/api/blocks/{paper['id']}/children", json={"blocks": [
         {"id": "gxh1", "content": "my thought", "children": [], "properties": {
-            "highlight_id": "gxh1", "quote": "a quote", "pdf_page": 1,
-            "color": "rgba(170, 235, 170, 0.65)",
-            "pdf_position": {"pageNumber": 1, "boundingRect": rect, "rects": [rect]},
+            "quote": "a quote", "color": "rgba(170, 235, 170, 0.65)",
+            "pdf_position": {"pageNumber": 1, "width": 612.0, "height": 792.0, "boundingRect": rect, "rects": [rect]},
         }},
     ]})
     assert r.status_code == 200, r.text
-    note = make_page(gdonor, "Gx note page", properties={"folder": "gxfolder"})
+    note = make_page(gdonor, "Gx note page", properties={"folders": [folders["gxtop/gxfolder"]]})
     r = gdonor.put(f"/api/chats/{paper['id']}", json={"messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200, r.text
-    return paper, note, up.json()
+    return paper, note, up.json(), folders, label
 
 
-def test_gamma_folder_export_merges_into_another_account(gdonor, greceiver):
-    paper, note, up = _donor_library(gdonor)
+def _say(text):
+    return [{"role": "user", "content": text}]
 
-    r = gdonor.get("/api/folders/export", params={"name": "gxfolder", "mode": "gamma"})
+
+@pytest.fixture(scope="module")
+def gx_export(gdonor):
+    """The donor's folder export (mode=gamma) and what it holds."""
+    paper, note, up, folders, label = _donor_library(gdonor)
+    # the paper's earlier conversation, the folder views' chats (the
+    # exported folder's and a subfolder's), and one the export leaves out
+    gdonor.post("/api/chat-history/archive", json={"bucket": paper["id"], "messages": _say("earlier")}
+                ).raise_for_status()
+    gdonor.put(f"/api/chats/{paper['id']}", json={"messages": _say("hi")}).raise_for_status()
+    for path in ("gxtop/gxfolder", "gxtop/gxfolder/sub", "gxfolderish"):
+        gdonor.put(f"/api/chats/{folders[path]}", json={"messages": _say(path)}).raise_for_status()
+    r = gdonor.get(f"/api/folders/{folders['gxtop/gxfolder']}/export", params={"mode": "gamma"})
     assert r.status_code == 200, r.text
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    names = set(z.namelist())
-    # the /api/export backup layout: DBs + manifest at the root, flat uploads/
-    assert {"pages.db", "data.db", "manifest.json"} <= names
-    assert json.loads(z.read("manifest.json"))["format"] == "gamma-backup-1"
-    pdf_name = up["source_url"].rsplit("/", 1)[-1]
-    assert f"uploads/{pdf_name}" in names
+    return {"paper": paper, "note": note, "up": up, "folders": folders, "label": label, "zip": r.content}
 
-    imp = greceiver.post("/api/import-data", params={"mode": "merge"},
-                         files={"file": ("gx.zip", r.content, "application/zip")})
+
+def _merge(client, data):
+    imp = client.post("/api/import-data", params={"mode": "merge"},
+                      files={"file": ("gx.zip", data, "application/zip")})
     assert imp.status_code == 200, imp.text
-    d = imp.json()
+    return imp.json()
+
+
+def test_gamma_folder_export_carries_its_folders_and_labels(gx_export):
+    z = zipfile.ZipFile(io.BytesIO(gx_export["zip"]))
+    names = set(z.namelist())
+    # the /api/export backup layout: pages.db (the chats in it) + manifest at
+    # the root, flat uploads/; no data.db, which holds nothing to carry
+    assert {"pages.db", "manifest.json"} <= names and "data.db" not in names
+    manifest = json.loads(z.read("manifest.json"))
+    assert manifest["format"] == "gamma-backup-1"
+    assert manifest["scope"] == {"folder": gx_export["folders"]["gxtop/gxfolder"], "pages": 2}
+    assert f"uploads/{gx_export['up']['source_url'].rsplit('/', 1)[-1]}" in names
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/pages.db"
+        with open(path, "wb") as out:
+            out.write(z.read("pages.db"))
+        with closing(sqlite3.connect(path)) as conn:
+            trees = dict(conn.execute("SELECT content, page_id FROM unified_blocks "
+                                      "WHERE page_id IN ('folders', 'labels')").fetchall())
+            buckets = {r[0] for r in conn.execute("SELECT bucket FROM chats")}
+    # the exported folder's subtree (the empty subfolder too) and the folder
+    # above it; the paper's other folder; its label
+    assert trees == {"gxtop": "folders", "gxfolder": "folders", "sub": "folders", "empty": "folders",
+                     "gxfolderish": "folders", "gxtag": "labels"}
+    folders = gx_export["folders"]
+    # the folder views' chats inside the exported folder, not the one outside it
+    assert buckets == {gx_export["paper"]["id"], folders["gxtop/gxfolder"], folders["gxtop/gxfolder/sub"]}
+
+
+def test_gamma_folder_export_merges_into_another_account(gx_export, greceiver):
+    paper, up, folders, label = gx_export["paper"], gx_export["up"], gx_export["folders"], gx_export["label"]
+    d = _merge(greceiver, gx_export["zip"])
     assert d["pages_added"] == 2 and d["uploads_added"] == 1
 
     # Whole block tree intact: same ids, highlight properties preserved.
     got = greceiver.get(f"/api/blocks/{paper['id']}").json()
-    assert got["properties"]["folder"] == "gxfolder/sub"
     assert got["properties"]["meta"]["authors"] == ["Ada"]
+    # The folders came along (an empty workspace: under their own ids), and
+    # the pages are filed in them.
+    paths = folder_names(greceiver)
+    assert {tuple(p) for p in paths.values()} == {
+        ("gxtop",), ("gxtop", "gxfolder"), ("gxtop", "gxfolder", "sub"), ("gxtop", "gxfolder", "empty"),
+        ("gxfolderish",)}
+    assert got["properties"]["folders"] == [folders["gxtop/gxfolder/sub"], folders["gxfolderish"]]
+    assert got["properties"]["labels"] == [label] and label_names(greceiver) == {label: "gxtag"}
+    note = greceiver.get(f"/api/blocks/{gx_export['note']['id']}").json()
+    assert [paths[f] for f in note["properties"]["folders"]] == [["gxtop", "gxfolder"]]
     children = greceiver.get(f"/api/blocks/{paper['id']}/children").json()["children"]
     hl = next(c for c in children if c["id"] == "gxh1")
     assert hl["content"] == "my thought"
@@ -90,13 +149,41 @@ def test_gamma_folder_export_merges_into_another_account(gdonor, greceiver):
     # The paper's AI chat merged too.
     chat = greceiver.get(f"/api/chats/{paper['id']}").json()
     assert chat["messages"] and chat["messages"][0]["content"] == "hi"
+    history = greceiver.get("/api/chat-history", params={"bucket": paper["id"]}).json()["sessions"]
+    assert [s["preview"] for s in history] == ["earlier"]
+    for path in ("gxtop/gxfolder", "gxtop/gxfolder/sub"):
+        assert greceiver.get(f"/api/chats/{folders[path]}").json()["messages"] == _say(path)
+    assert greceiver.get(f"/api/chats/{folders['gxfolderish']}").json()["messages"] == []
+    assert d["chats_added"] == 4  # the paper's two conversations, the two folder views'
 
-    # Merge is idempotent: the same zip again adds nothing.
-    again = greceiver.post("/api/import-data", params={"mode": "merge"},
-                           files={"file": ("gx.zip", r.content, "application/zip")})
-    assert again.status_code == 200, again.text
-    assert again.json()["pages_added"] == 0
-    assert again.json()["pages_skipped"] == 2
+    # Merge is idempotent: the same zip again adds nothing, no folder twice.
+    again = _merge(greceiver, gx_export["zip"])
+    assert again["pages_added"] == 0 and again["pages_skipped"] == 2
+    assert folder_names(greceiver) == paths and label_names(greceiver) == {label: "gxtag"}
+
+
+def test_gamma_folder_export_maps_onto_the_same_paths(gx_export):
+    """A workspace that has folders at the same paths (other ids) and a
+    label of the same name: the import files the pages in those, and makes
+    only the folders it lacks, below them."""
+    _make_user("gmapped", "gmappedpw")
+    mapped = _login("gmapped", "gmappedpw")
+    mine = make_folder(mapped, "gxtop/gxfolder")
+    my_label = make_label(mapped, "GXTAG")  # a name matches ignoring case
+    folders = gx_export["folders"]
+    assert mine != folders["gxtop/gxfolder"]
+    d = _merge(mapped, gx_export["zip"])
+    assert d["pages_added"] == 2
+    paths = folder_names(mapped)
+    assert sorted(paths.values()) == [["gxfolderish"], ["gxtop"], ["gxtop", "gxfolder"],
+                                      ["gxtop", "gxfolder", "empty"], ["gxtop", "gxfolder", "sub"]]
+    note = mapped.get(f"/api/blocks/{gx_export['note']['id']}").json()
+    assert note["properties"]["folders"] == [mine]
+    paper = mapped.get(f"/api/blocks/{gx_export['paper']['id']}").json()
+    assert [paths[f] for f in paper["properties"]["folders"]] == [["gxtop", "gxfolder", "sub"], ["gxfolderish"]]
+    assert paper["properties"]["labels"] == [my_label] and label_names(mapped) == {my_label: "GXTAG"}
+    # the exported folder's chat follows it to the folder it mapped onto
+    assert mapped.get(f"/api/chats/{mine}").json()["messages"] == _say("gxtop/gxfolder")
 
 
 def test_gamma_export_delete_reimport_is_near_identical(gdonor):
@@ -115,22 +202,22 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     pdf_name = up.json()["source_url"].rsplit("/", 1)[-1]
     paper = make_page(gdonor, "Rt paper", properties={
         "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-        "folder": "rtfolder/deep", "category": "rt",
+        "folders": [make_folder(gdonor, "rtfolder/deep")], "labels": [make_label(gdonor, "rt")],
         "meta": {"title": "Rt paper", "year": "2025"},
     })
-    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 612.0, "height": 792.0}
+    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
     r = gdonor.put(f"/api/blocks/{paper['id']}/children", json={"blocks": [
         {"id": "rth1", "content": "thought", "properties": {
-            "highlight_id": "rth1", "quote": "q", "pdf_page": 1,
-            "color": "rgba(170, 235, 170, 0.65)",
-            "pdf_position": {"pageNumber": 1, "boundingRect": rect, "rects": [rect]},
+            "quote": "q", "color": "rgba(170, 235, 170, 0.65)",
+            "pdf_position": {"pageNumber": 1, "width": 612.0, "height": 792.0, "boundingRect": rect, "rects": [rect]},
         }, "children": [
             {"id": "rth1a", "content": "nested note", "properties": {}, "children": []},
         ]},
         {"id": "rtn1", "content": "free note", "properties": {}, "children": []},
     ]})
     assert r.status_code == 200, r.text
-    note = make_page(gdonor, "Rt note", properties={"folder": "rtfolder"})
+    rtfolder = make_folder(gdonor, "rtfolder")
+    note = make_page(gdonor, "Rt note", properties={"folders": [rtfolder]})
     assert gdonor.put(f"/api/chats/{paper['id']}",
                       json={"messages": [{"role": "user", "content": "rt chat"}]}).status_code == 200
 
@@ -150,7 +237,7 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     assert len(before) == 5  # 2 roots + highlight + nested note + free note
     pdf_bytes_before = (ws_uploads_dir(workspace_of("gdonor")) / pdf_name).read_bytes()
 
-    exp = gdonor.get("/api/folders/export", params={"name": "rtfolder", "mode": "gamma"})
+    exp = gdonor.get(f"/api/folders/{rtfolder}/export", params={"mode": "gamma"})
     assert exp.status_code == 200, exp.text
 
     for pid in page_ids:  # deleted for good: through Recently deleted, then out of it
@@ -185,13 +272,19 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
 
 
 def test_gamma_single_page_export(gdonor):
-    page = make_page(gdonor, "Gx single", properties={"category": "solo"})
+    page = make_page(gdonor, "Gx single", properties={"labels": [make_label(gdonor, "solo")]})
     r = gdonor.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma"})
     assert r.status_code == 200, r.text
     z = zipfile.ZipFile(io.BytesIO(r.content))
     assert "pages.db" in z.namelist()
     scope = json.loads(z.read("manifest.json"))["scope"]
     assert scope == {"folder": None, "pages": 1}
+    with tempfile.TemporaryDirectory() as td:
+        with open(f"{td}/pages.db", "wb") as out:
+            out.write(z.read("pages.db"))
+        with closing(sqlite3.connect(f"{td}/pages.db")) as conn:
+            trees = conn.execute("SELECT content FROM unified_blocks WHERE page_id IN ('folders', 'labels')").fetchall()
+    assert trees == [("solo",)]  # its label travels, no folder
 
 
 def test_unknown_mode_rejected(gdonor):

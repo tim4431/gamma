@@ -6,7 +6,7 @@ refreshes a folder's .bib from.
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import login, make_folder, make_page, make_user
 from gamma import bibtex
 
 
@@ -21,11 +21,21 @@ def _paper(c, title, folder, meta=None, cite_key=""):
     way a metadata lookup leaves one."""
     record = {"title": title, "authors": ["Ada Lovelace"], "year": "1843",
               "venue": "Notes", "source": "crossref", **(meta or {})}
-    props = {"folder": folder, "meta": record,
+    props = {"folders": [make_folder(c, folder)], "meta": record,
              "bibtex": bibtex.build_entry(record, cite_key)}
     if cite_key:
         props["cite_key"] = cite_key
     return make_page(c, title, props)
+
+
+def _export_url(c, path):
+    """The download of the folder at ``path`` (made where missing)."""
+    return f"/api/folders/{make_folder(c, path)}/export"
+
+
+def _share(c, path):
+    """Share the folder at ``path``."""
+    return c.post(f"/api/share/folder/{make_folder(c, path)}")
 
 
 # --- the entry and its key ---------------------------------------------------
@@ -95,7 +105,7 @@ def test_a_folder_exports_one_bib_with_unique_keys(user):
     _paper(user, "Second paper", "Bib folder")
     _paper(user, "Deep paper", "Bib folder/Sub")
     _paper(user, "Other paper", "Bib elsewhere")
-    r = user.get("/api/folders/export", params={"name": "Bib folder", "mode": "bibtex"})
+    r = user.get(_export_url(user, "Bib folder"), params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
     keys = [line.split("{", 1)[1].rstrip(",") for line in r.text.splitlines() if line.startswith("@")]
     # The folder's three pages (the subfolder's included), never the one outside.
@@ -107,7 +117,7 @@ def test_a_folder_exports_one_bib_with_unique_keys(user):
 def test_a_pinned_key_keeps_its_spelling_against_a_clash(user):
     _paper(user, "Generated one", "Bib pinned")
     _paper(user, "Pinned one", "Bib pinned", cite_key="lovelace1843")
-    r = user.get("/api/folders/export", params={"name": "Bib pinned", "mode": "bibtex"})
+    r = user.get(_export_url(user, "Bib pinned"), params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
     entries = dict(_entries(r.text))
     assert entries["Pinned one"] == "lovelace1843"
@@ -128,7 +138,7 @@ def test_a_cached_entry_is_rekeyed_to_the_pin(user):
     """A registrar renders its own BibTeX with its own key; the pin wins."""
     record = {"title": "From doi.org", "authors": ["Ada Lovelace"], "year": "1843", "source": "doi"}
     page = make_page(user, "From doi.org", {
-        "folder": "Bib rekey", "meta": record, "cite_key": "mine:2026",
+        "folders": [make_folder(user, "Bib rekey")], "meta": record, "cite_key": "mine:2026",
         "bibtex": "@article{10.1234/abc,\n  title = {From doi.org},\n  year = {1843}\n}"})
     r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
@@ -145,12 +155,12 @@ def test_a_page_with_a_record_but_no_rendering_still_exports(user):
 
 
 def test_a_page_without_metadata_cannot_be_cited(user):
-    page = make_page(user, "Just notes", {"folder": "Bib empty"})
+    page = make_page(user, "Just notes", {"folders": [make_folder(user, "Bib empty")]})
     r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "bibtex"})
     assert r.status_code == 400
     assert r.json()["detail"] == "this page has no paper metadata to cite"
     # A folder of such pages says it about the set.
-    r = user.get("/api/folders/export", params={"name": "Bib empty", "mode": "bibtex"})
+    r = user.get(_export_url(user, "Bib empty"), params={"mode": "bibtex"})
     assert r.status_code == 400
     assert r.json()["detail"] == "none of these pages has paper metadata to cite"
 
@@ -158,8 +168,8 @@ def test_a_page_without_metadata_cannot_be_cited(user):
 def test_a_folder_lists_the_pages_it_left_out(user):
     from gamma import jobs
     _paper(user, "Cited paper", "Bib mixed")
-    make_page(user, "Uncited notes", {"folder": "Bib mixed"})
-    started = user.post("/api/jobs/export", json={"folder": "Bib mixed", "mode": "bibtex"})
+    make_page(user, "Uncited notes", {"folders": [make_folder(user, "Bib mixed")]})
+    started = user.post("/api/jobs/export", json={"folder": make_folder(user, "Bib mixed"), "mode": "bibtex"})
     assert started.status_code == 200, started.text
     job = jobs.wait(started.json()["id"])
     assert job["state"] == "done", job["error"]
@@ -179,25 +189,33 @@ def test_a_folder_share_link_serves_the_current_bib(user, anon):
     """What a LaTeX editor refreshes from: the token names the workspace, so
     the URL needs no session, and a page added later is simply in the file."""
     _paper(user, "Shared paper", "Bib shared")
-    r = user.post("/api/share/folder", params={"name": "Bib shared"})
+    r = _share(user, "Bib shared")
     assert r.status_code == 200, r.text
     token = r.json()["token"]
 
-    first = anon.get("/api/folders/export", params={"name": "Bib shared", "mode": "bibtex", "share": token})
+    first = anon.get(_export_url(user, "Bib shared"), params={"mode": "bibtex", "share": token})
     assert first.status_code == 200, first.text
     assert first.text.count("@article{") == 1
 
     _paper(user, "Added later", "Bib shared")
-    again = anon.get("/api/folders/export", params={"name": "Bib shared", "mode": "bibtex", "share": token})
+    again = anon.get(_export_url(user, "Bib shared"), params={"mode": "bibtex", "share": token})
     assert again.status_code == 200
     assert again.text.count("@article{") == 2
 
 
 def test_a_share_token_cannot_reach_another_folders_bib(user, anon):
     _paper(user, "Private paper", "Bib private")
-    token = user.post("/api/share/folder", params={"name": "Bib shared"}).json()["token"]
-    r = anon.get("/api/folders/export", params={"name": "Bib private", "mode": "bibtex", "share": token})
+    token = _share(user, "Bib shared").json()["token"]
+    r = anon.get(_export_url(user, "Bib private"), params={"mode": "bibtex", "share": token})
     assert r.status_code == 403
+    # a folder below the shared one is inside the share; its .bib is named by its path
+    _paper(user, "Nested paper", "Bib shared/Nested")
+    r = anon.get(_export_url(user, "Bib shared/Nested"), params={"mode": "bibtex", "share": token})
+    assert r.status_code == 200, r.text
+    assert r.text.startswith("% 1 entry from Bib shared / Nested, exported from Gamma")
+    assert "Bib shared-Nested.bib" in r.headers["content-disposition"]
+    page = _paper(user, "A page id", "Bib private")
+    assert anon.get(f"/api/folders/{page['id']}/export", params={"share": token}).status_code == 403
 
 
 # --- the review the dialog shows before exporting -----------------------------
@@ -205,8 +223,8 @@ def test_a_share_token_cannot_reach_another_folders_bib(user, anon):
 def test_preview_pairs_every_paper_with_its_entry(user):
     _paper(user, "Preview one", "Bib preview")
     _paper(user, "Preview two", "Bib preview", cite_key="pinned:two")
-    make_page(user, "Preview note", {"folder": "Bib preview"})
-    r = user.get("/api/bibliography", params={"folder": "Bib preview"})
+    make_page(user, "Preview note", {"folders": [make_folder(user, "Bib preview")]})
+    r = user.get("/api/bibliography", params={"folder": make_folder(user, "Bib preview")})
     assert r.status_code == 200, r.text
     data = r.json()
     assert [(e["title"], e["key"], e["pinned"]) for e in data["entries"]] == [
@@ -215,8 +233,7 @@ def test_preview_pairs_every_paper_with_its_entry(user):
     assert data["skipped"] == [{"page_id": data["skipped"][0]["page_id"], "title": "Preview note",
                                 "reason": "page has no paper metadata"}]
     # The text is the file the download would write, entry for entry.
-    assert data["text"] == user.get("/api/folders/export",
-                                    params={"name": "Bib preview", "mode": "bibtex"}).text
+    assert data["text"] == user.get(_export_url(user, "Bib preview"), params={"mode": "bibtex"}).text
     for entry in data["entries"]:
         assert entry["text"] in data["text"]
 
@@ -233,7 +250,7 @@ def test_preview_of_a_page_without_metadata_is_empty_not_an_error(user):
 def test_preview_needs_a_target_and_honours_the_share_scope(user, anon):
     assert user.get("/api/bibliography").status_code == 400
     assert user.get("/api/bibliography", params={"page_id": "nope"}).status_code == 404
-    token = user.post("/api/share/folder", params={"name": "Bib shared"}).json()["token"]
-    assert anon.get("/api/bibliography", params={"folder": "Bib shared", "share": token}).status_code == 200
-    assert anon.get("/api/bibliography", params={"folder": "Bib private", "share": token}).status_code == 403
-    assert anon.get("/api/bibliography", params={"folder": "Bib shared"}).status_code == 401
+    token = _share(user, "Bib shared").json()["token"]
+    assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib shared"), "share": token}).status_code == 200
+    assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib private"), "share": token}).status_code == 403
+    assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib shared")}).status_code == 401

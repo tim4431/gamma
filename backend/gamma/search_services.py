@@ -67,8 +67,8 @@ class SearchError(Exception):
 
 # --- stored settings ----------------------------------------------------------
 
-def load(user: str) -> dict:
-    value = get_pref(user, PREF_KEY)[0] if user else None
+def load(user_id: str) -> dict:
+    value = get_pref(user_id, PREF_KEY)[0] if user_id else None
     if not isinstance(value, dict):
         return {}
     out = {k: v for k, v in value.items() if k in SERVICES and isinstance(v, dict)}
@@ -77,14 +77,14 @@ def load(user: str) -> dict:
     return out
 
 
-def _update(user: str, change) -> None:
+def _update(user_id: str, change) -> None:
     """Read-modify-write in one transaction (db.update_pref), so saving one
     service never drops another saved meanwhile."""
     def apply(value):
         saved = value if isinstance(value, dict) else {}
         change(saved)
         return saved
-    update_pref(user, PREF_KEY, apply)
+    update_pref(user_id, PREF_KEY, apply)
 
 
 def _complete(service: str, conf) -> bool:
@@ -101,14 +101,14 @@ def _searxng(saved: dict) -> tuple[str, bool]:
     return SERVER_SEARXNG_URL, False
 
 
-def openalex_key(user: str) -> str:
-    return ((load(user).get("openalex") or {}).get("api_key") or "").strip()
+def openalex_key(user_id: str) -> str:
+    return ((load(user_id).get("openalex") or {}).get("api_key") or "").strip()
 
 
-def masked(user: str, can_edit: bool) -> dict:
+def masked(user_id: str, can_edit: bool) -> dict:
     """The settings view: the engine choice and every service, its fields
     (secrets as a last-4 hint) and whether it is ready."""
-    saved = load(user)
+    saved = load(user_id)
     rows = []
     for sid, service in SERVICES.items():
         conf = saved.get(sid) or {}
@@ -131,7 +131,7 @@ def _validated_url(value: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
 
 
-def save(user: str, service: str, fields: dict) -> None:
+def save(user_id: str, service: str, fields: dict) -> None:
     """Set a service's fields. A secret left empty keeps the stored value
     (the form never sees it); a plain field is taken as given."""
     if service not in SERVICES:
@@ -142,22 +142,22 @@ def save(user: str, service: str, fields: dict) -> None:
         if "url" in conf:
             conf["url"] = _validated_url(conf["url"])
         saved[service] = conf
-    _update(user, change)
+    _update(user_id, change)
 
 
-def remove(user: str, service: str) -> None:
+def remove(user_id: str, service: str) -> None:
     if service not in SERVICES:
         raise HTTPException(status_code=404, detail="unknown search service")
-    _update(user, lambda saved: saved.pop(service, None))
+    _update(user_id, lambda saved: saved.pop(service, None))
 
 
-def set_engine(user: str, engine: str) -> None:
+def set_engine(user_id: str, engine: str) -> None:
     if engine not in ENGINES:
         raise HTTPException(status_code=400, detail=f"engine must be one of {', '.join(ENGINES)}")
 
     def change(saved):
         saved["engine"] = engine
-    _update(user, change)
+    _update(user_id, change)
 
 
 # --- which engine a chat uses ---------------------------------------------------
@@ -174,9 +174,9 @@ def hosted_tool(runtime: dict | None, entry: dict | None) -> dict | None:
     return ai_protocols.of(conf).wire(conf, probe).hosted_web_search(conf)
 
 
-def web_engine(user: str, runtime: dict | None = None, entry: dict | None = None) -> str:
+def web_engine(user_id: str, runtime: dict | None = None, entry: dict | None = None) -> str:
     """The engine a chat on ``entry`` searches the web with, "" for none."""
-    saved = load(user)
+    saved = load(user_id)
     ready = {"brave": _complete("brave", saved.get("brave")), "searxng": bool(_searxng(saved)[0]),
              "ai": hosted_tool(runtime, entry) is not None}
     choice = saved.get("engine") or "auto"
@@ -308,12 +308,12 @@ def _ai_search(runtime: dict, entry: dict, effort: str, query: str, limit: int) 
     return _results(lines, limit)
 
 
-def search(engine: str, user: str, query: str, limit: int, ai: dict | None = None) -> list[dict]:
+def search(engine: str, user_id: str, query: str, limit: int, ai: dict | None = None) -> list[dict]:
     """[{title, url, snippet}] from ``engine`` (web_engine's pick); ``ai``
     carries the chat's ``runtime``, ``entry`` and ``effort`` for the "ai"
     engine. Raises SearchError."""
     limit = max(1, min(int(limit), RESULTS_MAX))
-    saved = load(user)
+    saved = load(user_id)
     if engine == "brave":
         key = ((saved.get("brave") or {}).get("api_key") or "").strip()
         if not key:
@@ -329,7 +329,7 @@ def search(engine: str, user: str, query: str, limit: int, ai: dict | None = Non
     raise SearchError("general web search is not set up")
 
 
-def test(user: str, service: str) -> dict:
+def test(user_id: str, service: str) -> dict:
     """Check a service with the stored settings: {ok, text} or {ok: false,
     error} (in the body, like the AI provider test)."""
     if service not in SERVICES:
@@ -338,12 +338,12 @@ def test(user: str, service: str) -> dict:
         if service == "openalex":
             from . import openalex
 
-            key = openalex_key(user)
+            key = openalex_key(user_id)
             if not key:
                 return {"ok": False, "error": "no key set up"}
             found = openalex.search("Degenerate Raman sideband cooling", 1, key=key)
             return {"ok": True, "text": "key accepted" + (f" — {found[0]['title'][:60]}" if found else "")}
-        results = search(service, user, "Attention Is All You Need arXiv", 3)
+        results = search(service, user_id, "Attention Is All You Need arXiv", 3)
     except SearchError as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:  # openalex.OpenAlexError and transport failures

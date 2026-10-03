@@ -4,7 +4,7 @@ and pages → a vault (the ``obsidian`` export mode), including the round trip."
 import io
 import zipfile
 
-from conftest import make_page
+from conftest import folder_names, label_names, make_folder, make_label, make_page
 
 from gamma.markdown_import import md_to_blocks, parse_frontmatter
 from gamma.obsidian_export import vault_name
@@ -121,17 +121,20 @@ Steps here.
 
 
 def test_vault_import_pages_links_embeds_and_properties(guest):
-    report = _import(guest, _vault(), folder="obs")
+    report = _import(guest, _vault(), folder=make_folder(guest, "obs"))
     assert report["obsidian"] is True
     assert report["pages_created"] == 2
     assert any("canvas" in w["reason"] for w in report["warnings"])
     titles = {p["title"]: p for p in report["pages"]}
     assert set(titles) == {"Home", "Deep Note"}          # filename is the title
-    assert titles["Deep Note"]["folder"] == "obs/Notes"
+    assert titles["Deep Note"]["folders"] == [["obs", "Notes"]]
 
     home = _subtree(guest, titles["Home"]["id"])
     deep = _subtree(guest, titles["Deep Note"]["id"])
-    assert home["properties"]["category"] == "project/alpha, reading"
+    assert [folder_names(guest)[f] for f in deep["properties"]["folders"]] == [["obs", "Notes"]]
+    # tags are labels by name ("/" is part of a name)
+    labels = label_names(guest)
+    assert [labels[i] for i in home["properties"]["labels"]] == ["project/alpha", "reading"]
     assert home["properties"]["aliases"] == ["Start", "Home page"]
 
     deep_blocks = _flat(deep)
@@ -176,7 +179,7 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
 def test_vault_import_is_idempotent(guest):
     """The same vault (same bytes) imported again adds nothing — the pages
     were already created by the test above, this import is the repeat."""
-    again = _import(guest, _vault(), folder="obs2")
+    again = _import(guest, _vault(), folder=make_folder(guest, "obs2"))
     assert again["pages_created"] == 0 and again["pages_skipped"] == 2
 
 
@@ -192,9 +195,7 @@ def _highlight(hid, quote, note="", page=1):
     return {
         "id": hid, "content": note, "children": [],
         "properties": {
-            "highlight_id": hid, "quote": quote, "pdf_page": page,
-            "color": "rgba(255, 226, 143, 0.65)",
-            "pdf_position": {"pageNumber": page, "boundingRect": {}, "rects": []},
+            "quote": quote, "color": "rgba(255, 226, 143, 0.65)", "pdf_position": {"pageNumber": page},
         },
     }
 
@@ -207,7 +208,8 @@ def test_vault_name_strips_obsidian_forbidden_characters():
 
 def test_obsidian_export_writes_a_vault(guest):
     img = guest.post("/api/upload-image", files={"file": ("d.png", PNG, "image/png")}).json()["url"]
-    target = make_page(guest, "Target: note", properties={"folder": "ov/sub", "category": "read, later"})
+    target = make_page(guest, "Target: note", properties={
+        "folders": [make_folder(guest, "ov/sub")], "labels": [make_label(guest, "read"), make_label(guest, "later")]})
     _put_children(guest, target["id"], [
         {"id": "ot-h", "content": "## Findings", "properties": {}, "children": [
             {"id": "ot-p", "content": "a shared finding\nsecond line", "properties": {}, "children": [
@@ -216,7 +218,8 @@ def test_obsidian_export_writes_a_vault(guest):
         ]},
         {"id": "ot-f", "content": "```py\nx = 1\n```", "properties": {}, "children": []},
     ])
-    src = make_page(guest, "Source", properties={"folder": "ov", "aliases": ["S"]})
+    ov = make_folder(guest, "ov")
+    src = make_page(guest, "Source", properties={"folders": [ov], "aliases": ["S"]})
     _put_children(guest, src["id"], [
         {"id": "os-1", "content": f"see [[ot-p]] and page [[{target['id']}]] and code [[ot-f]]",
          "properties": {}, "children": []},
@@ -225,7 +228,7 @@ def test_obsidian_export_writes_a_vault(guest):
         {"id": "os-4", "content": "> [!note] kept\n> body", "properties": {}, "children": []},
     ])
 
-    r = guest.get("/api/folders/export", params={"name": "ov", "mode": "obsidian"})
+    r = guest.get(f"/api/folders/{ov}/export", params={"mode": "obsidian"})
     assert r.status_code == 200, r.text
     assert "ov-obsidian.zip" in r.headers["content-disposition"]
     z = zipfile.ZipFile(io.BytesIO(r.content))
@@ -253,7 +256,8 @@ def test_obsidian_export_writes_a_vault(guest):
 def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     up = guest.post("/api/uploads", files={"file": ("paper.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
-    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], "folder": "ovp"}
+    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+             "folders": [make_folder(guest, "ovp/inner")]}
     page_id = make_page(guest, "Paper", properties=props)["id"]
     _put_children(guest, page_id, [
         _highlight("oh-1", "quoted text\nsecond", note="my note", page=3) | {"children": [
@@ -267,8 +271,8 @@ def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     assert r.status_code == 200, r.text
     z = zipfile.ZipFile(io.BytesIO(r.content))
     assert "attachments/Paper.pdf" in z.namelist()
-    # A single page keeps its whole folder label as the directory.
-    md = z.read("ovp/Paper.md").decode()
+    # A single page keeps its folder's whole path as the directory.
+    md = z.read("ovp/inner/Paper.md").decode()
     assert 'source: "[[Paper.pdf]]"' in md
     assert "> [!quote] [[Paper.pdf#page=3|p. 3]]\n> quoted text\n> second\n\nmy note\n\n- under the note\n" in md
     assert "- top paragraph\n  - > nested quote\n    [[Paper.pdf#page=5|p. 5]]\n" in md
@@ -276,14 +280,14 @@ def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     # Without the bundle: page markers only, and the source stays a URL.
     r = guest.get(f"/api/pages/{page_id}/export", params={"mode": "obsidian", "pdf": 0})
     z = zipfile.ZipFile(io.BytesIO(r.content))
-    md = z.read("ovp/Paper.md").decode()
+    md = z.read("ovp/inner/Paper.md").decode()
     assert "attachments/Paper.pdf" not in z.namelist()
     assert "> [!quote] p. 3\n> quoted text" in md and "[[Paper.pdf" not in md
     assert f"source: {props['source_url']}" in md
 
     # Dropping highlights keeps the note as a plain block (with its child).
     r = guest.get(f"/api/pages/{page_id}/export", params={"mode": "obsidian", "highlights": 0})
-    md = zipfile.ZipFile(io.BytesIO(r.content)).read("ovp/Paper.md").decode()
+    md = zipfile.ZipFile(io.BytesIO(r.content)).read("ovp/inner/Paper.md").decode()
     assert "[!quote]" not in md and "\n- my note\n  - under the note\n" in md
 
 
@@ -293,7 +297,8 @@ def test_obsidian_export_writes_text_boxes_as_notes_with_their_page(guest):
     bullet in a list); on a sheet it is just the note."""
     up = guest.post("/api/uploads", files={"file": ("boxes.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
-    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], "folder": "ovb"}
+    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+             "folders": [make_folder(guest, "ovb")]}
     page_id = make_page(guest, "Boxed", properties=props)["id"]
     box = {"x": 40, "y": 60, "w": 180}
     _put_children(guest, page_id, [
@@ -326,15 +331,16 @@ def test_obsidian_export_writes_text_boxes_as_notes_with_their_page(guest):
 
 
 def test_obsidian_export_disambiguates_same_titles(guest):
-    a = make_page(guest, "Twin", properties={"folder": "ovt/one"})
-    b = make_page(guest, "Twin", properties={"folder": "ovt/two"})
-    c = make_page(guest, "Twin", properties={"folder": "ovt/two"})
-    src = make_page(guest, "Links", properties={"folder": "ovt"})
+    ovt = make_folder(guest, "ovt")
+    a = make_page(guest, "Twin", properties={"folders": [make_folder(guest, "ovt/one")]})
+    b = make_page(guest, "Twin", properties={"folders": [make_folder(guest, "ovt/two")]})
+    c = make_page(guest, "Twin", properties={"folders": [make_folder(guest, "ovt/two")]})
+    src = make_page(guest, "Links", properties={"folders": [ovt]})
     _put_children(guest, src["id"], [
         {"id": "ol-1", "content": f"[[{a['id']}]] [[{b['id']}]] [[{c['id']}]]",
          "properties": {}, "children": []},
     ])
-    r = guest.get("/api/folders/export", params={"name": "ovt", "mode": "obsidian"})
+    r = guest.get(f"/api/folders/{ovt}/export", params={"mode": "obsidian"})
     z = zipfile.ZipFile(io.BytesIO(r.content))
     assert {"one/Twin.md", "two/Twin.md", "two/Twin 2.md", "Links.md"} <= set(z.namelist())
     assert "[[one/Twin]] [[two/Twin]] [[Twin 2]]" in z.read("Links.md").decode()
@@ -344,8 +350,9 @@ def test_obsidian_round_trip(guest):
     """Export a folder as a vault, import the zip into another folder: the
     same titles, tree, synced block and labels come back."""
     img = guest.post("/api/upload-image", files={"file": ("d.png", PNG, "image/png")}).json()["url"]
-    a = make_page(guest, "Round A", properties={"folder": "ovr", "category": "t1"})
-    b = make_page(guest, "Round B", properties={"folder": "ovr/deep"})
+    ovr = make_folder(guest, "ovr")
+    a = make_page(guest, "Round A", properties={"folders": [ovr], "labels": [make_label(guest, "t1")]})
+    b = make_page(guest, "Round B", properties={"folders": [make_folder(guest, "ovr/deep")]})
     _put_children(guest, a["id"], [
         {"id": "ra-h", "content": "# Heading", "properties": {}, "children": [
             {"id": "ra-p", "content": "first line\nsecond line", "properties": {}, "children": []},
@@ -359,15 +366,17 @@ def test_obsidian_round_trip(guest):
     _put_children(guest, b["id"], [
         {"id": "rb-1", "content": "b note", "properties": {}, "children": []},
     ])
-    r = guest.get("/api/folders/export", params={"name": "ovr", "mode": "obsidian"})
+    r = guest.get(f"/api/folders/{ovr}/export", params={"mode": "obsidian"})
     assert r.status_code == 200, r.text
-    report = _import(guest, io.BytesIO(r.content), folder="restored")
+    restored = make_folder(guest, "restored")
+    report = _import(guest, io.BytesIO(r.content), folder=restored)
     assert report["pages_created"] == 2 and report["warnings"] == []
     by_title = {p["title"]: p for p in report["pages"]}
-    assert by_title["Round B"]["folder"] == "restored/deep"
+    assert by_title["Round B"]["folders"] == [["restored", "deep"]]
     new_a = _subtree(guest, by_title["Round A"]["id"])
     new_b = _subtree(guest, by_title["Round B"]["id"])
-    assert new_a["properties"]["category"] == "t1"
+    assert new_a["properties"]["folders"] == [restored]
+    assert new_a["properties"]["labels"] == [make_label(guest, "t1")]  # the same label, by name
     b_note = new_b["children"][0]
     # Document style is lossy in one way: what follows a heading belongs to
     # it on re-import. Everything else — nesting, multi-line blocks, the

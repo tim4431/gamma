@@ -111,11 +111,15 @@ export async function guideScenarios(env) {
       const paperId = new URL(page.url()).searchParams.get("block");
       await page.waitForSelector('[data-guide-overlay="label"] .guideCard');
       await page.waitForSelector('[data-guide-overlay="home"] .guideCard');
+      // The label field made the llm label (a block of the label tree) and
+      // filed the page under it, once.
       const saved = await until(async () => {
         const { block } = await alice.api(`/api/blocks/${paperId}/subtree`);
-        return block.properties.category?.split(",").includes("llm") && block.children.some((b) => b.content.includes("Scaling keeps the scores stable.")) ? block : null;
+        const llm = (await alice.api("/api/blocks/labels/subtree")).block.children.filter((l) => l.content === "llm");
+        return llm.length && block.properties.labels?.includes(llm[0].id) && block.children.some((b) => b.content.includes("Scaling keeps the scores stable.")) ? { block, llm } : null;
       }, { what: "demo note and llm label persist" });
-      assertEq(saved.properties.category.split(",").filter((t) => t === "llm").length, 1, "llm is added once");
+      assertEq(saved.llm.length, 1, "llm is made once");
+      assertEq(saved.block.properties.labels.filter((id) => id === saved.llm[0].id).length, 1, "llm is added once");
       await page.click('[data-guide="header.home"]');
       await page.locator('.guideCard .guideDone').waitFor();
       assert(!new URL(page.url()).searchParams.has("block"), "final step returns to the homepage");

@@ -22,11 +22,11 @@ _FIELDS = ("input", "output", "cache_read", "cache_write")
 KEEP_DAYS = 400
 
 
-def record(username: str, kind: str, provider_id: str, provider_name: str,
+def record(user_id: str, kind: str, provider_id: str, provider_name: str,
            model: str, usage: dict | None) -> None:
     """Store one call's token counts. Never raises — usage is a courtesy,
     not something a failing insert should turn into a failed chat."""
-    if not usage or not username or kind not in KINDS:
+    if not usage or not user_id or kind not in KINDS:
         return
     counts = [max(0, int(usage.get(f) or 0)) for f in _FIELDS]
     if not any(counts):
@@ -34,12 +34,12 @@ def record(username: str, kind: str, provider_id: str, provider_name: str,
     try:
         with connect_users_db() as conn:
             conn.execute(
-                "INSERT INTO ai_usage (username, at, kind, provider_id, provider_name, model, "
+                "INSERT INTO ai_usage (user_id, at, kind, provider_id, provider_name, model, "
                 "input, output, cache_read, cache_write) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (username, page_now(), kind, str(provider_id or "")[:64],
+                (user_id, page_now(), kind, str(provider_id or "")[:64],
                  str(provider_name or "")[:80], str(model or "")[:120], *counts))
             cutoff = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
-            conn.execute("DELETE FROM ai_usage WHERE username = ? AND at < ?", (username, cutoff))
+            conn.execute("DELETE FROM ai_usage WHERE user_id = ? AND at < ?", (user_id, cutoff))
     except sqlite3.Error as e:
         log.warning(f"[ai_usage] could not record usage: {e}")
 
@@ -50,11 +50,11 @@ def recorder(kind: str, entry: dict, runtime: dict):
     registry entry the provider and model."""
     if not isinstance(entry, dict):  # a bare model id (tests stub the resolver so)
         entry = {"model": str(entry or "")}
-    username = runtime.get("user") or ""
+    user_id = runtime.get("user") or ""
     conf = (runtime.get("providers") or {}).get(entry.get("provider"), {})
 
     def on_usage(usage):
-        record(username, kind, entry.get("provider", ""), conf.get("name", ""),
+        record(user_id, kind, entry.get("provider", ""), conf.get("name", ""),
                entry.get("model", ""), usage)
     return on_usage
 
@@ -69,17 +69,17 @@ def _metered_args() -> tuple:
     return cutoff, len(SHARED_PREFIX), SHARED_PREFIX
 
 
-def shared_used(username: str) -> int:
+def shared_used(user_id: str) -> int:
     """Tokens (input + output) the account spent through the server's shared
     entries in the last 24 hours — what the shared AI allowance counts
     (docs/dev/guests.md). Own entries never count."""
-    if not username:
+    if not user_id:
         return 0
     try:
         with connect_users_db() as conn:
             row = conn.execute(
-                f"SELECT COALESCE(SUM(input + output), 0) FROM ai_usage WHERE username = ? AND {_METERED}",
-                (username, *_metered_args())).fetchone()
+                f"SELECT COALESCE(SUM(input + output), 0) FROM ai_usage WHERE user_id = ? AND {_METERED}",
+                (user_id, *_metered_args())).fetchone()
     except sqlite3.Error as e:
         log.warning(f"[ai_usage] could not read shared usage: {e}")
         return 0
@@ -99,7 +99,7 @@ def _totals(rows) -> dict:
     return total
 
 
-def summary(username: str) -> dict:
+def summary(user_id: str) -> dict:
     """The Settings pane's numbers: totals over today / 7 days / 30 days /
     everything kept, a 365-day UTC calendar, the 30-day split by kind, and the 30-day split by
     model (provider name + model id, biggest first)."""
@@ -107,7 +107,7 @@ def summary(username: str) -> dict:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT at, kind, provider_id, provider_name, model, input, output, cache_read, cache_write "
-            "FROM ai_usage WHERE username = ? ORDER BY at DESC", (username,)).fetchall()
+            "FROM ai_usage WHERE user_id = ? ORDER BY at DESC", (user_id,)).fetchall()
     now = datetime.now(timezone.utc)
     day_start = now.strftime("%Y-%m-%dT00:00:00")
     since = {"today": day_start,
@@ -145,11 +145,11 @@ def summary(username: str) -> dict:
     }
 
 
-def clear(username: str) -> int:
+def clear(user_id: str) -> int:
     """Drop the account's usage rows; returns how many went. The rows the
     shared allowance still counts (shared entries, last 24 hours) stay — a
     reset must not refill the allowance."""
     with connect_users_db() as conn:
-        cur = conn.execute(f"DELETE FROM ai_usage WHERE username = ? AND NOT ({_METERED})",
-                           (username, *_metered_args()))
+        cur = conn.execute(f"DELETE FROM ai_usage WHERE user_id = ? AND NOT ({_METERED})",
+                           (user_id, *_metered_args()))
         return cur.rowcount

@@ -11,9 +11,9 @@ Zotero's reader are NOT in the RDF: "Include Annotations" embeds them into the
 exported PDF copies, where the existing embedded-annotations importer
 (routers/imports.py) picks them up.
 
-Collections map onto Gamma's folder labels (both are trees, both allow an item
-in several places), Zotero tags onto flat labels. Segment cleaning is the
-shared gamma/foldertags.py rule (the frontend's cleanFolderSegment).
+Collections map onto Gamma's folders (both are trees, both allow an item in
+several places; an item's ``folders`` are its collections' paths, each a list
+of collection names from the top), Zotero tags onto labels by name.
 """
 
 import html as html_mod
@@ -24,7 +24,6 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 from .bibtex import clean_key
-from .foldertags import clean_segment
 
 _RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
 _Z = "{http://www.zotero.org/namespaces/export#}"
@@ -121,7 +120,8 @@ def parse_zotero_rdf(text: str) -> list[dict]:
             # standalone container records (bib:Journal …) referenced via isPartOf
             containers[about] = _container_fields(el)
 
-    # Collection tree → path per collection (hasPart links child collections)
+    # Collection tree → path (names from the top) per collection (hasPart
+    # links child collections)
     parent_of = {}
     for key, col in collections.items():
         for part in col["parts"]:
@@ -132,9 +132,9 @@ def parse_zotero_rdf(text: str) -> list[dict]:
         parts, seen = [], set()
         while key in collections and key not in seen:
             seen.add(key)  # cycle guard — malformed exports shouldn't hang us
-            parts.append(clean_segment(collections[key]["title"]) or "untitled")
+            parts.append(collections[key]["title"])
             key = parent_of.get(key)
-        return "/".join(reversed(parts))
+        return parts[::-1]
 
     item_folders = {}
     for key, col in collections.items():
@@ -213,7 +213,6 @@ def parse_zotero_rdf(text: str) -> list[dict]:
         for s in el.findall(f"{_DC}subject"):
             # plain text, or nested <z:AutomaticTag><rdf:value>…</rdf:value>
             t = (s.text or "").strip() or (s.findtext(f".//{_RDF}value") or "").strip()
-            t = t.replace(",", " ").strip()
             if t and t not in tags:
                 tags.append(t)
 

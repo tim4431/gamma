@@ -44,7 +44,10 @@ These are the rules the code keeps.
 ## Model
 
 No schema change, no migration, no new endpoint: a text box is a block
-with `text_box`, plus `pdf_page` (the 1-based page) on a PDF page. A box
+with `text_box`, plus `pdf_page` (the 1-based page) on a PDF page. The
+box is the one block with a `pdf_page`: a highlight, a link region and an
+ink group are on the page their `pdf_position` names
+([api.md](api.md) "The highlight shape"). A box
 imported from the PDF's own `/FreeText` or `/Text` also carries
 `imported_annot` and `annot_stripped`, as highlights do.
 
@@ -85,7 +88,9 @@ value.
 **Placement: the nearest sheet wins.** A box on a PDF page is made at the
 page's top level, like an ink group. A box on a sheet is made as the
 sheet's last child. A box stores no `pdf_position`, which every move would
-rewrite, and no `highlight_id`, so nothing takes it for an area highlight.
+rewrite and which would make it a highlight; the block table's `kind`
+and `highlights.is_highlight` test for a box first all the same, so
+nothing takes it for an area highlight.
 Every reader places a box by one rule:
 
 - under a sheet, it is on the nearest sheet above it, whatever `pdf_page`
@@ -322,8 +327,9 @@ highlight, placed by the nearest-sheet rule.
   `ai_context.under_sheet` once.
 - `ai_context.area_highlight` never answers for a box. `move_block` refuses
   to move a box to another page unless its sheet moves too
-  (`ai_tools._loose_text_box`). A search hit on a box is a note
-  (`routers/blocks.py` `_block_kind`).
+  (`ai_tools._loose_text_box`). A search hit on a box has `kind:
+  "text_box"` (the block table's generated `kind`); the search panel lists
+  it with the notes.
 
 ## Tests
 

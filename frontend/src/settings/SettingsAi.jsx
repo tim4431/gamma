@@ -8,7 +8,7 @@
 // the same hook over its own state.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
+import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
@@ -18,6 +18,9 @@ import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, Percent
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
+
+// A provider's model list as stored: comma-separated names.
+export const modelList = (raw) => (raw || "").split(",").map((name) => name.trim()).filter(Boolean);
 
 // Spoken languages for dictation, by native name. The pick "" follows the
 // display language, "auto" leaves the language to the model.
@@ -115,7 +118,7 @@ function ProviderUsage({ usage }) {
 // first button, and a click anywhere on the row would press it (Test).
 function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, children }) {
   const Frame = radio ? "label" : "div";
-  const models = parseFolderTags(provider.models);
+  const models = modelList(provider.models);
   const failed = test && !test.busy && !test.ok && test.kind
     ? failureCopy(test.kind, { provider: provider.label || provider.protocol, auth: oauth ? "oauth" : "key" }) : null;
   const fix = failed && onFix && ["key", "signin", "connection"].includes(failed.fix) ? failed.fix : "";
@@ -224,7 +227,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   const target = JSON.stringify([form?.id, form?.protocol, form?.api_key, form?.base_url, form?.oauthConnectedAt]);
   const targetRef = React.useRef(target);
   targetRef.current = target;
-  const formModels = parseFolderTags(form?.models);
+  const formModels = modelList(form?.models);
 
   // API protocols list live from the provider (the typed key, or the stored
   // one when editing); a ChatGPT sign-in lists through the entry's token.
@@ -299,7 +302,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
         });
         const connected = f.id ? next.providers.find((p) => p.id === f.id)
           : next.providers.find((p) => !(latest.current.info?.providers || []).some((old) => old.id === p.id));
-        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
+        if (connected && f.fromChat && modelList(connected.models).length) made = connected;
         else if (connected) {
           setForm((current) => current?.oauthState === f.oauthState
             ? { ...current, ...SIGN_IN_CLEARED, id: connected.id, models: connected.models || "",
@@ -442,10 +445,10 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     loadModelCatalog,
     addCatalogModel: (m) => m && setForm((f) => {
       if (!f) return f;
-      const cur = parseFolderTags(f.models);
+      const cur = modelList(f.models);
       return cur.includes(m) ? f : { ...f, models: [...cur, m].join(", ") };
     }),
-    removeModel: (m) => setForm((f) => f ? { ...f, models: parseFolderTags(f.models).filter((x) => x !== m).join(", ") } : f),
+    removeModel: (m) => setForm((f) => f ? { ...f, models: modelList(f.models).filter((x) => x !== m).join(", ") } : f),
     submitAiProvider: submit,
     run,
     startAdd,
@@ -726,7 +729,7 @@ function ProviderForm({ value, onCancel }) {
   const [autoPicked, setAutoPicked] = React.useState(false);
   React.useEffect(() => {
     const first = aiModelCatalog?.models?.[0];
-    if (!first || parseFolderTags(aiKeysForm.models).length) return;
+    if (!first || modelList(aiKeysForm.models).length) return;
     addCatalogModel(first);
     setAutoPicked(true);
   }, [aiModelCatalog]); // eslint-disable-line react-hooks/exhaustive-deps

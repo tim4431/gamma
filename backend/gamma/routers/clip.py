@@ -9,7 +9,8 @@ page — one carrying the tab's URL as ``properties.web_url`` (and the clipped
 selection as its first block) instead of a PDF attachment. The companions are
 read-only helpers for the popup (``/api/library/lookup`` for the "already in
 your library" badge, ``/api/library/preview`` for the paper's registry title
-before it is saved, ``/api/library/folders`` for the folder picker) and
+before it is saved, ``/api/library/folders`` for the folder and label
+pickers) and
 ``POST /api/clip/note`` for text selections appended into an existing page.
 Session-only — never share-token readable. Design: docs/dev/extension.md.
 """
@@ -25,25 +26,36 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import require_user, require_ws
+from ..auth import require_user, require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
+    FOLDERS,
+    LABELS,
+    STORED_COLUMNS,
     block_to_dict,
     create_page,
+    existing_in,
+    filing,
+    folder_chain,
+    folder_paths,
     get_or_create_doc_page,
+    label_names,
     last_child_position,
     page_attachment,
     page_for_doc,
+    refiled,
+    split_path,
+    touch_page,
+    tree_parents,
     write_lock,
 )
 from ..db import connect_pages_db, get_pref, page_now, safe_doc_id, ws_uploads_dir
-from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
 from ..logbuf import log
 from ..net_guard import browsing_session
-from ..ops import after_commit, apply_ops, props_patch
+from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
 from .. import pdf_meta
-from ..storage import DIGEST_CHARS, url_filename, write_atomic
+from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, url_filename, write_atomic
 from .metadata import fetch_page_metadata, registry_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -86,19 +98,19 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
     candidates (a clip dedups against files, not titles). Identifier matches
     come from the metadata cache (properties.meta) and the source URL; URL
-    matches from the proxy-cache hash, the stored source_url, or the web page
-    the extension saved it from (web_url)."""
+    matches from the proxy-cache hash, the attachment's URL (the stored
+    source_url, else the stored copy's), or the web page the extension
+    saved it from (web_url)."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
     url_ids = {url_doc_id(u) for u in urls}
     rows = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
-        "AND json_extract(properties, '$.doc_id') IS NOT NULL"
+        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root'"
     ).fetchall()
     for row in rows:
         props = json.loads(row[4] or "{}")
         meta = props.get("meta") or {}
-        src = str(props.get("source_url") or "")
+        src = page_attachment(props)["url"]
         web = str(props.get("web_url") or "")
         if props.get("doc_id") in url_ids or (urls and (src in urls or web in urls)):
             return block_to_dict(row)
@@ -127,31 +139,41 @@ def find_web_page(conn, url: str) -> dict | None:
     return None
 
 
-def _apply_tags(conn, ws: str, actor: str, block: dict, folder: str, labels: list[str]) -> dict:
-    """File the page: folder paths and flat labels are both comma lists on
-    the page's properties; adding is a soft link that keeps existing tags.
-    An op batch like every write to a page — logged under ``actor`` and
-    fanned out to the page's open tabs."""
-    props = dict(block.get("properties") or {})
-    changed = False
-    path = clean_path(folder)
-    if path:
-        tags = parse_tags(props.get("folder"))
-        if path not in tags:
-            props["folder"] = ", ".join(add_tag(tags, path))
-            changed = True
-    cats = parse_tags(props.get("category"))
-    for raw in labels or []:
-        name = clean_segment(str(raw))
-        if name and name not in cats:
-            cats.append(name)
-            props["category"] = ", ".join(cats)
-            changed = True
-    if changed:
-        after_commit(ws, conn, apply_ops(conn, block["id"], [{
-            "op": "set", "id": block["id"],
-            "props": props_patch(block.get("properties") or {}, props)}], actor=actor))
-        block = {**block, "properties": props}
+def _filing(ws: str, actor: str, payload: "ClipRequest") -> tuple[str, list[str]]:
+    """Where a clip files its page: ``(folder id or "", label ids)`` — the
+    request's ``folder`` (an id; 400 when it is no folder), else its
+    ``folder_path`` (names split on "/"), and its label names, each folder
+    or label made when it is missing (``ops.ensure_filing``)."""
+    names = split_path(payload.folder_path or "")
+    labels = [str(label).strip() for label in (payload.labels or [])[:50] if str(label).strip()]
+    with connect_pages_db(ws) as conn:
+        if payload.folder and not folder_chain(conn, payload.folder):
+            raise HTTPException(status_code=400, detail="no such folder")
+        folder_ids, label_ids = ensure_filing(ws, conn, paths=[names] if names and not payload.folder else [],
+                                              labels=labels, actor=actor)
+    return payload.folder or folder_ids.get(tuple(names), ""), list(dict.fromkeys(label_ids[n] for n in labels))
+
+
+def _file_page(conn, ws: str, actor: str, block: dict, folder: str, labels: list[str]) -> dict:
+    """File the page in the folder ``folder`` (an id, or "") with the labels
+    ``labels`` (ids) — adding: the page keeps its other folders and labels
+    (those that exist), and only a folder above the new one gives way
+    (filing into a subfolder refines, it does not duplicate). An op batch
+    like every write to a page — logged under ``actor`` and fanned out to
+    the page's open tabs."""
+    props = block.get("properties") or {}
+    patch = {}
+    folders = filing(props, FOLDERS)
+    if folder and folder not in folders:
+        patch[FOLDERS] = refiled(conn, existing_in(conn, FOLDERS, folders), folder)
+    have = filing(props, LABELS)
+    if any(label not in have for label in labels):
+        patch[LABELS] = existing_in(conn, LABELS, have + labels)
+    if patch:
+        result = after_commit(ws, conn, apply_ops(conn, block["id"], [
+            {"op": "set", "id": block["id"], "props": patch}], actor=actor))
+        applied = result["ops"][0].get("props") or {}
+        block = {**block, "properties": {k: v for k, v in {**props, **applied}.items() if v is not None}}
     return block
 
 
@@ -196,7 +218,7 @@ def _result(block: dict, existed: bool, note: str = "") -> dict:
         "block_id": block["id"], "doc_id": props.get("doc_id", ""),
         "title": block.get("content", ""), "existed": existed,
         "open_url": f"/?block={urllib.parse.quote(block['id'])}",
-        "folder": props.get("folder", ""), "labels": parse_tags(props.get("category")),
+        "folders": filing(props, FOLDERS), "labels": filing(props, LABELS),
     }
     if note:
         out["note"] = note
@@ -213,15 +235,16 @@ class ClipRequest(BaseModel):
     doc_id: str = ""              # set when the PDF bytes were uploaded first (/api/uploads)
     title: str = ""               # citation_title / document.title
     selection: str = ""           # selected text on the tab; a web clip's first block
-    folder: str = ""
-    labels: list[str] = []
+    folder: str = ""              # the folder (an id) to file the page in, or ...
+    folder_path: str = ""         # ... one by its names ("a/b"), made when missing (a "New folder…")
+    labels: list[str] = []        # label names, made when missing
     allow_oa: bool = True         # substitute an open-access copy behind paywalls
     save_copy: bool = True        # store the PDF server-side (else proxy on open)
     fetch_metadata: bool = True
 
 
 def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: str, title: str,
-                   labels: list[str], doi: str, arxiv_id: str, reason: str) -> dict:
+                   folder: str, labels: list[str], doi: str, arxiv_id: str, reason: str) -> dict:
     """The no-PDF outcome of a clip: a page carrying the tab as
     ``properties.web_url`` (title from the tab, else the URL), the clipped
     selection as its first block. Re-clipping the same URL finds that page
@@ -231,18 +254,19 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
     write_lock(conn)
     existing = find_web_page(conn, source_url)
     if existing:
-        block = _apply_tags(conn, ws, actor, existing, payload.folder, labels)
+        block = _file_page(conn, ws, actor, existing, folder, labels)
         if (payload.selection or "").strip():
             after_commit(ws, conn, apply_ops(conn, block["id"], [{
                 "op": "insert", "id": secrets.token_urlsafe(9), "parent": block["id"],
                 "content": _quote_content(payload.selection, source_url, title)}], actor=actor))
         return _result(block, existed=True)
     props = {"web_url": source_url} if source_url else {}
-    block = create_page(conn, title or _web_title(source_url), props)
+    block = create_page(conn, title or _web_title(source_url), props, actor=actor)
     if (payload.selection or "").strip():
         _insert_last(conn, block["id"], _quote_content(payload.selection, source_url, title), {}, now)
+        touch_page(conn, block["id"], actor)
         conn.commit()
-    block = _apply_tags(conn, ws, actor, block, payload.folder, labels)
+    block = _file_page(conn, ws, actor, block, folder, labels)
     # A DOI/arXiv id found on the page still identifies the work — the
     # lookup needs no PDF for those, so the note can cite even without one.
     if payload.fetch_metadata and (doi or arxiv_id):
@@ -254,7 +278,7 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
 # Sync on purpose: resolving and downloading run in FastAPI's threadpool.
 @router.post("/clip")
 def clip(payload: ClipRequest, request: Request):
-    return save_clip(require_ws(request, write=True), request.state.user or "", payload)
+    return save_clip(require_ws(request, write=True), request.state.user_id or "", payload)
 
 
 def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
@@ -266,7 +290,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     doi = norm_doi(payload.doi) or norm_doi(pdf_url) or norm_doi(source_url)
     arxiv_id = norm_arxiv(payload.arxiv_id) or norm_arxiv(pdf_url) or norm_arxiv(source_url)
     title = _clean_title(payload.title)
-    labels = [str(label) for label in (payload.labels or [])][:50]
+    folder, labels = _filing(ws, actor, payload)
     note = ""
 
     # 1. Dedup by identifier — the same paper reached via abs / pdf / DOI
@@ -274,7 +298,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     with connect_pages_db(ws) as conn:
         existing = find_page(conn, doi, arxiv_id, (pdf_url, source_url))
         if existing:
-            block = _apply_tags(conn, ws, actor, existing, payload.folder, labels)
+            block = _file_page(conn, ws, actor, existing, folder, labels)
             return _result(block, existed=True)
 
     if not (payload.doc_id or pdf_url or arxiv_id or doi):
@@ -283,7 +307,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         if not (source_url or title or (payload.selection or "").strip()):
             raise HTTPException(status_code=400, detail="nothing to save: no URL, title or selection")
         with connect_pages_db(ws) as conn:
-            return _clip_web_page(ws, actor, conn, payload, source_url, title, labels, doi, arxiv_id, "")
+            return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels, doi, arxiv_id, "")
 
     if payload.doc_id:
         # 2a. The extension uploaded the bytes itself (its browser session got
@@ -294,7 +318,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             raise HTTPException(status_code=400, detail="invalid doc_id")
         if not (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file():
             raise HTTPException(status_code=404, detail="no uploaded PDF with this doc_id — upload it first")
-        page_source = f"/api/uploads/{doc_id}.pdf"
+        page_source = stored_pdf_url(doc_id)
     else:
         # 2b. Resolve the best identifier to a fetchable PDF URL, then make
         #     sure it really delivers a PDF before any PDF page exists. A
@@ -326,7 +350,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                 raise
             log.info(f"[clip] no PDF for {candidate}: {e.detail} — saving as a web page")
             with connect_pages_db(ws) as conn:
-                return _clip_web_page(ws, actor, conn, payload, source_url, title, labels,
+                return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels,
                                       doi, arxiv_id, str(e.detail))
 
     # 3. The page, filed and tagged.
@@ -342,7 +366,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             after_commit(ws, conn, apply_ops(conn, block["id"], [
                 {"op": "set", "id": block["id"], "props": {"web_url": source_url}}], actor=actor))
             block = {**block, "properties": props}
-        block = _apply_tags(conn, ws, actor, block, payload.folder, labels)
+        block = _file_page(conn, ws, actor, block, folder, labels)
 
     # 4. Metadata, off the request.
     if payload.fetch_metadata and not (block.get("properties") or {}).get("meta"):
@@ -388,38 +412,37 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 
 @router.get("/library/folders")
 def library_folders(request: Request):
-    """Folder paths (with their ancestors) and flat labels in use — the
-    popup's pickers, with recently viewed folders first."""
-    user = require_user(request)
+    """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
+    name}]}`` — every folder (``path`` its names from the top), recently
+    viewed first, and every label by name."""
+    user_id = require_user_id(request)
     ws = require_ws(request)
-    recent_views, _ = get_pref(user, "recent-views", ws)
+    recent_views, _ = get_pref(user_id, "recent-views", ws)
     viewed_at = {
         entry["id"]: entry["at"]
         for entry in (recent_views if isinstance(recent_views, list) else [])
         if isinstance(entry, dict) and isinstance(entry.get("id"), str)
         and isinstance(entry.get("at"), str)
     }
-    folders: dict[str, tuple[str, str]] = {}
-    labels: set[str] = set()
     with connect_pages_db(ws) as conn:
-        rows = conn.execute(
-            "SELECT id, updated_at, json_extract(properties, '$.folder'), json_extract(properties, '$.category') "
-            "FROM unified_blocks WHERE parent_id = 'root'"
-        ).fetchall()
-    for page_id, updated_at, folder, category in rows:
-        for path in parse_tags(folder):
-            parts = [p for p in clean_path(path).split("/") if p]
-            for i in range(1, len(parts) + 1):
-                ancestor = "/".join(parts[:i])
-                viewed, updated = folders.get(ancestor, ("", ""))
-                folders[ancestor] = (max(viewed, viewed_at.get(page_id, "")),
-                                     max(updated, updated_at or ""))
-        labels.update(parse_tags(category))
+        paths = folder_paths(conn)
+        parents = tree_parents(conn, FOLDERS)
+        labels = label_names(conn)
+        rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
+                            "WHERE parent_id = 'root'").fetchall()
+    times = dict.fromkeys(paths, ("", ""))
+    for page_id, updated_at, filed in rows:
+        for folder in filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS):
+            while folder in times:  # a folder takes its pages' times, and its subfolders'
+                viewed, updated = times[folder]
+                times[folder] = (max(viewed, viewed_at.get(page_id, "")), max(updated, updated_at or ""))
+                folder = parents[folder]
     # Like the library's Recently viewed sort: viewed first, then modified;
-    # alphabetical order only breaks ties. Ancestors inherit their pages' times.
-    ordered = sorted(folders, key=lambda path: (path.lower(), path))
-    ordered.sort(key=folders.__getitem__, reverse=True)
-    return {"folders": ordered, "labels": sorted(labels, key=str.lower)}
+    # alphabetical order only breaks ties.
+    ordered = sorted(paths, key=lambda f: ([n.lower() for n in paths[f]], paths[f]))
+    ordered.sort(key=times.__getitem__, reverse=True)
+    return {"folders": [{"id": f, "path": paths[f]} for f in ordered],
+            "labels": [{"id": i, "name": n} for i, n in sorted(labels.items(), key=lambda label: label[1].lower())]}
 
 
 class ClipNoteRequest(BaseModel):
@@ -429,13 +452,14 @@ class ClipNoteRequest(BaseModel):
     page_id: str = ""             # empty → the account's "Web clips" note page
 
 
-def _insert_last(conn, parent_id: str, content: str, props: dict, now: str) -> str:
+def _insert_last(conn, page_id: str, content: str, props: dict, now: str) -> str:
+    """A new block, the last one of the page ``page_id``; its id. The
+    caller commits."""
     block_id = secrets.token_urlsafe(9)
-    pos = generate_key_between(last_child_position(conn, parent_id), None)
+    pos = generate_key_between(last_child_position(conn, page_id), None)
     conn.execute(
-        "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (block_id, parent_id, pos, content, json.dumps(props), now, now),
+        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (block_id, page_id, pos, content, json.dumps(props), now, now, page_id),
     )
     return block_id
 
@@ -461,10 +485,11 @@ def clip_note(payload: ClipNoteRequest, request: Request):
                 "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
                 "AND json_extract(properties, '$.web_clips') = 1 ORDER BY created_at, id LIMIT 1"
             ).fetchone()
-            page_id = row[0] if row else create_page(conn, WEB_CLIPS_TITLE, {"web_clips": 1})["id"]
+            page_id = row[0] if row else create_page(conn, WEB_CLIPS_TITLE, {"web_clips": 1},
+                                                     actor=request.state.user_id or "")["id"]
         block_id = secrets.token_urlsafe(9)
         after_commit(ws, conn, apply_ops(conn, page_id, [
             {"op": "insert", "id": block_id, "parent": page_id, "content": content}],
-            actor=request.state.user or ""))
+            actor=request.state.user_id or ""))
     return {"block_id": block_id, "page_id": page_id,
             "open_url": f"/?block={urllib.parse.quote(block_id)}"}

@@ -3,17 +3,18 @@ the fingerprint ack, and what guests get."""
 
 import pytest
 
-from conftest import login as _login, make_user as _make_user
+from conftest import account_of, login as _login, make_user as _make_user
 from gamma import logbuf, notices, version
 
 
 def _drop_user(username):
     from gamma.db import connect_users_db
 
+    user_id = account_of(username)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.execute("DELETE FROM user_prefs WHERE username = ?", (username,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
         conn.commit()
 
 
@@ -93,7 +94,7 @@ def test_strongest_first_and_bad_acks(nadmin, monkeypatch):
     for n in nadmin.get("/api/notices").json()["notices"]:
         nadmin.post(f"/api/notices/{n['id']}/seen", json={"fingerprint": n["fingerprint"]})
     assert _ids(nadmin) == []
-    assert set(notices.seen_map("nadmin")) == {"update", "log-errors"}
+    assert set(notices.seen_map(account_of("nadmin"))) == {"update", "log-errors"}
 
 
 # --- the account sources (their helpers stubbed: each is a plain read) ------
@@ -105,7 +106,7 @@ def _only(client, notice_id):
 
 def test_backup_failed_until_seen_and_again_on_the_next_failure(nuser, monkeypatch):
     tasks = [{"id": "a" * 32, "name": "Nightly", "state": "finished", "last_run": "2026-09-20T01:00:00"}]
-    monkeypatch.setattr(notices.backup_schedule, "list_tasks", lambda owner: tasks if owner == "nuser" else [])
+    monkeypatch.setattr(notices.backup_schedule, "list_tasks", lambda owner: tasks if owner == account_of("nuser") else [])
     assert _only(nuser, "backup-failed") is None
     tasks[0].update(state="failed", last_run="2026-09-21T01:00:00", last_error="disk full")
     notice = _only(nuser, "backup-failed")
@@ -124,7 +125,7 @@ def test_backup_failed_until_seen_and_again_on_the_next_failure(nuser, monkeypat
 
 def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
     marks = {"ws-clone": (0, 0)}
-    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: [{"workspace_id": "ws-clone"}] if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: [{"workspace_id": "ws-clone"}] if owner == account_of("nuser") else [])
     monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
     assert _only(nuser, "mirror-conflicts") is None
     marks["ws-clone"] = (3, 7)
@@ -140,7 +141,7 @@ def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
 def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
     mirrors = [{"workspace_id": "ws-clone"}, {"workspace_id": "ws-pub", "page_filter": ["p1"]}]
     marks = {"ws-clone": (0, 0), "ws-pub": (2, 5)}
-    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == account_of("nuser") else [])
     monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
     assert _only(nuser, "mirror-conflicts") is None
     notice = _only(nuser, "publish-conflicts")
@@ -152,7 +153,7 @@ def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
 
 def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
     status = {"state": "off", "at": "", "error": ""}
-    monkeypatch.setattr(notices.cloud_sync, "profile_status", lambda username: status)
+    monkeypatch.setattr(notices.cloud_sync, "profile_status", lambda user_id: status)
     assert _only(nuser, "cloud-sync") is None
     status.update(state="error", at="2026-09-24T10:00:00Z", error="Gamma Cloud could not be reached.")
     notice = _only(nuser, "cloud-sync")
@@ -166,20 +167,21 @@ def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):
     limits = {"quota_mb": 0}
     walks = []
 
-    def usage(username):
-        walks.append(username)
+    def usage(user_id):
+        walks.append(user_id)
         return used[0]
     used = [0]
-    monkeypatch.setattr(notices.server_settings, "user_limits", lambda username: dict(limits))
+    nuser_id = account_of("nuser")
+    monkeypatch.setattr(notices.server_settings, "user_limits", lambda user_id: dict(limits))
     monkeypatch.setattr(notices.server_settings, "usage_bytes", usage)
     notices.forget_usage()
     assert _only(nuser, "storage") is None and walks == []  # no quota: no walk at all
     limits["quota_mb"] = 100
     used[0] = 50 * notices.MB
-    assert _only(nuser, "storage") is None and walks == ["nuser"]
+    assert _only(nuser, "storage") is None and walks == [nuser_id]
     nuser.get("/api/notices")
-    assert walks == ["nuser"]  # remembered
-    notices.forget_usage("nuser")
+    assert walks == [nuser_id]  # remembered
+    notices.forget_usage(nuser_id)
     used[0] = 95 * notices.MB
     notice = _only(nuser, "storage")
     assert notice["tone"] == "warn" and notice["fingerprint"] == "90" and "95 of 100 MB" in notice["title"]
@@ -195,7 +197,7 @@ def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):
 
 def test_many_clones_with_conflicts_still_fit_one_fingerprint(nuser, monkeypatch):
     mirrors = [{"workspace_id": f"ws-clone-{i:02d}"} for i in range(15)]
-    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == account_of("nuser") else [])
     monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: (12, 345))
     notice = _only(nuser, "mirror-conflicts")
     assert notice["title"].startswith("180 sync conflicts") and len(notice["fingerprint"]) <= 32

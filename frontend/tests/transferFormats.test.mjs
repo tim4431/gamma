@@ -110,19 +110,17 @@ test("BibTeX is offered where there is something to cite, and reviews itself", (
 });
 
 test("the review is fetched for whichever target the dialog is on", () => {
-  assert.equal(bibliographyPreviewUrl("/api", { folder: "My Papers/Sub" }),
-    "/api/bibliography?folder=My%20Papers%2FSub");
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1" }), "/api/bibliography?folder=f1");
   assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1" }), "/api/bibliography?page_id=p%201");
 });
 
 test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
   // No token: the path the app fetches its own preview from.
-  assert.equal(bibliographyUrl("/api", { folder: "My Papers/Sub" }),
-    "/api/folders/export?name=My%20Papers%2FSub&mode=bibtex");
+  assert.equal(bibliographyUrl("/api", { folder: "f1" }), "/api/folders/f1/export?mode=bibtex");
   assert.equal(bibliographyUrl("/api", { pageId: "p 1" }), "/api/pages/p%201/export?mode=bibtex");
   // With one: the fixed link Overleaf refreshes from. The token names the
   // workspace, so no ?ws= rides along.
-  const shared = bibliographyUrl("https://host/api", { folder: "Reading", share: "tok en" });
-  assert.equal(shared, "https://host/api/folders/export?name=Reading&mode=bibtex&share=tok%20en");
+  const shared = bibliographyUrl("https://host/api", { folder: "f1", share: "tok en" });
+  assert.equal(shared, "https://host/api/folders/f1/export?mode=bibtex&share=tok%20en");
   assert(!shared.includes("ws="));
 });

@@ -1,14 +1,15 @@
-"""Page-first endpoints (/api/pages*): create a page, attach or detach its
-PDF. Stage 1 of docs/dev/block_centric.md — a page is a root block that may
-CARRY a PDF; the PDF is an action on an existing page, not the way pages come
-into being. (``POST /api/blocks/by-doc/{doc_id}`` remains the lookup-or-create
-BY ATTACHMENT path for PDF ingest and the extension's dedup.)
+"""Page-first endpoints (/api/pages*): create a page, look pages up by file,
+make a page from a stored markdown file, attach or detach a page's PDF. A
+page is a root block that may CARRY a PDF; the PDF is an action on an
+existing page, not the way pages come into being. (``POST
+/api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
+PDF ingest and the extension's dedup.)
 
-All three need an editor of the workspace (``require_ws(write=True)``): a share token never creates
-pages or changes a page's attachment (page properties stay the owner's, same
-rule as PUT /blocks/{id} under a share).
+Every endpoint but ``by-docs`` (any member) needs an editor of the workspace
+(``require_ws(write=True)``): a share token never creates pages or changes a
+page's attachment (page properties stay the owner's, same rule as PUT
+/blocks/{id} under a share).
 """
-
 
 import re
 
@@ -16,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import block_index, publish
+from .. import pdf_index, publish
 from ..auth import require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
@@ -31,7 +32,6 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, safe_doc_id
-from ..foldertags import clean_path
 from ..markdown_zip_import import markdown_page
 from ..storage import find_upload_file
 from ..ops import after_commit, apply_ops, props_patch
@@ -43,14 +43,14 @@ ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
 
 class PageCreate(BaseModel):
     title: str = ""
-    folder: str = ""
+    folders: list[str] = []   # folder ids to file it in
     id: str = ""              # a mirror bringing a page over keeps its id (409 when a live block has it)
     properties: dict = {}     # ...and its page properties
 
 
 class AttachRequest(BaseModel):
     doc_id: str = ""              # content hash of an uploaded PDF, or the URL hash a proxied one gets
-    source_url: str = ""          # where the viewer loads it from (upload path or external URL)
+    source_url: str = ""          # where the viewer loads it from (not stored when it is doc_id's own upload path)
     original_filename: str = ""   # display name; becomes the title while it is still automatic
 
 
@@ -66,17 +66,17 @@ def _load_page(conn, page_id: str):
 
 @router.post("/pages")
 def create_page_endpoint(payload: PageCreate, request: Request):
-    """A new text-only page: ``{title?, folder?}`` → the page's block dict.
-    Title defaults to "Untitled"; ``folder`` (a path like ``a/b``) becomes
-    ``properties.folder``. On a share host, 402 with ``{detail, limit,
-    used, plan}`` when the owner's plan allows no more pages in the
-    workspace (the path a publishing mirror creates its pages by;
-    gamma/publish.py page_cap)."""
+    """A new text-only page: ``{title?, folders?, id?, properties?}`` → the
+    page's block dict. Title defaults to "Untitled"; ``folders`` (folder
+    ids) becomes ``properties.folders``, ids that are no folder left out
+    (``create_page``). On a share host, 402 with ``{detail, limit, used,
+    plan}`` when the owner's plan allows no more pages in the workspace (the
+    path a publishing mirror creates its pages by; gamma/publish.py
+    page_cap)."""
     ws = require_ws(request, write=True)
     props = dict(payload.properties or {})
-    folder = clean_path(payload.folder or "")
-    if folder:
-        props["folder"] = folder
+    if payload.folders:
+        props["folders"] = payload.folders
     if payload.id and not valid_block_id(payload.id):
         raise HTTPException(status_code=400, detail="invalid page id")
     with connect_pages_db(ws) as conn:
@@ -91,7 +91,7 @@ def create_page_endpoint(payload: PageCreate, request: Request):
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
             return JSONResponse(status_code=402, content=refusal)
-        return create_page(conn, payload.title, props, block_id=payload.id)
+        return create_page(conn, payload.title, props, actor=request.state.user_id or "", block_id=payload.id)
 
 
 class DocsLookup(BaseModel):
@@ -115,7 +115,7 @@ def pages_by_docs(payload: DocsLookup, request: Request):
 class FromFile(BaseModel):
     filename: str          # a stored upload, ``<hash>.md`` / ``.markdown``
     original: str = ""     # the chip's display name (the page title when there is no front-matter title)
-    folder: str = ""       # files the new page (a path); ignored when the page exists
+    folder: str = ""       # a folder id: files the new page; ignored when the page exists
 
 
 @router.post("/pages/from-file")
@@ -145,7 +145,8 @@ def page_from_file(payload: FromFile, request: Request):
         original = m.group(0)
         # the chip's text is the display name; the stored name is a hash, so
         # take the title from the request's ``original`` when given
-        result = markdown_page(conn, path.read_bytes(), payload.original or original, payload.folder)
+        result = markdown_page(ws, conn, path.read_bytes(), payload.original or original, payload.folder,
+                               actor=request.state.user_id or "")
         row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (result["block_id"],)).fetchone()
     return {"page": block_to_dict(row), "created": True, "imported": result["imported"]}
 
@@ -186,7 +187,6 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
                     "detail": "attachment belongs to another page", "page_id": other[0]})
         attachment, auto = attachment_props(doc_id, source_url, payload.original_filename)
         props.update(attachment)
-        props["source_url"] = source_url or f"/api/uploads/{doc_id}.pdf"
         content = page["content"]
         if not content.strip() or content.strip() == "Untitled":
             # Same marker semantics as get_or_create_doc_page: metadata may
@@ -196,7 +196,7 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         op = {"op": "set", "id": page_id, "props": props_patch(page["properties"], props)}
         if content != page["content"]:
             op["content"] = content
-        result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=request.state.user or ""))
+        result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=request.state.user_id or ""))
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
 
 
@@ -218,6 +218,6 @@ def detach_pdf(page_id: str, request: Request):
             props.pop(key, None)
         result = after_commit(ws, conn, apply_ops(
             conn, page_id, [{"op": "set", "id": page_id,
-                             "props": props_patch(page["properties"], props)}], actor=request.state.user or ""))
-        block_index.purge_page_data(ws, conn, [])
+                             "props": props_patch(page["properties"], props)}], actor=request.state.user_id or ""))
+        pdf_index.purge_unused(ws, conn)
     return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}

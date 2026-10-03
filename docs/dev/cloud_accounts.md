@@ -636,7 +636,7 @@ scenario.
 
 **Nothing downstream changes.** The callback mints the same `sessions` row
 the password login does (`routers/auth.py` `new_session`) and sets the
-same cookie; every other module keeps reading `request.state.user`. The
+same cookie; every other module keeps reading `request.state.user_id`. The
 row is marked `via = 'cloud'` (migration step 18; a password login leaves
 it empty), which only the grant check below reads. What is new is one
 table in users.db, `identities` (migration step 14): which account server
@@ -727,12 +727,13 @@ cloud account per local account and one local account per cloud account.
 Unlinking (`POST /api/auth/cloud/unlink`) is refused while the account has
 no password, since nothing else could sign it in. `manage.py
 list-identities` / `link-identity` / `unlink-identity` are the shell
-equivalents; renaming and deleting an account carry or drop its identity.
+equivalents. An identity names its account by id (`identities.user_id`),
+so a rename leaves it linked; deleting the account drops it.
 Once the account is known, every sign-in claims the shared-workspace
 invitations waiting for its subject (`workspaces.claim_pending_memberships`,
 [workspaces.md](workspaces.md) "Pending invitations").
 
-**Access tokens.** `cloud_auth.access_token_for(username)` turns the
+**Access tokens.** `cloud_auth.access_token_for(user_id)` turns the
 stored refresh token into an access token for the endpoints under "What
 Gamma servers call with a token": a refresh-token grant at the token
 endpoint (client secret included for a confidential client). The rotated

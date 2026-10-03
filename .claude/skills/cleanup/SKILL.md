@@ -56,8 +56,7 @@ Each finding is a line: `file:line — what — fix / proposal`.
   frontend, two routers). Move it into one helper and call it from both.
   Exception: mirrors the docs declare on purpose (`textnorm.py` ↔
   `shared/lib/textnorm.js`, `textmerge.py` ↔ `replica/textmerge.js`, `text_box.py` ↔
-  `markup/textBox.js`, `foldertags.py` ↔ `library/libraryUtils.js`) —
-  those stay mirrored but must actually match.
+  `markup/textBox.js`) — those stay mirrored but must actually match.
 - A feature spread across App.jsx state + a component + a util when one
   module would own it whole. Prefer the module the file map in
   `frontend/src/README.md` already assigns to that concern.

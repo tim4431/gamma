@@ -7,11 +7,12 @@ naming and link conventions:
   else the leading ``# H1``, else the filename (Notion's ``Title <32-hex id>``
   suffix stripped). In an Obsidian vault the filename IS the title, so there
   the H1 stays in the body unless it repeats the title;
-- directories become folder labels (Notion puts a page's subpages in a folder
-  named after the page, so the page tree becomes the folder tree); a
-  front-matter ``folder:`` (what Gamma's export writes, relative to the
-  exported folder) wins over the directory; the caller's ``folder`` prefix
-  goes in front of both;
+- directories become folders, made below the destination folder where
+  missing (``ops.ensure_filing``; Notion puts a page's subpages in a folder
+  named after the page, so the page tree becomes the folder tree), each
+  directory name a folder name; a front-matter ``folder:`` path (what
+  Gamma's export writes, relative to the exported folder, names joined
+  with "/") wins over the directory;
 - links to other notes in the zip become ``[[page]]`` mentions — Markdown
   links (relative paths, Notion's percent-encoded ones) and Obsidian
   wikilinks alike, both resolved by path first and by basename anywhere in
@@ -24,7 +25,7 @@ naming and link conventions:
   (content-hash dedup, storage limits per file) and point at
   ``/api/uploads/…``; an Obsidian image embed's ``|300`` size becomes the
   ``![alt|300](url)`` form the editor renders;
-- Obsidian properties: ``tags`` become labels (``properties.category``),
+- Obsidian properties: ``tags`` become labels (made by name where missing),
   ``aliases`` are kept in ``properties.aliases``; foldable callout markers
   are dropped; ``%%comments%%`` are removed (vaults only — the ``.obsidian/``
   folder marks one); ``.obsidian/``, ``.trash/`` and ``.canvas`` files are
@@ -56,11 +57,13 @@ from fastapi import HTTPException
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import jobs
-from .blocks_store import last_child_position, write_lock
+from .blocks_store import (FOLDERS, STORED_COLUMNS, filing, folder_inserts, folder_paths, last_child_position,
+                           new_block_id, split_path, touch_page, write_lock)
 from .db import page_now
-from .foldertags import clean_path, clean_segment, parse_tags
+from .import_review import archive_entries, destination, validate_selection
 from .logbuf import log
 from .markdown_import import MAX_MARKDOWN_BYTES, fm_list, fm_text, md_to_blocks, parse_frontmatter
+from .ops import after_commit, apply_batches, ensure_filing
 from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file, upload_media_type
 
 MAX_PAGES = 2000
@@ -184,11 +187,18 @@ def _clean_stem(stem: str) -> str:
     return _NOTION_ID_RE.sub("", stem).strip() or stem.strip()
 
 
-def _dir_folder(path: str) -> str:
+def _dir_path(path: str) -> list[str]:
+    """The folder path a note's directory makes: a folder per directory,
+    named as the directory (Notion's id suffix dropped)."""
     dirname = posixpath.dirname(path)
-    if not dirname:
-        return ""
-    return "/".join(s for s in (clean_segment(_clean_stem(seg)) for seg in dirname.split("/")) if s)
+    return [s for s in (_clean_stem(seg) for seg in dirname.split("/")) if s] if dirname else []
+
+
+def _filed_in(under: str, ids: dict, path: list[str]) -> str:
+    """The folder id a note is filed in: the folder at ``path`` below the
+    destination (``ids``, from ``ops.ensure_filing`` / ``folder_inserts``),
+    else the destination itself; "" for the library's top."""
+    return ids.get(tuple(path)) or under
 
 
 def _split_ext(path: str):
@@ -328,14 +338,18 @@ def _walk(nodes):
 
 # --- storing -----------------------------------------------------------------
 
-def markdown_page(conn, raw: bytes, original: str, folder: str = "") -> dict:
-    """One Markdown file → a note page: title from front matter else the file
-    name, blocks from the body, filed under ``folder`` then a front-matter
-    ``folder:`` below it (what Gamma's own export writes). The page records
-    ``markdown_import`` = the content hash of ``raw`` — the same digest a
-    stored upload of the file is named by, which is how a file chip finds
-    the page made from it. Commits. Raises HTTPException 413/400 for an
-    oversized or non-UTF-8 file. Shared by POST /import/markdown (a fresh
+def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *, actor: str) -> dict:
+    """One Markdown file → a note page made by ``actor``: title from front
+    matter else the file name, blocks from the body, filed in the folder
+    ``folder`` (an id; "" the library's top) or — with a front-matter
+    ``folder:`` path (what Gamma's own export writes) — in the folder at
+    that path below it, made where missing in the page's own transaction
+    (``ops.apply_batches``: a caller may hold the write lock over a lookup
+    of its own). The page records ``markdown_import`` = the content hash of
+    ``raw`` — the same digest a stored upload of the file is named by, which
+    is how a file chip finds the page made from it. Commits. Raises
+    HTTPException 413/400 for an oversized or non-UTF-8 file, 400 for a
+    ``folder`` that is no folder. Shared by POST /import/markdown (a fresh
     upload) and POST /pages/from-file (a stored one)."""
     if len(raw) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="Markdown file exceeds 5 MB")
@@ -347,31 +361,39 @@ def markdown_page(conn, raw: bytes, original: str, folder: str = "") -> dict:
     fallback = re.sub(r"\.(?:md|markdown)$", "", original, flags=re.I).strip() or "Untitled note"
     title = (fm_text(fields, "title") or fallback).strip()[:500]
     tree = md_to_blocks(body)
-    clean_folder = clean_path("/".join(p for p in (folder, fm_text(fields, "folder")) if p))
     props = {"original_filename": original, "markdown_import": content_digest(raw)}
-    if clean_folder:
-        props["folder"] = clean_folder
-    page_id = secrets.token_urlsafe(9)
-    imported = insert_note_page(conn, page_id, title, props, tree)
-    conn.commit()
+    page_id = new_block_id()
+    write_lock(conn)
+    try:
+        under, _ = destination(conn, folder)
+        path = split_path(fm_text(fields, "folder"))
+        tree_ops, ids = folder_inserts(conn, [path], under)
+        filed = _filed_in(under, ids, path)
+        if filed:
+            props["folders"] = [filed]
+        results = apply_batches(conn, [(FOLDERS, tree_ops)], actor=actor) if tree_ops else []
+        imported = insert_note_page(conn, page_id, title, props, tree, actor)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    for result in results:
+        after_commit(ws, conn, result)
     return {"block_id": page_id, "title": title, "original_filename": original,
-            "imported": imported, "folder": clean_folder}
+            "imported": imported, "folders": props.get("folders", [])}
 
 
-def insert_note_page(conn, page_id, title, props, tree) -> int:
+def insert_note_page(conn, page_id, title, props, tree, actor) -> int:
     """Insert a root page (last on root) plus its ``{content, children}``
-    tree (a node's own ``id`` is honoured); returns the number of note blocks
-    written. Takes the write lock first (the position is read under it) and
-    stamps the rows then; the caller commits soon after (restamping the
-    root first when more pages share the transaction), so the change feed
-    sees the page by the time it is stamped."""
+    tree (a node's own ``id`` is honoured), touched by ``actor``
+    (``touch_page``); returns the number of note blocks written. Takes the
+    write lock first (the position is read under it); the caller commits."""
     write_lock(conn)
     now = page_now()
     pos = generate_key_between(last_child_position(conn, "root"), None)
     conn.execute(
-        "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-        "VALUES (?,'root',?,?,?,?,?)",
-        (page_id, pos, title, json.dumps(props), now, now),
+        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
+        (page_id, pos, title, json.dumps(props), now, now, page_id),
     )
     imported = 0
     pending = [(page_id, tree)]
@@ -383,25 +405,26 @@ def insert_note_page(conn, page_id, title, props, tree) -> int:
         for node, child_pos in zip(nodes, positions):
             child_id = node.get("id") or secrets.token_urlsafe(9)
             conn.execute(
-                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (child_id, parent_id, child_pos, node.get("content", ""), "{}", now, now),
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                (child_id, parent_id, child_pos, node.get("content", ""), "{}", now, now, page_id),
             )
             imported += 1
             if node.get("children"):
                 pending.append((child_id, node["children"]))
+    touch_page(conn, page_id, actor, now=now)
     return imported
 
 
 class _Plan:
-    __slots__ = ("entry", "page_id", "title", "folder", "body", "props", "existing",
+    __slots__ = ("entry", "page_id", "title", "path", "labels", "body", "props", "existing",
                  "tree", "anchors", "headings")
 
     def __init__(self, entry):
         self.entry = entry
         self.page_id = secrets.token_urlsafe(9)
         self.title = ""
-        self.folder = ""
+        self.path = []      # the folder path below the destination (names)
+        self.labels = []    # label names
         self.body = ""
         self.props = {}
         self.existing = False
@@ -410,23 +433,28 @@ class _Plan:
         self.headings = {}
 
 
-def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
-                        *, preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
+def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *, actor: str = "",
+                        preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
     """Import every note in ``zf`` into workspace ``ws`` through the open ``pages.db``
-    connection. Each page is its own short transaction, committed here once
-    its bundled files are stored (a long import never holds the write lock,
-    and every page is stamped at its commit). ``progress`` (a background
-    job's report, gamma/jobs.py) hears each note; a stopped job keeps the
-    notes it got to. Returns the report dict."""
+    connection, its pages made by ``actor`` and filed below the folder
+    ``folder`` (an id; "" the library's top; 400 when it is no folder). The
+    folders and labels the chosen notes need are made first, one committed
+    batch per tree (``ops.ensure_filing``: they stay if the import stops);
+    then the pages are written a few at a time, each batch its own short
+    transaction committed here once their bundled files are stored (a long
+    import never holds the write lock). A ``preview`` writes nothing.
+    ``progress`` (a background job's report, gamma/jobs.py) hears each
+    note; a stopped job keeps the notes it got to. Returns the report
+    dict: each page entry's ``folders`` are the paths (lists of names from
+    the top) the page is, or would be, filed in."""
     progress = progress or jobs.no_progress
-    from .import_review import archive_entries, validate_selection
-    prefix = clean_path(folder)
+    under, under_path = destination(conn, folder)
     entries, opened = [], []
     _walk_zip(zf, "", entries, {"bytes": 0}, opened)
     _strip_wrappers(entries)
     report = {"pages_created": 0, "pages_skipped": 0, "blocks_imported": 0,
               "assets_stored": 0, "links_resolved": 0, "notion": False, "obsidian": False,
-              "pages": [], "warnings": [], "entries": archive_entries(zf), "folder": prefix}
+              "pages": [], "warnings": [], "entries": archive_entries(zf), "folder": folder}
     current_selection = None
 
     def warn(title, reason):
@@ -495,9 +523,9 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
         if notion_id:
             plan.props["notion_id"] = notion_id
             report["notion"] = True
-        plan.folder = _dir_folder(e.path)
+        plan.path = _dir_path(e.path)
         if ext == ".csv":
-            plan.title = clean_segment(_clean_stem(re.sub(r"_all$", "", stem)))[:500] or "Database"
+            plan.title = _clean_stem(re.sub(r"_all$", "", stem))[:500] or "Database"
             plan.body = _csv_to_markdown(raw)
         else:
             try:
@@ -510,7 +538,7 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
                                       vault_stem=_clean_stem(stem) if vault else None)
             plan.title = (title or _clean_stem(stem)).strip()[:500] or "Untitled note"
             if fm.get("folder") is not None:
-                plan.folder = clean_path(fm_text(fm, "folder"))
+                plan.path = split_path(fm_text(fm, "folder"))
             bibtex, body = _take_bibtex(body)
             if bibtex:
                 plan.props["bibtex"] = bibtex
@@ -524,25 +552,20 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
                 plan.props["_source"] = _wiki_source(fm_text(fm, "source"))
             # Obsidian's built-in properties (and their pre-1.9 singular
             # names): tags are labels, aliases ride along.
-            tags = [t.lstrip("#").replace(",", " ").strip()
-                    for t in fm_list(fm, "tags") + fm_list(fm, "tag")]
-            tags = [t for t in tags if t]
-            if tags:
-                plan.props["category"] = ", ".join(dict.fromkeys(tags))
+            tags = (t.lstrip("#").strip() for t in fm_list(fm, "tags") + fm_list(fm, "tag"))
+            plan.labels = list(dict.fromkeys(t for t in tags if t))
             aliases = [a for a in fm_list(fm, "aliases") + fm_list(fm, "alias") if a]
             if aliases:
                 plan.props["aliases"] = list(dict.fromkeys(aliases))
             if vault:
                 body = _strip_comments(body)
             plan.body = _convert_asides(body)
-        plan.folder = clean_path("/".join(p for p in (prefix, plan.folder) if p))
         existing = by_digest.get(digest) or (by_notion.get(notion_id) if notion_id else None)
         if existing:
             plan.existing = True
             plan.page_id = existing
             plan.title, plan.props = existing_pages[existing]
             plan.props = dict(plan.props)
-            plan.folder = plan.props.get("folder") or ""
         elif plan.body.strip():
             plan.tree = _prepare_tree(md_to_blocks(plan.body), plan.anchors, plan.headings)
         plans.append(plan)
@@ -691,17 +714,13 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
     staged = []  # pages whose files are stored, written PAGES_PER_COMMIT at a time
 
     def flush():
-        """Write the staged pages in one short transaction, their roots
-        stamped at its commit (the change feed reads the root)."""
+        """Write the staged pages in one short transaction."""
         if not staged:
             return
         try:
             for plan in staged:
                 report["blocks_imported"] += insert_note_page(conn, plan.page_id, plan.title, plan.props,
-                                                              plan.tree)
-            stamp = page_now()
-            conn.executemany("UPDATE unified_blocks SET updated_at=? WHERE id=?",
-                             [(stamp, plan.page_id) for plan in staged])
+                                                              plan.tree, actor)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -709,6 +728,20 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
         staged.clear()
 
     chosen = [plan for plan in plans if selected is None or plan.entry.path in selected]
+    paths = folder_paths(conn)
+    folder_ids, label_ids = {}, {}
+    new = [plan for plan in chosen if not plan.existing]
+    if new and not preview:
+        folder_ids, label_ids = ensure_filing(ws, conn, paths=[p.path for p in new],
+                                              labels=[name for p in new for name in p.labels],
+                                              under=under, actor=actor)
+
+    def shown(plan):
+        """The paths (names from the top) the page is, or would be, filed in."""
+        if plan.existing:
+            return [paths[f] for f in filing(plan.props, FOLDERS) if f in paths]
+        return [under_path + plan.path] if under_path or plan.path else []
+
     for n, plan in enumerate(chosen):
         try:
             progress(done=n, total=len(chosen), unit="items", item=plan.title)
@@ -719,8 +752,8 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
         warning_start = len(report["warnings"])
         if plan.existing:
             report["pages_skipped"] += 1
-            report["pages"].append({"id": plan.page_id, "title": plan.title, "folder": plan.folder,
-                                    "folders": parse_tags(plan.folder), "selection_ids": [plan.entry.path],
+            report["pages"].append({"id": plan.page_id, "title": plan.title,
+                                    "folders": shown(plan), "selection_ids": [plan.entry.path],
                                     "source_path": plan.entry.source_path, "source_paths": [plan.entry.source_path],
                                     "kind": "pdf" if plan.props.get("doc_id") else "page", "created": False,
                                     "action": "skip", "warnings": [], "missing": False})
@@ -733,13 +766,16 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
                 url = store_asset(path)
                 if url:
                     plan.props["doc_id"] = url.rsplit("/", 1)[1][:-4]
-                    plan.props["source_url"] = url
             elif _SCHEME_RE.match(source) and source.lower().startswith(("http://", "https://")):
                 plan.props["source_url"] = source
             else:
                 warn(plan.title, f"Missing PDF attachment: {source}")
-        if plan.folder:
-            plan.props["folder"] = plan.folder
+        if not preview:
+            filed = _filed_in(under, folder_ids, plan.path)
+            if filed:
+                plan.props["folders"] = [filed]
+            if plan.labels:
+                plan.props["labels"] = list(dict.fromkeys(label_ids[name] for name in plan.labels))
         # The page's bundled files are stored while its links are rewritten —
         # before its rows, outside any transaction.
         for node in _walk(plan.tree):
@@ -750,8 +786,8 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
                 flush()
         report["pages_created"] += 1
         warnings = report["warnings"][warning_start:]
-        report["pages"].append({"id": plan.page_id, "title": plan.title, "folder": plan.folder,
-                                "folders": [plan.folder] if plan.folder else [], "selection_ids": [plan.entry.path],
+        report["pages"].append({"id": plan.page_id, "title": plan.title,
+                                "folders": shown(plan), "selection_ids": [plan.entry.path],
                                 "source_path": plan.entry.source_path, "source_paths": [plan.entry.source_path],
                                 "kind": "pdf" if plan.props.get("doc_id") else "page", "created": not plan.existing,
                                 "action": "skip" if plan.existing else "create", "warnings": warnings,

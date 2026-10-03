@@ -1,6 +1,7 @@
 """Search text normalization and fuzzy matching, shared by the FTS indexes
-(gamma/block_index.py, gamma/pdf_index.py) and block search
-(routers/blocks.py).
+(the notes index in pages.db, whose triggers call ``normalize_text`` as the
+SQL function ``textnorm`` — db.register_functions; gamma/pdf_index.py) and
+block search (routers/blocks.py).
 
 The frontend mirrors the normalization and fuzzy rules in
 frontend/src/shared/lib/textnorm.js (used by search/SearchPanel.jsx and
@@ -12,8 +13,11 @@ pin both sides; keep them in sync when changing a rule.
 import re
 import unicodedata
 
-# One bump has every workspace's search indexes (notes and PDF) rebuilt
-# lazily (extraction or normalization changes make old rows stale).
+# One bump has every workspace's PDF index rebuilt lazily (extraction or
+# normalization changes make old rows stale). The notes index has no
+# version: its triggers' deletes must see the text the index was built
+# with, so a change to ``normalize_text`` ships with a migration step that
+# rebuilds it in every pages.db (normalize.block_fts) — and bumps this.
 INDEX_VERSION = 4
 
 _DASHES = "‐‑‒–—―"

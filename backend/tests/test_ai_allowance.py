@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ai_fixtures import FakeResp
+from conftest import account_of
 
 LIMIT = 1000
 
@@ -47,11 +48,11 @@ def shared(admin):
 
 
 def forget_usage(user):
-    """Every usage row of ``user``, metered ones included (ai_usage.clear
-    keeps those)."""
+    """Every usage row of the account named ``user``, metered ones included
+    (ai_usage.clear keeps those)."""
     from gamma.db import connect_users_db
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM ai_usage WHERE username = ?", (user,))
+        conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (account_of(user),))
 
 
 @pytest.fixture(autouse=True)
@@ -61,15 +62,17 @@ def _fresh_usage():
 
 
 def spend(user, provider_id, tokens, hours_ago=0):
-    """One usage row as the recorder writes it (``hours_ago`` backdates it)."""
+    """One usage row of the account named ``user`` as the recorder writes
+    it (``hours_ago`` backdates it)."""
     from gamma import ai_usage
     from gamma.db import connect_users_db
-    ai_usage.record(user, "chat", provider_id, "Lab key", "lab-model", {"input": tokens, "output": 0})
+    user_id = account_of(user)
+    ai_usage.record(user_id, "chat", provider_id, "Lab key", "lab-model", {"input": tokens, "output": 0})
     if hours_ago:
         at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         with connect_users_db() as conn:
             conn.execute("UPDATE ai_usage SET at = ? WHERE id = (SELECT MAX(id) FROM ai_usage "
-                         "WHERE username = ?)", (at, user))
+                         "WHERE user_id = ?)", (at, user_id))
 
 
 def turn(text, input_tokens=10):
@@ -138,10 +141,11 @@ def test_admin_round_trip_and_validation(admin, member, shared):
 def test_runtime_reports_the_allowance(admin, member, shared):
     from gamma.ai_settings import ai_runtime
     from gamma.ai_usage import shared_used
+    member_id = account_of("allow_member")
     # No limit: the usage is reported, nothing is metered.
     spend("allow_member", shared, 40)
-    assert ai_runtime("allow_member")["allowance"] == {"limit": 0, "used": 40, "exhausted": False}
-    assert "allowance" not in ai_runtime("allow_member")["providers"][shared]
+    assert ai_runtime(member_id)["allowance"] == {"limit": 0, "used": 40, "exhausted": False}
+    assert "allowance" not in ai_runtime(member_id)["providers"][shared]
     forget_usage("allow_member")
 
     set_allowance(admin, accounts=LIMIT)
@@ -149,13 +153,13 @@ def test_runtime_reports_the_allowance(admin, member, shared):
     spend("allow_member", "own-entry", 5000)          # an own entry never counts
     spend("allow_member", shared, 5000, hours_ago=25)  # outside the window
     spend("allow_admin", shared, 700)                  # someone else's
-    assert shared_used("allow_member") == 300
-    rt = ai_runtime("allow_member")
+    assert shared_used(member_id) == 300
+    rt = ai_runtime(member_id)
     assert rt["allowance"] == {"limit": LIMIT, "used": 300, "exhausted": False}
-    assert rt["providers"][shared]["allowance"] == {"user": "allow_member", "limit": LIMIT}
+    assert rt["providers"][shared]["allowance"] == {"user": member_id, "limit": LIMIT}
 
     spend("allow_member", shared, 700)
-    rt = ai_runtime("allow_member")
+    rt = ai_runtime(member_id)
     assert rt["allowance"] == {"limit": LIMIT, "used": LIMIT, "exhausted": True}
     # The shared models stay listed (the picker shows them, and why they refuse).
     assert [m["id"] for m in rt["models"]] == [f"{shared}:lab-model"]

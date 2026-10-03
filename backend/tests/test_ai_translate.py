@@ -2,7 +2,6 @@
 
 import json
 
-import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,21 +13,10 @@ def carol(client):
     The account name is file-unique: other test modules make their own 'carol'
     and the worker's data dir is shared across the files it runs.
     """
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma import workspaces
+    from conftest import login, make_user
 
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'translate_carol'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                ("translate_carol", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    workspaces.ensure_personal("translate_carol")
-    c = TestClient(app)
-    r = c.post("/api/login", json={"username": "translate_carol", "password": "pw"})
-    assert r.status_code == 200, r.text
+    make_user("translate_carol", "pw")
+    c = login("translate_carol", "pw")
     r = c.post("/api/ai/providers", json={"protocol": "anthropic", "api_key": "sk-ant-key-1234",
                                           "models": "claude-test"})
     assert r.status_code == 200, r.text
@@ -267,20 +255,10 @@ def _fake_urlopen(reply):
 @pytest.fixture(scope="module")
 def dave(client):
     """An account with NO AI provider — the engine path must not need one."""
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma import workspaces
+    from conftest import login, make_user
 
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'translate_dave'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                ("translate_dave", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    workspaces.ensure_personal("translate_dave")
-    c = TestClient(app)
-    assert c.post("/api/login", json={"username": "translate_dave", "password": "pw"}).status_code == 200
+    make_user("translate_dave", "pw")
+    c = login("translate_dave", "pw")
     return c
 
 

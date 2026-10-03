@@ -12,7 +12,7 @@ search indexer when it walks a document anyway, and on demand by the
 endpoint for anything that predates the table. A file pdfium cannot read is
 stored with ``pages = 0`` so it is not parsed again on every open. Rows of
 documents no page carries any more are purged with the text index
-(``block_index.purge_page_data``)."""
+(``pdf_index.purge_unused``)."""
 
 import json
 import threading

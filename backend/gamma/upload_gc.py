@@ -67,7 +67,7 @@ def referenced(conn) -> set[str]:
     names = set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
-            "OR instr(properties, '/api/uploads/') > 0 OR instr(properties, '\"doc_id\"') > 0"):
+            "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
     return names
 

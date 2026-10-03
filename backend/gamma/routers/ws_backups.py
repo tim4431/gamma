@@ -29,8 +29,8 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from .. import jobs, workspaces, ws_backup
-from ..auth import require_user, requested_ws
-from ..db import page_now, ws_dir
+from ..auth import require_user_id, requested_ws
+from ..db import account_id, connect_users_db, page_now, ws_dir
 from ..storage import display_filename
 from .workspaces import _member
 
@@ -60,15 +60,17 @@ def _mode(mode: str) -> str:
 
 def _target_ws(request: Request, ws: str | None, user: str | None, needed: str) -> str:
     """The workspace an export or restore applies to. ``ws`` names one (else
-    the request's usual workspace); ``user`` — admins only — means that
-    account's personal workspace (the Settings → Users rows). The caller
-    must hold ``needed`` (viewer / editor / owner) in it; server admins
-    pass every check, because a backup is how they rescue an account."""
-    me = require_user(request)
-    if user and user != me:
+    the request's usual workspace); ``user`` — a username, admins only —
+    means that account's personal workspace (the Settings → Users rows).
+    The caller must hold ``needed`` (viewer / editor / owner) in it; server
+    admins pass every check, because a backup is how they rescue an
+    account."""
+    me = require_user_id(request)
+    if user and user != request.state.user:
         if not request.state.is_admin:
             raise HTTPException(status_code=403, detail="admin privilege required")
-        target = workspaces.default_workspace(user)
+        with connect_users_db() as conn:
+            target = workspaces.default_workspace(account_id(conn, user))
         if not target:
             raise HTTPException(status_code=404, detail="no such user")
         return target
@@ -105,8 +107,8 @@ def _export_name(ws: str, uploads: bool) -> str:
     return f"gamma-export{'' if uploads else '-db'}-{_slug(ws)}-{page_now()[:10]}.zip"
 
 
-def _export_all_name(me: str, uploads: bool) -> str:
-    return f"gamma-export-all{'' if uploads else '-db'}-{me}-{page_now()[:10]}.zip"
+def _export_all_name(username: str, uploads: bool) -> str:
+    return f"gamma-export-all{'' if uploads else '-db'}-{username}-{page_now()[:10]}.zip"
 
 
 def _write_all(targets: list[str], dest: Path, uploads: bool, by: str, progress=jobs.no_progress) -> None:
@@ -151,7 +153,7 @@ def export_data(request: Request, uploads: int = 1, ws: str | None = None, user:
         raise HTTPException(status_code=404, detail="no data for this workspace yet")
     tmp = _temp_zip()
     try:
-        ws_backup.write_zip(target, tmp, uploads=bool(uploads), by=request.state.user)
+        ws_backup.write_zip(target, tmp, uploads=bool(uploads), by=request.state.user_id)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -164,7 +166,7 @@ def export_all(request: Request, uploads: int = 1):
     """Every personal workspace of the session account in one zip — one
     /api/export zip per workspace inside (``<name>-<id>.zip``), each of
     which restores on its own through /api/import-data."""
-    me = require_user(request)
+    me = require_user_id(request)
     if request.state.is_guest:
         raise HTTPException(status_code=403, detail="a guest account has nothing to export as a whole")
     tmp = _temp_zip()
@@ -173,7 +175,7 @@ def export_all(request: Request, uploads: int = 1):
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    return _zip_download(tmp, _export_all_name(me, bool(uploads)))
+    return _zip_download(tmp, _export_all_name(request.state.user, bool(uploads)))
 
 
 # Sync on purpose: unzip + sqlite restore runs in the threadpool.
@@ -191,7 +193,7 @@ def import_data(request: Request, file: UploadFile = File(...), mode: str = "rep
         with open(zpath, "wb") as out:
             shutil.copyfileobj(file.file, out)
         try:
-            return {"ok": True, **ws_backup.restore_zip(target, zpath, mode, by=request.state.user)}
+            return {"ok": True, **ws_backup.restore_zip(target, zpath, mode, by=request.state.user_id)}
         except ws_backup.BackupError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -208,16 +210,16 @@ class WorkspaceExportJob(BaseModel):
 @transfers.post("/jobs/workspace-export")
 def start_workspace_export(payload: WorkspaceExportJob, request: Request):
     """``/export`` or ``/export-all`` as a job whose file is the zip."""
-    me = require_user(request)
+    me = require_user_id(request)
     uploads = payload.uploads
     if payload.all:
         if request.state.is_guest:
             raise HTTPException(status_code=403, detail="a guest account has nothing to export as a whole")
-        targets = workspaces.personal_workspaces(me)
+        targets, username = workspaces.personal_workspaces(me), request.state.user
 
         def run_all(job):
             _write_all(targets, job.artifact_path, uploads, me, job.progress)
-            job.set_artifact(_export_all_name(me, uploads), "application/zip")
+            job.set_artifact(_export_all_name(username, uploads), "application/zip")
             return {"workspaces": len(targets)}
 
         return jobs.start("workspace-export", owner=me, run=run_all, artifact=True,
@@ -249,7 +251,7 @@ def start_snapshot(payload: SnapshotJob, request: Request):
     workspace after the other. A workspace whose snapshot fails (a full
     store) is listed in the result's ``failed``; the job fails only when
     every one did."""
-    me = require_user(request)
+    me = require_user_id(request)
     targets = list(dict.fromkeys(ws for ws in payload.workspaces if ws))
     if not targets:
         raise HTTPException(status_code=400, detail="name the workspaces to back up")
@@ -292,7 +294,7 @@ def start_restore(request: Request, file: UploadFile = File(...), mode: str = Fo
                   ws: str = Form(""), user: str = Form("")):
     """``/import-data`` as a job: the upload is kept until the job has read
     it; the result is the restore's report."""
-    me = require_user(request)
+    me = require_user_id(request)
     target = _restorable(request, ws or None, user or None, mode)
     filename = display_filename(file.filename, "backup.zip")
     zpath = jobs.incoming_path()
@@ -360,10 +362,10 @@ def list_backups(ws: str, request: Request):
 def create_backup(ws: str, payload: BackupCreate, request: Request):
     """Take a snapshot now (owner): the databases, plus every upload unless
     ``uploads`` is false. (The web app takes one as a job: /jobs/snapshot.)"""
-    user = _member(request, ws, "owner")
+    user_id = _member(request, ws, "owner")
     _not_guest(ws)
     try:
-        return ws_backup.create(ws, label=payload.label.strip() or "manual", uploads=payload.uploads, by=user)
+        return ws_backup.create(ws, label=payload.label.strip() or "manual", uploads=payload.uploads, by=user_id)
     except ws_backup.BackupError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -384,11 +386,11 @@ def restore_backup(ws: str, name: str, request: Request, mode: str = "replace"):
     ``pre_restore``) and swaps the databases, ``merge`` (editor) adds what
     is missing — the same rules as /api/import-data. (The web app restores
     as a job: /jobs/restore-snapshot.)"""
-    user = _member(request, ws, "owner" if _mode(mode) == "replace" else "editor")
+    user_id = _member(request, ws, "owner" if _mode(mode) == "replace" else "editor")
     _not_guest(ws)
     _named(ws, name)
     try:
-        return {"ok": True, **ws_backup.restore_zip(ws, ws_backup.backup_path(ws, name), mode, by=user)}
+        return {"ok": True, **ws_backup.restore_zip(ws, ws_backup.backup_path(ws, name), mode, by=user_id)}
     except ws_backup.BackupError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -12,7 +12,8 @@ def _drop_user(username):
     from gamma.db import connect_users_db
 
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+                     (username,))
         conn.execute("DELETE FROM users WHERE username = ?", (username,))
         conn.commit()
 

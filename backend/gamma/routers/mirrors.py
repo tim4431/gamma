@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import config, sync_engine, workspaces
-from ..auth import require_personal_user
+from ..auth import require_personal_user_id
 from ..ops import OpError
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
@@ -42,28 +42,29 @@ class Resolution(BaseModel):
 
 
 def _me(request: Request) -> str:
-    return require_personal_user(request, "Sign in with a personal account to keep an offline copy.")
+    return require_personal_user_id(request, "Sign in with a personal account to keep an offline copy.")
 
 
-def _owns(user: str, mirror: dict) -> bool:
+def _owns(user_id: str, mirror: dict) -> bool:
     """The mirror is the caller's: recorded as its owner, and still the
-    owner of the workspace the copy lives in (an account that later took a
-    renamed owner's old name never is)."""
-    return mirror["owner"] == user and workspaces.role_of(mirror["workspace_id"], user) == "owner"
+    owner of the workspace the copy lives in."""
+    return mirror["owner"] == user_id and workspaces.role_of(mirror["workspace_id"], user_id) == "owner"
 
 
 def _mine(request: Request, ws: str) -> dict:
-    user = _me(request)
+    user_id = _me(request)
     mirror = sync_engine.get_mirror(ws)
-    if not mirror or not _owns(user, mirror):
+    if not mirror or not _owns(user_id, mirror):
         raise HTTPException(status_code=404, detail="no such mirror")
     return mirror
 
 
 def _info(mirror: dict) -> dict:
+    """A mirror as the API shows it to its owner (who needs no owner id)."""
     info = workspaces.get(mirror["workspace_id"])
     count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
-    return {**mirror, "name": info["name"] if info else "",
+    shown = {k: v for k, v in mirror.items() if k != "owner"}
+    return {**shown, "name": info["name"] if info else "",
             "conflicts_open": count, "conflicts_newest": newest,
             "pending_local": sync_engine.pending_local(mirror),
             "interval_s": config.sync_interval_s(), "detached": mirror["mode"] == "off"}
@@ -73,8 +74,8 @@ def _info(mirror: dict) -> dict:
 def list_mirrors(request: Request):
     """``{mirrors: [{workspace_id, name, remote_url, remote_ws, remote_name,
     mode, status, ...}]}`` — the caller's."""
-    user = _me(request)
-    return {"mirrors": [_info(m) for m in sync_engine.list_mirrors(user) if _owns(user, m)]}
+    user_id = _me(request)
+    return {"mirrors": [_info(m) for m in sync_engine.list_mirrors(user_id) if _owns(user_id, m)]}
 
 
 @router.post("", status_code=201)
@@ -85,9 +86,9 @@ def create_mirror(payload: MirrorCreate, request: Request):
     viewer's, gives a pull-only copy. ``workspace_id`` links an existing
     workspace of the caller's under the ``adopt`` policy. The first fill
     runs in the background."""
-    user = _me(request)
+    user_id = _me(request)
     try:
-        mirror = sync_engine.create_mirror(user, payload.remote_url, payload.token, name=payload.name,
+        mirror = sync_engine.create_mirror(user_id, payload.remote_url, payload.token, name=payload.name,
                                            mode=payload.mode, workspace_id=payload.workspace_id, adopt=payload.adopt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

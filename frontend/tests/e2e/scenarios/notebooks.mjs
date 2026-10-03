@@ -67,7 +67,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
       const g = (sheet?.children || []).find((c) => c.properties?.ink_url);
       return g && g.properties.ink_url.endsWith(".ink") && g.properties.ink_strokes === 1 ? g : null;
     }, { what: "an ink group under the first sheet with its upload" });
-    assert(!("pdf_page" in group.properties), "a sheet's group names no PDF page");
+    assert(!group.properties.pdf_position, "a sheet's group names no PDF page");
     const ink = await account.api(group.properties.ink_url);
     assertEq(ink.space.kind, "canvas", "the file is on the sheet's canvas");
     assertEq(Math.round(ink.space.width), 595, "the canvas is the sheet's width");

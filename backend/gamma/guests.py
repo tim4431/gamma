@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import config, workspaces
-from .db import connect_users_db, format_stamp, page_now, parse_stamp
+from .db import connect_users_db, format_stamp, new_account_id, page_now, parse_stamp
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
@@ -48,27 +48,27 @@ def is_expired(created_at: str, *, now: datetime | None = None, ttl_hours: int |
     return (now or datetime.now(timezone.utc)) >= created + timedelta(hours=hours)
 
 
-def account_expires_at(username: str) -> str:
-    """``expires_at`` of a guest account by name ("" when it is not one)."""
+def account_expires_at(user_id: str) -> str:
+    """``expires_at`` of a guest account by id ("" when it is not one)."""
     with connect_users_db() as conn:
-        row = conn.execute("SELECT created_at FROM users WHERE username = ? AND is_guest = 1",
-                           (username,)).fetchone()
+        row = conn.execute("SELECT created_at FROM users WHERE id = ? AND is_guest = 1",
+                           (user_id,)).fetchone()
     return expires_at(row[0]) if row else ""
 
 
-def _insert_account() -> str:
-    """The users row of a new guest, refused with 503 once the live guest
-    accounts reach ``GAMMA_GUEST_MAX`` (count and insert in one statement,
-    so two logins cannot both take the last place)."""
+def _insert_account() -> tuple[str, str]:
+    """The users row of a new guest — ``(id, username)`` —, refused with 503
+    once the live guest accounts reach ``GAMMA_GUEST_MAX`` (count and insert
+    in one statement, so two logins cannot both take the last place)."""
     cap = config.guest_max()
     for _ in range(5):
-        name = NAME_PREFIX + secrets.token_urlsafe(6)  # 6 bytes = 8 url-safe chars
+        user_id, name = new_account_id(), NAME_PREFIX + secrets.token_urlsafe(6)  # 6 bytes = 8 url-safe chars
         try:
             with connect_users_db() as conn:
                 cur = conn.execute(
-                    "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) "
-                    "SELECT ?, '', 1, 0, ? WHERE (SELECT COUNT(*) FROM users WHERE is_guest = 1) < ?",
-                    (name, page_now(), cap))
+                    "INSERT INTO users (id, username, password_hash, is_guest, is_admin, created_at) "
+                    "SELECT ?, ?, '', 1, 0, ? WHERE (SELECT COUNT(*) FROM users WHERE is_guest = 1) < ?",
+                    (user_id, name, page_now(), cap))
                 conn.commit()
         except sqlite3.IntegrityError:
             continue  # the name is taken (by another guest, or a real account)
@@ -76,20 +76,21 @@ def _insert_account() -> str:
             log.warning(f"[guests] a guest login was refused: {cap} guest accounts are live (GAMMA_GUEST_MAX)")
             raise HTTPException(503, "This server has as many guests as it can hold right now. "
                                      "Try again later.")
-        return name
+        return user_id, name
     raise HTTPException(503, "Could not create a guest account. Try again.")
 
 
-def new_guest() -> str:
+def new_guest() -> tuple[str, str]:
     """Mint a guest account with its own workspace (the welcome page, then
-    the ``GAMMA_GUEST_SEED`` library when one is set); returns its name. The
-    caller mints the session. A seed that cannot be restored is logged and
-    skipped: the visitor still gets the welcome page."""
-    name = _insert_account()
+    the ``GAMMA_GUEST_SEED`` library when one is set); returns its ``(id,
+    username)``. The caller mints the session. A seed that cannot be
+    restored is logged and skipped: the visitor still gets the welcome
+    page."""
+    user_id, name = _insert_account()
     try:
-        ws = workspaces.ensure_personal(name, welcome=True)
+        ws = workspaces.ensure_personal(user_id, welcome=True)
     except Exception:
-        workspaces.delete_account(name)
+        workspaces.delete_account(user_id)
         raise
     seed = config.guest_seed_path()
     if seed:
@@ -99,7 +100,7 @@ def new_guest() -> str:
             ws_backup.restore_zip(ws, Path(seed), "replace")
         except Exception as e:  # a broken seed must not lock visitors out
             log.warning(f"[guests] GAMMA_GUEST_SEED {seed} could not be restored into {name}'s workspace: {e}")
-    return name
+    return user_id, name
 
 
 def delete_expired(*, now: datetime | None = None, everyone: bool = False) -> list[str]:
@@ -107,10 +108,10 @@ def delete_expired(*, now: datetime | None = None, everyone: bool = False) -> li
     guest account); returns their names."""
     ttl = guest_ttl_hours()
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT username, created_at FROM users WHERE is_guest = 1").fetchall()
-    gone = [u for u, created in rows if everyone or is_expired(created, now=now, ttl_hours=ttl)]
-    for username in gone:
-        workspaces.delete_account(username)
+        rows = conn.execute("SELECT id, username, created_at FROM users WHERE is_guest = 1").fetchall()
+    gone = [(i, u) for i, u, created in rows if everyone or is_expired(created, now=now, ttl_hours=ttl)]
+    for user_id, _name in gone:
+        workspaces.delete_account(user_id)
     if gone:
         log.info(f"[guests] deleted {len(gone)} guest account(s)" + ("" if everyone else " past their lifetime"))
-    return gone
+    return [name for _id, name in gone]

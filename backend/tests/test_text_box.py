@@ -305,8 +305,8 @@ def _put_children(guest, page_id, tree):
 
 
 def _stored_pdf(guest, page_id):
-    source = guest.get(f"/api/blocks/{page_id}").json()["properties"]["source_url"]
-    return PdfReader(io.BytesIO(guest.get(source).content))
+    doc_id = guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc_id"]
+    return PdfReader(io.BytesIO(guest.get(f"/api/uploads/{doc_id}.pdf").content))
 
 
 def _kids(guest, block_id):
@@ -322,7 +322,8 @@ def test_import_then_export_through_the_endpoints(guest):
     [block] = _kids(guest, page["id"])
     props = block["properties"]
     assert block["content"] == "Round *trip*" and props["text_box"] == tb["box"] and props["pdf_page"] == 1
-    assert props["imported_annot"] and props["annot_stripped"] is True and "highlight_id" not in props
+    assert props["imported_annot"] and props["annot_stripped"] is True and "pdf_position" not in props
+    assert block["kind"] == "text_box"
     r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": doc_id})
     assert r.json()["imported"] == 0                          # idempotent
     # stripped from the file, so the export writes it again
@@ -390,7 +391,7 @@ def test_a_sheets_boxes_are_real_text_in_the_notebook_pdf(guest):
     assert height - 100 - text_box.PAD - 16 * text_box.LINE < bottom < top < height - 100 - text_box.PAD
 
 
-_RECT = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 612.0, "height": 792.0}
+_RECT = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
 
 
 def test_a_box_under_a_highlight_is_written_once(guest):
@@ -400,8 +401,9 @@ def test_a_box_under_a_highlight_is_written_once(guest):
     page, _doc = _upload_pdf(guest, _pdf(), "Nested box")
     _put_children(guest, page["id"], [
         {"id": "tbNestHl", "content": "my comment", "properties": {
-            "highlight_id": "tbNestHl", "quote": "q", "pdf_page": 1, "color": "rgba(255, 226, 143, 0.65)",
-            "pdf_position": {"pageNumber": 1, "boundingRect": _RECT, "rects": [_RECT]}}, "children": [
+            "quote": "q", "color": "rgba(255, 226, 143, 0.65)",
+            "pdf_position": {"pageNumber": 1, "width": 612.0, "height": 792.0, "boundingRect": _RECT, "rects": [_RECT]}},
+         "children": [
             {"id": "tbNestBox", "content": "TYPED BOX TEXT", "properties": {
                 "pdf_page": 1, "text_box": {"x": 300, "y": 300}}, "children": [
                 {"id": "tbNestUnder", "content": "about the box", "properties": {}, "children": []}]},

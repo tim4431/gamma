@@ -125,13 +125,12 @@ def test_paper_ops_draw_the_pattern():
 def test_the_agent_reads_a_sheet_as_a_page_of_paper(guest):
     from gamma import ai_tools
     from gamma.db import connect_pages_db
-    from gamma.workspaces import default_workspace
-    from conftest import guest_name
+    from conftest import guest_name, workspace_of
     page = _page(guest, "Agent notebook")
     _ops(guest, page, [_sheet("nbAg", page, generate_key_between(None, None))])
     url = _canvas_ink(guest, [_stroke("s1", 50, 60)])
     _ops(guest, page, [{"op": "insert", "id": "nbAgInk", "parent": "nbAg", "content": "", "props": {"ink_url": url, "ink_strokes": 1}}])
-    ws = default_workspace(guest_name())
+    ws = workspace_of(guest_name())
     with connect_pages_db(ws) as conn:
         text, _ = ai_tools._run_read_block(conn, ws, {"pages": None}, {"block_id": page})
     assert "(a page of paper: the handwriting under it is written on it)" in text

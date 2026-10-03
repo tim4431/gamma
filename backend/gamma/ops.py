@@ -30,11 +30,28 @@ can edit one page at once and only the touched rows move:
 
 Every touched block (and every insert parent) must be inside the page; the
 page root may only be ``set`` (a share editor: content only — rename — never
-its properties), never moved or deleted. Only touched rows get
-``updated_at``; the page root is stamped once per batch (home-feed order,
-the notes index fingerprint). One batch is one transaction and one row of
-the per-page op log (``page_ops``, ``seq`` counting up per page) — live
-clients follow the log over the page's websocket (gamma/collab.py), a
+its properties), never moved or deleted. A page's filing
+(``properties.folders`` / ``labels``) must be a list of block ids; it is
+stored as given, an id of a block this copy does not have included — a
+mirror's page may name a folder its tree has not brought yet, a published
+page folders the share host never sees — and every reader passes such an id
+by (gamma/blocks_store.py ``filing``).
+
+The folder and label trees are pseudo-pages to this path
+(gamma/blocks_store.py ``TREES``): a batch may name ``folders`` or
+``labels`` as its page and touches the blocks under it — a folder's rename
+is one ``set`` of its content, a move (or a reorder) one ``move``, a new
+folder one ``insert``; labels stay flat (their parent is always
+``labels``). The reserved row itself is never set, moved or deleted. A
+pseudo-page has its op log, its room and its row of the change log like
+any page, so the home view and a mirror follow it as they follow a page.
+
+Only touched rows get ``updated_at``; the page is touched once per batch
+(``touch_page``: the root's stamp — home-feed order — and the workspace
+change log's next seq). One batch is one transaction — the notes index
+follows the touched rows in it (db.BLOCK_FTS_SCHEMA's triggers) — and one
+row of the per-page op log (``page_ops``, ``seq`` counting up per page) —
+live clients follow the log over the page's websocket (gamma/collab.py), a
 reconnecting one reads it back with ``ops_since``. A batch refused because
 someone else changed the page meanwhile (the block is gone, lives in another
 page now, or the move would make a cycle) says so in ``OpError.conflict``,
@@ -45,10 +62,11 @@ answer to a batch this process already applied is replayed instead of
 applying it twice (``_replays``, in memory — a restart forgets them, and the
 clients catch up from the log anyway).
 
-``ws`` everywhere below is the workspace id (docs/dev/workspaces.md), ``actor``
-the account making the change. Server-side writers (the block endpoints, AI
-tools, page rename/attach, metadata) go through ``apply_ops`` too, so everything a page's viewers see
-comes from one code path and one log.
+``ws`` everywhere below is the workspace id (docs/dev/workspaces.md),
+``actor`` who makes the change (an account's id, or a writer's label —
+gamma/auth.py ``actor_of``). Server-side writers (the block endpoints, AI
+tools, page rename/attach, metadata) go through ``apply_ops`` too, so
+everything a page's viewers see comes from one code path and one log.
 """
 
 import json
@@ -62,15 +80,16 @@ from typing import Annotated, Literal, Union
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
-from . import block_index, collab, textmerge, upload_gc
+from . import collab, pdf_index, textmerge, upload_gc
 from . import ink as inkmod
 from .text_box import merge_text_box
 from .blocks_store import (
-    BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, free_position,
-    last_child_position, subtree_refs, trashed_page, valid_block_id, write_lock)
+    BLOCK_COLUMNS, FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, block_to_dict, delete_subtree, ensure_reserved,
+    fetch_subtree, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
+    move_subtree_to_page, subtree_refs, touch_page, trashed_page, valid_block_id, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
-from .storage import content_digest, store_file, upload_refs
+from .storage import content_digest, pdf_url, store_file, upload_refs
 
 MAX_OPS = 500
 MAX_CONTENT = 200_000
@@ -204,6 +223,7 @@ class _Batch:
         self.conn = conn
         self.ws = getattr(conn, "ws", "")  # the workspace whose files an ink merge reads
         self.page_id = page_id
+        self.tree = page_id in TREES  # a batch on the folder or label tree
         self.now = now
         self.share_scoped = share_scoped
         self.cursor = cursor  # the writer's caret, remapped when its block's text is merged
@@ -220,28 +240,15 @@ class _Batch:
         self.added |= new - old
 
     def page_of(self, block_id: str) -> str | None:
-        """The page a block lives in (None: unknown block). Memoized per
-        batch — walks parent links, one query per unseen level."""
-        chain = []
-        cur = block_id
-        while cur not in self._page_of:
+        """The page a block lives in: its ``page_id`` — ``TRASH`` for one in
+        Recently deleted (no batch reaches it), '' for a reserved row, None
+        for an unknown block. Memoized per batch."""
+        if block_id not in self._page_of:
             row = self.conn.execute(
-                "SELECT parent_id FROM unified_blocks WHERE id = ?", (cur,)).fetchone()
-            if not row:
-                self._page_of[cur] = None
-                break
-            chain.append(cur)
-            if row[0] in (None, "root"):
-                self._page_of[cur] = cur
-                break
-            if row[0] == TRASH:
-                self._page_of[cur] = TRASH  # a page in Recently deleted: no batch reaches it
-                break
-            cur = row[0]
-        page = self._page_of[cur]
-        for b in chain:
-            self._page_of[b] = page
-        return page
+                "SELECT b.page_id, p.parent_id FROM unified_blocks b "
+                "LEFT JOIN unified_blocks p ON p.id = b.page_id WHERE b.id = ?", (block_id,)).fetchone()
+            self._page_of[block_id] = None if not row else TRASH if row[1] == TRASH else row[0]
+        return self._page_of[block_id]
 
     def require_in_page(self, block_id: str, what: str = "block") -> None:
         page = self.page_of(block_id)
@@ -261,6 +268,8 @@ class _Batch:
     def check_parent(self, parent: str, block_id: str | None) -> None:
         if parent == "root":
             raise OpError(403, "ops never create or move pages")
+        if self.page_id == LABELS and parent != LABELS:
+            raise OpError(400, "labels do not nest")
         self.require_in_page(parent, "parent")
         if block_id and (parent == block_id
                          or parent in {r[0] for r in fetch_subtree(self.conn, block_id)}):
@@ -278,8 +287,12 @@ class _Batch:
         content, patch = op.get("content"), op.get("props")
         if content is None and patch is None:
             return
+        if block_id == self.page_id and self.tree:
+            raise OpError(403, f"the reserved row {block_id!r} cannot be changed")
         if patch and block_id == self.page_id and self.share_scoped:
             raise OpError(403, "share editors cannot change page settings")
+        if patch and block_id == self.page_id:
+            patch = _filing_patch(patch)
         if content is not None and len(content) > MAX_CONTENT:
             raise OpError(413, "content too long")
         base = op.get("base")
@@ -297,6 +310,8 @@ class _Batch:
                 cur["head"] = textmerge.map_offset(content, merged, cur.get("head", -1)) if cur.get("head", -1) >= 0 else -1
             content = merged
         props = json.loads(row[1] or "{}")
+        if patch and block_id == self.page_id:
+            patch = _attachment_patch(patch, props)
         base_props = op.get("base_props")
         if patch and base_props:
             patch = self.merge_ink(props, patch, base_props)
@@ -413,9 +428,8 @@ class _Batch:
         self.check_parent(parent, None)
         position = self.free_position(parent, op.get("position"), block_id)
         self.conn.execute(
-            "INSERT INTO unified_blocks (id, parent_id, position, content, properties, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (block_id, parent, position, content, json.dumps(props), self.now, self.now))
+            f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (block_id, parent, position, content, json.dumps(props), self.now, self.now, self.page_id))
         self._page_of[block_id] = self.page_id
         self.refs_changed(set(), upload_refs(content, props))
         self.applied.append({"op": "insert", "id": block_id, "parent": parent,
@@ -450,6 +464,30 @@ class _Batch:
             self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "")
         self.dropped |= subtree_refs(rows)
         self.applied.append({"op": "delete", "id": block_id})
+
+
+def _filing_patch(patch: dict) -> dict:
+    """A page root's ``patch`` with its ``folders`` / ``labels`` (a list of
+    block ids, or null) without repeats; an empty list removes the key.
+    400 for anything that is no list of ids."""
+    for tree in TREES:
+        if patch.get(tree) is None:
+            continue
+        ids = filing_ids(patch[tree])
+        if ids is None:
+            raise OpError(400, f"{tree} must be a list of block ids")
+        patch = {**patch, tree: ids or None}
+    return patch
+
+
+def _attachment_patch(patch: dict, props: dict) -> dict:
+    """A page root's ``patch`` against its stored ``props``, a
+    ``source_url`` that is the page's ``doc_id``'s stored copy removed
+    instead of stored (blocks_store.page_attachment derives it)."""
+    doc_id = patch.get("doc_id", props.get("doc_id"))
+    if doc_id and patch.get("source_url") == pdf_url(doc_id):
+        patch = {**patch, "source_url": None}
+    return patch
 
 
 def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0) -> int:
@@ -540,56 +578,85 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     stored when a merge changed it. Raises ``OpError`` (nothing written) on a
     bad op. ``batch_id``: the client's name for the batch — one this process
     already applied for that client is answered again (``replayed``), not
-    re-applied. Lone surrogates in the ops' strings are stored as U+FFFD."""
-    if not ops:
-        raise OpError(400, "no ops")
-    if len(ops) > MAX_OPS:
-        raise OpError(413, f"too many ops in one batch (>{MAX_OPS})")
-    ops = storable(ops)
+    re-applied. Lone surrogates in the ops' strings are stored as U+FFFD.
+    ``page_id`` is a page of the library or a pseudo-page (``TREES``)."""
+    ops = _checked(ops)
     key = (page_id, client, batch_id) if batch_id else None
     write_lock(conn)  # up front: seq is per page
     try:
-        root = conn.execute(
-            "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not root or root[0] != "root":
+        if not is_op_page(conn, page_id):
             raise OpError(404, "page not found")
         answer = _replay_get(key) if key else None
         if answer:
             conn.rollback()
             return _replayed(conn, page_id, answer)
-        now = page_now()
-        cursor = dict(cursor) if cursor else None
-        batch = _Batch(conn, page_id, now, share_scoped, cursor)
-        for i, op in enumerate(ops):
-            kind = op.get("op")
-            try:
-                if kind == "set":
-                    batch.set(op)
-                elif kind == "insert":
-                    batch.insert(op)
-                elif kind == "move":
-                    batch.move(op)
-                elif kind == "delete":
-                    batch.delete(op)
-                else:
-                    raise OpError(400, f"unknown op: {kind!r}")
-            except OpError as e:
-                e.index = i
-                raise
-        # a name one op dropped and another took up (a cut and paste within
-        # the batch) changed nothing
-        dropped = batch.dropped - batch.added
-        upload_gc.claim(conn, batch.added - batch.dropped)
-        conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
-        seq = _log(conn, page_id, actor, client, now, batch.applied)
+        result = _apply(conn, page_id, ops, actor=actor, client=client, share_scoped=share_scoped,
+                        cursor=dict(cursor) if cursor else None)
         if key:  # remembered before the lock goes, so a retry waiting on it sees the answer
-            _replay_put(key, {"seq": seq, "at": now, "cursor": cursor})
+            _replay_put(key, {"seq": result["seq"], "at": result["at"], "cursor": result.get("cursor")})
         conn.commit()
     except BaseException:
         conn.rollback()
         if key:
             _replay_drop(key)
         raise
+    return result
+
+
+def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str) -> list[dict]:
+    """Several batches, ``[(page_id, ops), …]`` — each its own page's, each
+    logged on its page — in the caller's transaction: what one request
+    changes across pages as one step (a folder deleted together with the
+    ids it leaves on the pages filed in it). Takes the write lock; the
+    caller commits, or rolls back and nothing is written, then hands each
+    result to ``after_commit``. Raises ``OpError`` as ``apply_ops`` does."""
+    write_lock(conn)
+    results = []
+    for page_id, ops in batches:
+        ops = _checked(ops)
+        if not is_op_page(conn, page_id):
+            raise OpError(404, "page not found")
+        results.append(_apply(conn, page_id, ops, actor=actor))
+    return results
+
+
+def _checked(ops: list[dict]) -> list[dict]:
+    if not ops:
+        raise OpError(400, "no ops")
+    if len(ops) > MAX_OPS:
+        raise OpError(413, f"too many ops in one batch (>{MAX_OPS})")
+    return storable(ops)
+
+
+def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
+           share_scoped: bool = False, cursor: dict | None = None) -> dict:
+    """One checked batch on ``page_id`` inside the caller's transaction,
+    under its write lock: the ops applied, the page touched, the batch
+    logged. Returns ``apply_ops``' result; commits nothing."""
+    now = page_now()
+    batch = _Batch(conn, page_id, now, share_scoped, cursor)
+    for i, op in enumerate(ops):
+        kind = op.get("op")
+        try:
+            if kind == "set":
+                batch.set(op)
+            elif kind == "insert":
+                batch.insert(op)
+            elif kind == "move":
+                batch.move(op)
+            elif kind == "delete":
+                batch.delete(op)
+            else:
+                raise OpError(400, f"unknown op: {kind!r}")
+        except OpError as e:
+            e.index = i
+            raise
+    # a name one op dropped and another took up (a cut and paste within
+    # the batch) changed nothing
+    dropped = batch.dropped - batch.added
+    upload_gc.claim(conn, batch.added - batch.dropped)
+    touch_page(conn, page_id, actor, now=now)
+    seq = _log(conn, page_id, actor, client, now, batch.applied)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
               "doc_deleted": batch.doc_deleted}
@@ -599,9 +666,8 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
 
 
 # Called after every committed write with ``(ws, client, page_id)``: an
-# offline copy's sync-on-change (sync_engine._on_commit) and the notes
-# index's background re-index (block_index.page_changed, registered by
-# routers/search.py). Each listener registers itself at import.
+# offline copy's sync-on-change (sync_engine._on_commit). Each listener
+# registers itself at import.
 commit_listeners: list = []
 
 
@@ -621,19 +687,28 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     the room in seq order as a rule (the client's ordered inbox copes with
     the exception). Then the derived data: the upload names the batch
     dropped go to the orphan check (gamma/upload_gc.py, debounced on its own
-    thread, never on the request), and the deleted blocks' data.db rows are
-    purged (the library-wide part only when a PDF-carrying block went; it
-    may wait on data.db's lock). A batch that refiled the page (its folder
-    labels) re-checks the room peers a folder share admitted."""
+    thread, never on the request), and when a deleted block carried a PDF,
+    data.db's rows of papers nothing carries any more go
+    (``pdf_index.purge_unused``; it may wait on data.db's lock). A batch
+    that changed what a folder holds — a page refiled, a folder moved or
+    deleted — re-checks the room peers a folder share admitted."""
     collab.publish_ops(ws, result)
-    if any(op["op"] == "set" and op["id"] == result["page_id"] and "folder" in (op.get("props") or {})
-           for op in result["ops"]):
+    if _refiles(result):
         collab.revalidate_shares(ws)
     upload_gc.schedule(ws, result["dropped_uploads"])
-    if result["deleted_ids"]:
-        block_index.purge_page_data(ws, conn, result["deleted_ids"], library=result["doc_deleted"])
+    if result["doc_deleted"]:
+        pdf_index.purge_unused(ws, conn)
     notify_commit(ws, result.get("client") or "", result.get("page_id") or "")
     return result
+
+
+def _refiles(result: dict) -> bool:
+    """Whether an applied batch may have changed a folder share's pages: a
+    page's ``folders`` set, a folder moved or deleted."""
+    if result["page_id"] == FOLDERS:
+        return any(op["op"] in ("move", "delete") for op in result["ops"])
+    return any(op["op"] == "set" and op["id"] == result["page_id"] and FOLDERS in (op.get("props") or {})
+               for op in result["ops"])
 
 
 def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str = "",
@@ -652,15 +727,34 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
         return after_commit(ws, conn, result)
 
 
+def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
+                  actor: str) -> tuple[dict, dict]:
+    """The folders at ``paths`` (lists of names, from the top or from the
+    folder ``under``, "" = the top) and the labels called ``labels``, made where they are
+    missing — one batch on each tree that needs one
+    (``blocks_store.folder_inserts`` / ``label_inserts``), committed — for a
+    writer about to file pages by name (an import, a clip, the agent).
+    Returns ``({tuple(names): folder id}, {name: label id})``."""
+    folder_ops, folder_ids = folder_inserts(conn, paths, under)
+    label_ops, label_ids = label_inserts(conn, labels)
+    for tree, tree_ops in ((FOLDERS, folder_ops), (LABELS, label_ops)):
+        if tree_ops:
+            after_commit(ws, conn, apply_ops(conn, tree, tree_ops, actor=actor))
+    return folder_ids, label_ids
+
+
 def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
     """Delete a page for good, in one transaction committed here: the
-    subtree, its op log and a ``deleted_pages`` tombstone, so a copy of the
-    workspace can tell a deleted page from one it never had (a page purged
-    from Recently deleted keeps the tombstone its trashing wrote). Then the
-    upload names the page held go to the orphan check, the page's data.db
-    rows (chats, indexes) are purged — the one path that drops them — and
-    the page's room is told to reload (which surfaces the 404). Returns
-    ``{deleted_ids, dropped_uploads}``.
+    subtree (its notes index rows with it), its op log and its AI chats —
+    the active conversation and the history of its bucket; this is the one
+    path that drops them — go, and its row of the change log turns
+    ``deleted`` (``touch_page``), so a copy of the workspace can tell a
+    deleted page from one it never had (a page purged from Recently deleted
+    keeps the row its trashing wrote: to a copy it went then). Then the
+    upload names the page held go to the orphan check, data.db's rows of
+    papers no block carries any more are purged, and the page's room is
+    told to reload (which surfaces the 404). Returns ``{deleted_ids,
+    dropped_uploads}``.
 
     Deleting a page in the app moves it to the trash (``trash_page``); this
     runs on Delete permanently, Empty, the 30-day purge (gamma/trash.py) and
@@ -674,8 +768,10 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
         trashed = any(r[0] == page_id and r[1] == TRASH for r in rows)
         delete_subtree(conn, page_id)
         conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
-        conn.execute(f"INSERT OR {'IGNORE' if trashed else 'REPLACE'} INTO deleted_pages "
-                     "(page_id, deleted_at, actor) VALUES (?, ?, ?)", (page_id, page_now(), actor))
+        conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
+        conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
+        if not trashed:
+            touch_page(conn, page_id, actor, "deleted")
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -683,7 +779,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
     deleted_ids = [r[0] for r in rows]
     dropped = sorted(subtree_refs(rows))
     upload_gc.schedule(ws, dropped)
-    block_index.purge_page_data(ws, conn, deleted_ids)
+    pdf_index.purge_unused(ws, conn)
     collab.publish_reload(ws, page_id)
     notify_commit(ws, client, page_id)
     return {"deleted_ids": deleted_ids, "dropped_uploads": dropped}
@@ -692,11 +788,12 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
 def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
     """Move a page to Recently deleted (gamma/trash.py): its root goes under
     the reserved ``trash`` block, stamped ``deleted_at`` / ``deleted_by``;
-    its blocks, files, chats and op log stay as they are. To everything
+    its blocks, files, chats and op log stay as they are (every row keeps
+    its ``page_id``, the trash entry a 404 names). To everything
     else it is deleted: listings and searches pass it by, ops to it are
     refused, its room hears ``trashed`` (an open tab keeps what its typist
-    has not sent yet, for a restore to take back), and the ``deleted_pages``
-    tombstone a hard delete leaves is written, so a copy of the workspace
+    has not sent yet, for a restore to take back), and its row of the change
+    log turns ``deleted`` as on a hard delete, so a copy of the workspace
     removes its copy. ``restore_page`` brings it back, ``delete_page``
     removes it for good. Commits; returns its trash entry. OpError(404)
     unless ``page_id`` is a page, 409 when a block holds the reserved id."""
@@ -706,14 +803,13 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
             "SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
         if not row or row[0] != "root":
             raise OpError(404, "page not found")
-        if not ensure_trash(conn):
+        if not ensure_reserved(conn, TRASH):
             raise OpError(409, f"a block holds the reserved id {TRASH!r}")
         now = page_now()
         props = json.dumps({**json.loads(row[2] or "{}"), "deleted_at": now, "deleted_by": actor})
         conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, properties = ? WHERE id = ?",
                      (TRASH, generate_key_between(last_child_position(conn, TRASH), None), props, page_id))
-        conn.execute("INSERT OR REPLACE INTO deleted_pages (page_id, deleted_at, actor) VALUES (?, ?, ?)",
-                     (page_id, now, actor))
+        touch_page(conn, page_id, actor, "deleted", now=now)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -723,14 +819,14 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     return trashed_page(page_id, row[1], props)
 
 
-def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
+def restore_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
     """Bring a page back from Recently deleted: under ``root`` again, last
-    in the library, its folder labels as they were, the deletion stamps
-    gone. The root is stamped and the tombstone cleared, so the change feed
-    shows a page (re)created and a copy of the workspace takes it back
-    whole; its room hears ``reload`` (a tab still open on it refetches and
-    sends what it kept). Commits; returns the page's block dict. OpError(404)
-    unless the page is in the trash."""
+    in the library, filed where it was, the deletion stamps
+    gone. The page is touched live by ``actor`` (``touch_page``), so the
+    change feed shows a page (re)created and a copy of the workspace takes
+    it back whole; its room hears ``reload`` (a tab still open on it
+    refetches and sends what it kept). Commits; returns the page's block
+    dict. OpError(404) unless the page is in the trash."""
     write_lock(conn)
     try:
         row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -740,9 +836,9 @@ def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
         props.pop("deleted_at", None)
         props.pop("deleted_by", None)
         conn.execute(
-            "UPDATE unified_blocks SET parent_id = 'root', position = ?, properties = ?, updated_at = ? WHERE id = ?",
-            (generate_key_between(last_child_position(conn, "root"), None), json.dumps(props), page_now(), page_id))
-        conn.execute("DELETE FROM deleted_pages WHERE page_id = ?", (page_id,))
+            "UPDATE unified_blocks SET parent_id = 'root', position = ?, properties = ? WHERE id = ?",
+            (generate_key_between(last_child_position(conn, "root"), None), json.dumps(props), page_id))
+        touch_page(conn, page_id, actor)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -756,8 +852,9 @@ def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
 def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> int:
     """Log + publish ops a writer performed with its own SQL (a cross-page
     move, whose two halves are a delete on one page and an arrival on the
-    other). Commits."""
+    other), touching the page like a batch. Commits."""
     now = page_now()
+    touch_page(conn, page_id, actor, now=now)
     seq = _log(conn, page_id, actor, "", now, ops)
     conn.commit()
     collab.publish(ws, page_id, {"t": "ops", "seq": seq, "at": now, "actor": actor,
@@ -769,12 +866,12 @@ def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> i
 def move_across_pages(ws: str, conn, block_id: str, parent_id: str, position: str,
                       src_page_id: str, page_id: str, *, actor: str) -> None:
     """Move a block with its subtree under ``parent_id`` on another page.
-    The op vocabulary is per page, so this is its own SQL: a delete logged
-    on the page it leaves and a reload on the page it joins. Commits."""
-    now = page_now()
+    The op vocabulary is per page, so this is its own SQL: the subtree's
+    rows take the page's id, a delete is logged on the page it leaves and a
+    reload on the page it joins (each touching its page). Commits."""
     conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",
-                 (parent_id, position, now, block_id))
-    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id IN (?, ?)", (now, src_page_id, page_id))
+                 (parent_id, position, page_now(), block_id))
+    move_subtree_to_page(conn, block_id, page_id)
     record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block_id}], actor=actor)
     note_reload(ws, conn, page_id, actor)
 
@@ -791,14 +888,14 @@ def note_reload(ws: str, conn, page_id: str, actor: str) -> int:
 
 def log_reload(conn, page_id: str, actor: str, *, after: int = 0) -> int:
     """Log a change ops can't express (a subtree replace, an import into an
-    existing page) so a catching-up client knows to refetch, and stamp the
-    page root like any batch (the home feed and the change feed read it).
+    existing page) so a catching-up client knows to refetch, and touch the
+    page like any batch (``touch_page``: the home feed and the change feed).
     ``after``: a seq the entry must land above even when this log is behind
     it (a restored backup's log, which a client may have seen past —
     gamma/ws_backup.py). Caller commits and publishes
     (``collab.publish_reload``)."""
     now = page_now()
-    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
+    touch_page(conn, page_id, actor, now=now)
     return _log(conn, page_id, actor, "", now, [{"op": "reload"}], after)
 
 

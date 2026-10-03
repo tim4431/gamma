@@ -5,6 +5,8 @@ import random
 import re
 import string
 
+from .highlights import from_scaled
+
 
 def parse_edn(text):
     """Minimal EDN parser covering Logseq's highlight export format."""
@@ -200,15 +202,12 @@ def md_to_ordered_blocks(md_blocks, edn_by_quote, edn_by_uuid):
     used_quotes = set()
 
     def make_highlight(edn, notes, color_name):
-        bid = make_block_id()
         ordered.append({
-            'id': bid,
+            'id': make_block_id(),
             'content': notes,
             'properties': json.dumps({
-                'highlight_id': bid,
                 'color': map_color(color_name or edn.get('color', 'yellow')),
                 'quote': edn['quote'],
-                'pdf_page': edn['page'],
                 'pdf_position': edn['position'],
             }),
         })
@@ -230,18 +229,17 @@ def md_to_ordered_blocks(md_blocks, edn_by_quote, edn_by_uuid):
             if edn:
                 make_highlight(edn, notes, props.get('hl-color'))
             else:
-                # Still a real highlight — just no bounding box in this EDN snapshot
+                # Still a real highlight — just no bounding box in this EDN
+                # snapshot: its position is its page alone (without one, a note
+                # with the quote).
                 page = props.get('hl-page', '')
-                bid = make_block_id()
                 ordered.append({
-                    'id': bid,
+                    'id': make_block_id(),
                     'content': notes,
                     'properties': json.dumps({
-                        'highlight_id': bid,
                         'color': map_color(props.get('hl-color', 'yellow')),
                         'quote': content,
-                        'pdf_page': int(page) if page else None,
-                        'pdf_position': None,
+                        **({'pdf_position': {'pageNumber': int(page)}} if page else {}),
                     }),
                 })
             # Recurse only into annotation children
@@ -262,35 +260,22 @@ def md_to_ordered_blocks(md_blocks, edn_by_quote, edn_by_uuid):
 
 
 def edn_highlight_position(h):
-    """Extract (page, position dict) from an EDN highlight entry."""
+    """The ``pdf_position`` of an EDN highlight entry: Logseq keeps the page
+    size in every rect, Gamma once (gamma/highlights.py ``from_scaled``)."""
     pos_edn = h.get('position', {})
     page = h.get('page') or pos_edn.get('page') or 1
-    bounding = pos_edn.get('bounding', {})
-    rects = pos_edn.get('rects', [])
-
-    def add_page(r):
-        return {**r, 'pageNumber': page}
-
-    return page, {
-        'pageNumber': page,
-        'boundingRect': add_page(bounding),
-        'rects': [add_page(r) for r in rects],
-    }
+    return from_scaled({'boundingRect': pos_edn.get('bounding', {}), 'rects': pos_edn.get('rects', [])}, page)
 
 
 def edn_highlight_to_block(h):
-    bid = make_block_id()
-    page, pdf_position = edn_highlight_position(h)
     props = h.get('properties', {})
     quote = (h.get('content') or {}).get('text', '')
     return {
-        'id': bid,
+        'id': make_block_id(),
         'content': '',
         'properties': json.dumps({
-            'highlight_id': bid,
             'color': map_color(props.get('color', 'yellow')),
             'quote': quote,
-            'pdf_page': page,
-            'pdf_position': pdf_position,
+            'pdf_position': edn_highlight_position(h),
         }),
     }

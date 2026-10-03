@@ -84,9 +84,9 @@ file, job directories no row names and uploads no job took. At startup
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
 lifespan in the same process never fails its own jobs. The jobs run in the
-one server process, like the page sockets. A deleted account's jobs go with
-it (`workspaces.delete_account`); a renamed account's follow it
-(`admin.rename_account_rows`, `jobs.renamed`).
+one server process, like the page sockets. A job's owner is the account's
+id, so a rename leaves its jobs as they are; a deleted account's jobs go
+with it (`workspaces.delete_account`).
 
 ## The API (`routers/jobs.py`)
 
@@ -150,7 +150,7 @@ it ends, however it ends. Asking again for the same review answers the job
 already started (409 with another selection). The indexer keeps one row per
 workspace (`jobs.prune`). Synchronous endpoints serve scripts, the share
 view and the MCP export: `/api/export`, `/export-all`, `/import-data`,
-`/pages/{id}/export`, `/folders/export` and the snapshot endpoints. They
+`/pages/{id}/export`, `/folders/{id}/export` and the snapshot endpoints. They
 run the same code as the jobs.
 
 ## The web app (`frontend/src/tasks/`)

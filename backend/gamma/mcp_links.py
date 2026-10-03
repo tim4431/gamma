@@ -2,14 +2,15 @@
 
 A pasted URL is an identifier, never a fetch target or an additional grant.
 A page, block or page-share link resolves to a page (``page_id``); a
-folder-share link resolves to the folder (``folder``) — the same pages the
-share view lists — unless it also names a page in that folder.
+folder-share link resolves to the folder (``folder``, its id, with its path
+as ``title``) — the same pages the share view lists — unless it also names
+a page in that folder.
 """
 
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .auth import ShareScope
-from .blocks_store import page_root_id
+from .blocks_store import PATH_SEP, folder_path, page_root_id
 from .db import connect_pages_db, connect_users_db
 
 LINK_SCHEMA = {
@@ -67,7 +68,11 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
         else:
             folder = row[1]
     if folder and not page_id and not block_id:
-        reference = {"workspace_id": ws, "folder": folder,
+        with connect_pages_db(ws) as conn:
+            path = folder_path(conn, folder)
+        if not path:
+            raise ValueError("The shared folder is unavailable in the connected workspace.")
+        reference = {"workspace_id": ws, "folder": folder, "title": PATH_SEP.join(path),
                      "url": base + "/?" + urlencode({"ws": ws, "folder": folder})}
         if values.get("quote"):
             reference["selected_quote"] = values["quote"]

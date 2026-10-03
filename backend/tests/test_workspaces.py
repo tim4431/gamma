@@ -6,7 +6,7 @@ under a role (owner / editor / viewer). A request picks its workspace with
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import guest_name, login, make_page, make_user, workspace_of
+from conftest import account_of, guest_name, login, make_page, make_user, workspace_of
 
 
 @pytest.fixture(scope="module")
@@ -91,12 +91,12 @@ def test_non_members_and_viewers(ann, ben, cid, lab):
     assert cid.post("/api/pages", json={"title": "x"}, headers=_in(lab)).status_code == 403
     assert cid.post("/api/uploads", files={"file": ("a.pdf", b"%PDF-1.4 x", "application/pdf")},
                     headers=_in(lab)).status_code == 403
-    # an editor's op carries their own name
+    # an editor's op carries their own account
     r = ben.post(f"/api/pages/{page['id']}/ops", headers=_in(lab), json={
         "client": "c", "ops": [{"op": "set", "id": page["id"], "content": "Lab page!"}]})
     assert r.status_code == 200, r.text
     log = ann.get(f"/api/pages/{page['id']}/ops", params={"since": 0}, headers=_in(lab)).json()
-    assert log["batches"][-1]["actor"] == "ws_ben"
+    assert log["batches"][-1]["actor"] == account_of("ws_ben")
 
 
 def test_owner_only_management_and_rails(ann, ben, cid, lab):
@@ -109,7 +109,7 @@ def test_owner_only_management_and_rails(ann, ben, cid, lab):
     assert ann.put(f"/api/workspaces/{lab}/members/ws_cid", json={"role": "king"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/nobody-here", json={"role": "viewer"}).status_code == 400
     from gamma import guests
-    assert ann.put(f"/api/workspaces/{lab}/members/{guests.new_guest()}", json={"role": "viewer"}).status_code == 400
+    assert ann.put(f"/api/workspaces/{lab}/members/{guests.new_guest()[1]}", json={"role": "viewer"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/ws_ann", json={"role": "editor"}).status_code == 400
     assert ann.delete(f"/api/workspaces/{lab}/members/ws_ann").status_code == 400
     # a second owner can be named, then the first may step down
@@ -242,7 +242,7 @@ def test_workspace_update_is_atomic(boss, ann):
 def test_public_access_does_not_consume_workspace_creation_slots(boss, ann, monkeypatch):
     from gamma import workspaces
     public = boss.post("/api/workspaces", json={"name": "Public reading room", "kind": "shared", "access": "public"}).json()["id"]
-    monkeypatch.setattr(workspaces, "MAX_WORKSPACES_PER_USER", workspaces.membership_count("ws_ann") + 1)
+    monkeypatch.setattr(workspaces, "MAX_WORKSPACES_PER_USER", workspaces.membership_count(account_of("ws_ann")) + 1)
     created = ann.post("/api/workspaces", json={"name": "My extra library"})
     assert created.status_code == 200, created.text
     assert ann.post("/api/workspaces", json={"name": "Over the limit"}).status_code == 400
@@ -333,7 +333,7 @@ def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
                  headers=_in(lab))
     assert r.status_code == 200, r.text
     assert ann.get("/api/quota").json()["used_bytes"] == ann_before
-    assert ben.get("/api/quota").json()["used_bytes"] == ben_before == server_settings.usage_bytes("ws_ben")
+    assert ben.get("/api/quota").json()["used_bytes"] == ben_before == server_settings.usage_bytes(account_of("ws_ben"))
     assert ann.get("/api/quota", headers=_in(lab)).json()["workspace_bytes"] > 0
     # the workspace's own quota: admin-only, 0/null = unlimited, enforced on upload
     assert ann.put(f"/api/workspaces/{lab}", json={"quota_mb": 1}).status_code == 403
@@ -382,7 +382,7 @@ def test_admin_creates_a_workspace_for_someone_and_hands_out_ownership(boss, ann
     assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared", "owner": "nobody"}).status_code == 400
     from gamma import guests
     assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared",
-                                              "owner": guests.new_guest()}).status_code == 400
+                                              "owner": guests.new_guest()[1]}).status_code == 400
     r = boss.post("/api/workspaces", json={"name": "Ann's course", "kind": "shared", "owner": "ws_ann"})
     assert r.status_code == 200, r.text
     ws = r.json()
@@ -466,6 +466,6 @@ def test_deleting_an_account_keeps_workspaces_with_other_owners(boss):
     assert r.status_code == 200, r.text
     assert sorted(r.json()["deleted_workspaces"]) == sorted([personal, solo])
     from gamma import workspaces
-    assert workspaces.get(duo) and workspaces.role_of(duo, "ws_fay") == "owner"
+    assert workspaces.get(duo) and workspaces.role_of(duo, account_of("ws_fay")) == "owner"
     assert workspaces.get(solo) is None and workspaces.get(personal) is None
     assert fay.get("/api/blocks/root/children", headers=_in(duo)).status_code == 200

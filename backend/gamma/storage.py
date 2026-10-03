@@ -269,15 +269,22 @@ def _store(ws: str, filename: str, data: bytes) -> bool:
     return False
 
 
-def store_pdf(ws: str, data: bytes) -> tuple[str, str, bool]:
+def pdf_url(doc_id: str) -> str:
+    """Where the stored PDF ``doc_id`` is served: what a page carrying it
+    shows unless it stores a ``source_url`` of its own
+    (blocks_store.page_attachment)."""
+    return f"/api/uploads/{doc_id}.pdf"
+
+
+def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
     """Store PDF bytes under their content hash in the workspace (callers
-    validate with :func:`is_pdf` first). Returns ``(doc_id, source_url,
-    already_existed)``. Dedup first: a re-upload of a stored file adds no
-    bytes."""
+    validate with :func:`is_pdf` first). Returns ``(doc_id,
+    already_existed)``; the file is at ``pdf_url(doc_id)``. Dedup first: a
+    re-upload of a stored file adds no bytes."""
     doc_id = content_digest(data)
     already_existed = _store(ws, f"{doc_id}.pdf", data)
     pdf_meta.schedule(ws, doc_id)  # the viewer's manifest, ready before the first open
-    return doc_id, f"/api/uploads/{doc_id}.pdf", already_existed
+    return doc_id, already_existed
 
 
 def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:

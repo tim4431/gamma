@@ -169,15 +169,15 @@ def test_daily_calendar_utc_boundaries_totals_and_reset(org, monkeypatch):
     c.delete("/api/ai/usage")
     with connect_users_db() as conn:
         for user, at, tokens in [
-            (ids["user"], "2023-03-02T23:59:59", 999),  # outside the calendar
-            (ids["user"], "2023-03-03T00:00:00", 10),
-            (ids["user"], "2024-02-29T00:00:00", 20),
-            (ids["user"], "2024-02-29T23:59:59", 30),
-            (ids["user"], "2024-03-01T00:00:00", 40),
+            (ids["user_id"], "2023-03-02T23:59:59", 999),  # outside the calendar
+            (ids["user_id"], "2023-03-03T00:00:00", 10),
+            (ids["user_id"], "2024-02-29T00:00:00", 20),
+            (ids["user_id"], "2024-02-29T23:59:59", 30),
+            (ids["user_id"], "2024-03-01T00:00:00", 40),
             ("another-account", "2024-03-01T00:00:00", 9999),
         ]:
             conn.execute(
-                "INSERT INTO ai_usage (username, at, kind, provider_id, provider_name, model, "
+                "INSERT INTO ai_usage (user_id, at, kind, provider_id, provider_name, model, "
                 "input, output, cache_read, cache_write) VALUES (?, ?, 'chat', 'own', 'Own', 'model', ?, 2, 3, 1)",
                 (user, at, tokens))
     data = c.get("/api/ai/usage").json()

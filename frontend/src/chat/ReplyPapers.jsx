@@ -14,7 +14,7 @@ import { clipPayload, lookupQuery, replyPapers } from "./chatPapers.js";
 
 const MAX_LOOKED_UP = 30;
 
-export default function ReplyPapers({ actions, text, folder = "", options = {}, onOpenPage, onLibraryChange }) {
+export default function ReplyPapers({ actions, text, folder = "", folderName = "", options = {}, onOpenPage, onLibraryChange }) {
   const papers = useMemo(() => replyPapers(actions, text), [actions, text]);
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState(() => new Set());
@@ -81,7 +81,6 @@ export default function ReplyPapers({ actions, text, folder = "", options = {}, 
     onLibraryChange?.();
   }
 
-  const where = folder ? folder.split("/").pop() : "";
   return (
     <div className="chatPapersWrap">
       <button type="button" className="chatPill" onClick={() => setOpen((v) => !v)} aria-expanded={open}
@@ -129,10 +128,10 @@ export default function ReplyPapers({ actions, text, folder = "", options = {}, 
               {chosen.length === choosable.length && choosable.length ? t("Select none") : t("Select all")}
             </button>
             <button type="button" className="uiBtn sm primary" disabled={busy || !chosen.length} onClick={save}
-              title={folder ? t("Saved into {folder}", { folder }) : t("Saved into your library")}>
+              title={folderName ? t("Saved into {folder}", { folder: folderName }) : t("Saved into your library")}>
               <FilePlusIcon size={14} />
-              {where
-                ? tn("Save {n} paper to {folder}", "Save {n} papers to {folder}", chosen.length, { folder: where })
+              {folderName
+                ? tn("Save {n} paper to {folder}", "Save {n} papers to {folder}", chosen.length, { folder: folderName })
                 : tn("Save {n} paper to library", "Save {n} papers to library", chosen.length)}
             </button>
           </div>

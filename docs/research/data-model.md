@@ -8,6 +8,13 @@ payoff per effort. The current mechanics live in the dev docs; this note
 keeps the diagnosis and the reasoning, so the ranking can be revisited when
 a redesign is actually on the table.
 
+Since then the six changes ranked below landed, as schema versions 25–30
+([dev/migrations.md](../dev/migrations.md)); the dev docs describe the
+result. Two details went otherwise than written here: the highlight's
+rectangles keep the viewer's measured frame (the page size once beside
+them) rather than PDF points, and a text box keeps `pdf_page`, its only
+page, since it has no position.
+
 ## What the survey found
 
 The block table is sound. `unified_blocks(id, parent_id, position,

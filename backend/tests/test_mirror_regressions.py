@@ -400,7 +400,7 @@ def _lose_create_answer(monkeypatch, how="reset"):
 
 
 def _link(remote, local, adopt="theirs"):
-    token = create_token(remote.name, remote.ws, "link", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws, "adopt": adopt})
     assert r.status_code == 201, r.text

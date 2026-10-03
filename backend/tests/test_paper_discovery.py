@@ -414,7 +414,7 @@ def test_fetch_failure_allows_one_look_for_another_copy_only_with_web_search(org
 
     monkeypatch.setattr(web, "guarded_urlopen", blocked)
     web.clear_cache()
-    scope = {**folder(""), "handoff_user": org[1]["user"]}
+    scope = {**folder(""), "handoff_user": org[1]["user_id"]}
     text, action = run_agent_tool(org[1]["ws"], scope, "fetch_paper", {"source": "https://pub.example.org/x.pdf"})
     assert action.get("handoff") and "fetch another version" in text and "search_web" not in text
     text, action = run_agent_tool(org[1]["ws"], {**scope, "web_engine": "brave"}, "fetch_paper",

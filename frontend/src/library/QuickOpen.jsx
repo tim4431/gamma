@@ -23,7 +23,7 @@ import { chordLabel } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
 import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
-import { formatRelativeTime, pageAttachment, parseFolderTags } from "./libraryUtils";
+import { filedIn, filingChips, folderPath, formatRelativeTime, pageAttachment } from "./libraryUtils";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const MAX_ROWS = 40;
@@ -34,7 +34,7 @@ const CREATE_CHORD = "Shift-Enter";
 
 export default function QuickOpen({
   open, prefix = "", commands, onClose, pages, recentViews, openTabs, currentPageId, onOpen,
-  folders = [], folderMeta = {}, onOpenFolder, onOpenLabel, onSearch, onCreate,
+  tree, folderMeta = {}, onOpenFolder, onOpenLabel, onSearch, onCreate,
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -70,9 +70,9 @@ export default function QuickOpen({
   const labelCounts = useMemo(() => {
     const m = new Map();
     if (!open) return m;
-    for (const p of pages) for (const l of parseFolderTags(p.properties?.category)) m.set(l, (m.get(l) || 0) + 1);
+    for (const p of pages) for (const l of filedIn(tree.labels, p.properties?.labels)) m.set(l, (m.get(l) || 0) + 1);
     return m;
-  }, [open, pages]);
+  }, [open, pages, tree]);
 
   // One flat list for the keyboard; each row names the section it sits
   // under: {key, section, page | folder | label | action | cmd}.
@@ -108,34 +108,33 @@ export default function QuickOpen({
     }
     const rankOf = (p) => (recentRank.has(p.id) ? recentRank.get(p.id) : tabs.has(p.id) ? 1000 : 2000);
     const pageRows = pages
-      .map((p) => ({
-        page: p,
-        score: match(p.content, [...parseFolderTags(p.properties?.folder), ...parseFolderTags(p.properties?.category)]),
-        rank: rankOf(p),
-      }))
+      .map((p) => {
+        const chips = filingChips(tree, p.properties);
+        return { page: p, score: match(p.content, [...chips.folders, ...chips.labels].map((c) => c.name)), rank: rankOf(p) };
+      })
       .filter((r) => r.score > 0)
       .sort((a, b) => (b.score - a.score) || (a.rank - b.rank)
         || (b.page.updated_at || "").localeCompare(a.page.updated_at || ""))
       .slice(0, MAX_ROWS)
       .map((r) => ({ key: r.page.id, page: r.page, section: "pages", time: recentAt.get(r.page.id) || r.page.updated_at }));
-    // A folder matches on its own name or its path ("physics/rydberg").
-    const folderRows = folders
-      .map((f) => ({ folder: f, score: match(f.slice(f.lastIndexOf("/") + 1), [f]) }))
+    // A folder matches on its own name or its path ("Physics / Rydberg").
+    const folderRows = [...tree.folders.values()]
+      .map((f) => ({ folder: f, path: folderPath(tree, f.id), score: match(f.name, [folderPath(tree, f.id)]) }))
       .filter((r) => r.score > 0)
-      .sort((a, b) => (b.score - a.score) || a.folder.localeCompare(b.folder))
+      .sort((a, b) => (b.score - a.score) || a.path.localeCompare(b.path))
       .slice(0, MAX_CONTAINERS)
-      .map((r) => ({ key: `folder:${r.folder}`, folder: r.folder, section: "folders" }));
-    const labelRows = [...labelCounts.keys()]
-      .map((l) => ({ label: l, score: match(l) }))
+      .map((r) => ({ key: `folder:${r.folder.id}`, folder: r.folder, section: "folders" }));
+    const labelRows = [...tree.labels.values()]
+      .map((l) => ({ label: l, score: match(l.name) }))
       .filter((r) => r.score > 0)
-      .sort((a, b) => (b.score - a.score) || a.label.localeCompare(b.label))
+      .sort((a, b) => (b.score - a.score) || a.label.name.localeCompare(b.label.name))
       .slice(0, MAX_CONTAINERS)
-      .map((r) => ({ key: `label:${r.label}`, label: r.label, section: "labels" }));
+      .map((r) => ({ key: `label:${r.label.id}`, label: r.label, section: "labels" }));
     const actions = [];
     if (canSearch) actions.push({ key: "action:search", action: "search", section: "actions" });
     if (canCreate) actions.push({ key: "action:create", action: "create", section: "actions" });
     return [...pageRows, ...folderRows, ...labelRows, ...actions];
-  }, [open, commandMode, commandList, pages, folders, labelCounts, recentViews, openTabs, query, canSearch, canCreate]);
+  }, [open, commandMode, commandList, pages, tree, recentViews, openTabs, query, canSearch, canCreate]);
 
   if (!open) return null;
   const runAction = (action) => {
@@ -151,8 +150,8 @@ export default function QuickOpen({
     // a command that looks at the focus (rename, undo) would decline, and
     // the focus hold above would pull focus back from what it opens.
     if (r.cmd) setTimeout(r.cmd.run, 0);
-    else if (r.folder) onOpenFolder(r.folder);
-    else if (r.label) onOpenLabel(r.label);
+    else if (r.folder) onOpenFolder(r.folder.id);
+    else if (r.label) onOpenLabel(r.label.id);
     else onOpen(r.page.id);
   };
   const sectionTitle = {
@@ -199,13 +198,13 @@ export default function QuickOpen({
     }
     if (r.folder) {
       const f = r.folder;
-      const parent = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "";
-      const count = tn("{n} page", "{n} pages", folderMeta[f]?.count || 0);
+      const parent = folderPath(tree, f.parent);
+      const count = tn("{n} page", "{n} pages", folderMeta[f.id]?.count || 0);
       return (
-        <button key={r.key} {...optionProps(r, i, { title: f, "data-kind": "folder" })}>
+        <button key={r.key} {...optionProps(r, i, { title: folderPath(tree, f.id), "data-kind": "folder" })}>
           <FolderIcon size={16} className="quickOpenFolderIcon" />
           <span>
-            <strong><MarkedText text={f.slice(f.lastIndexOf("/") + 1)} query={q} /></strong>
+            <strong><MarkedText text={f.name} query={q} /></strong>
             {parent ? <small>{t("in {parent}", { parent })}</small> : null}
           </span>
           <em className="quickOpenTime">{count}</em>
@@ -214,10 +213,10 @@ export default function QuickOpen({
     }
     if (r.label) {
       return (
-        <button key={r.key} {...optionProps(r, i, { title: r.label, "data-kind": "label" })}>
+        <button key={r.key} {...optionProps(r, i, { title: r.label.name, "data-kind": "label" })}>
           <LabelIcon size={16} />
-          <span><strong><MarkedText text={r.label} query={q} /></strong></span>
-          <em className="quickOpenTime">{tn("{n} page", "{n} pages", labelCounts.get(r.label) || 0)}</em>
+          <span><strong><MarkedText text={r.label.name} query={q} /></strong></span>
+          <em className="quickOpenTime">{tn("{n} page", "{n} pages", labelCounts.get(r.label.id) || 0)}</em>
         </button>
       );
     }
@@ -230,7 +229,7 @@ export default function QuickOpen({
       <button key={r.key} {...optionProps(r, i, { title: [title, detail].filter(Boolean).join("\n"), "data-kind": "page" })}>
         <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
         <span><strong><MarkedText text={title} query={q} /></strong>{detail && <small>{detail}</small>}</span>
-        <CardLabels className="fileRowLabels" folders={parseFolderTags(page.properties?.folder)} labels={parseFolderTags(page.properties?.category)} />
+        <CardLabels className="fileRowLabels" {...filingChips(tree, page.properties)} />
         {page.id === currentPageId
           ? <em className="quickOpenTag">{t("Current")}</em>
           : r.time ? <em className="quickOpenTime">{formatRelativeTime(r.time)}</em> : null}

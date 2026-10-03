@@ -13,10 +13,12 @@ scoped to the page's block tree and needs a signed-in editor.
 """
 
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_user, make_page
+from conftest import account_of, login, make_folder, make_user, make_page
+from gamma.seed import insert_account
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +82,7 @@ def test_only_page_roots_can_be_shared(bob):
 def test_shared_chat_is_scoped_and_read_only(bob, carol, anon):
     page = make_page(bob, "Shared conversation")
     other = make_page(bob, "Private conversation")
+    folder = make_folder(bob, "private/folder")
     saved = {"messages": [{"role": "user", "text": "Explain this page"},
                            {"role": "assistant", "text": "Saved answer"}],
              "title": "Page discussion"}
@@ -89,7 +92,7 @@ def test_shared_chat_is_scoped_and_read_only(bob, carol, anon):
 
     for viewer in (anon, carol, bob):
         assert viewer.get(f"/api/chats/{page['id']}", params=q).json() == saved
-        for bucket in (other["id"], "home", "home:private/folder"):
+        for bucket in (other["id"], "home", folder):
             assert viewer.get(f"/api/chats/{bucket}", params=q).status_code == 403
     assert anon.get(f"/api/chats/{page['id']}").status_code == 401
     assert anon.get(f"/api/chats/{page['id']}", params={"share": "invalid"}).status_code == 401
@@ -100,7 +103,7 @@ def test_shared_chat_is_scoped_and_read_only(bob, carol, anon):
         for method, path, body in (
             ("PUT", f"/api/chats/{page['id']}", {"messages": []}),
             ("DELETE", f"/api/chats/{page['id']}", None),
-            ("POST", "/api/folders/rename", {"src": "private", "dst": "renamed"}),
+            ("DELETE", f"/api/folders/{folder}", None),
             ("POST", "/api/chat-history/archive", {"bucket": page["id"]}),
             ("POST", "/api/chat-history/entry/open", {"bucket": page["id"]}),
             ("PUT", "/api/chat-history/entry", {"title": "Changed"}),
@@ -338,6 +341,42 @@ def test_invited_people_get_in_with_their_own_role(bob, carol, dave, anon):
                      json={"blocks": []}).status_code == 403
 
 
+def test_invitations_name_the_account_not_its_name(bob, anon):
+    """An invitation is a share_users row by account id: the dialog shows the
+    username, a deleted account's invitation goes with it (an account made
+    later under the same name is a stranger to the link), and stopping the
+    share drops its rows."""
+    from gamma import workspaces
+    from gamma.db import connect_users_db
+
+    make_user("erin_share", "erinpw1234567")
+    erin_id = account_of("erin_share")
+    page = make_page(bob, "For Erin")
+    token = _share(bob, page["id"], audience="list", users=[{"name": "erin_share", "role": "edit"}])["token"]
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT user_id, role FROM share_users WHERE token = ?", (token,)).fetchall() == [
+            (erin_id, "edit")]
+    assert bob.get(f"/api/share-settings/{page['id']}").json()["users"] == [{"name": "erin_share", "role": "edit"}]
+
+    workspaces.delete_account(erin_id)
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM share_users WHERE token = ?", (token,)).fetchone()[0] == 0
+    assert bob.get(f"/api/share-settings/{page['id']}").json()["users"] == []
+    with connect_users_db() as conn:  # the name again, as a new account
+        insert_account(conn, "erin_share", bcrypt.hashpw(b"erinpw1234567", bcrypt.gensalt()).decode())
+    workspaces.ensure_personal(account_of("erin_share"))
+    assert account_of("erin_share") != erin_id
+    assert login("erin_share", "erinpw1234567").get(f"/api/share/{token}").status_code == 403
+
+    bob.put(f"/api/share-settings/{page['id']}", json={"users": ["erin_share"]})
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT user_id FROM share_users WHERE token = ?", (token,)).fetchall() == [
+            (account_of("erin_share"),)]
+    assert bob.delete(f"/api/share-settings/{page['id']}").status_code == 200
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM share_users WHERE token = ?", (token,)).fetchone()[0] == 0
+
+
 def test_view_role_never_writes(bob, carol, anon):
     page = make_page(bob, "Look, don't touch")
     token = _share(bob, page["id"], audience="users")["token"]  # role view
@@ -541,39 +580,53 @@ def test_share_reads_are_cors_open_and_importable(bob, anon):
 # or below it, read live (gamma/auth.py ShareScope). Same audience / role /
 # people model; the token confines reads and writes to those pages.
 
-def _folder_share(client, name, **settings):
-    r = client.post("/api/share/folder", params={"name": name}, json=settings or None)
+def _folder_share(client, folder_id, **settings):
+    r = client.post(f"/api/share/folder/{folder_id}", json=settings or None)
     assert r.status_code == 200, r.text
     return r.json()
 
 
+def _move(client, folder_id, parent):
+    r = client.post("/api/pages/folders/ops", json={"ops": [{"op": "move", "id": folder_id, "parent": parent}]})
+    assert r.status_code == 200, r.text
+
+
 def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
-    inside = make_page(bob, "In the folder", {"folder": "lab/readout"})
-    deeper = make_page(bob, "In a subfolder", {"folder": "lab/readout/sub, elsewhere"})
-    outside = make_page(bob, "Outside", {"folder": "lab/other"})
+    lab, readout = make_folder(bob, "lab"), make_folder(bob, "lab/readout")
+    sub, other = make_folder(bob, "lab/readout/sub"), make_folder(bob, "lab/other")
+    inside = make_page(bob, "In the folder", {"folders": [readout]})
+    deeper = make_page(bob, "In a subfolder", {"folders": [sub, make_folder(bob, "elsewhere")]})
+    outside = make_page(bob, "Outside", {"folders": [other]})
     note = _child(bob, inside["id"], "a note in the folder")
 
-    assert bob.post("/api/share/folder", params={"name": "lab/nowhere"}).status_code == 404
-    assert bob.post("/api/share/folder", params={"name": "  /  "}).status_code == 400
-    share = _folder_share(bob, "lab/readout/")
+    assert bob.post("/api/share/folder/no-such-folder").status_code == 404
+    assert bob.post(f"/api/share/folder/{inside['id']}").status_code == 404  # a page is no folder
+    share = _folder_share(bob, readout)
     token = share["token"]
-    assert share["folder"] == "lab/readout" and share["page_id"] == ""
-    assert _folder_share(bob, "lab/readout")["token"] == token             # stable, like a page's
-    assert bob.get("/api/share-settings/folder", params={"name": "lab/readout"}).json()["token"] == token
-    assert bob.get("/api/share-settings/folder", params={"name": "lab"}).json()["token"] is None
+    assert share["folder"] == readout and share["page_id"] == ""
+    assert _folder_share(bob, readout)["token"] == token             # stable, like a page's
+    assert bob.get(f"/api/share-settings/folder/{readout}").json()["token"] == token
+    assert bob.get(f"/api/share-settings/folder/{lab}").json()["token"] is None
 
     resolved = anon.get(f"/api/share/{token}")
     assert resolved.status_code == 200, resolved.text
     data = resolved.json()
-    assert data["folder"] == "lab/readout" and data["page_id"] == "" and "doc_id" not in data
+    assert data["folder"] == readout and data["folder_name"] == "readout"
+    assert data["page_id"] == "" and "doc_id" not in data
 
     q = {"share": token}
-    # the library listing through the link is the folder's pages, with previews
+    # the library listing through the link is the folder's pages, with previews,
+    # and the shared folder's own tree (no seq: a link joins no tree's room)
     listing = anon.get("/api/blocks/root/children", params=q)
     assert listing.status_code == 200, listing.text
     children = listing.json()["children"]
     assert {c["id"] for c in children} == {inside["id"], deeper["id"]}
     assert next(c for c in children if c["id"] == inside["id"])["preview"] == "a note in the folder"
+    folders = listing.json()["folders"]
+    assert "seq" not in folders and [f["id"] for f in folders["children"]] == [readout]
+    assert [f["id"] for f in folders["children"][0]["children"]] == [sub]
+    assert anon.get("/api/blocks/folders/subtree", params=q).status_code == 403
+    assert anon.get("/api/pages/folders/ops", params=q).status_code == 403
     assert anon.get(f"/api/blocks/{inside['id']}", params=q).status_code == 200
     assert anon.get(f"/api/blocks/{note['id']}", params=q).status_code == 200
     assert anon.get(f"/api/blocks/{deeper['id']}/subtree", params=q).status_code == 200
@@ -583,22 +636,28 @@ def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
     assert anon.get(f"/api/chats/{inside['id']}", params=q).status_code == 200
     assert anon.get(f"/api/chats/{outside['id']}", params=q).status_code == 403
     # whole-folder reads: the shared folder and its subfolders, nothing beside them
-    assert anon.get("/api/folders/export", params={**q, "name": "lab/readout", "mode": "readable"}).status_code == 200
-    assert anon.get("/api/folders/export", params={**q, "name": "lab/readout/sub", "mode": "readable"}).status_code == 200
-    assert anon.get("/api/folders/export", params={**q, "name": "lab", "mode": "readable"}).status_code == 403
+    assert anon.get(f"/api/folders/{readout}/export", params={**q, "mode": "readable"}).status_code == 200
+    assert anon.get(f"/api/folders/{sub}/export", params={**q, "mode": "readable"}).status_code == 200
+    assert anon.get(f"/api/folders/{lab}/export", params={**q, "mode": "readable"}).status_code == 403
 
-    # membership is live: a page filed later joins, one moved out leaves
-    later = make_page(bob, "Filed later", {"folder": "lab/readout"})
+    # membership is live: a page filed later joins, one moved out leaves, and
+    # a folder moved in brings its pages along (moved out, takes them away)
+    later = make_page(bob, "Filed later", {"folders": [readout]})
     assert anon.get(f"/api/blocks/{later['id']}", params=q).status_code == 200
     assert {c["id"] for c in anon.get("/api/blocks/root/children", params=q).json()["children"]} == {
         inside["id"], deeper["id"], later["id"]}
-    bob.put(f"/api/blocks/{inside['id']}", json={"properties": {"folder": "lab/other"}})
+    bob.put(f"/api/blocks/{inside['id']}", json={"properties": {"folders": [other]}})
     assert anon.get(f"/api/blocks/{inside['id']}", params=q).status_code == 403
+    _move(bob, other, readout)
+    assert anon.get(f"/api/blocks/{inside['id']}", params=q).status_code == 200
+    assert anon.get(f"/api/blocks/{outside['id']}", params=q).status_code == 200
+    _move(bob, other, lab)
+    assert anon.get(f"/api/blocks/{outside['id']}", params=q).status_code == 403
 
-    r = bob.delete("/api/share-settings/folder", params={"name": "lab/readout"})
+    r = bob.delete(f"/api/share-settings/folder/{readout}")
     assert r.json()["removed"] == 1
     assert anon.get(f"/api/share/{token}").status_code == 404
-    assert bob.get("/api/share-settings/folder", params={"name": "lab/readout"}).json()["token"] is None
+    assert bob.get(f"/api/share-settings/folder/{readout}").json()["token"] is None
 
 
 def test_folder_share_reads_only_its_pages_assets(bob, anon):
@@ -608,19 +667,21 @@ def test_folder_share_reads_only_its_pages_assets(bob, anon):
         up = bob.post("/api/upload-image", files={"file": (name, png + name.encode(), "image/png")})
         assert up.status_code == 200, up.text
         urls.append(up.json()["url"])
-    inside = make_page(bob, "Figure inside", {"folder": "assets/shared"})
+    shared = make_folder(bob, "assets/shared")
+    inside = make_page(bob, "Figure inside", {"folders": [shared]})
     _child(bob, inside["id"], f"![in]({urls[0]})")
     outside = make_page(bob, "Figure outside")
     _child(bob, outside["id"], f"![out]({urls[1]})")
-    token = _folder_share(bob, "assets/shared")["token"]
+    token = _folder_share(bob, shared)["token"]
     assert anon.get(urls[0], params={"share": token}).status_code == 200
     assert anon.get(urls[1], params={"share": token}).status_code == 403
 
 
 def test_folder_edit_share_writes_inside_the_folder_only(bob, carol):
-    page = make_page(bob, "Draft in folder", {"folder": "team/drafts"})
+    drafts = make_folder(bob, "team/drafts")
+    page = make_page(bob, "Draft in folder", {"folders": [drafts]})
     outside = make_page(bob, "Not shared")
-    token = _folder_share(bob, "team/drafts", audience="list",
+    token = _folder_share(bob, drafts, audience="list",
                           users=[{"name": "carol_share", "role": "edit"}])["token"]
     q = {"share": token}
 
@@ -634,7 +695,12 @@ def test_folder_edit_share_writes_inside_the_folder_only(bob, carol):
     # renaming the page is fine; re-filing it (its properties) is not — a
     # share editor could otherwise move pages into or out of the share
     assert carol.put(f"/api/blocks/{page['id']}", params=q, json={"content": "Draft, renamed"}).status_code == 200
-    assert carol.put(f"/api/blocks/{page['id']}", params=q, json={"properties": {"folder": "team"}}).status_code == 403
+    assert carol.put(f"/api/blocks/{page['id']}", params=q,
+                     json={"properties": {"folders": [make_folder(bob, "team")]}}).status_code == 403
+    # nor the folders themselves: a share link reaches no tree
+    assert carol.post("/api/pages/folders/ops", params=q, json={"ops": [
+        {"op": "set", "id": drafts, "content": "renamed"}]}).status_code == 403
+    assert carol.delete(f"/api/folders/{drafts}", params=q).status_code == 403
     # never other pages, never new pages, never deleting a shared page
     assert carol.post("/api/blocks", params=q, json={"parent_id": outside["id"], "content": "x"}).status_code == 403
     assert carol.post(f"/api/pages/{outside['id']}/ops", params=q, json={"client": "c1", "ops": []}).status_code == 403
@@ -645,38 +711,35 @@ def test_folder_edit_share_writes_inside_the_folder_only(bob, carol):
     got = bob.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
     assert got["content"] == "Draft, renamed"
     assert [c["content"] for c in got["children"]] == ["carol's line, via ops"]
-    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["folder"] == "team/drafts"
+    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["folders"] == [drafts]
 
 
-def test_folder_share_follows_renames_and_dies_with_the_folder(bob, anon):
-    page = make_page(bob, "Moving page", {"folder": "old/x"})
-    keep = make_page(bob, "Already at the destination", {"folder": "new/x"})
-    old_x = _folder_share(bob, "old/x")["token"]
-    old = _folder_share(bob, "old")["token"]
-    taken = _folder_share(bob, "new/x")["token"]
-
-    # a page share does not follow (its page is not a folder)
+def test_folder_share_survives_renames_and_moves_and_dies_with_the_folder(bob, anon):
+    old, old_x, beside = make_folder(bob, "old"), make_folder(bob, "old/x"), make_folder(bob, "beside")
+    page = make_page(bob, "Moving page", {"folders": [old_x]})
+    whole = _folder_share(bob, old)["token"]
+    inner = _folder_share(bob, old_x)["token"]
     page_token = bob.post(f"/api/share/{page['id']}").json()["token"]
-    # what the frontend does on rename: the tags page by page, then this call
-    bob.put(f"/api/blocks/{page['id']}", json={"properties": {"folder": "new/x"}})
-    r = bob.post("/api/folders/rename", json={"src": "old", "dst": "new"})
-    assert r.status_code == 200, r.text
-    assert r.json()["shares_moved"] == 2
-    assert bob.get("/api/share-settings/folder", params={"name": "new"}).json()["token"] == old
-    # the destination already had a share: it wins, the moved one is gone
-    assert bob.get("/api/share-settings/folder", params={"name": "new/x"}).json()["token"] == taken
-    assert anon.get(f"/api/share/{old_x}").status_code == 404
-    assert anon.get(f"/api/share/{page_token}").json()["page_id"] == page["id"]
-    assert {c["id"] for c in anon.get("/api/blocks/root/children", params={"share": taken}).json()["children"]} == {
-        page["id"], keep["id"]}
 
-    # deleting the folder drops its shares
-    r = bob.post("/api/folders/rename", json={"src": "new", "dst": ""})
-    assert r.json()["shares_moved"] == 2
-    for token in (old, taken):
+    # a rename and a move are one op on the tree: the shares name the folder by id
+    r = bob.post("/api/pages/folders/ops", json={"ops": [{"op": "set", "id": old, "content": "new"},
+                                                          {"op": "move", "id": old_x, "parent": beside}]})
+    assert r.status_code == 200, r.text
+    assert bob.get(f"/api/share-settings/folder/{old_x}").json()["token"] == inner
+    assert anon.get(f"/api/share/{whole}").json()["folder_name"] == "new"
+    assert {c["id"] for c in anon.get("/api/blocks/root/children", params={"share": inner}).json()["children"]} == {
+        page["id"]}
+    # x left "old": its page went with it
+    assert anon.get("/api/blocks/root/children", params={"share": whole}).json()["children"] == []
+
+    # deleting a folder drops its shares and those of the folders below it
+    _move(bob, old_x, old)
+    r = bob.delete(f"/api/folders/{old}")
+    assert r.status_code == 200 and r.json()["shares"] == 2
+    for token in (whole, inner):
         assert anon.get(f"/api/share/{token}").status_code == 404
     assert anon.get(f"/api/share/{page_token}").status_code == 200
-    assert anon.post("/api/folders/rename", params={"share": page_token}, json={"src": "a", "dst": "b"}).status_code == 403
+    assert anon.delete(f"/api/folders/{beside}", params={"share": page_token}).status_code == 403
 
 
 def test_block_search_through_a_share_sees_only_what_it_opens(bob, anon):
@@ -685,7 +748,8 @@ def test_block_search_through_a_share_sees_only_what_it_opens(bob, anon):
     # so nothing tells a visitor whether it exists.
     page = make_page(bob, "Searchable shared")
     note = _child(bob, page["id"], "a shared quokkaneedle")
-    other = make_page(bob, "Private elsewhere", {"folder": "vault"})
+    vault = make_folder(bob, "vault")
+    other = make_page(bob, "Private elsewhere", {"folders": [vault]})
     secret = _child(bob, other["id"], "a private quokkaneedle")
     q = {"share": bob.post(f"/api/share/{page['id']}").json()["token"]}
 
@@ -701,7 +765,7 @@ def test_block_search_through_a_share_sees_only_what_it_opens(bob, anon):
         note["id"], secret["id"]}
 
     # a folder share: the pages filed in the folder, and nothing beside them
-    fq = {"share": _folder_share(bob, "vault")["token"]}
+    fq = {"share": _folder_share(bob, vault)["token"]}
     hits = anon.get("/api/block-search", params={**fq, "q": "quokkaneedle"}).json()["blocks"]
     assert [b["id"] for b in hits] == [secret["id"]]
     assert anon.get("/api/block-search", params={**fq, "ids": note["id"]}).json()["blocks"] == []

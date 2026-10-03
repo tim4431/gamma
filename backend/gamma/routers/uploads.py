@@ -1,5 +1,6 @@
 """PDF / image / generic file uploads (content-hash deduped) and upload serving."""
 
+import json
 import threading
 import time
 from collections import OrderedDict
@@ -20,6 +21,7 @@ from ..storage import (
     display_filename,
     find_upload_file,
     is_pdf,
+    pdf_url,
     store_file,
     store_pdf,
     upload_extension,
@@ -52,10 +54,10 @@ def upload_pdf(request: Request, file: UploadFile = File(...)):
     contents = file.file.read()
     if not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-    doc_id, source_url, already_existed = store_pdf(ws, contents)
+    doc_id, already_existed = store_pdf(ws, contents)
     return {
         "doc_id": doc_id,
-        "source_url": source_url,
+        "source_url": pdf_url(doc_id),
         "size": len(contents),
         "already_existed": already_existed,
     }
@@ -146,25 +148,17 @@ def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
 
 def _pages_reference(conn, pages: list[str], filename: str) -> bool:
     """Whether one of ``pages`` carries ``filename`` as its PDF or a block of
-    its subtree names it (500 pages per query)."""
+    it names it."""
     needle = f"/api/uploads/{filename}"
-    for i in range(0, len(pages), 500):
-        chunk = pages[i:i + 500]
-        marks = ",".join("?" * len(chunk))
-        if filename.endswith(".pdf") and conn.execute(
-                f"SELECT 1 FROM unified_blocks WHERE id IN ({marks}) "
-                "AND json_extract(properties, '$.doc_id') = ?", (*chunk, filename[:-4])).fetchone():
-            return True
-        if conn.execute(
-                f"""WITH RECURSIVE tree(id, content, properties) AS (
-                        SELECT id, content, properties FROM unified_blocks WHERE id IN ({marks})
-                        UNION ALL
-                        SELECT ub.id, ub.content, ub.properties
-                        FROM unified_blocks ub JOIN tree t ON ub.parent_id = t.id)
-                    SELECT 1 FROM tree WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0 LIMIT 1""",
-                (*chunk, needle, needle)).fetchone():
-            return True
-    return False
+    reach = json.dumps(pages)
+    if filename.endswith(".pdf") and conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE doc_id = ? AND id IN (SELECT value FROM json_each(?))",
+            (filename[:-4], reach)).fetchone():
+        return True
+    return conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
+        "AND (instr(content, ?) > 0 OR instr(properties, ?) > 0) LIMIT 1",
+        (reach, needle, needle)).fetchone() is not None
 
 
 @router.get("/pdf-info/{doc_id}")

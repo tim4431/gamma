@@ -34,9 +34,8 @@ from .ai_agent import AgentLoop, Conversation, Helper
 from .ai_client import open_ai, sse_events, wire_protocol
 from .ai_settings import require_ai_runtime, resolve_model
 from .ai_tools import agent_system, agent_tools, available
-from .blocks_store import create_page
+from .blocks_store import FOLDERS, PATH_SEP, create_page, existing_in, folder_path
 from .db import connect_pages_db
-from .foldertags import add_tag, clean_path
 from .logbuf import log
 from .ops import after_commit, apply_ops
 
@@ -77,36 +76,42 @@ TOOLS = frozenset({"list_pages", "list_folders", "read_page", "read_block", "sea
                    "search_papers", "related_papers", "search_web", "fetch_paper", "read_paper"})
 
 
-def start(*, user: str, ws: str, question: str, folder: str = "", model: str = "",
+def start(*, user_id: str, ws: str, question: str, folder: str = "", model: str = "",
           read_chars: int = 0) -> dict:
-    """Queue a research job for ``question``. Raises the usual job errors
-    (too many at once, no disk) and HTTPException when the account has no
-    AI connection to run it on."""
+    """Queue a research job for ``question``, run on the AI connection of the
+    account ``user_id``, reading the folder ``folder`` (an id; "" = the
+    whole library) and filing its report there. Raises ValueError for no
+    question or no such folder, the usual job errors (too many at once, no
+    disk) and HTTPException when the account has no AI connection."""
     question = " ".join((question or "").split())[:MAX_QUESTION]
     if not question:
         raise ValueError("a research job needs a question")
-    require_ai_runtime(user)  # fail now, not in the worker
-    folder = clean_path(folder or "")
+    if folder and not _folder_path(ws, folder):
+        raise ValueError("no such folder")
+    require_ai_runtime(user_id)  # fail now, not in the worker
     return jobs.start(
-        "research", owner=user, ws=ws, title=question[:TITLE_MAX],
+        "research", owner=user_id, ws=ws, title=question[:TITLE_MAX],
         params={"question": question, "folder": folder, "model": model},
-        run=lambda job: _work(job, user=user, ws=ws, question=question, folder=folder,
+        run=lambda job: _work(job, user_id=user_id, ws=ws, question=question, folder=folder,
                              model=model, read_chars=read_chars))
 
 
-def _work(job, *, user: str, ws: str, question: str, folder: str, model: str, read_chars: int) -> dict:
-    runtime = require_ai_runtime(user)
+def _work(job, *, user_id: str, ws: str, question: str, folder: str, model: str, read_chars: int) -> dict:
+    runtime = require_ai_runtime(user_id)
     entry = resolve_model(runtime, model)
     count_usage = ai_usage.recorder("chat", entry, runtime)
     job.progress(phase="searching", unit="steps", done=0)
+    path = _folder_path(ws, folder) if folder else ""
+    if folder and not path:
+        raise ValueError("the folder this research was started in was deleted")
 
     scope = {
-        "type": "folder", "folder": folder, "actor": user, "read_chars": read_chars,
+        "type": "folder", "folder": folder, "folder_path": path, "actor": user_id, "read_chars": read_chars,
         "can_write": False, "context_pages": [], "read_texts": {},
         # A wall is reported, not waited on: nobody is here to pass a check,
         # but the request still shows in Background tasks to finish by hand.
-        "handoff_user": user, "paper_wait": False,
-        "publisher_user": user, "delegates": True,
+        "handoff_user": user_id, "paper_wait": False,
+        "publisher_user": user_id, "delegates": True,
         # Every read is allowed, nothing may change the library, and no tool
         # may ask: a job has no one to ask.
         "permissions": {name: "allow" for name in TOOLS},
@@ -143,7 +148,7 @@ def _work(job, *, user: str, ws: str, question: str, folder: str, model: str, re
     if not text:
         raise ValueError("the assistant answered nothing — try the question in a chat first")
     job.progress(phase="filing", unit="steps", done=len(actions), stoppable=False)
-    page_id, title = _file_report(ws, user, question, folder, text, actions)
+    page_id, title = _file_report(ws, user_id, question, folder, text, actions)
     return {"page_id": page_id, "title": title, "steps": len(actions),
             "blocked": [a["handoff"]["host"] for a in actions if a.get("handoff", {}).get("host")]}
 
@@ -160,23 +165,31 @@ def _phase(action: dict) -> str:
             "search": "searching", "list": "searching"}.get(action.get("kind"), "searching")
 
 
-def _file_report(ws: str, user: str, question: str, folder: str, text: str,
+def _folder_path(ws: str, folder: str) -> str:
+    """The folder's path as it reads; "" when it is no folder."""
+    with connect_pages_db(ws) as conn:
+        return PATH_SEP.join(folder_path(conn, folder))
+
+
+def _file_report(ws: str, user_id: str, question: str, folder: str, text: str,
                  actions: list) -> tuple[str, str]:
-    """Put the report in the library: a page in ``folder`` holding the
+    """Put the report in the library: a page in the folder ``folder`` (an
+    id; at the library root when it was deleted meanwhile) holding the
     question and the answer. Returns ``(page_id, title)``."""
     title = f"Research: {question[:TITLE_MAX]}"
     props = {"research": 1}
-    if folder:
-        props["folder"] = ", ".join(add_tag([], folder))
     with connect_pages_db(ws) as conn:
-        page = create_page(conn, title, props)
+        filed = existing_in(conn, FOLDERS, [folder])
+        if filed:
+            props[FOLDERS] = filed
+        page = create_page(conn, title, props, actor=user_id)
         # Each insert appends as the page's last block, so they land in the
         # order written: the question, the report, then what it read.
         blocks = [{"op": "insert", "id": secrets.token_urlsafe(9), "parent": page["id"],
                    "content": content}
                   for content in (f"**Question.** {question}", text, _sources_line(actions))
                   if content]
-        after_commit(ws, conn, apply_ops(conn, page["id"], blocks, actor=user))
+        after_commit(ws, conn, apply_ops(conn, page["id"], blocks, actor=user_id))
     log.info(f"[research] filed {len(blocks)} blocks in page {page['id']}")
     return page["id"], title
 

@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
+import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
@@ -698,7 +698,7 @@ export function refLabelOf(rb) {
 const _areaSnapCache = new Map();
 function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
   const r = block.position?.boundingRect;
-  const key = `${docKey || ""}|${block.highlightId}:${r?.pageNumber}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
+  const key = `${docKey || ""}|${block.id}:${block.page}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
   const [src, setSrc] = useState(() => _areaSnapCache.get(key) || null);
   useEffect(() => {
     const cached = _areaSnapCache.get(key);
@@ -1172,7 +1172,7 @@ function BlockRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  const isHighlight = !!block.highlightId;
+  const isHighlight = isHighlightBlock(block);
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
   // as a card; its content is the caption. A text box
   // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
@@ -1475,7 +1475,7 @@ function BlockRow({
           // Clicking anywhere on a highlight's card jumps the PDF to it —
           // not just the little colored dot. Ctrl+click appends the quote to
           // the chat selection, same as clicking the highlight on the PDF.
-          if (block.highlightId) onJump?.(block.highlightId, e.ctrlKey || e.metaKey);
+          if (isHighlight) onJump?.(block.id, e.ctrlKey || e.metaKey);
           // Ctrl on any other block: decided on click (below) — a Ctrl+drag
           // selects note text for a chip instead, so the editor must not open
           // and the selection must be allowed to start.
@@ -1538,7 +1538,7 @@ function BlockRow({
           // Ctrl+click attaches the block to the next chat message (a chip
           // with its id, so the agent can edit it) — unless the gesture
           // selected text, which App's mouseup turned into a note chip.
-          if (!(e.ctrlKey || e.metaKey) || !onAddToChat || block.highlightId || editing) return;
+          if (!(e.ctrlKey || e.metaKey) || !onAddToChat || isHighlight || editing) return;
           if (e.target.closest("button, textarea, input, a, .noteSheet")) return;
           if (window.getSelection()?.toString().trim()) return;
           e.preventDefault();
@@ -1562,7 +1562,7 @@ function BlockRow({
           <>
             <button
               className="collapseBtn highlightDotBtn dotSlot"
-              onClick={(e) => { e.stopPropagation(); onJump(block.highlightId, e.ctrlKey || e.metaKey); }}
+              onClick={(e) => { e.stopPropagation(); onJump(block.id, e.ctrlKey || e.metaKey); }}
               title={
                 block.position
                   ? t("Jump to highlight") : block.properties?.linked_highlight_id

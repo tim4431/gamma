@@ -10,6 +10,7 @@ import pytest
 
 import gamma.routers.clip as clip_mod
 import gamma.routers.pdf as pdf_mod
+from conftest import make_folder
 from gamma.ai_tools import MAX_SAVES, Tally, approval_preview, run_agent_tool
 
 from ai_fixtures import FakeResp, ai_provider, folder, org, props  # noqa: F401  (fixtures)
@@ -75,14 +76,14 @@ def test_cite_gives_records_and_bibtex(org):
 
 def test_cite_prefers_the_stored_entry_and_flags_unverified_records(org):
     c, ids = org
-    page = _page(c, "stored cite", {"folder": "readout", "bibtex": "@misc{kept,\n  title = {Kept}\n}",
+    page = _page(c, "stored cite", {"folders": [ids["readout"]], "bibtex": "@misc{kept,\n  title = {Kept}\n}",
                                     "ppt_cite": "K. Ept, Nature 1 (2020)",
                                     "meta": {"title": "Kept", "authors": ["K. Ept"], "unverified": True}})
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "cite", {"page_ids": page})  # a bare id works too
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": page})  # a bare id works too
     assert "@misc{kept," in text and "Slide citation: K. Ept, Nature 1 (2020)" in text
     assert "Unverified:" in text and "Paper title: Kept" in text
     # Pages outside the chat's folder are refused, and all refused is an error.
-    text, action = run_agent_tool(ids["ws"], folder("cooling"), "cite", {"page_ids": [page]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["cooling"]), "cite", {"page_ids": [page]})
     assert text.startswith("error") and "outside" in text and action["error"]
 
 
@@ -90,21 +91,23 @@ def test_cite_prefers_the_stored_entry_and_flags_unverified_records(org):
 
 def test_save_paper_saves_files_and_never_duplicates(org, upstream):
     c, ids = org
-    scope = folder("readout")
+    scope = folder(ids["readout"])
     text, action = run_agent_tool(ids["ws"], scope, "save_paper",
                                   {"source": "arXiv:2601.04321", "title": "Saved From Chat"})
     assert text.startswith("ok — saved [Saved From Chat](/?page=") and "with its PDF" in text, text
     page = action["page_id"]
     assert action["kind"] == "save" and action["to"] == "readout" and action["pdf"] and not action["existed"]
     saved = props(c, page)
-    assert saved["content"] == "Saved From Chat" and saved["properties"]["folder"] == "readout"
+    assert saved["content"] == "Saved From Chat" and saved["properties"]["folders"] == [ids["readout"]]
     assert saved["properties"]["doc_id"] and upstream["meta"] == [page]
     assert any("arxiv.org/pdf/2601.04321" in u for u in upstream["fetched"])
-    # The same paper again, into a subfolder: filed there, not duplicated.
+    # The same paper again, into a subfolder the call makes: filed there
+    # (refining the folder above), not duplicated.
     text, action = run_agent_tool(ids["ws"], scope, "save_paper",
                                   {"source": "https://arxiv.org/abs/2601.04321v2", "folder": "fast"})
-    assert "already in the library" in text and "readout/fast" in text
-    assert action["page_id"] == page and action["existed"] and action["to"] == "readout/fast"
+    assert "already in the library" in text and "readout / fast" in text
+    assert action["page_id"] == page and action["existed"] and action["to"] == "readout / fast"
+    assert props(c, page)["properties"]["folders"] == [make_folder(c, "readout/fast")]
     # And once more where it already is: nothing changed, and the chip says so.
     text, action = run_agent_tool(ids["ws"], scope, "save_paper",
                                   {"source": "2601.04321", "folder": "fast"})
@@ -116,7 +119,7 @@ def test_the_approval_card_shows_what_a_save_would_do(org, upstream):
     paper, the folder and the source; a paper filed there already, or a
     source that is none, is answered without a card. Nothing is fetched."""
     c, ids = org
-    scope = folder("readout")
+    scope = folder(ids["readout"])
     preview, answer = approval_preview(ids["ws"], scope, "save_paper",
                                        {"source": "arXiv:2601.05555", "title": "  A New One "})
     assert answer is None
@@ -127,7 +130,14 @@ def test_the_approval_card_shows_what_a_save_would_do(org, upstream):
     preview, answer = approval_preview(ids["ws"], scope, "save_paper",
                                        {"source": "https://arxiv.org/abs/2601.05555", "folder": "fast"})
     assert answer is None and preview["existed"] and preview["page_id"] == page
-    assert preview["to"] == "readout/fast"
+    assert preview["to"] == "readout / fast"
+    # A folder still to be made is named, and the preview makes nothing.
+    preview, answer = approval_preview(ids["ws"], scope, "save_paper",
+                                       {"source": "https://arxiv.org/abs/2601.05555", "folder": "unmade"})
+    assert answer is None and preview["to"] == "readout / unmade"
+    readout = next(n for n in c.get("/api/blocks/folders/subtree").json()["block"]["children"]
+                   if n["id"] == ids["readout"])
+    assert "unmade" not in [n["content"] for n in readout["children"]]
     preview, answer = approval_preview(ids["ws"], scope, "save_paper", {"source": "2601.05555"})
     assert preview is None and "already in the library" in answer and "nothing changed" in answer
     preview, answer = approval_preview(ids["ws"], scope, "save_paper", {"source": "cats"})
@@ -141,7 +151,13 @@ def test_save_paper_in_a_page_chat_files_with_the_open_page(org, upstream):
                                   {"source": "https://example.org/papers/cited-ref.pdf"})
     assert text.startswith("ok — saved") and "outside this chat's reach" in text, text
     assert action["to"] == "readout"  # page a's first folder
-    assert props(c, action["page_id"])["properties"]["folder"] == "readout"
+    assert props(c, action["page_id"])["properties"]["folders"] == [ids["readout"]]
+    # A path is read from the top there, and made when missing.
+    text, action = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["a"]}, "save_paper",
+                                  {"source": "https://example.org/papers/other-ref.pdf",
+                                   "folder": "cooling / references"})
+    assert text.startswith("ok — saved") and action["to"] == "cooling / references", text
+    assert props(c, action["page_id"])["properties"]["folders"] == [make_folder(c, "cooling/references")]
 
 
 def test_save_paper_refusals(org, upstream):
@@ -207,43 +223,46 @@ def test_the_save_count_spans_the_calls_of_one_message(org, upstream):
 
 def test_list_and_restore_deleted_pages_within_the_folder(org):
     c, ids = org
-    page = _page(c, "old readout draft", {"folder": "readout/old"})
+    old = make_folder(c, "readout/old")
+    page = _page(c, "old readout draft", {"folders": [old, ids["cooling"]]})
     assert c.delete(f"/api/blocks/{page}").status_code == 200
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "list_deleted", {})
-    assert f'id={page} | "old readout draft" | was in readout/old' in text
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "list_deleted", {})
+    assert f'id={page} | "old readout draft" | was in "readout / old", "cooling"' in text
     assert action["kind"] == "list" and "Recently deleted" in action["summary"]
     # Another folder's chat sees none of it, and cannot bring it back.
-    text, _ = run_agent_tool(ids["ws"], folder("cooling"), "list_deleted", {})
+    other = make_folder(c, "elsewhere")
+    text, _ = run_agent_tool(ids["ws"], folder(other), "list_deleted", {})
     assert page not in text and "holds no pages" in text
-    text, _ = run_agent_tool(ids["ws"], folder("cooling"), "restore_page", {"page_id": page})
+    text, _ = run_agent_tool(ids["ws"], folder(other), "restore_page", {"page_id": page})
     assert text.startswith("error") and "not filed in this chat's folder" in text
     # The title filter.
     text, _ = run_agent_tool(ids["ws"], folder(""), "list_deleted", {"title_contains": "nothing like it"})
     assert page not in text
 
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "restore_page", {"page_id": page})
-    assert text.startswith("ok — restored [old readout draft]") and '"readout/old"' in text
-    assert action["kind"] == "restore" and action["page_id"] == page and action["to"] == "readout/old"
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_id": page})
+    assert text.startswith("ok — restored [old readout draft]") and '"readout / old", "cooling"' in text
+    assert action["kind"] == "restore" and action["page_id"] == page
+    assert action["to"] == "readout / old, cooling"
     back = props(c, page)
-    assert back["parent_id"] == "root" and back["properties"]["folder"] == "readout/old"
+    assert back["parent_id"] == "root" and back["properties"]["folders"] == [old, ids["cooling"]]
     # Restored already: nothing to do.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "restore_page", {"page_id": page})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_id": page})
     assert "not deleted" in text and action["noop"]
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "restore_page", {"page_id": "nope"})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_id": "nope"})
     assert text.startswith("error") and action["error"]
 
 
 def test_the_approval_card_shows_what_a_restore_would_bring_back(org):
     c, ids = org
-    page = _page(c, "a card draft", {"folder": "readout/cards"})
+    page = _page(c, "a card draft", {"folders": [make_folder(c, "readout/cards")]})
     assert c.delete(f"/api/blocks/{page}").status_code == 200
-    scope = folder("readout")
+    scope = folder(ids["readout"])
     preview, answer = approval_preview(ids["ws"], scope, "restore_page", {"page_id": page})
-    assert answer is None and preview == {"title": "a card draft", "to": "readout/cards"}
+    assert answer is None and preview == {"title": "a card draft", "to": "readout / cards"}
     assert c.get(f"/api/blocks/{page}").status_code == 404, "a preview restores nothing"
     preview, answer = approval_preview(ids["ws"], scope, "restore_page", {"page_id": ids["a"]})
     assert preview is None and "not deleted" in answer
-    preview, answer = approval_preview(ids["ws"], folder("cooling"), "restore_page", {"page_id": page})
+    preview, answer = approval_preview(ids["ws"], folder(ids["cooling"]), "restore_page", {"page_id": page})
     assert preview is None and answer.startswith("error")
 
 

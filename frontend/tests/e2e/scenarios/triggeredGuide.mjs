@@ -535,8 +535,9 @@ export async function triggeredGuideScenarios(env) {
   await step("triggered guide: a library past 20 pages offers the organizing tour, passing over the strips it has not got", async () => {
     server.manage("create-user", "filer", "filer-pw");
     const big = await new Account(server, "filer", "filer-pw").login();
+    const attention = await big.folder("ml/attention");
     for (let i = 0; i < 20; i++) {
-      await big.api("/api/pages", { method: "POST", body: { title: `Filed paper ${i}`, ...(i ? {} : { folder: "ml/attention" }) } });
+      await big.api("/api/pages", { method: "POST", body: { title: `Filed paper ${i}`, ...(i ? {} : { folders: [attention] }) } });
     }
     const ctx = await big.context(browser, { suggestTours: true });
     const page = await openPage(ctx, `${server.base}/?ws=${big.ws}`);
@@ -565,12 +566,12 @@ export async function triggeredGuideScenarios(env) {
     const upload = await user.upload("/api/uploads", makePdf([["Annotated", "A line to mark."]]), "annotated.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Annotated paper", source_url: upload.source_url } });
     // `annotatedPage` counts what blocksToHighlights returns, which needs a
-    // position on each block, not just a highlight id.
+    // place on the page on each block, not just its page.
     for (let i = 0; i < 5; i++) {
-      const rect = { x1: 60, y1: 60 + i * 20, x2: 480, y2: 78 + i * 20, width: 612, height: 792, pageNumber: 1 };
+      const rect = { x1: 60, y1: 60 + i * 20, x2: 480, y2: 78 + i * 20 };
       await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: `Marked ${i}`,
-        properties: { highlight_id: `mark-${i}`, quote: "A line to mark.", color: "rgba(255, 229, 100, 0.55)", pdf_page: 1,
-          pdf_position: { pageNumber: 1, boundingRect: rect, rects: [rect] } } } });
+        properties: { quote: "A line to mark.", color: "rgba(255, 229, 100, 0.55)",
+          pdf_position: { pageNumber: 1, width: 612, height: 792, boundingRect: rect, rects: [rect] } } } });
     }
     const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
     try {

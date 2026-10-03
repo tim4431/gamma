@@ -8,7 +8,8 @@
 export const DEFAULTS = {
   server: "",          // e.g. "http://gamma.local:9001"
   servers: [],         // remembered origins for the options-page switcher
-  folder: "",          // default folder for saves
+  defaultFolders: {},  // default folder for saves, per server: {origin: folder id}
+  folder: "",          // the default as a path, stored before folders had ids (defaultFolder)
   labels: [],          // default labels
   allowOa: true,       // open-access fallback behind paywalls
   saveCopy: true,      // store the PDF server-side
@@ -46,6 +47,47 @@ export async function removeServer(origin) {
     server: settings.server === origin ? "" : settings.server,
     servers: settings.servers.filter((server) => server !== origin),
   });
+}
+
+// The connected server's default folder, as POST /api/clip names it: `folder`
+// its id ("" = the library root), or — while the setting is still the path an
+// older version stored — that path as `folder_path`, which the next save sends
+// (made where missing) and rememberFolder replaces by the folder's id.
+export function defaultFolder(settings) {
+  const folder = settings.defaultFolders[settings.server] || "";
+  return { folder, folder_path: folder ? "" : settings.folder };
+}
+
+// The default folder for a save made without the popup (the shortcut, the
+// context menu), checked against the library: an id the server no longer
+// lists (the folder was deleted) is forgotten, and the save goes to the
+// library root. A stored old path is sent as it is (made where missing).
+export async function checkedDefaultFolder(settings) {
+  const filing = defaultFolder(settings);
+  if (!filing.folder) return filing;
+  const { folders = [] } = await api("/library/folders", { expectedOrigin: settings.server });
+  if (folders.some((f) => f.id === filing.folder)) return filing;
+  await setSettings({ defaultFolders: { ...settings.defaultFolders, [settings.server]: "" } });
+  return { folder: "", folder_path: "" };
+}
+
+// The id of the folder a path names ("a/b", split as POST /api/clip splits
+// it) among GET /api/library/folders' `folders` ({id, path}), or "".
+export function folderByPath(folders, path) {
+  const names = path.split("/").map((name) => name.trim()).filter(Boolean).join("/");
+  const found = folders.find((f) => f.path.join("/") === names);
+  return found ? found.id : "";
+}
+
+// Makes a save's folder the connected server's default; one named by path (a
+// typed new folder, or the stored old path) by the id the save filed it under.
+export async function rememberFolder(settings, { folder, folder_path }) {
+  if (folder_path) {
+    const { folders = [] } = await api("/library/folders", { expectedOrigin: settings.server });
+    folder = folderByPath(folders, folder_path);
+  }
+  if (folder === defaultFolder(settings).folder && !settings.folder) return;
+  await setSettings({ defaultFolders: { ...settings.defaultFolders, [settings.server]: folder }, folder: "" });
 }
 
 // "gamma.local:9001" → "http://gamma.local:9001"; keeps an explicit scheme.

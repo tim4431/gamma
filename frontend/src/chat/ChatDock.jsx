@@ -20,7 +20,7 @@ import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
-import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
+import { filedIn, pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { chipNote, isChange, runningLabel, splitActions, stepsSummary } from "./agentSteps";
@@ -331,7 +331,7 @@ export default function ChatDock({
   // only editors change them: the conversation stays in this tab (no
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
-  docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
+  docId, pageAttach, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
   // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
   // text}], App state like pdfSelections) and the block row the user's
@@ -352,7 +352,7 @@ export default function ChatDock({
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
-  // Home/folder view: the folder path being viewed ("" = library root) —
+  // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
   // read, block_read, search, rename, move, block_edit}; setAgentPerms edits
@@ -375,12 +375,12 @@ export default function ChatDock({
   const [loadedMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [loadError, setLoadError] = useState("");
-  // Chat history is per page; the home view buckets per folder ("home" at the
-  // library root, "home:<path>" inside a folder) — switching folders switches
+  // Chat history is per page; the home view buckets per folder (the folder's
+  // id, "home" at the library root) — switching folders switches
   // conversations, so the organizer never drags one folder's context into
-  // another. App migrates the buckets on folder rename/move/delete
-  // (POST /api/folders/rename).
-  const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
+  // another. A rename or a move keeps the bucket; deleting the folder files
+  // its conversations into "home"'s history (DELETE /api/folders/{id}).
+  const chatKey = focusedBlockId || organizeFolder || "home";
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedMessages;
   // A reply is streaming into THIS conversation. Other buckets stream on
@@ -392,7 +392,7 @@ export default function ChatDock({
   // Where a reply's "Save to library" files papers: the folder the chat is
   // about — the one viewed, else the open paper's first.
   const paperFolder = organizeFolder != null ? organizeFolder
-    : parseFolderTags(homeBlocks.find((b) => b.id === focusedBlockId)?.properties?.folder)[0] || "";
+    : filedIn(libraryTree.folders, homeBlocks.find((b) => b.id === focusedBlockId)?.properties?.folders)[0] || "";
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
@@ -1868,7 +1868,8 @@ export default function ChatDock({
                         autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
                     ) : null}
                     {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
-                      <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder} options={paperSave}
+                      <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder}
+                        folderName={libraryTree.folders.get(paperFolder)?.name || ""} options={paperSave}
                         onOpenPage={onOpenPage} onLibraryChange={onLibraryChange} />
                     ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
@@ -2013,7 +2014,7 @@ export default function ChatDock({
         <>
         <PaperMentionInput
           key={chatKey}
-          pages={homeBlocks} openTabs={openTabs} selected={chatDocs}
+          pages={homeBlocks} tree={libraryTree} openTabs={openTabs} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
           className="chatInput chatInputArea"

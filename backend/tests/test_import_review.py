@@ -5,7 +5,8 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of, guest_name
+from conftest import (account_of, folder_names, label_names, login, make_folder, make_label, make_page, make_user,
+                      workspace_of, guest_name)
 from test_zotero_import import RDF, _annotated_pdf
 
 
@@ -87,13 +88,14 @@ def test_empty_selection_and_bad_ids_do_not_import(guest):
 
 def test_markdown_selection_preserves_links_and_only_stores_selected_assets(guest):
     ws = workspace_of(guest_name())
+    selected = make_folder(guest, "Selected notes")
     before, before_files = rows(ws), uploads(ws)
     data = archive({"vault/.obsidian/app.json": "{}", "vault/One.md": "# One\n[[Two]]\n![image](one.png)\n![missing](gone.png)",
                     "vault/Two.md": "# Two\n![image](two.png)", "vault/one.png": b"one-picture", "vault/two.png": b"two-picture"})
-    plan = review(guest, data, "markdown-zip", folder="Selected notes")
+    plan = review(guest, data, "markdown-zip", folder=selected)
     assert rows(ws) == before and uploads(ws) == before_files
     page = next(p for p in plan["pages"] if p["title"] == "One")
-    assert page["missing"] and page["folders"] == ["Selected notes"]
+    assert page["missing"] and page["folders"] == [["Selected notes"]]
     data = report(commit(guest, plan, page["selection_ids"]))
     assert data["pages_created"] == 1 and data["assets_stored"] == 1
     assert len(uploads(ws) - before_files) == 1
@@ -103,23 +105,35 @@ def test_markdown_selection_preserves_links_and_only_stores_selected_assets(gues
 
 
 def test_single_markdown_uses_same_review_contract(guest):
-    plan = review(guest, b"---\ntitle: Single reviewed note\nfolder: child\n---\nContent", "markdown-file", name="note.md", folder="Parent")
-    assert len(plan["pages"]) == 1
+    parent = make_folder(guest, "Parent")
+    plan = review(guest, b"---\ntitle: Single reviewed note\nfolder: child\n---\nContent", "markdown-file", name="note.md",
+                  folder=parent)
+    assert len(plan["pages"]) == 1 and plan["folder"] == parent
     page = plan["pages"][0]
-    assert page["title"] == "Single reviewed note" and page["folders"] == ["Parent/child"]
-    assert report(commit(guest, plan, page["selection_ids"]))["pages_created"] == 1
+    assert page["title"] == "Single reviewed note" and page["folders"] == [["Parent", "child"]]
+    assert "child" not in [p[-1] for p in folder_names(guest).values()]  # the review made nothing
+    created = report(commit(guest, plan, page["selection_ids"]))
+    assert created["pages_created"] == 1
+    filed = guest.get(f"/api/blocks/{created['pages'][0]['id']}").json()["properties"]["folders"]
+    assert [folder_names(guest)[f] for f in filed] == [["Parent", "child"]]
+
+
+def test_a_review_refuses_a_destination_that_is_no_folder(guest):
+    result = guest.post("/api/import/review", data={"source": "markdown-zip", "folder": "no-such-folder"},
+                        files={"file": ("n.zip", archive({"n.md": "# n"}), "application/zip")})
+    assert result.status_code == 400
 
 
 def test_markdown_repeat_review_shows_existing_destination(accounts):
     owner = accounts["review-owner"]
     content = b"# Repeat review note\nKeep the existing destination."
-    first = review(owner, content, "markdown-file", name="repeat.md", folder="Original folder")
+    first = review(owner, content, "markdown-file", name="repeat.md", folder=make_folder(owner, "Original folder"))
     created = report(commit(owner, first, first["pages"][0]["selection_ids"]))["pages"][0]
     result = owner.put(f"/api/blocks/{created['id']}", json={"content": "Renamed in library"})
     assert result.status_code == 200
-    repeated = review(owner, content, "markdown-file", name="repeat.md", folder="Different folder")
+    repeated = review(owner, content, "markdown-file", name="repeat.md", folder=make_folder(owner, "Different folder"))
     page = repeated["pages"][0]
-    assert page["title"] == "Renamed in library" and page["folders"] == ["Original folder"]
+    assert page["title"] == "Renamed in library" and page["folders"] == [["Original folder"]]
     assert page["action"] == "skip" and repeated["pages_created"] == 0
     imported = report(commit(owner, repeated, page["selection_ids"]))
     assert imported["pages_created"] == 0 and imported["pages_skipped"] == 1
@@ -142,9 +156,9 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
     other_ws = owner.post("/api/workspaces", json={"name": "Another review destination"}).json()["id"]
     assert start(owner, plan, ids, headers={"X-Gamma-Workspace": other_ws}).status_code == 404
     from gamma import import_staging
-    path, _ = import_staging.get(plan["review_id"], "review-owner", workspace_of("review-owner"))
+    path, _ = import_staging.get(plan["review_id"], account_of("review-owner"), workspace_of("review-owner"))
     assert path.exists()
-    with import_staging.claim(plan["review_id"], "review-owner", workspace_of("review-owner")):
+    with import_staging.claim(plan["review_id"], account_of("review-owner"), workspace_of("review-owner")):
         # a delete while the import holds the upload waits for it
         assert owner.delete(f"/api/import/review/{plan['review_id']}").status_code == 409
     assert owner.delete(f"/api/import/review/{plan['review_id']}").status_code == 200
@@ -156,8 +170,13 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
     donor, receiver = accounts["review-donor"], accounts["review-owner"]
     a_pdf = donor.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(b"Selected Gamma PDF"), "application/pdf")}).json()
     b_pdf = donor.post("/api/uploads", files={"file": ("b.pdf", _annotated_pdf(b"Unselected Gamma PDF"), "application/pdf")}).json()
-    a = make_page(donor, "Chosen Gamma page", {"doc_id": a_pdf["doc_id"], "source_url": a_pdf["source_url"], "folder": "Research/Chosen"})
-    b = make_page(donor, "Excluded Gamma page", {"doc_id": b_pdf["doc_id"], "source_url": b_pdf["source_url"]})
+    a = make_page(donor, "Chosen Gamma page", {"doc_id": a_pdf["doc_id"], "source_url": a_pdf["source_url"],
+                                               "folders": [make_folder(donor, "Research/Chosen")],
+                                               "labels": [make_label(donor, "chosen-tag")]})
+    b = make_page(donor, "Excluded Gamma page", {"doc_id": b_pdf["doc_id"], "source_url": b_pdf["source_url"],
+                                                 "folders": [make_folder(donor, "Research/Other")],
+                                                 "labels": [make_label(donor, "other-tag")]})
+    make_folder(donor, "Research/Empty")
     child = donor.post("/api/blocks", json={"parent_id": a["id"], "content": f"Chosen child note [[{b['id']}]]"}).json()
     donor.put(f"/api/chats/{a['id']}", json={"messages": [{"role": "user", "content": "chosen chat"}]})
     donor.put(f"/api/chats/{b['id']}", json={"messages": [{"role": "user", "content": "excluded chat"}]})
@@ -166,8 +185,14 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
     plan = review(receiver, donor.get("/api/export").content, "gamma")
     assert rows(ws) == before and uploads(ws) == before_files
     chosen = next(p for p in plan["pages"] if p["title"] == "Chosen Gamma page")
-    assert chosen["folders"] == ["Research/Chosen"]
+    assert chosen["folders"] == [["Research", "Chosen"]]
     data = report(commit(receiver, plan, chosen["selection_ids"]))
+    # only the folders and labels the chosen page needs come along
+    research = sorted(p for p in folder_names(receiver).values() if p[0] == "Research")
+    assert research == [["Research"], ["Research", "Chosen"]]
+    assert "chosen-tag" in label_names(receiver).values() and "other-tag" not in label_names(receiver).values()
+    filed = receiver.get(f"/api/blocks/{a['id']}").json()["properties"]["folders"]
+    assert [folder_names(receiver)[f] for f in filed] == [["Research", "Chosen"]]
     assert data["pages_added"] == 1 and data["chats_added"] == 1
     assert any("unselected" in w["reason"] for w in data["warnings"])
     assert receiver.get(f"/api/blocks/{child['id']}").status_code == 200
@@ -218,4 +243,4 @@ def test_import_job_reports_progress_and_can_be_stopped(accounts, monkeypatch):
     titles = {b["content"] for b in owner.get("/api/blocks/root/children").json()["children"]}
     assert "Stoppable note 0" in titles and "Stoppable note 2" not in titles
     with pytest.raises(Exception):
-        import_staging.get(plan["review_id"], "review-owner", workspace_of("review-owner"))
+        import_staging.get(plan["review_id"], account_of("review-owner"), workspace_of("review-owner"))

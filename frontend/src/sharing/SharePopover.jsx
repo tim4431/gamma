@@ -10,8 +10,9 @@
 // Citation. State is the server's share settings (docs/dev/api.md "Shares"):
 // every change saves at once; the link itself only changes on Stop.
 // `target` says what is shared — {kind: "page", title} or {kind: "folder",
-// name} — and only the words differ: a folder share reaches every page filed
-// in the folder, now and later, so its edit wording says so.
+// id, name} (`name` its path) — and only the words differ: a folder share
+// reaches every page filed in the folder, now and later, so its edit
+// wording says so.
 //
 // Nothing is shared by opening the popover: the first audience tile picked,
 // or the first person invited (as Invited only), creates the share with
@@ -345,7 +346,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   );
 }
 
-// Props: target ({kind: "page", title} or {kind: "folder", name}; a page
+// Props: target ({kind: "page", title} or {kind: "folder", id, name}; a page
 // when omitted), settings (null while loading; {token: null} when
 // unshared), error (the last failed save, e.g. an unknown username), me /
 // meIsGuest (your account; a guest can't search the account directory, so

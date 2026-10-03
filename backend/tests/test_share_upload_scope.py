@@ -9,7 +9,7 @@ import io
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import login, make_folder, make_page, make_user
 from gamma.routers import uploads as uploads_router
 
 USER, PASSWORD = "sus_owner", "pw-sus-1"
@@ -87,19 +87,20 @@ def test_a_page_share_reads_its_own_files_only(owner, anon, traced):
     assert anon.get(f"/api/uploads/{doc}.pdf", params={"share": token}).status_code == 200
     assert anon.get(f"/api/pdf-info/{doc}", params={"share": token}).status_code == 200
     assert anon.get(theirs, params={"share": token}).status_code == 403
-    # Every reference lookup walked the shared page's subtree; none scanned
-    # the workspace's blocks.
+    # Every reference lookup read the shared page's blocks (by page_id);
+    # none scanned the workspace's blocks.
     scans = [s for s in traced if "instr(content" in s]
-    assert scans and all("WITH RECURSIVE tree" in s for s in scans)
+    assert scans and all("WHERE page_id IN" in s for s in scans)
 
 
 def test_a_folder_share_reads_the_files_of_its_pages(owner, anon):
-    inside = make_page(owner, "Filed page", properties={"folder": "sus/lab"})
-    outside = make_page(owner, "Unfiled page", properties={"folder": "sus/other"})
+    lab = make_folder(owner, "sus/lab")
+    inside = make_page(owner, "Filed page", properties={"folders": [lab]})
+    outside = make_page(owner, "Unfiled page", properties={"folders": [make_folder(owner, "sus/other")]})
     fig_in, fig_out = _image(owner, b"\x03"), _image(owner, b"\x04")
     _note(owner, inside["id"], f"![a]({fig_in})")
     _note(owner, outside["id"], f"![b]({fig_out})")
-    r = owner.post("/api/share/folder", params={"name": "sus/lab"}, json={"audience": "anyone", "role": "view"})
+    r = owner.post(f"/api/share/folder/{lab}", json={"audience": "anyone", "role": "view"})
     assert r.status_code == 200, r.text
     token = r.json()["token"]
     assert anon.get(fig_in, params={"share": token}).status_code == 200

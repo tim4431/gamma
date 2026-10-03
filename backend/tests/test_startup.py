@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from conftest import make_user
+from conftest import account_of, make_user
 
 
 def test_normal_startup_does_not_load_mcp_sdk(tmp_path):
@@ -38,7 +38,7 @@ def test_concurrent_first_mcp_requests_and_lifespan_restart():
     from gamma.integrations import create_token
 
     ws = make_user("startup-reader", "pw")
-    token = create_token("startup-reader", ws, "Startup test", 1)["token"]
+    token = create_token(account_of("startup-reader"), ws, "Startup test", 1)["token"]
     # Re-entering the same app must create a transport for the new event loop.
     for _ in range(2):
         with TestClient(app, base_url="http://localhost") as client:

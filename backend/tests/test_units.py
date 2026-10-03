@@ -107,9 +107,10 @@ def test_extract_pdf_annotations_resolves_indirects():
     assert len(found) == 1
     a = found[0]
     assert a["content"] == "a note"
-    assert a["page"] == 1
+    pos = a["position"]
+    assert (pos["pageNumber"], pos["width"], pos["height"]) == (1, 612, 792)  # the page box, once
     # y flipped to top-left origin: 792 - 720 = 72
-    assert abs(a["position"]["boundingRect"]["y1"] - 72.0) < 0.01
+    assert abs(pos["boundingRect"]["y1"] - 72.0) < 0.01 and list(pos["boundingRect"]) == ["x1", "y1", "x2", "y2"]
     assert a["color"].startswith("rgba(255, 229,")
 
 

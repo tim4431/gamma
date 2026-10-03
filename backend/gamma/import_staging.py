@@ -38,7 +38,7 @@ def _remove(path):
         shutil.rmtree(path, ignore_errors=True)
 
 
-def create(file, *, user, ws, source, folder, strip):
+def create(file, *, user_id, ws, source, folder, strip):
     root = _root()
     for path in root.iterdir():
         try:
@@ -49,7 +49,7 @@ def create(file, *, user, ws, source, folder, strip):
     token = secrets.token_hex(20)
     path = root / token
     path.mkdir()
-    metadata = {"user": user, "ws": ws, "source": source, "folder": folder,
+    metadata = {"user": user_id, "ws": ws, "source": source, "folder": folder,
                 "strip": strip, "filename": file.filename, "created": time.time()}
     try:
         count = 0
@@ -66,7 +66,7 @@ def create(file, *, user, ws, source, folder, strip):
     return token
 
 
-def get(token, user, ws):
+def get(token, user_id, ws):
     if not TOKEN_RE.fullmatch(token):
         raise HTTPException(status_code=404, detail="import review not found")
     path = _root() / token
@@ -74,7 +74,7 @@ def get(token, user, ws):
         metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise HTTPException(status_code=404, detail="import review not found")
-    if metadata["user"] != user or metadata["ws"] != ws:
+    if metadata["user"] != user_id or metadata["ws"] != ws:
         raise HTTPException(status_code=404, detail="import review not found")
     if time.time() - metadata["created"] > TTL:
         raise HTTPException(status_code=410, detail="import review expired; choose the file again")
@@ -82,8 +82,8 @@ def get(token, user, ws):
 
 
 @contextmanager
-def claim(token, user, ws):
-    path, metadata = get(token, user, ws)
+def claim(token, user_id, ws):
+    path, metadata = get(token, user_id, ws)
     lock = path / "running"
     try:
         lock.mkdir()
@@ -97,8 +97,8 @@ def claim(token, user, ws):
         lock.rmdir()
 
 
-def discard(token, user, ws):
-    with claim(token, user, ws) as (path, _):
+def discard(token, user_id, ws):
+    with claim(token, user_id, ws) as (path, _):
         # Remove payload while claimed; the small token directory follows.
         for name in ("upload", "metadata.json"):
             (path / name).unlink(missing_ok=True)

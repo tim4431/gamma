@@ -1,15 +1,29 @@
 """The page tools' executors — list_pages (filters, labels mode), rename_page,
 move_page, read_page (windows through a long PDF, page anchors, the tunable
-read cap) — and the folder-scope rules they share."""
+read cap) — and the folder-scope rules they share: folders named by path or
+id, read inside the chat's folder."""
 
+import secrets
+
+from conftest import make_folder, make_label
 from gamma.ai_tools import agent_tools, run_agent_tool
 
 from ai_fixtures import folder, org, props  # noqa: F401  (org is a fixture)
 
 
+def _tree_insert(c, name, parent="folders"):
+    """A new folder called ``name`` under ``parent``, even beside one of the
+    same name (make_folder reuses those)."""
+    folder_id = secrets.token_urlsafe(9)
+    r = c.post("/api/pages/folders/ops", json={"ops": [
+        {"op": "insert", "id": folder_id, "parent": parent, "content": name}]})
+    assert r.status_code == 200, r.text
+    return folder_id
+
+
 def test_list_pages_scoped_and_annotated(org):
     c, ids = org
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "list_pages", {})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "list_pages", {})
     assert action["kind"] == "list" and "2 pages" in action["summary"]
     assert f"id={ids['a']}" in text and f"id={ids['b']}" in text
     assert ids["note"] not in text  # outside the folder
@@ -21,13 +35,13 @@ def test_list_pages_scoped_and_annotated(org):
 
 def test_rename_page(org):
     c, ids = org
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "rename_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "rename_page",
                                   {"page_id": ids["a"], "title": "  Ada2019 —  Cavity readout \n"})
     assert text.startswith("ok"), text
     assert action["kind"] == "rename" and "Ada2019 — Cavity readout" in action["summary"]
     assert props(c, ids["a"])["content"] == "Ada2019 — Cavity readout"
     # No-op rename mutates nothing, but still shows as a (non-error) chip.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "rename_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "rename_page",
                                   {"page_id": ids["a"], "title": "Ada2019 — Cavity readout"})
     assert action["kind"] == "rename" and not action.get("error")
     # Every chip carries the raw call so the chat can expand it.
@@ -37,41 +51,104 @@ def test_rename_page(org):
 
 def test_scope_blocks_outside_pages(org):
     c, ids = org
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "rename_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "rename_page",
                                   {"page_id": ids["note"], "title": "hijack"})
     assert text.startswith("error") and action["error"] and action["kind"] == "error"
     assert props(c, ids["note"])["content"] == "loose note"
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "rename_page",
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "rename_page",
                              {"page_id": "nope", "title": "x"})
     assert text.startswith("error")
 
 
-def test_move_page_keeps_out_of_scope_tags(org):
+def test_move_page_keeps_folders_outside_the_scope(org):
     c, ids = org
-    # Relative target resolves inside the scope; the "cooling" membership survives.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "move_page",
+    # A relative path resolves inside the scope and is made when missing; the
+    # "cooling" membership, outside the chat's folder, survives.
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "move_page",
                                   {"page_id": ids["b"], "folder": "fast"})
-    assert text.startswith("ok"), text
-    assert action["kind"] == "move" and "readout/fast" in action["summary"]
+    assert text.startswith("ok") and "(a new folder)" in text, text
+    assert action["kind"] == "move" and "readout / fast" in action["summary"]
     # The chat lists the change from structured fields, not the summary.
-    assert action["title"] == "qec paper" and action["to"] == "readout/fast"
-    assert action["from"] == "readout/nondestructive, cooling"
-    tags = [t.strip() for t in props(c, ids["b"])["properties"]["folder"].split(",")]
-    assert sorted(tags) == ["cooling", "readout/fast"]
-    # "" files the page at the scope itself.
-    run_agent_tool(ids["ws"], folder("readout"), "move_page", {"page_id": ids["b"], "folder": ""})
-    tags = [t.strip() for t in props(c, ids["b"])["properties"]["folder"].split(",")]
-    assert sorted(tags) == ["cooling", "readout"]
+    assert action["title"] == "qec paper" and action["to"] == "readout / fast"
+    assert action["from"] == "readout / nondestructive, cooling"
+    fast = make_folder(c, "readout/fast")  # the one the call made
+    assert props(c, ids["b"])["properties"]["folders"] == [ids["cooling"], fast]
+    # "" files the page at the scope itself: a subfolder gives way to its parent.
+    run_agent_tool(ids["ws"], folder(ids["readout"]), "move_page", {"page_id": ids["b"], "folder": ""})
+    assert props(c, ids["b"])["properties"]["folders"] == [ids["cooling"], ids["readout"]]
+    # The chat's own path names the chat's folder, not a subfolder of the same name.
+    _, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "move_page",
+                               {"page_id": ids["b"], "folder": "Readout"})
+    assert action["noop"] is True
+
+
+def test_move_page_refines_an_ancestor_and_makes_nested_folders(org):
+    c, ids = org
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "refined page", "properties": {
+        "folders": [ids["readout"], ids["nondestructive"]]}}).json()["id"]
+    # Filed in a folder and the one above it: the level above gives way,
+    # even though it is outside the chat's folder.
+    text, _ = run_agent_tool(ids["ws"], folder(ids["nondestructive"]), "move_page",
+                             {"page_id": page, "folder": ""})
+    assert text.startswith("ok"), text
+    assert props(c, page)["properties"]["folders"] == [ids["nondestructive"]]
+    # A missing path makes every missing level, once.
+    text, action = run_agent_tool(ids["ws"], folder(""), "move_page",
+                                  {"page_id": page, "folder": "cooling / laser / doppler"})
+    assert text.startswith("ok") and action["to"] == "cooling / laser / doppler", text
+    assert props(c, page)["properties"]["folders"] == [make_folder(c, "cooling/laser/doppler")]
+    _, action = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": page, "folder": "cooling/laser/doppler"})
+    assert action["noop"] is True
+    tree = c.get("/api/blocks/folders/subtree").json()["block"]
+    cooling = next(n for n in tree["children"] if n["id"] == ids["cooling"])
+    assert [n["content"] for n in cooling["children"]] == ["laser"]
+    assert [n["content"] for n in cooling["children"][0]["children"]] == ["doppler"]
+
+
+def test_folder_arguments_resolve_by_path_or_id(org):
+    """A folder argument is a path as the tools show it ("a / b"), a bare
+    "a/b", or an id. Each name matches exactly, else ignoring case; a folder
+    chat reads it below its own folder (its own path read from there); a
+    path several folders share is refused, naming their ids."""
+    c, ids = org
+    top = make_folder(c, "Resolve")
+    sub = make_folder(c, "Resolve/Sub")
+    slashed = _tree_insert(c, "I/O", top)  # a name may hold a "/"
+    twins = [_tree_insert(c, "Twin", top) for _ in range(2)]
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "resolved page",
+                                       "properties": {"folders": [slashed, sub]}}).json()["id"]
+
+    def listed(scope, where):
+        return run_agent_tool(ids["ws"], scope, "list_pages", {"folder": where})[0]
+
+    for where in ("Resolve / I/O", "resolve / i/o", slashed, "Resolve / Sub", "Resolve/Sub", "RESOLVE/SUB"):
+        assert f"id={page}" in listed(folder(""), where), where
+    assert 'folders=["Resolve / I/O", "Resolve / Sub"]' in listed(folder(""), "Resolve")
+    for where in ("Sub", "sub", "Resolve / Sub", "I/O"):
+        assert f"id={page}" in listed(folder(top), where), where
+    for scope, where in ((folder(""), "Resolve / Twin"), (folder(top), "twin")):
+        text = listed(scope, where)
+        assert text.startswith("error") and twins[0] in text and twins[1] in text, text
+        assert '"Resolve / Twin"' in text
+    # An id names that one folder; outside the chat's folder it is refused.
+    run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": page, "folder": twins[1]})
+    assert props(c, page)["properties"]["folders"] == [twins[1]]
+    text = listed(folder(top), ids["readout"])
+    assert text.startswith("error") and "outside this chat's folder" in text
+    text, _ = run_agent_tool(ids["ws"], folder(top), "move_page", {"page_id": page, "folder": ids["readout"]})
+    assert text.startswith("error") and props(c, page)["properties"]["folders"] == [twins[1]]
+    # A read names no folder into being.
+    assert listed(folder(""), "Resolve / Nowhere").startswith('error: there is no folder "Resolve / Nowhere"')
 
 
 def test_move_at_root_replaces_all_folders(org):
     c, ids = org
-    run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": "archive/2019"})
-    assert props(c, ids["b"])["properties"]["folder"] == "archive/2019"
+    run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": "archive / 2019"})
+    assert props(c, ids["b"])["properties"]["folders"] == [make_folder(c, "archive/2019")]
     # Root + "" = out of every folder.
     _, action = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": ""})
-    assert props(c, ids["b"])["properties"]["folder"] == ""
-    assert action["from"] == "archive/2019" and action["to"] == ""
+    assert "folders" not in props(c, ids["b"])["properties"]
+    assert action["from"] == "archive / 2019" and action["to"] == ""
     # Moving it where it already is changes nothing, and says so.
     _, action = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": ""})
     assert action["noop"] is True and not action.get("error")
@@ -95,11 +172,11 @@ def test_read_page_returns_notes_and_respects_scope(org):
     c, ids = org
     r = c.post("/api/blocks", json={"parent_id": ids["a"], "content": "important note"})
     assert r.status_code == 200
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": ids["a"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": ids["a"]})
     assert action["kind"] == "read" and action["summary"].startswith("Read “")
     assert "important note" in text  # the user's notes ride along
     # A page outside the scope is unreadable, same rule as the write tools.
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": ids["note"]})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": ids["note"]})
     assert text.startswith("error")
 
 
@@ -116,7 +193,7 @@ def test_read_page_pdf_offset_pages_through_long_documents(org, monkeypatch):
 
     monkeypatch.setattr("gamma.ai_context.extract_text_pages", fake_extract)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
-    scope = folder("readout")
+    scope = folder(ids["readout"])
 
     text, _ = run_agent_tool(ids["ws"], scope, "read_page",
                              {"page_id": ids["a"], "pdf_chars": 100})
@@ -152,7 +229,7 @@ def test_read_page_pdf_page_jumps_to_a_search_hit(org, monkeypatch):
         lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
     monkeypatch.setattr("gamma.ai_context.extract_text", extract_text)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
-    scope = folder("readout")
+    scope = folder(ids["readout"])
 
     text, _ = run_agent_tool(ids["ws"], scope, "read_page",
                              {"page_id": ids["a"], "pdf_page": 4, "pdf_chars": 60})
@@ -191,7 +268,7 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     cover = {"page_id": ids["a"], "doc_id": "d" * 24, "title": "cavity paper", "native": False,
              "partial": True, "pages": 5, "pages_shown": 3, "notes": False}
-    scope = {**folder("readout"), "coverage": [cover]}
+    scope = {**folder(ids["readout"]), "coverage": [cover]}
 
     # A plain read starts where the excerpt stopped, with the notes (first window).
     text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": ids["a"]})
@@ -221,7 +298,7 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
                                 "read_page", {"page_id": ids["a"]})
     assert "whole PDF text" in text and "Document text" not in text and "pdf_pages" not in chip
     # A page the context doesn't hold reads as before.
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": ids["a"]})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": ids["a"]})
     assert "(page 1)" in text and "margin remark" in text and "not repeated" not in text
     # A page whose file went natively: the text reads as before, the notes are skipped.
     text, _ = run_agent_tool(ids["ws"], {**scope, "coverage": [{**cover, "native": True, "notes": True}]},
@@ -271,34 +348,33 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
     monkeypatch.setattr(ai_context, "extract_text_pages", lambda *a, **kw: ("(page 1) text", 1))
     monkeypatch.setattr(ai_context, "ensure_indexed", lambda *a: None)
 
-    def rect(x1, y1, x2, y2):
-        return {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": 800, "height": 1000, "pageNumber": 2}
-    props = {"highlight_id": "h-area", "quote": "",
-             "pdf_position": {"pageNumber": 2, "boundingRect": rect(80, 100, 400, 300),
-                              "rects": [rect(80, 100, 400, 300)], "area": True}}
+    rect = {"x1": 80, "y1": 100, "x2": 400, "y2": 300}
+    position = {"pageNumber": 2, "width": 800, "height": 1000, "boundingRect": rect, "rects": [rect]}
+    props = {"quote": "", "pdf_position": {**position, "area": True}}
     assert area_highlight(props) == (2, (0.095, 0.095, 0.505, 0.305))
-    assert area_highlight({"highlight_id": "h-text", "quote": "some text",  # a text highlight
-                           "pdf_position": {"pageNumber": 2, "boundingRect": rect(80, 100, 400, 300)}}) is None
-    assert area_highlight({"highlight_id": "x"}) is None
+    assert area_highlight({"quote": "some text", "pdf_position": position}) is None  # a text highlight
+    assert area_highlight({"quote": "", "pdf_position": {"pageNumber": 2}}) is None  # its page alone
+    assert area_highlight({"quote": ""}) is None
+    assert area_highlight({"ink_url": "/api/uploads/a.ink", "pdf_position": position}) is None  # ink
     page = c.post("/api/blocks", json={"parent_id": "root", "content": "figure notes",
-                                       "properties": {"folder": "readout", "doc_id": "a" * 24}}).json()["id"]
+                                       "properties": {"folders": [ids["readout"]], "doc_id": "a" * 24}}).json()["id"]
     ids_made = [c.post("/api/blocks", json={"parent_id": page, "content": f"box {n}" if n == 0 else "",
-                                            "properties": {**props, "highlight_id": f"h{n}"}}).json()["id"]
+                                            "properties": props}).json()["id"]
                 for n in range(MAX_AREA_CROPS + 1)]
 
-    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": page})
+    text, chip = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": page})
     assert "Area highlight (a rectangle on PDF page 2; picture 1 attached)\n  User note: box 0" in text
     assert f"picture {MAX_AREA_CROPS} attached" in text and "no picture: more than the limit" in text
     assert len(chip["images"]) == MAX_AREA_CROPS and chip["images"][0][0] == "image/png"
     assert rendered[0] == (2, (0.095, 0.095, 0.505, 0.305)) and len(rendered) == MAX_AREA_CROPS
 
     rendered.clear()
-    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_block", {"block_id": page})
+    text, chip = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_block", {"block_id": page})
     assert f"[{ids_made[0]}] (area highlight: a rectangle on PDF page 2; picture 1 attached) box 0" in text
     assert "no picture: more than the limit" in text
     assert len(chip["images"]) == MAX_AREA_CROPS
     # A single block read carries its own picture.
-    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_block", {"block_id": ids_made[1]})
+    text, chip = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_block", {"block_id": ids_made[1]})
     assert "picture 1 attached" in text and len(chip["images"]) == 1
 
     # The chat context: the pictures ride with the message's images, and
@@ -333,13 +409,13 @@ def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
     monkeypatch.setattr(ai_context, "extract_text_pages", lambda *a, **kw: ("(page 1) text", 1))
     monkeypatch.setattr(ai_context, "ensure_indexed", lambda *a: None)
 
-    rect = {"x1": 80, "y1": 100, "x2": 400, "y2": 300, "width": 800, "height": 1000, "pageNumber": 2}
+    rect = {"x1": 80, "y1": 100, "x2": 400, "y2": 300}
     box = {"text_box": {"x": 40, "y": 60, "w": 180}, "pdf_page": 2}
-    stray = {**box, "pdf_position": {"pageNumber": 2, "boundingRect": rect, "rects": [rect], "area": True}}
+    stray = {**box, "pdf_position": {"pageNumber": 2, "width": 800, "height": 1000, "boundingRect": rect,
+                                     "rects": [rect], "area": True}}
     assert area_highlight(box) is None and area_highlight(stray) is None
-    assert area_highlight({**stray, "highlight_id": "h-stray"}) is None
     page = c.post("/api/blocks", json={"parent_id": "root", "content": "boxed paper",
-                                       "properties": {"folder": "readout", "doc_id": "b" * 24}}).json()["id"]
+                                       "properties": {"folders": [ids["readout"]], "doc_id": "b" * 24}}).json()["id"]
     c.post("/api/blocks", json={"parent_id": page, "content": "typed on the figure", "properties": stray})
     # Under a sheet the sheet holds a box whatever its pdf_page says; with neither it is on no page.
     sheet = c.post("/api/blocks", json={"parent_id": page, "content": "",
@@ -347,7 +423,7 @@ def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
     c.post("/api/blocks", json={"parent_id": sheet, "content": "moved onto the sheet", "properties": box})
     c.post("/api/blocks", json={"parent_id": page, "content": "on no page", "properties": {"text_box": {}}})
 
-    text, chip = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": page})
+    text, chip = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": page})
     assert "User's notes:\n- (text box on p. 2) typed on the figure" in text
     assert "  - (text box on a page of paper) moved onto the sheet" in text
     assert "- (text box, not placed on a page) on no page" in text
@@ -392,14 +468,14 @@ def test_read_window_cap_is_user_tunable(org, monkeypatch):
                         lambda src, char_limit, empty_page_cap=50, start_page=1, label_pages=False: (doc[:char_limit + 7], 1))
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
 
-    scope = {**folder("readout"), "read_chars": 150}
+    scope = {**folder(ids["readout"]), "read_chars": 150}
     text, _ = run_agent_tool(ids["ws"], scope, "read_page",
                              {"page_id": ids["a"], "pdf_chars": 99999})
     assert "[0020]" in text and "[0030]" not in text  # clamped to ~150 chars
     assert "pdf_offset=150" in text
     # Unset / absurd values fall back to the stock 20000 cap.
     for bad in ({}, {"read_chars": 0}, {"read_chars": "x"}, {"read_chars": 10**9}):
-        text, _ = run_agent_tool(ids["ws"], {**folder("readout"), **bad},
+        text, _ = run_agent_tool(ids["ws"], {**folder(ids["readout"]), **bad},
                                  "read_page", {"page_id": ids["a"], "pdf_chars": 99999})
         assert "[0199]" in text  # the whole 1200-char doc fits under 20000
 
@@ -421,58 +497,71 @@ def test_list_pages_filters_and_labels_mode(org):
         assert r.status_code == 200, r.text
         return r.json()["id"]
 
-    jeff1 = page("erasure paper", {"folder": "labtest", "category": "Jeff, Yb"})
-    jeff2 = page("tweezer gates", {"folder": "labtest/sub", "category": "jeff"})
-    other = page("ldpc paper", {"folder": "labtest", "category": "qec"})
-    # Exact label match, case-insensitive; only matching pages come back.
-    text, action = run_agent_tool(ids["ws"], folder("labtest"), "list_pages", {"label": "jeff"})
-    assert "2 pages" in action["summary"] and "jeff" in action["summary"]
+    labtest = make_folder(c, "labtest")
+    jeff1 = page("erasure paper", {"folders": [labtest], "labels": [make_label(c, "Jeff"), make_label(c, "Yb")]})
+    jeff2 = page("tweezer gates", {"folders": [make_folder(c, "labtest/sub")], "labels": [make_label(c, "jeff")]})
+    other = page("ldpc paper", {"folders": [labtest], "labels": [make_label(c, "qec")]})
+    make_label(c, "unused")
+    # A label's name: exactly, else ignoring case; only matching pages come back.
+    text, action = run_agent_tool(ids["ws"], folder(labtest), "list_pages", {"label": "jeff"})
+    assert "1 page" in action["summary"] and "jeff" in action["summary"]
+    assert jeff2 in text and jeff1 not in text
+    text, action = run_agent_tool(ids["ws"], folder(labtest), "list_pages", {"label": "JEFF"})
+    assert "2 pages" in action["summary"]
     assert jeff1 in text and jeff2 in text and other not in text
+    assert 'labels=["Jeff", "Yb"]' in text and 'folders=["labtest / sub"]' in text
     # Title substring filter.
-    text, _ = run_agent_tool(ids["ws"], folder("labtest"), "list_pages",
+    text, _ = run_agent_tool(ids["ws"], folder(labtest), "list_pages",
                              {"title_contains": "LDPC"})
     assert other in text and jeff1 not in text
     # Relative subfolder filter resolves inside the scope.
-    text, _ = run_agent_tool(ids["ws"], folder("labtest"), "list_pages", {"folder": "sub"})
+    text, _ = run_agent_tool(ids["ws"], folder(labtest), "list_pages", {"folder": "sub"})
     assert jeff2 in text and jeff1 not in text
     # No matches is a clear answer, not an empty-library claim.
-    text, _ = run_agent_tool(ids["ws"], folder("labtest"), "list_pages", {"label": "nope"})
+    text, _ = run_agent_tool(ids["ws"], folder(labtest), "list_pages", {"label": "nope"})
     assert "No pages match" in text
-    # Labels mode: the vocabulary with counts, not page lines.
-    text, action = run_agent_tool(ids["ws"], folder("labtest"), "list_pages",
+    # Labels mode: the vocabulary with counts, not page lines — a folder's
+    # labels are its pages', the library's every label, unused ones too.
+    text, action = run_agent_tool(ids["ws"], folder(labtest), "list_pages",
                                   {"list_labels": True})
     assert "labels" in action["summary"]
     assert '- label "Jeff": 1 page' in text and '- label "jeff": 1 page' in text
     assert '- label "qec": 1 page' in text and "folder" not in text  # folders: list_folders
-    assert jeff1 not in text
+    assert jeff1 not in text and "unused" not in text
+    text, _ = run_agent_tool(ids["ws"], folder(""), "list_pages", {"list_labels": True})
+    assert '- label "unused": 0 pages' in text and '- label "Yb": 1 page' in text
 
 
 def test_list_folders_shows_the_tree_with_counts(org):
-    """list_folders: every tagged path plus its implied parents, subfolders
-    indented under their folder, direct and total page counts, the loose
-    pages at the root — and a folder chat or `folder` sees only its subtree."""
+    """list_folders: every folder — an empty one too — with its id and full
+    path, subfolders indented under their folder, direct and total page
+    counts, the loose pages at the root — and a folder chat or `folder`
+    sees only its subtree."""
     c, ids = org
-    for title, where in (("tree top", "tree"), ("deep one", "tree/a/b"), ("deep two", "tree/a/b, tree/c")):
-        r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {"folder": where}})
+    tree, a, b, cc = (make_folder(c, path) for path in ("tree", "tree/a", "tree/a/b", "tree/c"))
+    empty = make_folder(c, "tree/empty")
+    for title, where in (("tree top", [tree]), ("deep one", [b]), ("deep two", [b, cc])):
+        r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {"folders": where}})
         assert r.status_code == 200, r.text
     text, action = run_agent_tool(ids["ws"], folder(""), "list_folders", {})
     assert action["kind"] == "list" and "folders in the library" in action["summary"]
     lines = text.splitlines()
-    # "tree/a" is only implied by "tree/a/b"; a page in two subfolders counts once above them.
-    assert '- "tree" (1 here, 3 with subfolders)' in lines
-    assert '  - "tree/a" (0 here, 2 with subfolders)' in lines
-    assert '    - "tree/a/b" (2 pages)' in lines
-    assert '  - "tree/c" (1 page)' in lines
+    # A page in two subfolders counts once above them.
+    assert f'- [{tree}] "tree" (1 here, 3 with subfolders)' in lines
+    assert f'  - [{a}] "tree / a" (0 here, 2 with subfolders)' in lines
+    assert f'    - [{b}] "tree / a / b" (2 pages)' in lines
+    assert f'  - [{cc}] "tree / c" (1 page)' in lines
+    assert f'  - [{empty}] "tree / empty" (no pages)' in lines
     assert "in no folder." in text.splitlines()[-2]  # the fixture's loose note
-    assert 'list_pages(folder="<path>")' in text
+    assert 'list_pages(folder="<path or id>")' in text
     # Scoped to a folder: only its subtree, relative `folder` resolved inside it.
-    text, _ = run_agent_tool(ids["ws"], folder("tree"), "list_folders", {"folder": "a"})
-    assert '- "tree/a" (0 here, 2 with subfolders)' in text.splitlines()
-    assert '"tree/c"' not in text and '"readout"' not in text and "no folder" not in text
-    text, _ = run_agent_tool(ids["ws"], folder("tree/c"), "list_folders", {})
-    assert '- "tree/c" (1 page)' in text.splitlines()
+    text, _ = run_agent_tool(ids["ws"], folder(tree), "list_folders", {"folder": "a"})
+    assert f'- [{a}] "tree / a" (0 here, 2 with subfolders)' in text.splitlines()
+    assert '"tree / c"' not in text and '"readout"' not in text and "no folder" not in text
+    text, _ = run_agent_tool(ids["ws"], folder(cc), "list_folders", {})
+    assert f'- [{cc}] "tree / c" (1 page)' in text.splitlines()
     text, _ = run_agent_tool(ids["ws"], folder(""), "list_folders", {"folder": "nowhere"})
-    assert text.startswith("No folders in “nowhere”")
+    assert text.startswith('error: there is no folder "nowhere"')
     # Paper chats have no folder tools.
     text, action = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["a"]}, "list_folders", {})
     assert action["error"] and "unknown tool" in text
@@ -495,7 +584,7 @@ def test_view_pdf_page_renders_a_picture_for_the_model(org, monkeypatch, tmp_pat
     c, ids = org
     pdf = _blank_pdf(tmp_path / "two.pdf")
     monkeypatch.setattr("gamma.ai_tools.pdf_path", lambda ws, doc: pdf)
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_pdf_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_pdf_page",
                                   {"page_id": ids["a"], "pdf_page": 2})
     assert text.startswith("PDF page 2 of 2"), text
     assert action["kind"] == "view" and action["pdf_page"] == 2 and action["page_id"] == ids["a"]
@@ -503,16 +592,16 @@ def test_view_pdf_page_renders_a_picture_for_the_model(org, monkeypatch, tmp_pat
     assert media_type in ("image/png", "image/jpeg") and len(data) > 100
     assert "×" in text and "not kept" in text  # dimensions named; replay warning
     # Out of range: the count tells the model how far it may look.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_pdf_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_pdf_page",
                                   {"page_id": ids["a"], "pdf_page": 3})
     assert text.startswith("error") and "has 2 pages" in text and action["error"]
     assert "images" not in action
     # A page without an attachment has nothing to draw.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_pdf_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_pdf_page",
                                   {"page_id": ids["b"], "pdf_page": 1})
     assert "no PDF attachment" in text and not action.get("error")
     # Permission off: refused before any rendering.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_pdf_page",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_pdf_page",
                                   {"page_id": ids["a"], "pdf_page": 1},
                                   allowed_tools={"read_page"})
     assert text.startswith("error") and "not enabled" in text

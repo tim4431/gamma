@@ -8,9 +8,11 @@ export async function quickOpenScenarios(env) {
   const user = await new Account(server, "quickopen-user", "quickopen-pw").login();
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];
   const papers = {};
+  const cavities = await user.folder("optics/cavities");
+  const horlogerie = await user.label("horlogerie");
   for (const title of titles) {
-    const properties = title === "Atomic clocks" ? { category: "horlogerie" }
-      : title === "Cavity readout" ? { folder: "optics/cavities" } : undefined;
+    const properties = title === "Atomic clocks" ? { labels: [horlogerie] }
+      : title === "Cavity readout" ? { folders: [cavities] } : undefined;
     papers[title] = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title, properties } });
   }
 
@@ -55,7 +57,7 @@ export async function quickOpenScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("quickopen: folders open their view; Ctrl+Enter searches everywhere, Shift+Enter creates the page", async () => {
+  await step("quickopen: folders and labels open their view; Ctrl+Enter searches everywhere, Shift+Enter creates the page", async () => {
     const ctx = await user.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
     try {
@@ -69,7 +71,18 @@ export async function quickOpenScenarios(env) {
       await until(async () => (await folderRow.count()) === 1, { what: "the folder matches" });
       assert(/in optics/.test(await folderRow.textContent()), "the folder row names its parent");
       await folderRow.click();
-      await until(async () => new URL(page.url()).searchParams.get("folder") === "optics/cavities", { what: "the folder view opens" });
+      await until(async () => new URL(page.url()).searchParams.get("folder") === cavities, { what: "the folder view opens" });
+      await page.locator(".fileRow", { hasText: "Cavity readout" }).waitFor();
+      // A label row opens the label's view, over the whole library.
+      await page.keyboard.press("Control+p");
+      await input.fill("horlogerie");
+      const labelRow = dialog.locator('[role="option"][data-kind="label"]');
+      await until(async () => (await labelRow.count()) === 1, { what: "the label matches" });
+      await labelRow.click();
+      await until(async () => new URL(page.url()).searchParams.get("label") === horlogerie, { what: "the label view opens" });
+      assert(!new URL(page.url()).searchParams.get("folder"), "over the whole library");
+      await page.locator(".fileRow", { hasText: "Atomic clocks" }).waitFor();
+      await page.goto(`${server.base}/?folder=${cavities}&ws=${user.ws}`);
       await page.locator(".fileRow", { hasText: "Cavity readout" }).waitFor();
 
       // Ctrl+Enter hands the query to the workspace search.
@@ -90,7 +103,7 @@ export async function quickOpenScenarios(env) {
         { what: "the page exists" });
       const created = (await user.api("/api/blocks/root/children")).children.find((b) => b.content === "Fresh cavity idea");
       await until(() => new URL(page.url()).searchParams.get("block") === created.id, { what: "the new page opens" });
-      assert(String(created.properties?.folder || "").includes("optics/cavities"), "it lands in the folder the palette was opened over");
+      assertEq(JSON.stringify(created.properties?.folders), JSON.stringify([cavities]), "it lands in the folder the palette was opened over");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -192,7 +205,8 @@ export async function quickOpenScenarios(env) {
       await page.locator(".ctxMenuItem", { hasText: "New page here" }).click();
       await until(() => new URL(page.url()).searchParams.get("block"), { what: "the new page opens" });
       const id = new URL(page.url()).searchParams.get("block");
-      await until(async () => (await user.api("/api/blocks/root/children")).children.some((b) => b.id === id && b.properties?.folder === "optics"),
+      const optics = await user.folder("optics");
+      await until(async () => (await user.api("/api/blocks/root/children")).children.some((b) => b.id === id && b.properties?.folders?.includes(optics)),
         { what: "the page is filed in the folder" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -256,14 +270,15 @@ export async function quickOpenScenarios(env) {
   });
 
   await step("tabs: closing returns to the folder or label it opened from, even with another tab open", async () => {
-    const filed = await user.api("/api/blocks", { method: "POST", body: {
-      parent_id: "root", content: "Return to library view", properties: { folder: "return/nested", category: "return-label" },
-    } });
+    const filed = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Return to library view" } });
+    await user.file(filed.id, { folders: ["return/nested"], labels: ["return-label"] });
+    const nested = await user.folder("return/nested");
+    const returnLabel = await user.label("return-label");
     const other = papers["Atomic clocks"];
-    for (const category of ["", "return-label"]) {
+    for (const label of ["", returnLabel]) {
       await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: other.id, title: other.content }] } });
       const ctx = await user.context(browser);
-      const page = await openPage(ctx, `${server.base}/?folder=return/nested&category=${category}&ws=${user.ws}`);
+      const page = await openPage(ctx, `${server.base}/?folder=${nested}&label=${label}&ws=${user.ws}`);
       try {
         const row = page.locator(".fileRow", { hasText: filed.content });
         await row.dblclick();
@@ -272,8 +287,8 @@ export async function quickOpenScenarios(env) {
         await active.getByRole("button", { name: `Close ${filed.content}`, exact: true }).click();
         await row.waitFor();
         const params = new URL(page.url()).searchParams;
-        assertEq(params.get("folder"), "return/nested", "closing restores the nested folder");
-        assertEq(params.get("category") || "", category, "closing restores the label filter");
+        assertEq(params.get("folder"), nested, "closing restores the nested folder");
+        assertEq(params.get("label") || "", label, "closing restores the label filter");
         assertEq(await page.locator(".tabStrip .tab", { hasText: other.content }).count(), 1, "the other tab stays open");
         assertEq(await page.locator(".tabStrip .tab.active").count(), 0, "the source library view takes priority over other tabs");
         assertNoProblems(page);

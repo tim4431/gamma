@@ -24,19 +24,21 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
-from ..auth import actor_of, require_user, require_ws
+from ..auth import actor_of, require_user, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
-from ..blocks_store import create_page, last_child_position, page_for_doc, page_root_id, write_lock
-from ..foldertags import clean_path, parse_tags
+from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
+                            last_child_position, page_for_doc, page_root_id, refiled, refiled_paths, touch_page,
+                            write_lock)
+from ..highlights import position as highlight_position
 from ..logbuf import log
-from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, note_reload, props_patch
+from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
 from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import display_filename, is_pdf, store_file, store_pdf
+from ..storage import display_filename, is_pdf, pdf_url, store_file, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -46,7 +48,7 @@ from ..logseq_import import (
     parse_logseq_md,
 )
 from ..zotero_import import html_note_text, plan_zotero_archive
-from ..import_review import parse_selection, selected_warnings, validate_selection
+from ..import_review import destination, parse_selection, selected_warnings, validate_selection
 from ..workspaces import is_guest_workspace
 
 router = APIRouter(prefix="/api", tags=["import"])
@@ -55,9 +57,12 @@ router = APIRouter(prefix="/api", tags=["import"])
 # --- The reviewed import: upload → review → import (a background job) -----------
 # Each source is a preview and a commit over a binary file (the staged
 # upload, or a plain endpoint's file) and the review's metadata (filename,
-# folder, strip): ``preview(ws, data, meta)`` and ``commit(ws, actor, data,
-# meta, selection, progress)`` — ``selection`` the chosen source ids (None:
-# everything), ``progress`` a background job's report (gamma/jobs.py).
+# folder — the destination folder's id, "" the library's top —, strip):
+# ``preview(ws, data, meta)`` and ``commit(ws, actor, data, meta, selection,
+# progress)`` — ``selection`` the chosen source ids (None: everything),
+# ``progress`` a background job's report (gamma/jobs.py). A preview writes
+# nothing; a commit makes the folders and labels its pages need first
+# (``ops.ensure_filing``).
 
 def _review_source(source):
     sources = {
@@ -78,21 +83,21 @@ def upload_import_review(request: Request, file: UploadFile = File(...), source:
     ``review_id``: nothing is imported until ``POST /api/jobs/import``."""
     ws = require_ws(request, write=True)
     preview, _ = _review_source(source)
-    token = import_staging.create(file, user=request.state.user, ws=ws, source=source, folder=folder, strip=strip)
+    token = import_staging.create(file, user_id=request.state.user_id, ws=ws, source=source, folder=folder, strip=strip)
     try:
-        path, metadata = import_staging.get(token, request.state.user, ws)
+        path, metadata = import_staging.get(token, request.state.user_id, ws)
         with (path / "upload").open("rb") as data:
             report = preview(ws, data, metadata)
         return {**report, "review_id": token}
     except Exception:
-        import_staging.discard(token, request.state.user, ws)
+        import_staging.discard(token, request.state.user_id, ws)
         raise
 
 
 @router.delete("/import/review/{token}")
 def discard_import_review(token: str, request: Request):
     ws = require_ws(request, write=True)
-    import_staging.discard(token, request.state.user, ws)
+    import_staging.discard(token, request.state.user_id, ws)
     return {"ok": True}
 
 
@@ -111,7 +116,7 @@ def start_import_job(payload: ImportJob, request: Request):
     (kind ``import``, docs/dev/tasks.md); its result is the import's report.
     Asking again for the same review answers the job already started — 409
     when it was started with another selection."""
-    user = require_user(request)
+    user = require_user_id(request)
     ws = require_ws(request, write=True)
     token, digest = payload.review_id, _selection_digest(payload.selected)
 
@@ -163,7 +168,7 @@ def import_logseq(
     pdf_bytes = pdf.file.read()
     if not is_pdf(pdf_bytes):
         raise HTTPException(status_code=400, detail="not a valid PDF")
-    digest, source_url, _ = store_pdf(ws, pdf_bytes)
+    digest, _ = store_pdf(ws, pdf_bytes)
 
     # 2. Parse EDN → build quote→highlight lookup
     edn_text = edn.file.read().decode("utf-8")
@@ -177,12 +182,10 @@ def import_logseq(
     edn_by_quote = {}
     for h in edn_highlights:
         quote = (h.get("content") or {}).get("text", "")
-        page, position = edn_highlight_position(h)
         edn_by_quote[quote.strip()] = {
             "quote": quote.strip(),
-            "page": page,
             "color": map_color((h.get("properties") or {}).get("color", "yellow")),
-            "position": position,
+            "position": edn_highlight_position(h),
         }
 
     # 3. Build import blocks ordered by MD (if provided), EDN-only at end
@@ -212,7 +215,7 @@ def import_logseq(
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = page_for_doc(conn, digest)
-        block_id = row[0] if row else create_page(conn, title, {"doc_id": digest, "source_url": source_url})["id"]
+        block_id = row[0] if row else create_page(conn, title, {"doc_id": digest}, actor=actor)["id"]
 
         # 5. Append blocks, skipping what an earlier import of these files
         #    already put there: highlights by their quote, notes by their
@@ -236,25 +239,27 @@ def import_logseq(
                 existing_notes[b.get("content", "")] -= 1
                 continue
             conn.execute(
-                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
                 (b["id"], block_id, pos_key,
                  b.get("content", ""),
                  b["properties"] if isinstance(b["properties"], str) else json.dumps(b.get("properties", {})),
-                 now, now),
+                 now, now, block_id),
             )
             if quote:
                 existing_quotes.add(quote)
             inserted += 1
-        if inserted and not row:
-            # A new page is stamped once its notes are in (the change feed
-            # reads the root); an existing one is stamped by its reload entry.
-            conn.execute("UPDATE unified_blocks SET updated_at=? WHERE id=?", (page_now(), block_id))
-        conn.commit()
+        # One transaction with the rows: an existing page logs a reload
+        # (note_reload touches it, commits and fans out); a new page is
+        # touched again once its notes are in, so the change feed lists it
+        # after its creation.
         if row and inserted:
             note_reload(ws, conn, block_id, actor)
+        else:
+            if inserted:
+                touch_page(conn, block_id, actor)
+            conn.commit()
 
-    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": source_url, "imported": inserted}
+    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": pdf_url(digest), "imported": inserted}
 
 
 # --- Plain Markdown note import -----------------------------------------------
@@ -272,19 +277,19 @@ def import_markdown(request: Request, file: UploadFile = File(...),
     raw = file.file.read(MAX_MARKDOWN_BYTES + 1)
     original = display_filename(file.filename, "note.md")
     with connect_pages_db(ws) as conn:
-        result = markdown_page(conn, raw, original, folder)
+        result = markdown_page(ws, conn, raw, original, folder, actor=actor_of(request))
     return {"ok": True, **result}
 
 
-def _markdown_zip(data, ws, folder, *, preview=False, selection=None, progress=jobs.no_progress):
+def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
     """A zip of Markdown notes → one page per .md (see markdown_zip_import)."""
     try:
         zf = zipfile.ZipFile(data)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="not a zip file")
     with zf, connect_pages_db(ws) as conn:  # the import commits page by page
-        return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, preview=preview, selected=selection,
-                                                  progress=progress)}
+        return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, actor=actor, preview=preview,
+                                                  selected=selection, progress=progress)}
 
 
 def _preview_markdown_zip(ws, data, meta):
@@ -292,10 +297,10 @@ def _preview_markdown_zip(ws, data, meta):
 
 
 def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress):
-    return _markdown_zip(data, ws, meta.get("folder", ""), selection=selection, progress=progress)
+    return _markdown_zip(data, ws, meta.get("folder", ""), actor=actor, selection=selection, progress=progress)
 
 
-def _markdown_file(ws, data, meta, *, preview=False, selection=None, progress=jobs.no_progress):
+def _markdown_file(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
     """The review flow treats a single note as a one-entry archive."""
     raw = data.read(MAX_MARKDOWN_BYTES + 1)
     if len(raw) > MAX_MARKDOWN_BYTES:
@@ -304,7 +309,8 @@ def _markdown_file(ws, data, meta, *, preview=False, selection=None, progress=jo
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(display_filename(meta.get("filename"), "note.md"), raw)
     buf.seek(0)
-    return _markdown_zip(buf, ws, meta.get("folder", ""), preview=preview, selection=selection, progress=progress)
+    return _markdown_zip(buf, ws, meta.get("folder", ""), actor=actor, preview=preview, selection=selection,
+                         progress=progress)
 
 
 def _preview_markdown_file(ws, data, meta):
@@ -312,7 +318,7 @@ def _preview_markdown_file(ws, data, meta):
 
 
 def _commit_markdown_file(ws, actor, data, meta, selection, progress=jobs.no_progress):
-    return _markdown_file(ws, data, meta, selection=selection, progress=progress)
+    return _markdown_file(ws, data, meta, actor=actor, selection=selection, progress=progress)
 
 
 def _gamma_zip(ws, data, work):
@@ -359,8 +365,8 @@ def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
                                  folder: str = Form(""), selected: str | None = Form(None)):
     """A zip of Markdown notes → one page per .md (see markdown_zip_import):
     an Obsidian vault, Notion's Markdown & CSV export, a Gamma Markdown or
-    vault export, or any zipped folder of notes. ``folder`` prefixes every
-    page's folder label."""
+    vault export, or any zipped folder of notes. ``folder`` (a folder id)
+    is the destination: the zip's folder tree is made below it."""
     ws = require_ws(request, write=True)
     return _commit_markdown_zip(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
@@ -460,7 +466,7 @@ def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
         return None
     first = ink_list[0][:2] if ink_list and len(ink_list[0]) >= 2 else (0, 0)
     key = f"{pnum}:/Ink:{round(first[0])}:{round(first[1])}:{len(ink.strokes)}"
-    return {"key": key, "page": pnum, "content": contents, "quote": "", "color": color,
+    return {"key": key, "content": contents, "quote": "", "color": color,
             "position": ink_position(ink), "kind": "ink", "ink": ink}
 
 
@@ -714,14 +720,6 @@ def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
                   if any(qx1 - 2 <= x <= qx2 + 2 and qy1 - 3 <= y <= qy2 + 3
                          for (qx1, qy1, qx2, qy2) in quads)]
         quote = re.sub(r"\s+", " ", " ".join(picked)).strip()[:1000]
-    # Flip to top-left origin (what the viewer stores)
-    rects = [{"x1": q[0], "y1": ph - q[3], "x2": q[2], "y2": ph - q[1],
-              "width": pw, "height": ph, "pageNumber": pnum} for q in quads]
-    bounding = {
-        "x1": min(r["x1"] for r in rects), "y1": min(r["y1"] for r in rects),
-        "x2": max(r["x2"] for r in rects), "y2": max(r["y2"] for r in rects),
-        "width": pw, "height": ph, "pageNumber": pnum,
-    }
     color = "rgba(255, 226, 143, 0.65)"
     c = _resolve(obj.get("/C"))
     try:
@@ -736,10 +734,10 @@ def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
                      f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})")
     except Exception:
         pass
-    position = {"pageNumber": pnum, "boundingRect": bounding, "rects": rects}
-    if subtype in _AREA_TYPES:
-        position["area"] = True
-    return {"key": annotation_key(pnum, subtype, quads[0]), "page": pnum, "content": contents,
+    # Flipped to top-left origin (what the viewer stores), in the page's points
+    position = highlight_position(pnum, pw, ph, [(q[0], ph - q[3], q[2], ph - q[1]) for q in quads],
+                                  area=subtype in _AREA_TYPES)
+    return {"key": annotation_key(pnum, subtype, quads[0]), "content": contents,
             "quote": quote, "color": color, "position": position}
 
 
@@ -845,11 +843,10 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
 
         def insert(record, parent, position, props):
             nonlocal inserted
-            bid = props.get("highlight_id") or secrets.token_urlsafe(9)
+            bid = secrets.token_urlsafe(9)
             conn.execute(
-                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (bid, parent, position, record["content"], json.dumps(props), now, now),
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                (bid, parent, position, record["content"], json.dumps(props), now, now, page_id),
             )
             made[id(record)] = bid
             inserted += 1
@@ -873,7 +870,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                     # The strokes live in an .ink upload like any drawn group.
                     filename, _ = store_file(ws, ink_dumps(f["ink"]), ".ink")
                     props = {
-                        "ink_url": f"/api/uploads/{filename}", "pdf_page": f["page"],
+                        "ink_url": f"/api/uploads/{filename}",
                         "pdf_position": f["position"], "ink_strokes": len(f["ink"].strokes),
                         "color": f["color"], "imported_annot": f["key"],
                     }
@@ -881,8 +878,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                     props = {"text_box": f["box"], "pdf_page": f["page"], "imported_annot": f["key"]}
                 else:
                     props = {
-                        "highlight_id": secrets.token_urlsafe(9), "color": f["color"], "quote": f["quote"],
-                        "pdf_page": f["page"], "pdf_position": f["position"],
+                        "color": f["color"], "quote": f["quote"], "pdf_position": f["position"],
                         "imported_annot": f["key"],
                     }
                 insert(f, block_id, pos, props)
@@ -890,8 +886,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
             if f.get("replies"):
                 add_replies(made.get(id(f)) or existing[f["key"]], f["replies"])
         if inserted:
-            conn.commit()
-            note_reload(ws, conn, page_id, actor)  # stamps the page root as it logs
+            note_reload(ws, conn, page_id, actor)  # logs the reload, touches the page, commits: one transaction
 
     # Strip AFTER the blocks are committed: if the rewrite fails the file is
     # untouched and the import still stands; a re-run can strip again.
@@ -926,7 +921,7 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
     try:
         result = import_embedded_annotations(ws, payload.block_id, pdf_path, payload.strip,
-                                             request.state.user or "")
+                                             request.state.user_id or "")
     except HTTPException:
         raise
     except Exception as e:
@@ -937,19 +932,12 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
 # --- Zotero library import ----------------------------------------------------
 # A zip of Zotero's File → Export Library → "Zotero RDF" (with "Export Files",
 # "Export Notes" and "Include Annotations"). Items become pages, collections
-# folder labels, tags flat labels, item notes child blocks; reader annotations
+# folders (below the destination folder), tags labels, item notes child
+# blocks; reader annotations
 # arrive embedded in the exported PDF copies and go through
 # import_embedded_annotations above. Idempotent: pages are keyed by the file
 # hash and by properties.zotero_key (export bytes change between exports —
 # Zotero re-embeds annotations — so the item key is what survives a re-export).
-
-
-def _merge_tags(existing_raw: str, new_tags: list[str]) -> str:
-    merged = parse_tags(existing_raw)
-    for t in new_tags:
-        if t not in merged:
-            merged.append(t)
-    return ", ".join(merged)
 
 
 def _zotero_existing_page(conn, item):
@@ -966,16 +954,20 @@ def _zotero_existing_page(conn, item):
 ZOTERO_PAGES_PER_COMMIT = 50
 
 
-def _zotero_folders(item, prefix):
-    folders = [f"{prefix}/{p}" if prefix else p for p in item["folders"]]
-    return folders or ([prefix] if prefix else [])
+def _zotero_paths(item, under_path):
+    """The folder paths (names from the top) an item is filed in: its
+    collections' below the destination (``under_path``), else the
+    destination itself."""
+    return [under_path + path for path in item["folders"]] or ([under_path] if under_path else [])
 
 
-def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
+def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
     """What the item makes of the library: the page it merges into (found
     by PDF, else by Zotero key) or a new one, with the properties and the
-    notes it adds. Its PDF is stored here, outside any transaction, so a
-    long import never holds the workspace's write lock over file writes."""
+    notes it adds — filed in its collections' folders and labelled with its
+    tags, ``dest``'s ids for them (``_commit_zotero``) after a merged page's
+    own. Its PDF is stored here, outside any transaction, so a long import
+    never holds the workspace's write lock over file writes."""
     digest = item["digest"]
     row = _zotero_existing_page(conn, item)
 
@@ -992,11 +984,10 @@ def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
     # Attach the file only when the page doesn't already have one — a page
     # found by zotero_key keeps its existing PDF (and the highlights tied to it).
     if digest and not props.get("doc_id"):
-        _, source_url, already_existed = store_pdf(ws, zf.read(item["pdf_entry"]))
+        _, already_existed = store_pdf(ws, zf.read(item["pdf_entry"]))
         if not already_existed:
             report["pdfs_stored"] += 1
         props["doc_id"] = digest
-        props["source_url"] = source_url
 
     if item["meta"]["title"] and not props.get("meta"):
         props["meta"] = item["meta"]
@@ -1008,11 +999,17 @@ def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
             props["bibtex"] = bibtex_mod.build_entry(item["meta"], props.get("cite_key") or "")
     props["zotero_key"] = item["key"]
 
-    folders = _zotero_folders(item, prefix)
+    under = dest["under"]
+    # filed like any refiling (refiled): a merged page's own folders first,
+    # a folder above a new one giving way; labelled on top of its own labels
+    folders = filing(props, FOLDERS)
+    for folder_id in [dest["folders"][tuple(path)] for path in item["folders"]] or ([under] if under else []):
+        folders = refiled(conn, folders, folder_id)
     if folders:
-        props["folder"] = _merge_tags(props.get("folder"), folders)
-    if item["tags"]:
-        props["category"] = _merge_tags(props.get("category"), item["tags"])
+        props[FOLDERS] = existing_in(conn, FOLDERS, folders)
+    labels = [dest["labels"][tag] for tag in item["tags"]]
+    if labels:
+        props[LABELS] = existing_in(conn, LABELS, filing(props, LABELS) + labels)
 
     todo = item["notes"]
     if todo and not created:
@@ -1021,7 +1018,8 @@ def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
             (block_id,)).fetchall() if r[0]}
         todo = [n for n in todo if n["key"] not in existing]
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
-            "todo": todo, "created": created}
+            "todo": todo, "created": created,
+            "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
 
 
 def _zotero_done(prep, report, uploads):
@@ -1033,7 +1031,7 @@ def _zotero_done(prep, report, uploads):
     report["notes_imported"] += len(prep["todo"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
-                            "folders": parse_tags(props.get("folder"))})
+                            "folders": prep["folders"]})
     doc_id = props.get("doc_id")
     if doc_id:
         pdf_path = uploads / f"{doc_id}.pdf"
@@ -1056,12 +1054,12 @@ def _zotero_merge(conn, ws, prep, report, uploads, actor):
     return _zotero_done(prep, report, uploads)
 
 
-def _zotero_write_new(conn, staged, report, uploads):
+def _zotero_write_new(conn, staged, report, uploads, actor):
     """Write new items' pages and notes, ZOTERO_PAGES_PER_COMMIT of them in
-    one short transaction, their roots stamped at its commit (the change
-    feed reads the root). Each page is looked for again under the lock: an
-    item another import (or an earlier item of this batch) made a page for
-    is not written but returned, to merge into that page. Returns
+    one short transaction, each page touched by ``actor`` (``touch_page``,
+    what the change feed lists). Each page is looked for again under the
+    lock: an item another import (or an earlier item of this batch) made a
+    page for is not written but returned, to merge into that page. Returns
     ``(annotation jobs, items to merge)``."""
     write_lock(conn)
     written, retry = [], []
@@ -1075,21 +1073,17 @@ def _zotero_write_new(conn, staged, report, uploads):
                 continue
             pos = generate_key_between(pos, None)
             conn.execute(
-                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                "VALUES (?,'root',?,?,?,?,?)",
-                (prep["block_id"], pos, item["title"], json.dumps(prep["props"]), now, now))
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
+                (prep["block_id"], pos, item["title"], json.dumps(prep["props"]), now, now, prep["block_id"]))
             todo = prep["todo"]
             positions = generate_n_keys_between(None, None, n=len(todo)) if todo else []
             for note, note_pos in zip(todo, positions):
                 conn.execute(
-                    "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?)",
+                    f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
                     (secrets.token_urlsafe(9), prep["block_id"], note_pos, note["text"],
-                     json.dumps({"zotero_note": note["key"]}), now, now))
+                     json.dumps({"zotero_note": note["key"]}), now, now, prep["block_id"]))
+            touch_page(conn, prep["block_id"], actor, now=now)
             written.append(prep)
-        stamp = page_now()
-        conn.executemany("UPDATE unified_blocks SET updated_at=? WHERE id=?",
-                         [(stamp, prep["block_id"]) for prep in written])
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -1119,16 +1113,20 @@ def preview_zotero(request: Request, file: UploadFile = File(...), folder: str =
 
 def _preview_zotero(ws, data, meta):
     """What importing the Zotero export would make of the library, without
-    storing a file or changing a page (merges within the zip simulated)."""
-    prefix = clean_path(meta.get("folder", ""))
+    storing a file, making a folder or changing a page (merges within the
+    zip simulated). A page's ``folders`` are the paths (names from the top)
+    it would be filed in."""
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
     pages, by_digest, by_key = {}, {}, {}
     # Simulate merges within this ZIP too, without storing files or changing pages.
     with connect_pages_db(ws) as conn:
+        _, under_path = destination(conn, meta.get("folder", ""))
+        paths = folder_paths(conn)
         for row in conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root'"):
             props = json.loads(row[1] or "{}")
-            target = {"id": row[0], "title": row[2], "props": props, "exists": True}
+            target = {"id": row[0], "title": row[2], "props": props, "exists": True,
+                      "folders": [paths[f] for f in filing(props, FOLDERS) if f in paths]}
             if props.get("doc_id"):
                 by_digest.setdefault(props["doc_id"], target)
             if props.get("zotero_key"):
@@ -1136,9 +1134,12 @@ def _preview_zotero(ws, data, meta):
         for index, item in enumerate(plan["items"]):
             target = by_digest.get(item["digest"]) or by_key.get(item["key"])
             if target is None:
-                target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False}
+                target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False, "folders": []}
             props = target["props"]
-            folders = parse_tags(_merge_tags(props.get("folder"), _zotero_folders(item, prefix)))
+            folders = target["folders"]
+            for path in _zotero_paths(item, under_path):
+                folders = refiled_paths(folders, path)
+            target["folders"] = folders
             kind = "pdf" if props.get("doc_id") or item["digest"] else "page"
             warnings = list(item["warnings"])
             if props.get("doc_id") and item["digest"] and props["doc_id"] != item["digest"]:
@@ -1161,7 +1162,6 @@ def _preview_zotero(ws, data, meta):
                 page["source_paths"] = list(dict.fromkeys(prior["source_paths"] + page["source_paths"]))
                 page["missing"] = prior["missing"] or page["missing"]
             pages[target["id"]] = page
-            props["folder"] = ", ".join(folders)
             if item["digest"] and not props.get("doc_id"):
                 props["doc_id"] = item["digest"]
                 by_digest[item["digest"]] = target
@@ -1172,7 +1172,7 @@ def _preview_zotero(ws, data, meta):
             if item["key"]:
                 by_key[item["key"]] = target
     return {"ok": True, "manifest": plan["manifest"], "entries": plan["entries"],
-            "pages": list(pages.values()), "warnings": plan["warnings"], "folder": prefix}
+            "pages": list(pages.values()), "warnings": plan["warnings"], "folder": meta.get("folder", "")}
 
 
 @router.post("/import/zotero")
@@ -1183,16 +1183,17 @@ def import_zotero(request: Request, file: UploadFile = File(...),
 
 
 def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
-    """Import the Zotero export's selected items (None: all): pages upserted
-    item by item, new ones written ZOTERO_PAGES_PER_COMMIT at a time, then
-    the annotations embedded in their PDFs. A stopped job keeps what it
-    wrote (the staged new pages are written first)."""
+    """Import the Zotero export's selected items (None: all): the folders
+    of their collections (below the destination folder) and the labels of
+    their tags made first (``ops.ensure_filing``), then pages upserted item
+    by item, new ones written ZOTERO_PAGES_PER_COMMIT at a time, then the
+    annotations embedded in their PDFs. A stopped job keeps what it wrote
+    (the staged new pages are written first)."""
     strip = bool(meta.get("strip"))
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        prefix = clean_path(meta.get("folder", ""))
         uploads = ws_uploads_dir(ws)
         uploads.mkdir(parents=True, exist_ok=True)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
@@ -1200,6 +1201,11 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}
         annot_jobs = []
         with connect_pages_db(ws) as conn:
+            under, _ = destination(conn, meta.get("folder", ""))
+            folder_ids, label_ids = ensure_filing(
+                ws, conn, paths=[path for item in items for path in item["folders"]],
+                labels=[tag for item in items for tag in item["tags"]], under=under, actor=actor)
+            dest = {"under": under, "folders": folder_ids, "labels": label_ids, "paths": folder_paths(conn)}
             staged = []  # new pages, written ZOTERO_PAGES_PER_COMMIT at a time
 
             def skip(item, reason):
@@ -1211,7 +1217,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
                 batch = staged[:]
                 staged.clear()
                 try:
-                    written, retry = _zotero_write_new(conn, batch, report, uploads)
+                    written, retry = _zotero_write_new(conn, batch, report, uploads, actor)
                 except Exception as e:
                     log.warning(f"[zotero] {len(batch)} new page(s) failed: {e}")
                     for prep in batch:
@@ -1223,7 +1229,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
 
             def run(item):
                 try:
-                    prep = _zotero_prepare(conn, ws, zf, item, prefix, report)
+                    prep = _zotero_prepare(conn, ws, zf, item, dest, report)
                     if prep["created"]:
                         staged.append(prep)
                         if len(staged) >= ZOTERO_PAGES_PER_COMMIT:

@@ -6,15 +6,16 @@ reserved ``trash`` block (``blocks_store.TRASH``) with ``deleted_at`` /
 ``deleted_by`` in its properties, and its blocks, files, chats and op log
 stay. Nothing that lists or reads pages reaches it — they ask for
 ``parent_id = 'root'`` or walk up to a page, and a walk from a trashed block
-finds none — and a copy of the workspace sees the tombstone a hard delete
-leaves. ``ops.restore_page`` puts it back. ``KEEP_DAYS`` after it went, the
-sweeper here deletes it for good through ``ops.delete_page``, the one path
-that drops a page's chats and indexes; "Delete permanently" and Empty take
-the same path at once.
+finds none — and a copy of the workspace sees it deleted, as after a hard
+delete (its row of the change log, ``page_changes``). ``ops.restore_page``
+puts it back. ``KEEP_DAYS`` after it went, the sweeper here deletes it for
+good through ``ops.delete_page``, the one path that drops a page's chats and
+indexes; "Delete permanently" and Empty take the same path at once.
 """
 
 from datetime import datetime, timedelta, timezone
 
+from .auth import actor_names
 from .blocks_store import TRASH, trashed_page, write_lock
 from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
@@ -31,11 +32,22 @@ def purge_at(deleted_at: str) -> str:
     return format_stamp(at + timedelta(days=KEEP_DAYS)) if at else ""
 
 
+def named(pages: list[dict]) -> list[dict]:
+    """Trash entries (``blocks_store.trashed_page``, whose ``deleted_by`` is
+    the actor stored) with ``deleted_by`` as people see it
+    (``auth.actor_names``): what goes out to be shown."""
+    shown = actor_names([page["deleted_by"] for page in pages])
+    for page in pages:
+        page["deleted_by"] = shown[page["deleted_by"]]
+    return pages
+
+
 def list_trash(conn) -> list[dict]:
     """The pages in Recently deleted, the last deleted first: ``{id, title,
-    folder, deleted_at, deleted_by, purge_at}``."""
-    pages = [trashed_page(*row) for row in conn.execute(
-        "SELECT id, content, properties FROM unified_blocks WHERE parent_id = ?", (TRASH,))]
+    folders, deleted_at, deleted_by, purge_at}`` (``named``; ``folders``
+    the ids of the folders it was filed in)."""
+    pages = named([trashed_page(*row) for row in conn.execute(
+        "SELECT id, content, properties FROM unified_blocks WHERE parent_id = ?", (TRASH,))])
     for page in pages:
         page["purge_at"] = purge_at(page["deleted_at"])
     return sorted(pages, key=lambda p: p["deleted_at"], reverse=True)

@@ -7,7 +7,7 @@ from contextlib import closing
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_page, make_user, workspace_of, guest_name
+from conftest import account_of, login, make_folder, make_page, make_user, workspace_of, guest_name
 from gamma import upload_gc
 from gamma.db import connect_pages_db, ws_uploads_dir
 
@@ -35,9 +35,16 @@ def test_create_page_defaults_and_folder(guest):
     page = r.json()
     assert page["parent_id"] == "root" and page["content"] == "Untitled" and page["properties"] == {}
 
-    r = guest.post("/api/pages", json={"title": "  Reading list ", "folder": " a / b "})
+    folder = make_folder(guest, "a/b")
+    r = guest.post("/api/pages", json={"title": "  Reading list ", "folders": [folder, folder]})
     page = r.json()
-    assert page["content"] == "Reading list" and page["properties"] == {"folder": "a/b"}
+    assert page["content"] == "Reading list" and page["properties"] == {"folders": [folder]}
+    # a filing is stored as written, an id this copy has no folder for included
+    # (a mirror's page); what is no list of ids is no filing
+    kept = guest.post("/api/pages", json={"title": "Mirrored", "folders": ["notHereYet"]}).json()
+    assert kept["properties"] == {"folders": ["notHereYet"]}
+    dropped = guest.post("/api/pages", json={"title": "Odd", "properties": {"folders": "a/b"}}).json()
+    assert dropped["properties"] == {}
     # it is a real root page: listed at root, no attachment
     ids = [b["id"] for b in guest.get("/api/blocks/root/children").json()["children"]]
     assert page["id"] in ids
@@ -59,7 +66,7 @@ def test_attach_stored_pdf_sets_attachment_and_automatic_title(guest):
     body = r.json()
     props = body["properties"]
     assert props["doc_id"] == doc_id
-    assert props["source_url"] == f"/api/uploads/{doc_id}.pdf"
+    assert "source_url" not in props  # the stored copy's URL is derived from doc_id
     assert props["original_filename"] == "My Paper.pdf"
     # "Untitled" was automatic → the file name, marked for the metadata worker
     assert body["content"] == "My Paper.pdf" and props["auto_title"] == "My Paper.pdf"
@@ -138,7 +145,7 @@ def test_detach_clears_attachment_and_keeps_the_file(guest, no_grace):
     # a highlight child keeps its anchor
     hl = guest.post("/api/blocks", json={
         "parent_id": page["id"], "content": "quoted",
-        "properties": {"highlight_id": "h1", "pdf_position": {"page": 1}}}).json()
+        "properties": {"pdf_position": {"pageNumber": 1}}}).json()
     assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file()
 
     r = guest.delete(f"/api/pages/{page['id']}/attachment")
@@ -148,7 +155,7 @@ def test_detach_clears_attachment_and_keeps_the_file(guest, no_grace):
     assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file() and f"{doc_id}.pdf" in _orphans(ws)
     props = body["block"]["properties"]
     assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
-    assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {"page": 1}
+    assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {"pageNumber": 1}
     assert guest.get(f"/api/blocks/by-doc/{doc_id}").status_code == 404
     # nothing left to detach
     assert guest.delete(f"/api/pages/{page['id']}/attachment").status_code == 404
@@ -250,17 +257,19 @@ def test_pdf_file_block_promotes_to_a_document_page(guest, no_grace):
     r = guest.post("/api/pages/by-docs", json={"doc_ids": [doc_id, other, "", "nope"]})
     assert r.status_code == 200 and r.json() == {"pages": {}}
     # promote: same hash, no re-upload, filed in the asking page's folder
+    rydberg = make_folder(guest, "Projects/Rydberg")
     r = guest.post(f"/api/blocks/by-doc/{doc_id}", json={
         "default_title": "", "source_url": up["url"], "original_filename": "Supplement.pdf",
-        "folder": "Projects/Rydberg"})
+        "folder": rydberg})
     assert r.status_code == 200, r.text
     page = r.json()
     assert page["parent_id"] == "root" and page["content"] == "Supplement.pdf"
-    assert page["properties"]["doc_id"] == doc_id and page["properties"]["folder"] == "Projects/Rydberg"
+    assert page["properties"]["doc_id"] == doc_id and page["properties"]["folders"] == [rydberg]
     assert page["properties"]["auto_title"] == "Supplement.pdf"
     # a second promotion finds the page; the folder of an existing page is left alone
-    again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "", "folder": "Elsewhere"}).json()
-    assert again["id"] == page["id"] and again["properties"]["folder"] == "Projects/Rydberg"
+    again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "",
+                                                             "folder": make_folder(guest, "Elsewhere")}).json()
+    assert again["id"] == page["id"] and again["properties"]["folders"] == [rydberg]
     r = guest.post("/api/pages/by-docs", json={"doc_ids": [doc_id, other]})
     assert r.json() == {"pages": {doc_id: {"id": page["id"], "title": "Supplement.pdf"}}}
     # the same file referenced by a file block AND carried by a page survives either going away
@@ -328,14 +337,15 @@ def test_markdown_file_block_promotes_to_a_note_page(guest):
     filename = up["url"].rsplit("/", 1)[-1]
     stem = filename[:-3]
     assert guest.post("/api/pages/by-docs", json={"doc_ids": [stem]}).json() == {"pages": {}}
-    r = guest.post("/api/pages/from-file", json={"filename": filename, "folder": "Projects/Rydberg",
+    rydberg = make_folder(guest, "Projects/Rydberg")
+    r = guest.post("/api/pages/from-file", json={"filename": filename, "folder": rydberg,
                                                  "original": "Qubit controlled squeezing (2).md"})
     assert r.status_code == 200, r.text
     body = r.json()
     page = body["page"]
     assert body["created"] is True and body["imported"] == 4
     assert page["parent_id"] == "root" and page["content"] == "Squeezing notes"
-    assert page["properties"]["folder"] == "Projects/Rydberg"
+    assert page["properties"]["folders"] == [rydberg]
     assert page["properties"]["markdown_import"] == stem and "doc_id" not in page["properties"]
     tree = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
     assert [b["content"] for b in tree] == ["# Setup", "- first point", "- second point"] or tree[0]["content"].startswith("#")
@@ -365,7 +375,7 @@ def test_root_listing_carries_a_text_preview(guest):
         {"id": "pv1", "content": "First   line\nof notes", "properties": {}, "children": [
             {"id": "pv1a", "content": "nested (not in preview)", "properties": {}, "children": []},
         ]},
-        {"id": "pv2", "content": "a highlight", "properties": {"highlight_id": "h", "pdf_position": {}}, "children": []},
+        {"id": "pv2", "content": "a highlight", "properties": {"pdf_position": {"pageNumber": 1}}, "children": []},
         {"id": "pv3", "content": "", "properties": {}, "children": []},
         {"id": "pv4", "content": "Second", "properties": {}, "children": []},
         {"id": "pv5", "content": "x" * 300, "properties": {}, "children": []},
@@ -408,6 +418,7 @@ def _pages_conn(user=None):
 def test_root_listing_is_a_pure_read(guest):
     """A leaked upload path is repaired by the migration/restore normalizer
     (gamma/normalize.py), never by a listing: reads write nothing."""
+    from gamma.blocks_store import touch_page
     from gamma.normalize import normalize_pages_db
 
     page = make_page(guest, "dir/leaked.pdf")
@@ -420,11 +431,13 @@ def test_root_listing_is_a_pure_read(guest):
     assert listed[page["id"]]["properties"]["original_filename"] == "dir/leaked.pdf"
     with _pages_conn() as conn:
         assert normalize_pages_db(conn)["upload_path_titles"] == 1
+        touch_page(conn, page["id"], "")  # as the restore that runs it touches what it puts back
+        conn.commit()
     fixed = guest.get(f"/api/blocks/{page['id']}").json()
     assert fixed["content"] == "leaked.pdf" and fixed["properties"]["original_filename"] == "leaked.pdf"
 
 
-def test_deleting_a_page_leaves_a_tombstone_and_drops_its_op_log(guest):
+def test_deleting_a_page_for_good_marks_it_deleted_and_drops_its_op_log(guest):
     from gamma.blocks_store import create_page
 
     page = make_page(guest, "Doomed")
@@ -438,11 +451,11 @@ def test_deleting_a_page_leaves_a_tombstone_and_drops_its_op_log(guest):
     assert guest.delete(f"/api/trash/{page['id']}").status_code == 200
     with _pages_conn() as conn:
         assert conn.execute("SELECT count(*) FROM page_ops WHERE page_id = ?", (page["id"],)).fetchone()[0] == 0
-        row = conn.execute("SELECT actor FROM deleted_pages WHERE page_id = ?", (page["id"],)).fetchone()
-        assert row == (guest_name(),)
+        row = conn.execute("SELECT kind, actor FROM page_changes WHERE page_id = ?", (page["id"],)).fetchone()
+        assert row == ("deleted", account_of(guest_name()))
         # a page brought back under the same id is no longer "deleted"
-        create_page(conn, "Back", block_id=page["id"])
-        assert conn.execute("SELECT 1 FROM deleted_pages WHERE page_id = ?", (page["id"],)).fetchone() is None
+        create_page(conn, "Back", actor=account_of(guest_name()), block_id=page["id"])
+        assert conn.execute("SELECT kind FROM page_changes WHERE page_id = ?", (page["id"],)).fetchone() == ("live",)
     assert guest.get(f"/api/blocks/{page['id']}").json()["content"] == "Back"
 
 
@@ -459,4 +472,4 @@ def test_by_doc_backfill_on_an_existing_page_is_an_op(guest):
     assert len(log["batches"]) == 1
     (op,) = log["batches"][0]["ops"]
     assert op["op"] == "set" and op["id"] == page["id"] and op["props"] == {"original_filename": "paper.pdf"}
-    assert log["batches"][0]["actor"] == guest_name()
+    assert log["batches"][0]["actor"] == account_of(guest_name())

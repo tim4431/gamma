@@ -10,7 +10,7 @@ refreshed into an access token, the lookup at the fake account server, the
 pending row."""
 
 import pytest
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 from test_cloud_auth import browser, callback, cloud, start  # noqa: F401  (the fake account server fixture)
 
 from gamma import cloud_auth, workspaces
@@ -75,7 +75,7 @@ def test_invite_waits_and_provisioned_sign_in_claims_it(owner, boss, cloud_on, m
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["invited"]["pending"]["subject"] == "sub-pm-alice"
-    assert cloud_on[-1] == ("pm-alice", "pm_owner")  # typed name normalized, the inviter named
+    assert cloud_on[-1] == ("pm-alice", account_of("pm_owner"))  # typed name normalized, the inviter named
     # one list: real members, then the pending invitation
     assert [(m["username"], m["role"], m.get("pending", False)) for m in body["members"]] == [
         ("pm_owner", "owner", False), ("pm-alice", "viewer", True)]
@@ -88,8 +88,8 @@ def test_invite_waits_and_provisioned_sign_in_claims_it(owner, boss, cloud_on, m
 
     # her first cloud sign-in creates the account, and the membership is waiting
     monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
-    assert cloud_auth.resolve_account(_claims("sub-pm-alice", "pm-alice")) == "pm-alice"
-    assert workspaces.role_of(ws, "pm-alice") == "editor"
+    assert cloud_auth.resolve_account(_claims("sub-pm-alice", "pm-alice")) == (account_of("pm-alice"), "pm-alice")
+    assert workspaces.role_of(ws, account_of("pm-alice")) == "editor"
     assert workspaces.pending_invites(ws) == []
     info = owner.get(f"/api/workspaces/{ws}").json()
     assert ("pm-alice", "editor", "pm_owner") in [(m["username"], m["role"], m["added_by"]) for m in info["members"]]
@@ -99,7 +99,7 @@ def test_invite_waits_and_provisioned_sign_in_claims_it(owner, boss, cloud_on, m
     ws2 = _shared(boss, "PM lab two")
     r = owner.post(f"/api/workspaces/{ws2}/invites", json={"username": "pm-alice", "role": "viewer"})
     assert r.json()["invited"] == {"member": "pm-alice", "username": "pm-alice"}
-    assert workspaces.role_of(ws2, "pm-alice") == "viewer" and workspaces.pending_invites(ws2) == []
+    assert workspaces.role_of(ws2, account_of("pm-alice")) == "viewer" and workspaces.pending_invites(ws2) == []
     r = owner.post(f"/api/workspaces/{ws2}/invites", json={"username": "pm-alice", "role": "editor"})
     assert r.status_code == 400 and "already a member" in r.json()["detail"]
 
@@ -111,12 +111,13 @@ def test_claim_policy_and_link_claim_waiting_invitations(owner, boss, cloud_on, 
     # claim: the cloud username matches an unlinked local account
     make_user("pm-bob", "pm-bob-pw1")
     monkeypatch.setenv("GAMMA_CLOUD_POLICY", "claim")
-    assert cloud_auth.resolve_account(_claims("sub-pm-bob", "pm-bob")) == "pm-bob"
-    assert workspaces.role_of(ws, "pm-bob") == "viewer"
+    assert cloud_auth.resolve_account(_claims("sub-pm-bob", "pm-bob")) == (account_of("pm-bob"), "pm-bob")
+    assert workspaces.role_of(ws, account_of("pm-bob")) == "viewer"
     # link: a signed-in local account under another name attaches the cloud account
     make_user("pm_carlos", "pm-carlos-pw1")
-    assert cloud_auth.resolve_account(_claims("sub-pm-carl", "pm-carl", _link_user="pm_carlos")) == "pm_carlos"
-    assert workspaces.role_of(ws, "pm_carlos") == "viewer"
+    carlos = account_of("pm_carlos")
+    assert cloud_auth.resolve_account(_claims("sub-pm-carl", "pm-carl", _link_user=carlos)) == (carlos, "pm_carlos")
+    assert workspaces.role_of(ws, carlos) == "viewer"
     assert workspaces.pending_invites(ws) == []
 
 
@@ -142,8 +143,8 @@ def test_claim_keeps_existing_roles_and_drops_stale_invitations(owner, boss, clo
         assert conn.execute("SELECT COUNT(*) FROM pending_memberships WHERE workspace_id = ?", (gone,)).fetchone()[0] == 0
     assert boss.put(f"/api/workspaces/{solo}", json={"kind": "personal"}).status_code == 200
     assert workspaces.pending_invites(solo) == []
-    joined = workspaces.claim_pending_memberships("pm-eve", "sub-pm-eve")
-    assert joined == [] and workspaces.role_of(keep, "pm-eve") == "editor"  # the explicit role stays
+    joined = workspaces.claim_pending_memberships(account_of("pm-eve"), "sub-pm-eve")
+    assert joined == [] and workspaces.role_of(keep, account_of("pm-eve")) == "editor"  # the explicit role stays
     assert workspaces.pending_invites(keep) == []
 
 
@@ -241,7 +242,7 @@ def test_invite_through_the_account_server(owner, boss, cloud, monkeypatch):  # 
     assert r.json()["invited"]["pending"]["subject"] == "sub-pm-hana"
     assert [(p["username"], p["role"]) for p in workspaces.pending_invites(ws)] == [("pm-hana", "viewer")]
     assert [f["grant_type"] for f in cloud.token_calls[-2:]] == ["authorization_code", "refresh_token"]
-    assert cloud_auth.refresh_token_of("pm_owner") == "rt-1+"  # the rotated token was kept
+    assert cloud_auth.refresh_token_of(account_of("pm_owner")) == "rt-1+"  # the rotated token was kept
     assert ("GET", "/api/lookup/username?u=pm-hana") in cloud.calls
     # an unknown username is the account server's 404: refused, nothing pending
     r = c.post(f"/api/workspaces/{ws}/invites", json={"username": "pm-nobody"})

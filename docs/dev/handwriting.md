@@ -146,8 +146,7 @@ An ink group is a block with these properties (no schema change):
 | key | value |
 |---|---|
 | `ink_url` | `/api/uploads/<hash>.ink`, the group's stroke file; `""` for the moment between the first stroke and its upload |
-| `pdf_page` | 1-based PDF page (the highlight key) |
-| `pdf_position` | the group's bounding box in the highlight shape (`{pageNumber, boundingRect: {x1, y1, x2, y2, width, height, pageNumber}, rects: [...]}`), so jump-to-position, markers and the exporters treat ink like any region |
+| `pdf_position` | on a PDF page, the group's bounding box in the highlight shape (`{pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [the box]}`, [api.md](api.md) "The highlight shape"): the page and the file's `space` size once, the box in its points. Jump-to-position, markers and the exporters treat ink like any region, and the page's layer finds its groups by `pageNumber`. A group made before its first upload carries its draft's box. None on a sheet |
 | `ink_strokes` | stroke count |
 | `imported_annot` / `annot_stripped` | as on highlights, for ink that came from the PDF's own `/Ink` annotations |
 
@@ -379,7 +378,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   last one, and on `pagehide` / `visibilitychange` / leaving the page).
   The flush uploads the draft (`POST /api/upload-ink`, the `serializeInk`
   bytes) and PATCHes the block through `PUT /api/blocks/{id}` with
-  `inkProps` (the url, count, page and box) and `base_properties: {ink_url}`,
+  `inkProps` (the url, count and position) and `base_properties: {ink_url}`,
   the file the draft was edited from. That is a server-side writer, so the
   change fans out over the page socket and reaches this tree like a
   remote op. Only the group's block itself (first stroke) is inserted
@@ -422,8 +421,9 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   (the parsed file behind a block's `ink_url`, None when unreadable — the
   exporters' one loader),
   `stroke_polyline` (variable-width polylines every renderer draws from),
-  `bounding_box` / `pdf_position`, `to_svg`, `pdf_path_ops` (content-stream
-  operators for the notes-as-PDF writer), `ink_buckets` and `from_pdf_ink`
+  `bounding_box` / `pdf_position` (the shape is `gamma/highlights.py`'s),
+  `to_svg`, `pdf_path_ops` (content-stream operators for the notes-as-PDF
+  writer), `ink_buckets` and `from_pdf_ink`
   for the `/Ink` interchange, `dumps` (canonical bytes: sorted keys, so the
   same strokes dedup to one upload).
 - `POST /api/upload-ink` (`routers/ink.py`): the file as the JSON body,

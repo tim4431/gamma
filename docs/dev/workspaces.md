@@ -49,7 +49,7 @@ username". Such an invitation grants edit or view access, never ownership:
    workspace and subject) records the invitation. Inviting the same
    username again changes its role.
 4. **The claim.** Each cloud sign-in calls
-   `workspaces.claim_pending_memberships(username, subject)` from
+   `workspaces.claim_pending_memberships(user_id, subject)` from
    `cloud_auth.resolve_account`, after the local account is known. The local
    account can be newly provisioned, claimed by username, linked from
    Settings → Account & sync, or already linked. Every pending row for that subject
@@ -131,8 +131,8 @@ GAMMA_DATA_DIR/
   users.db                 accounts, sessions, workspaces, memberships,
                            page shares and account preferences
   workspaces/<id>/
-    pages.db               blocks and the per-page operation log
-    data.db                chats, cover snapshots and search indexes
+    pages.db               blocks, the op and change logs, AI chats, notes index
+    data.db                derived only: PDF text index, PDF manifests, covers
     uploads/               PDFs, images and other attachments
 ```
 
@@ -156,7 +156,8 @@ Keep identity and data location separate in endpoint code:
 
 | Helper in `backend/gamma/auth.py` | Purpose |
 |---|---|
-| `require_user(request)` | Session username; account-only data such as AI settings (an integration token gets 403) |
+| `require_user_id(request)` | The session account's id (`users.id`), what storage takes: account-only data such as AI settings (an integration token gets 403) |
+| `require_user(request)` | The same check, answering the session's username: what an endpoint shows or compares with a name it was given |
 | `require_ws(request, write=False)` | Workspace ID with effective viewer access |
 | `require_ws(request, write=True)` | Workspace ID with editor or owner access (and, through an integration token, a write-scope one) |
 | `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
@@ -176,7 +177,11 @@ since they open every page with their workspace role whatever the share
 says.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
-`commit_ops`. Use `request.state.user` as the actor in the operation log.
+`commit_ops`. The actor in the operation log is `auth.actor_of(request)`:
+the account's id (`request.state.user_id`), or a link visitor's label. The
+membership helpers in `gamma/workspaces.py` take account ids too; the
+endpoints take and answer usernames and translate (`db.account_id`), and
+lists of people (`workspaces.members`, `pending_invites`) carry usernames.
 Account-wide preference keys do not require access to the selected workspace;
 workspace-specific preferences do.
 
@@ -289,12 +294,17 @@ manifest's `integrity`. The listing shows a damaged copy and missing files.
 
 **Restoring** (`restore_zip`) checks the backup before it touches anything:
 the zip's shape and `PRAGMA quick_check` of its databases. A damaged backup
-is refused whole.
+is refused whole. Then the unpacked copies are normalized to the current
+shapes (`_normalize_copies`, [user_db.md](user_db.md) "pages.db"): a
+backup from before schema version 28 has its chats moved from its data.db
+into its pages.db, and every backup has its notes index built again from
+its rows (it may have been built under other normalization rules).
 
-- **Replace** normalizes the unpacked copies, keeps what the workspace holds
+- **Replace** keeps what the workspace holds
   now as an automatic `pre-restore` snapshot with its uploads, and swaps the
   databases in: pages.db is copied into the live file in one write
-  transaction, data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
+  transaction — its chats with it, the notes index following the copied
+  rows through its triggers — and data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
   newest three stay (`PRE_RESTORE_KEEP`) and do not count against the cap.
   The restore is refused when that snapshot cannot be taken.
 - **Files.** The backup's files the workspace lacks are copied in. Files
@@ -303,7 +313,9 @@ is refused whole.
 - **Merge** adds the pages the workspace lacks, whole. A block of such a
   page whose id the workspace uses elsewhere (it moved to another page
   since) comes in under a fresh id with its children, so nothing is grafted
-  into a page nobody restored.
+  into a page nobody restored. In the same transaction it adds every
+  conversation the workspace lacks (a bucket's active one, an archived one
+  by its id; `chats_added` counts them). The backup's data.db is not read.
 - **Pages in Recently deleted** count as lacking. A merge (and the reviewed
   Gamma import, which plans such a page as "create") removes the trashed
   copy's rows and brings the backup's version back live under the same ids.
@@ -318,12 +330,15 @@ Either way a restore writes pages behind the op log, so it keeps the log and
 the change feed honest ([collab.md](collab.md)):
 
 - every page it wrote gets a `reload` entry above the highest seq either
-  side had (a tab's seq never goes back), and its root is stamped now; a
-  replace copies pages.db in and writes these in the same write transaction
-  that read the live seqs, so a batch committed meanwhile waits and lands
-  above them;
-- pages a replace removed get a `deleted_pages` tombstone, and pages a
-  merge brought back lose theirs;
+  side had (a tab's seq never goes back), which touches it `live` in the
+  change log; a replace copies pages.db in and writes these in the same
+  write transaction that read the live seqs, so a batch committed meanwhile
+  waits and lands above them;
+- the change log is never replaced: a replace copies every table but
+  `page_changes`, so the cursors copies hold into it stay good, and turns
+  `deleted` every page that is no page of the library afterwards (removed,
+  in the restored Recently deleted, or deleted in the backup's own log)
+  unless it is already; pages a merge brought back turn `live`;
 - every open room of the workspace (a replace) or of the added pages (a
   merge) is told to reload, and the commit listeners hear of it.
 

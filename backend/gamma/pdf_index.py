@@ -1,21 +1,23 @@
-"""The PDF text index — ``pdf_fts`` in the workspace's data.db, next to the
-notes index (``block_index``). The schema, the writes (a paper's rows stored
-or dropped) and the queries every consumer of the index shares: which papers
-still need extracting, the ranked hits for a MATCH, a paper's pages.
-Extraction itself (and the background indexer thread) lives in
+"""The PDF text index — ``pdf_fts`` in the workspace's data.db (derived from
+the stored files, so it can be deleted and built again; the notes index is
+in pages.db, gamma/block_index.py). The schema, the writes (a paper's rows
+stored or dropped) and the queries every consumer of the index shares:
+which papers still need extracting, the ranked hits for a MATCH, a paper's
+pages. Extraction itself (and the background indexer job) lives in
 routers/search.py; the same normalization rules as the notes index apply
 (gamma.textnorm — bump INDEX_VERSION to re-index lazily).
 
 FTS5 finds a row only by its rowid or by MATCH: a filter on ``doc_id`` (an
 UNINDEXED column) reads the whole table. So ``pdf_fts_rows`` maps each paper
 to the rowids of its rows, and everything that deletes or reads one paper
-goes through it (``ensure_tracked`` / ``insert_tracked`` /
-``delete_tracked``, shared with the notes index)."""
+goes through it."""
 
 import sqlite3
 from contextlib import contextmanager
 
-from .db import page_now
+from . import pdf_meta
+from .db import connect_data_db, page_now
+from .logbuf import log
 from .textnorm import INDEX_VERSION
 
 SCHEMA = (
@@ -48,50 +50,38 @@ def write_txn(conn: sqlite3.Connection):
         raise
 
 
-def ensure_tracked(conn: sqlite3.Connection, schema, fts: str, key: str, takeover=()) -> None:
-    """Apply an FTS index's ``schema`` (CREATE ... IF NOT EXISTS), among it
-    the ``<fts>_rows`` side table mapping each ``key`` (a paper, a page) to
-    the rowids of its rows. Rows written before that table existed — by an
-    older Gamma, or in a restored backup — are taken over once, in the
-    transaction that creates it, followed by the ``takeover`` statements."""
-    side = f"{fts}_rows"
-    if conn.execute(_TABLE, (side,)).fetchone():
-        for stmt in schema:
-            conn.execute(stmt)
-        return
-    with write_txn(conn):
-        new = not conn.execute(_TABLE, (side,)).fetchone()  # again, under the write lock
-        rows = conn.execute(_TABLE, (fts,)).fetchone()
-        for stmt in schema:
-            conn.execute(stmt)
-        if new and rows:
-            conn.execute(f"INSERT OR IGNORE INTO {side} ({key}, fts_rowid) SELECT {key}, rowid FROM {fts}")
-            for stmt in takeover:
-                conn.execute(stmt)
-
-
-def insert_tracked(conn: sqlite3.Connection, fts: str, key: str, value: str, column: str, rows) -> None:
-    """Insert ``(column value, content)`` rows under ``key`` = ``value`` (a
-    paper, a page) into an ``ensure_tracked`` index, each rowid recorded in
-    its side table."""
+def _insert_rows(conn: sqlite3.Connection, doc_id: str, pages) -> None:
+    """Insert a paper's ``(page, content)`` rows, each rowid recorded in
+    ``pdf_fts_rows``."""
     tracked = []
-    for other, content in rows:
-        cur = conn.execute(f"INSERT INTO {fts} ({key}, {column}, content) VALUES (?, ?, ?)",
-                           (value, other, content))
-        tracked.append((value, cur.lastrowid))
-    conn.executemany(f"INSERT INTO {fts}_rows ({key}, fts_rowid) VALUES (?, ?)", tracked)
+    for page, content in pages:
+        cur = conn.execute("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)", (doc_id, page, content))
+        tracked.append((doc_id, cur.lastrowid))
+    conn.executemany("INSERT INTO pdf_fts_rows (doc_id, fts_rowid) VALUES (?, ?)", tracked)
 
 
-def delete_tracked(conn: sqlite3.Connection, fts: str, key: str, value: str) -> None:
-    """Delete the rows of ``key`` = ``value`` from an ``ensure_tracked``
-    index, by rowid through its side table."""
-    rowids = conn.execute(f"SELECT fts_rowid FROM {fts}_rows WHERE {key} = ?", (value,)).fetchall()
-    conn.executemany(f"DELETE FROM {fts} WHERE rowid = ?", rowids)
-    conn.execute(f"DELETE FROM {fts}_rows WHERE {key} = ?", (value,))
+def _delete_rows(conn: sqlite3.Connection, doc_id: str) -> None:
+    """Delete a paper's rows, by rowid through ``pdf_fts_rows``."""
+    rowids = conn.execute("SELECT fts_rowid FROM pdf_fts_rows WHERE doc_id = ?", (doc_id,)).fetchall()
+    conn.executemany("DELETE FROM pdf_fts WHERE rowid = ?", rowids)
+    conn.execute("DELETE FROM pdf_fts_rows WHERE doc_id = ?", (doc_id,))
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    ensure_tracked(conn, SCHEMA, "pdf_fts", "doc_id")
+    """Apply the schema. Rows an index written before ``pdf_fts_rows``
+    existed holds (an older Gamma, a restored backup) are taken over once,
+    in the transaction that creates that table."""
+    if conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone():
+        for stmt in SCHEMA:
+            conn.execute(stmt)
+    else:
+        with write_txn(conn):
+            new = not conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone()  # again, under the write lock
+            rows = conn.execute(_TABLE, ("pdf_fts",)).fetchone()
+            for stmt in SCHEMA:
+                conn.execute(stmt)
+            if new and rows:
+                conn.execute("INSERT OR IGNORE INTO pdf_fts_rows (doc_id, fts_rowid) SELECT doc_id, rowid FROM pdf_fts")
     try:  # older DBs predate the ver column
         conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN ver INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
@@ -108,10 +98,10 @@ def store_doc(conn: sqlite3.Connection, doc_id: str, pages) -> None:
     ensure_schema(conn)
     with write_txn(conn):
         conn.execute("DELETE FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,))
-        delete_tracked(conn, "pdf_fts", "doc_id", doc_id)
+        _delete_rows(conn, doc_id)
     for start in range(0, len(pages), STORE_CHUNK):
         with write_txn(conn):
-            insert_tracked(conn, "pdf_fts", "doc_id", doc_id, "page", pages[start:start + STORE_CHUNK])
+            _insert_rows(conn, doc_id, pages[start:start + STORE_CHUNK])
     with write_txn(conn):
         conn.execute(
             "INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) VALUES (?, ?, ?, ?)",
@@ -122,8 +112,27 @@ def drop_docs(conn: sqlite3.Connection, doc_ids) -> None:
     """Delete these papers' rows and bookkeeping. The caller commits."""
     ensure_schema(conn)
     for doc_id in doc_ids:
-        delete_tracked(conn, "pdf_fts", "doc_id", doc_id)
+        _delete_rows(conn, doc_id)
         conn.execute("DELETE FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,))
+
+
+def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
+    """Sweep data.db after a PDF may have left the workspace (a page deleted
+    for good, a block carrying a PDF deleted, a PDF detached, a restore):
+    the index rows and the manifests of papers no block carries any more —
+    nothing else cleans them up. Costs a scan of the ``doc_id`` index, so
+    callers run it only when a PDF may have gone. Never raises (derived
+    data)."""
+    try:
+        live = {r[0] for r in pages_conn.execute(
+            "SELECT DISTINCT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL")}
+        with connect_data_db(ws) as conn:
+            ensure_schema(conn)
+            drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs") if r[0] not in live])
+            pdf_meta.purge(conn, live)
+            conn.commit()
+    except Exception as e:  # noqa: BLE001 — derived data: the next sweep tries again
+        log.warning(f"[pdf_index] cleanup of unused papers failed: {e}")
 
 
 def doc_pages(conn: sqlite3.Connection, doc_id: str, chars: int) -> list[tuple[int, str]]:

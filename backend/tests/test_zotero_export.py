@@ -5,7 +5,7 @@ import's exact inverse — verified by round-tripping through
 import io
 import zipfile
 
-from conftest import make_page
+from conftest import folder_names, make_folder, make_label, make_page
 
 from gamma.zotero_import import parse_zotero_rdf
 
@@ -25,13 +25,12 @@ def _put_children(guest, page_id, tree):
 
 
 def _positioned(hid, quote, note=""):
-    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0, "width": 800.0, "height": 1035.0}
+    rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
     return {
         "id": hid, "content": note, "children": [],
         "properties": {
-            "highlight_id": hid, "quote": quote, "pdf_page": 1,
-            "color": "rgba(170, 235, 170, 0.65)",
-            "pdf_position": {"pageNumber": 1, "boundingRect": rect, "rects": [rect]},
+            "quote": quote, "color": "rgba(170, 235, 170, 0.65)",
+            "pdf_position": {"pageNumber": 1, "width": 800.0, "height": 1035.0, "boundingRect": rect, "rects": [rect]},
         },
     }
 
@@ -59,7 +58,8 @@ def _paper(guest, prefix):
     assert up.status_code == 200, up.text
     page = make_page(guest, f"Attention {prefix}", properties={
         "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-        "folder": f"{prefix}ML/Transformers", "category": "transformers, attention",
+        "folders": [make_folder(guest, f"{prefix}ML/Transformers")],
+        "labels": [make_label(guest, "transformers"), make_label(guest, "attention")],
         "meta": {"title": f"Attention {prefix}",
                  "authors": ["Ashish Vaswani", "Noam Shazeer"],
                  "year": "2017", "venue": "Nature", "volume": "647",
@@ -91,7 +91,7 @@ def test_page_zotero_export_roundtrips_through_parser(guest):
     assert meta["arxiv_id"] == "1706.03762"
     assert meta["pages"] == "1-11"
     assert it["tags"] == ["transformers", "attention"]
-    assert it["folders"] == ["zxaML/Transformers"]
+    assert it["folders"] == [["zxaML", "Transformers"]]  # one page: its folder's whole path
     # the free note (with its child) came back as one note, markdown intact
     assert len(it["notes"]) == 1
     assert "Read this **twice**." in it["notes"][0]["text"]
@@ -190,38 +190,41 @@ def test_zotero_export_switches(guest):
 
 
 def test_folder_zotero_export_scopes_collections(guest):
+    optics, cooking = make_folder(guest, "zxresearch/optics"), make_folder(guest, "zxcooking")
     make_page(guest, "Zx in folder A", properties={
-        "folder": "zxresearch/optics, zxcooking",
+        "folders": [optics, cooking],
         "meta": {"title": "Zx in folder A", "arxiv_id": "2101.00001"},
     })
-    make_page(guest, "Zx in subfolder", properties={"folder": "zxresearch/optics/lasers"})
-    make_page(guest, "Zx elsewhere", properties={"folder": "zxcooking"})
+    make_page(guest, "Zx in subfolder", properties={"folders": [make_folder(guest, "zxresearch/optics/lasers/blue")]})
+    make_page(guest, "Zx elsewhere", properties={"folders": [cooking]})
 
-    r = guest.get("/api/folders/export", params={"name": "zxresearch/optics", "mode": "zotero-rdf"})
+    r = guest.get(f"/api/folders/{optics}/export", params={"mode": "zotero-rdf"})
     items = _rdf_items(_zip_of(r))
     by_title = {i["title"]: i for i in items}
     assert set(by_title) == {"Zx in folder A", "Zx in subfolder"}  # not "elsewhere"
-    # folder labels outside the exported folder ("zxcooking") don't leak
-    assert by_title["Zx in folder A"]["folders"] == ["zxresearch/optics"]
-    # the nested collection chain reassembles the full path
-    assert by_title["Zx in subfolder"]["folders"] == ["zxresearch/optics/lasers"]
+    # the exported folder is the library's top: folders outside it
+    # ("zxcooking") don't leak, the folder itself is no collection
+    assert by_title["Zx in folder A"]["folders"] == []
+    # the nested collection chain reassembles the path below the folder
+    assert by_title["Zx in subfolder"]["folders"] == [["lasers", "blue"]]
     assert by_title["Zx in folder A"]["meta"]["arxiv_id"] == "2101.00001"
 
 
 def test_zotero_export_reimports_via_the_real_endpoint(guest):
+    roundtrip = make_folder(guest, "roundtrip")
     make_page(guest, "Paper one", properties={
-        "folder": "roundtrip",
+        "folders": [roundtrip],
         "meta": {"title": "Paper one", "authors": ["Ada Lovelace"], "year": "1843",
                  "venue": "Notes", "doi": "10.1000/rt1"},
     })
-    make_page(guest, "Paper two", properties={"folder": "roundtrip/deep"})
-    r = guest.get("/api/folders/export", params={"name": "roundtrip", "mode": "zotero-rdf"})
+    make_page(guest, "Paper two", properties={"folders": [make_folder(guest, "roundtrip/deep")]})
+    r = guest.get(f"/api/folders/{roundtrip}/export", params={"mode": "zotero-rdf"})
     assert r.status_code == 200, r.text
 
     imp = guest.post(
         "/api/import/zotero",
         files={"file": ("lib.zip", io.BytesIO(r.content), "application/zip")},
-        data={"folder": "zimported"},
+        data={"folder": make_folder(guest, "zimported")},
     )
     assert imp.status_code == 200, imp.text
     d = imp.json()
@@ -231,6 +234,8 @@ def test_zotero_export_reimports_via_the_real_endpoint(guest):
     one = guest.get(f"/api/blocks/{by_title['Paper one']['id']}").json()["properties"]
     assert one["meta"]["authors"] == ["Ada Lovelace"]
     assert one["meta"]["doi"] == "10.1000/rt1" and one["meta"]["venue"] == "Notes"
-    assert "zimported/roundtrip" in one["folder"]
+    paths = folder_names(guest)
+    assert [paths[f] for f in one["folders"]] == [["zimported"]]
     two = guest.get(f"/api/blocks/{by_title['Paper two']['id']}").json()["properties"]
-    assert "zimported/roundtrip/deep" in two["folder"]
+    assert [paths[f] for f in two["folders"]] == [["zimported", "deep"]]
+    assert by_title["Paper two"]["folders"] == [["zimported", "deep"]]

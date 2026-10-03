@@ -42,10 +42,25 @@ the frontend changes: editing a mirror is editing a workspace.
 ## What travels
 
 - **Pages and blocks**: the whole tree, root properties included (title,
-  folder, labels, metadata), by block id and fractional position. Ids are
-  kept, so a block is the same block on both sides forever. A page that
-  comes over whole takes the remote's place in the library too (its root's
-  key, when no page here holds it).
+  the folder and label ids it is filed under, metadata), by block id and
+  fractional position. Ids are kept, so a block is the same block on both
+  sides forever. A page that comes over whole takes the remote's place in
+  the library too (its root's key, when no page here holds it).
+- **Folders and labels**: the two trees are pseudo-pages, `folders` and
+  `labels` ([collab.md](collab.md) "The folder and label trees"), and travel
+  as pages do. Both feeds list them, and a round reconciles each three ways
+  like a page's tree, before the pages (`_round`'s order), so a page filed
+  in a new folder never arrives before its folder: a rename, a move, a pin
+  or a new folder on either side goes over, a folder deleted on one side
+  goes on the other (the delete's refiling of the pages travels with the
+  pages), an edit there beats a delete here as for any block. A tree is
+  never created or deleted (both sides always have it, a side without one
+  is left as it is) and never taken whole from one side: a link's or a
+  force's policy (`adopt`, `prune`) does not apply to it, since the pages
+  on each side are filed in that side's folders — a first round keeps both
+  sides' folders. Two copies converted apart by migration step 29 name the
+  same folder alike (`normalize.tree_block_id`, derived from the path), so
+  a mirror and its remote upgraded separately find the same tree.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
   content or properties, a page's `doc_id`), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
@@ -61,12 +76,13 @@ the frontend changes: editing a mirror is editing a workspace.
   stops) is an error of the page, never bytes to store (`Remote.get_bytes`).
   What is stored is written whole (`storage.write_atomic`,
   [user_db.md](user_db.md) "Stored files").
-- **Deletions**: pages through the tombstones (`deleted_pages`), blocks
+- **Deletions**: pages through the tombstones (the change feed's `deleted`
+  entries, a page's row of the change log turned `deleted`), blocks
   through the diff. The trash ([home_library.md](home_library.md) "Recently
   deleted") never travels; each side keeps its own.
-  - A page moved to Recently deleted writes the tombstone a hard delete
-    does, so to the other side it is deleted.
-  - A restored page is stamped and loses its tombstone, so the other side
+  - A page moved to Recently deleted turns its row `deleted` as a hard
+    delete does, so to the other side it is deleted.
+  - A restored page is touched `live` again, so the other side
     takes it back whole as a new page. That holds for a copy that removed
     its own copy meanwhile too: the tombstone its removal wrote here is no
     deletion made here of a page it has no sync record of, while the
@@ -95,8 +111,10 @@ the frontend changes: editing a mirror is editing a workspace.
   changed since, counts as landed.
 
 Not synced: preferences (reading positions, open tabs, recents — they are
-per account and per server), chats, cover snapshots, search indexes (the
-copy rebuilds its own).
+per account and per server), the AI chats (in pages.db beside the pages,
+but no round reads them; "Limits and next steps"),
+cover snapshots, search indexes (the copy keeps its own: the notes index
+follows the copy's own writes, the PDF index is extracted again).
 
 ## The page filter
 
@@ -108,7 +126,10 @@ filter a round:
 - takes from both change feeds, and from its retry list, only the listed
   pages, and fetches only their missing files (`missing_uploads(ws,
   pages)`); a page outside it never travels in either direction, whatever
-  the feeds say, and neither does its deletion;
+  the feeds say, and neither does its deletion — nor do the folder and
+  label trees: a published page's filing goes along as ids that name no
+  folder there, which every read passes by and the op path stores as
+  written, so the page here never comes back unfiled;
 - treats a listed page that has no saved base as new whatever the feeds say
   (`_filtered`): a tombstone on the remote from an earlier publication says
   nothing about this one. So a page added to the filter (`filter_add`) goes
@@ -131,12 +152,18 @@ lock a round holds, so no round sees half of one.
 
 ## The change feed (remote side)
 
-`GET /api/sync/changes?since=&limit=` lists the pages whose root was
-stamped after a cursor, each with its latest op `seq`, and the pages
-deleted after it, as one time-ordered stream ([collab.md](collab.md) "The
-change feed" has the cursor rules). The feed is a hint: the engine compares
-each listed page's `seq` with the one it holds and fetches the tree only
-when they differ. `GET /api/sync/whoami` tells the engine who its token is,
+`GET /api/sync/changes?since=&limit=` lists, in the order of the remote
+workspace's change log, the pages written since a cursor, each with its
+latest op `seq`, and the pages deleted since it ([collab.md](collab.md)
+"The change feed" has the log and the cursor rules). Nothing is listed
+twice for one change and nothing is missed, so a round walks both feeds to
+the end (`_feed_all`, `_local_feed_all`: a page listed again in one walk is
+what its last entry says) and keeps their cursors on the mirror's row
+(`mirrors.remote_cursor`, `local_cursor`: the feed's cursor, a seq as a
+string, `''` = from the start). The engine compares each listed
+page's `seq` with the one it holds and fetches the tree only when they
+differ, so a cursor set back (a force, a direction change) costs
+a re-walk and no writes. `GET /api/sync/whoami` tells the engine who its token is,
 which workspace and role it has there, and whether it may write. A round
 reuses an earlier round's answer for the same link for 15 minutes
 (`WHOAMI_TTL_S`); a round that ends with an error forgets it, so a revoked
@@ -366,7 +393,8 @@ A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
 exception — is reported, kept on the mirror's `retry` list with the flags
 it had, and worked again next round (the feeds' cursors have moved past
-it). Nothing a round does can leave the `running` flag up: every exception
+it; a feed that lists the page again has the newer say for its side).
+Nothing a round does can leave the `running` flag up: every exception
 brings it down with `last_error`, and a process stopped in the middle of a
 round (the desktop app quit) is caught at the next startup by
 `reset_interrupted`, which clears the flag and notes `interrupted`; the
@@ -788,12 +816,12 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 | POST | `/api/mirrors/{ws}/conflicts/{id}` | `{choice: keep \| mine \| theirs}` |
 
 Session-only, the mirror's owner only, never a guest. The owner is the
-account `mirrors.owner` names that also owns the copy's workspace
-(`routers/mirrors._owns`): anyone else gets 404 and an empty list. Renaming
-an account moves its mirrors along (`routers/admin.rename_account_rows`), so
-a later account that takes the old name never reaches the copy's sync log,
-conflict texts or force-push. Publishing's three endpoints are in
-[api.md](api.md) "Publishing".
+account `mirrors.owner` names (by id) that also owns the copy's workspace
+(`routers/mirrors._owns`): anyone else gets 404 and an empty list. The id
+survives a rename and is never reused, so a later account that takes an
+old name never reaches the copy's sync log, conflict texts or force-push;
+the API leaves the owner out of a mirror's info (it is the caller).
+Publishing's three endpoints are in [api.md](api.md) "Publishing".
 
 ## Testing
 
@@ -803,9 +831,14 @@ the engine's transport is a TestClient (`sync_engine.default_fetch`) so
 every request is the real HTTP API with the real token. Covered: the first
 fill, edits both ways, different-block and same-span merges with the
 conflict rows and their resolution, edit-versus-delete both ways, pages
-created and deleted on either side, files by hash, pull-only, stopping.
+created and deleted on either side, the folder and label trees (a rename, a
+move, new folders on both sides, a page filed in a new folder, a folder
+deleted there), files by hash, pull-only, stopping. `test_publish.py`'s
+filtered mirror keeps a published page's filing on both sides without its
+trees.
 `test_sync_tree.py` pins the diff, `apply` and `moved`; `test_token_api.py` the bearer rules;
-`test_sync_feed.py` the feed. `test_mirror_edges.py` is the odd cases:
+`test_sync_feed.py` the feed and `test_page_changes.py` the change log under it
+(every writer, racing writers). `test_mirror_edges.py` is the odd cases:
 typing while a round is in flight, two clones of one remote editing the
 same blocks, a move against a delete (both ways: a block moved here out of
 a subtree deleted there, and a block moved there out of a subtree deleted
@@ -862,7 +895,10 @@ The iPad app keeps a copy without a server of its own ([ipad.md](ipad.md)
 reads, batches under ids with `client: "sync"`, page creation, deletion
 and files by name. Its rounds are this engine's rules, ported to
 JavaScript (`frontend/src/replica/`) and run in the app's JavaScriptCore.
-Shared fixtures pin the port to the pure half of this engine:
+The folder and label trees travel as described above: first in a round,
+never created or deleted, and both sides' folders kept. A device starts
+with neither tree, so the first round that lists one pulls it whole,
+while a tree the remote lacks is left as it is. Shared fixtures pin the port to the pure half of this engine:
 `tests/shared/synctree.json` (diff, apply, moved, `_unlanded`),
 `textmerge.json` and `inkmerge.json`. `backend/tests/test_shared_fixtures.py`
 checks this side, and `frontend/tests/replica.test.mjs` the port. The
@@ -876,11 +912,23 @@ until it follows.
   changed on both sides costs one fetch and one push, and the remote's
   per-batch authors are not carried into the copy's log (its actor is
   `mirror`).
-- The change feed lists a page whose root moved; a writer that never stamps
-  the root would be missed — every writer does today (ops, reloads,
-  cross-page moves, imports).
+- The change feed lists a page whose row of the change log moved; a writer
+  that never touches the page (`touch_page`) would be missed — every writer
+  does today (ops, reloads, cross-page moves, page creation, trash and
+  restore, imports, restores), and the suite checks it after every test.
+- A server whose data directory is put back from an older snapshot hands
+  out seqs a copy's cursor already passed. A cursor above the log's newest
+  seq is read as from the start, but once the log has grown past it again
+  the pages written in between are missed until they move; a force pull
+  (or push) after such a restore puts the copies right.
 - A mirror of a mirror works but doubles the delay; a workspace mirrored
   from two servers into one copy is refused (one remote per copy).
+- The AI chats do not travel. Since they moved into pages.db (schema
+  version 28) they are rows beside the pages, keyed by a block id (a page's
+  or a folder's) or `home`, so syncing them is a follow-up the move
+  enables: a conversation per bucket, last writer wins by its `updated_at`
+  version (what `routers/chats.py` already compares), the history entries
+  by id. Nothing in the change feed names them yet.
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.

@@ -1,5 +1,8 @@
 """Named backup tasks with UTC cron, task-specific retention and OS locking.
 
+A task is a file under ``backups/tasks/``; its ``owner`` is the id of the
+account it belongs to (``users.id``), so a rename never touches it.
+
 Every run is a full copy, so the limits below bound what an account can
 make the server keep: a task runs at most hourly, keeps at most
 ``MAX_RETENTION`` days or snapshots, an account has at most ``MAX_TASKS``
@@ -16,7 +19,7 @@ import os
 import re
 import time
 import uuid
-from contextlib import ExitStack, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 
 from . import config, workspaces, ws_backup
@@ -178,7 +181,7 @@ def locked(key):
 
 def _account(owner):
     with connect_users_db() as conn:
-        row = conn.execute('SELECT is_admin, is_guest FROM users WHERE username = ?', (owner,)).fetchone()
+        row = conn.execute('SELECT is_admin, is_guest FROM users WHERE id = ?', (owner,)).fetchone()
     if not row or row[1]:
         raise TaskError("The task owner no longer has an eligible account.")
     return bool(row[0])
@@ -210,29 +213,6 @@ def list_tasks(owner):
         if task['owner'] == owner:
             result.append(task)
     return sorted(result, key=lambda t: (t['created_at'], t['id']))
-
-
-@contextmanager
-def renaming(old, new):
-    """Rename the owner of ``old``'s tasks to ``new`` around an account
-    rename (``routers/admin.rename_account``): every task is held under its lock
-    while the ``with`` body renames the account's rows, and gets its new
-    owner when the body finishes without an error. Raises TaskBusy before
-    the body when one of them is running — its round writes the task back
-    when it ends and would bring the old name back — so nothing changes."""
-    with ExitStack() as stack:
-        ids = [task['id'] for task in list_tasks(old)]
-        for task_id in ids:
-            if not stack.enter_context(locked(task_id)):
-                raise TaskBusy("A backup task of this account is running. Rename the account when it finishes.")
-        yield
-        for task_id in ids:
-            try:
-                task = read(task_id)
-            except TaskError:
-                continue
-            if task['owner'] == old:
-                _write({**task, 'owner': new})
 
 
 def save(owner, data, task_id=None):

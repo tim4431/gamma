@@ -13,7 +13,7 @@ from contextlib import closing
 import pytest
 
 from conftest import login, make_user, workspace_of
-from gamma.blocks_store import trashed_ids
+from gamma.blocks_store import page_root_id
 from gamma.db import connect_pages_db
 from gamma.routers import blocks as blocks_router
 from gamma.textnorm import fuzzy_pattern, literal_runs
@@ -54,10 +54,9 @@ def _old_scan(q, case=False, whole=False, limit=20):
     ws = workspace_of(USER)
     pattern = fuzzy_pattern(q, case, whole)
     with closing(connect_pages_db(ws)) as conn:
-        gone = trashed_ids(conn)
         return [r[0] for r in conn.execute(
             "SELECT id, content FROM unified_blocks WHERE content != '' ORDER BY updated_at DESC")
-            if r[0] not in gone and pattern.search(r[1] or "")][:limit]
+            if page_root_id(conn, r[0]) and pattern.search(r[1] or "")][:limit]
 
 
 QUERIES = [

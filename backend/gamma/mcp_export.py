@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from fastapi import HTTPException
 
-from .db import connect_pages_db
+from .db import account_name, connect_pages_db, connect_users_db
 from .markdown_export import UPLOAD_RE
 
 FORMATS = ("markdown", "pdf", "notes_pdf")
@@ -46,11 +46,12 @@ EXPORT_DESCRIPTION = (
 )
 
 
-def export_page(ws: str, base: str, user: str, args: dict) -> tuple[str, tuple | None]:
+def export_page(ws: str, base: str, user_id: str, args: dict) -> tuple[str, tuple | None]:
     """One page in one format: ``(text, file)``, where ``file`` is
     ``(uri, media type, bytes)`` for a PDF and None for Markdown (the text is
     the document). ``uri`` is the HTTP export giving the same file to a
-    signed-in browser. Raises ValueError with a message for the model."""
+    signed-in browser. An annotated PDF's notes are signed with the token
+    account's username. Raises ValueError with a message for the model."""
     page_id, fmt = args["page_id"], args["format"]
     highlights, notes = bool(args.get("highlights", True)), bool(args.get("notes", True))
     with connect_pages_db(ws) as conn:
@@ -71,7 +72,9 @@ def export_page(ws: str, base: str, user: str, args: dict) -> tuple[str, tuple |
             return (f"Markdown export of “{title}” (file name {name}; images and files link to "
                     f"this Gamma server and open signed in):\n\n{md}"), None
         if fmt == "pdf":
-            data, name, _, _ = annotated_pdf(ws, page_id, highlights=highlights, notes=notes, author=user)
+            with connect_users_db() as conn:
+                author = account_name(conn, user_id)
+            data, name, _, _ = annotated_pdf(ws, page_id, highlights=highlights, notes=notes, author=author)
             what = "the annotated PDF" if highlights or notes else "the original PDF"
             path = f"/api/pages/{page_id}/export-pdf?" + urlencode({"ws": ws, **flags})
         else:

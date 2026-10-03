@@ -58,15 +58,16 @@ def inked(org, tmp_path_factory):
     def upload(data):
         r = c.post("/api/upload-ink", json=data)
         assert r.status_code == 200, r.text
-        return r.json()["url"]
+        return r.json()
 
-    paper = block("root", "inked paper", {"folder": "readout", "doc_id": "e" * 24})
+    paper = block("root", "inked paper", {"folders": [ids["readout"]], "doc_id": "e" * 24})
+    drawn = upload(_ink())
     group = block(paper, "circled the key result",
-                  {"ink_url": upload(_ink()), "pdf_page": 1, "ink_strokes": 1})
+                  {"ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1})
     plain = block(paper, "a typed note")
-    book = block("root", "lecture notebook", {"folder": "readout"})
+    book = block("root", "lecture notebook", {"folders": [ids["readout"]]})
     sheet = block(book, "Page 1", {"sheet": {"pattern": "ruled"}})
-    scrawl = block(sheet, "", {"ink_url": upload(_ink("canvas", "#0000ff", 595.28, 841.89)),
+    scrawl = block(sheet, "", {"ink_url": upload(_ink("canvas", "#0000ff", 595.28, 841.89))["url"],
                                "ink_strokes": 1})
     pdf = _pdf(tmp_path_factory.mktemp("ink") / "inked.pdf")
     return c, {**ids, "paper": paper, "group": group, "plain": plain, "book": book,
@@ -105,40 +106,40 @@ def test_crop_box_pads_grows_and_stays_on_the_page():
 
 def test_view_ink_shows_a_group_on_its_pdf_page(stored_pdf):
     ids = stored_pdf
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["group"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["group"]})
     assert text.startswith(f"Handwriting block [{ids['group']}] on PDF page 1"), text
     assert "cropped" in text and '"circled the key result"' in text and "[illegible]" in text
     assert action["kind"] == "ink" and action["block_id"] == ids["group"] and action["pdf_page"] == 1
     (media_type, data), = action["images"]
     assert media_type in ("image/png", "image/jpeg") and len(data) > 100
     # The whole page, with every group on it.
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink",
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink",
                                   {"block_id": ids["group"], "area": "page"})
     assert text.startswith('All the handwriting on PDF page 1 of "inked paper"') and action["images"]
 
 
 def test_view_ink_shows_a_sheet_of_paper(stored_pdf):
     ids = stored_pdf
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["scrawl"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["scrawl"]})
     assert f"Handwriting block [{ids['scrawl']}] on a page of paper" in text and "no caption yet" in text
     assert "pdf_page" not in action and action["images"]
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["sheet"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["sheet"]})
     assert text.startswith(f"The page of paper [{ids['sheet']}]") and "with all the handwriting" in text
 
 
 def test_view_ink_refusals(stored_pdf, monkeypatch):
     ids = stored_pdf
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["plain"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["plain"]})
     assert "holds no handwriting" in text and action["error"] and "images" not in action
     # Outside the chat's folder, and with the permission off.
-    text, _ = run_agent_tool(ids["ws"], folder("cooling"), "view_ink", {"block_id": ids["group"]})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["cooling"]), "view_ink", {"block_id": ids["group"]})
     assert text.startswith("error") and "outside" in text
-    text, _ = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["group"]},
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["group"]},
                              allowed_tools={"read_block"})
     assert "not enabled" in text
     # A PDF this server doesn't hold: the strokes are still drawn, on blank paper.
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: None)
-    text, action = run_agent_tool(ids["ws"], folder("readout"), "view_ink", {"block_id": ids["group"]})
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["group"]})
     assert "drawn on blank paper" in text and action["images"]
 
 

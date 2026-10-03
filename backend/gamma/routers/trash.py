@@ -15,8 +15,8 @@ router = APIRouter(prefix="/api", tags=["trash"])
 
 @router.get("/trash")
 def list_deleted(request: Request):
-    """``{pages: [{id, title, folder, deleted_at, deleted_by, purge_at}],
-    keep_days}``, the last deleted first."""
+    """``{pages: [{id, title, folders, deleted_at, deleted_by, purge_at}],
+    keep_days}``, the last deleted first (``folders``: folder ids)."""
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
         return {"pages": trash.list_trash(conn), "keep_days": trash.KEEP_DAYS}
@@ -29,7 +29,7 @@ def restore_deleted(page_id: str, request: Request):
     ws = require_ws(request, write=True)
     try:
         with connect_pages_db(ws) as conn:
-            return restore_page(ws, conn, page_id)
+            return restore_page(ws, conn, page_id, actor=request.state.user_id or "")
     except OpError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -41,7 +41,7 @@ def delete_forever(page_id: str, request: Request):
     the orphan check (gamma/upload_gc.py) → ``{ok, id}``. 404 when it is not
     in Recently deleted."""
     ws = require_ws(request, write=True)
-    if trash.purge(ws, page_id, actor=request.state.user or "") is None:
+    if trash.purge(ws, page_id, actor=request.state.user_id or "") is None:
         raise HTTPException(status_code=404, detail="not in Recently deleted")
     return {"ok": True, "id": page_id}
 
@@ -50,4 +50,4 @@ def delete_forever(page_id: str, request: Request):
 def empty_trash(request: Request):
     """Delete every page of Recently deleted for good → ``{deleted: [ids]}``."""
     ws = require_ws(request, write=True)
-    return {"deleted": trash.empty(ws, actor=request.state.user or "")}
+    return {"deleted": trash.empty(ws, actor=request.state.user_id or "")}

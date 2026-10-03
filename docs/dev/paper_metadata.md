@@ -210,7 +210,7 @@ these endpoints. Imports require HTTPS (including the existing trusted proxy
 configuration) or localhost and are bounded to 256 KiB / 200 cookies.
 
 `users.db.publisher_sessions` (schema v5) stores authenticated Fernet ciphertext
-per `(username, host)`. The key is generated at `GAMMA_DATA_DIR/publisher-sessions.key`
+per `(user_id, host)`, each sealed with its account's id. The key is generated at `GAMMA_DATA_DIR/publisher-sessions.key`
 with private file permissions where supported, or supplied as a Fernet key in
 `GAMMA_PUBLISHER_SESSION_KEY`. Keep it stable across workers and restarts. Encryption
 protects a database copy without the key; the server operator can access the key

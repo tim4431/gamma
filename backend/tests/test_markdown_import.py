@@ -1,10 +1,10 @@
 """Plain .md uploads become note pages, including inside folder uploads."""
 
 import json
-from conftest import workspace_of, guest_name
+from conftest import make_folder, workspace_of, guest_name
 import sqlite3
 
-from gamma.db import ws_db_path
+from gamma.db import register_functions, ws_db_path
 
 
 def test_markdown_upload_creates_nested_note_page(guest):
@@ -22,20 +22,21 @@ Opening paragraph.
 
 More text.
 """
+    week = make_folder(guest, "papers/week 1")
     r = guest.post(
         "/api/import/markdown",
         files={"file": ("paper-notes.md", source, "text/markdown")},
-        data={"folder": "papers/week 1"},
+        data={"folder": week},
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["title"] == "Reading notes"
     assert body["original_filename"] == "paper-notes.md"
-    assert body["folder"] == "papers/week 1"
+    assert body["folders"] == [week]
 
     page = guest.get(f"/api/blocks/{body['block_id']}/subtree").json()["block"]
     assert page["content"] == "Reading notes"
-    assert page["properties"]["folder"] == "papers/week 1"
+    assert page["properties"]["folders"] == [week]
     assert page["properties"]["original_filename"] == "paper-notes.md"
     overview = page["children"][0]
     assert overview["content"] == "# Overview"
@@ -66,7 +67,7 @@ def test_markdown_upload_strips_directory_from_multipart_filename(guest):
             b"Index body",
             "text/markdown",
         )},
-        data={"folder": "spectrum_analyzer_data"},
+        data={"folder": make_folder(guest, "spectrum_analyzer_data")},
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -74,13 +75,14 @@ def test_markdown_upload_strips_directory_from_multipart_filename(guest):
     assert body["original_filename"] == "CODE_INDEX.md"
     page = guest.get(f"/api/blocks/{body['block_id']}").json()
     assert page["content"] == "CODE_INDEX"
-    assert page["properties"]["folder"] == "spectrum_analyzer_data"
+    assert page["properties"]["folders"] == [make_folder(guest, "spectrum_analyzer_data")]
 
 
 def test_normalizer_repairs_old_automatic_path_title(guest):
     """An old markdown import whose title kept the leaked directory path is
     repaired by the content normalizer (a migration step / backup restore,
     gamma/normalize.py) — a library listing is a pure read."""
+    from gamma.blocks_store import touch_page
     from gamma.normalize import normalize_pages_db
 
     created = guest.post(
@@ -88,6 +90,7 @@ def test_normalizer_repairs_old_automatic_path_title(guest):
         files={"file": ("CODE_INDEX.md", b"Index body", "text/markdown")},
     ).json()
     with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+        register_functions(conn)  # the notes index's triggers call textnorm
         row = conn.execute(
             "SELECT properties FROM unified_blocks WHERE id=?", (created["block_id"],)
         ).fetchone()
@@ -104,7 +107,9 @@ def test_normalizer_repairs_old_automatic_path_title(guest):
     assert listed["content"] == "spectrum_analyzer_data/CODE_INDEX"
 
     with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+        register_functions(conn)  # the notes index's triggers call textnorm
         assert normalize_pages_db(conn)["upload_path_titles"] == 1
+        touch_page(conn, created["block_id"], "")  # as the restore that runs it touches what it puts back
     repaired = guest.get(f"/api/blocks/{created['block_id']}").json()
     assert repaired["content"] == "CODE_INDEX"
     assert repaired["properties"]["original_filename"] == "CODE_INDEX.md"

@@ -60,33 +60,36 @@ def test_profile_is_one_account_wide_object(alice):
     # The preference profile follows the account, not the workspace: a write
     # through one workspace reads back through any other (or none).
     from gamma import db
-    from conftest import workspace_of
+    from conftest import account_of, workspace_of
     assert "profile" in db.USER_PREF_KEYS
+    me = account_of("prefs_alice")
     profile = {"theme": "sepia", "enterNewNote": True, "agentPerms": {"pdf": {"block_edit": False}}}
     r = alice.put("/api/prefs/profile", json={"value": profile}, headers={"X-Gamma-Workspace": workspace_of("prefs_alice")})
     assert r.status_code == 200 and r.json()["updated_at"]
     body = alice.get("/api/prefs/profile", headers={"X-Gamma-Workspace": "some-other-workspace"}).json()
     assert body["value"] == profile and body["updated_at"] == r.json()["updated_at"]
-    assert db.get_profile("prefs_alice") == (profile, body["updated_at"])
+    assert db.get_profile(me) == (profile, body["updated_at"])
     # set_profile goes through set_pref (last write wins, a newer updated_at)
-    later = db.set_profile("prefs_alice", {"theme": "gray"})
+    later = db.set_profile(me, {"theme": "gray"})
     assert later > body["updated_at"]
     assert alice.get("/api/prefs/profile").json() == {"key": "profile", "cloud_choice": False, "value": {"theme": "gray"},
                                                       "updated_at": later}
     with pytest.raises(ValueError):
-        db.set_profile("prefs_alice", ["not", "an", "object"])
+        db.set_profile(me, ["not", "an", "object"])
 
 
 def test_profile_patch_sets_only_the_named_entries(alice):
     # the web app's save: the entries it changed, every other one kept as stored
     from gamma import db
-    db.set_profile("prefs_alice", {"theme": "dark", "language": "en"})
-    before = db.get_profile("prefs_alice")[1]
+    from conftest import account_of
+    me = account_of("prefs_alice")
+    db.set_profile(me, {"theme": "dark", "language": "en"})
+    before = db.get_profile(me)[1]
     r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewNote": True}})
     assert r.status_code == 200
     assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewNote": True}
     assert r.json()["updated_at"] > before
-    assert db.get_profile("prefs_alice") == (r.json()["value"], r.json()["updated_at"])
+    assert db.get_profile(me) == (r.json()["value"], r.json()["updated_at"])
     assert alice.patch("/api/prefs/profile", json={"set": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
     assert alice.patch("/api/prefs/profile", json={"set": ["theme"]}).status_code == 422
     # the cloud sync's merge base is not a pref the generic endpoints serve
@@ -95,7 +98,7 @@ def test_profile_patch_sets_only_the_named_entries(alice):
 
 def test_profile_must_be_an_object_within_the_size_cap(alice):
     from gamma import db
-    assert db.get_profile("prefs_nobody") == ({}, "")
+    assert db.get_profile("no-such-account") == ({}, "")
     assert alice.put("/api/prefs/profile", json={"value": ["theme"]}).status_code == 400
     assert alice.put("/api/prefs/profile", json={"value": "dark"}).status_code == 400
     assert alice.put("/api/prefs/profile", json={"value": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
@@ -467,14 +470,14 @@ def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
 def test_shared_provider_admin_api_is_admin_session_only(alice, admin, shared):
     from gamma.app import app
     from gamma.integrations import create_token
-    from conftest import workspace_of
+    from conftest import account_of, workspace_of
     for method, path in (("get", "/api/admin/ai-providers"), ("put", "/api/admin/ai-providers"),
                          ("post", "/api/admin/ai-providers"),
                          ("put", f"/api/admin/ai-providers/{shared['id']}"),
                          ("delete", f"/api/admin/ai-providers/{shared['id']}")):
         assert getattr(alice, method)(path, **({} if method in ("get", "delete") else {"json": {}})).status_code == 403
     # An admin's integration token is not an admin session.
-    token = create_token("prefs_admin", workspace_of("prefs_admin"), "script", 1)["token"]
+    token = create_token(account_of("prefs_admin"), workspace_of("prefs_admin"), "script", 1)["token"]
     bearer = TestClient(app)
     bearer.headers["Authorization"] = f"Bearer {token}"
     assert bearer.get("/api/admin/ai-providers").status_code == 403
@@ -597,7 +600,7 @@ def test_rename_user_moves_rows_and_directory(client):
 def test_rename_user_refuses_guest_and_collisions(client, capsys):
     import manage
     from gamma import guests
-    manage.rename_user(guests.new_guest(), "prefs_someone")
+    manage.rename_user(guests.new_guest()[1], "prefs_someone")
     assert "cannot be renamed" in capsys.readouterr().out
     manage.create_user("prefs_carol", "pw3")
     manage.rename_user("prefs_carol", "prefs_bobby")  # prefs_bobby exists from the test above

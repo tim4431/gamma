@@ -25,7 +25,8 @@ Usage:
   python manage.py backups --restore <name>        # copy one back over the data dir (server stopped!)
   python manage.py backups --delete <name> | --prune   # --prune: old pre-upgrade snapshots only
 
-Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder).
+Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder). Commands
+name accounts by username; storage names them by id (``users.id``).
 """
 
 import re
@@ -36,7 +37,7 @@ import bcrypt
 import json
 
 from gamma import backups as backups_mod, cloud_auth, cloud_sync, guests, migrations, workspaces
-from gamma.db import SchemaOutdated, connect_users_db, ws_dir
+from gamma.db import SchemaOutdated, account_id, connect_users_db, ws_dir
 from gamma.seed import create_account
 
 
@@ -94,20 +95,28 @@ def set_member(ws, username, role):
     if not workspaces.get(ws):
         print(f"Workspace '{ws}' not found.")
         return
+    account = _account(username)
+    if not account:
+        print(f"User '{username}' not found.")
+        return
     try:
         if role == "none":
-            workspaces.remove_member(ws, username)
+            workspaces.remove_member(ws, account[0])
             print(f"Removed '{username}' from workspace {ws}.")
         else:
-            workspaces.set_member(ws, username, role, by="manage.py")
+            workspaces.set_member(ws, account[0], role, by="")
             print(f"'{username}' is now {role} of workspace {ws}.")
     except ValueError as e:
         print(f"Refused: {e}")
 
 
 def create_workspace(name, owner, kind="personal", access="private", public_role="viewer"):
+    account = _account(owner)
+    if not account:
+        print(f"User '{owner}' not found.")
+        return
     try:
-        info = workspaces.create(name, owner, kind=kind, by="manage.py", access=access, public_role=public_role)
+        info = workspaces.create(name, account[0], kind=kind, access=access, public_role=public_role)
     except ValueError as e:
         print(f"Refused: {e}")
         return
@@ -128,36 +137,38 @@ def set_access(ws, access, public_role=None):
           + (f" (everyone {info['public_role']})." if info["access"] == "public" else "."))
 
 
-def _is_guest(username) -> bool | None:
-    """True / False for an account, None when there is no such account."""
+def _account(username) -> tuple[str, bool] | None:
+    """``(id, is_guest)`` of the account named ``username``, None when there
+    is no such account."""
     with connect_users_db() as conn:
-        row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
-    return bool(row[0]) if row else None
+        row = conn.execute("SELECT id, is_guest FROM users WHERE username = ?", (username,)).fetchone()
+    return (row[0], bool(row[1])) if row else None
 
 
 def set_admin(username, value):
     if value not in ("on", "off"):
         print("Usage: python manage.py set-admin <username> <on|off>")
         return
-    if _is_guest(username):
+    account = _account(username)
+    if not account:
+        print(f"User '{username}' not found.")
+        return
+    if account[1]:
         print("A guest account cannot be an admin.")
         return
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
-            print(f"User '{username}' not found.")
-            return
-        conn.execute("UPDATE users SET is_admin = ? WHERE username = ?",
-                     (1 if value == "on" else 0, username))
+        conn.execute("UPDATE users SET is_admin = ? WHERE id = ?", (1 if value == "on" else 0, account[0]))
         conn.commit()
     print(f"Admin privilege {'granted to' if value == 'on' else 'revoked from'} '{username}'.")
 
 
 def delete_user(username):
-    if _is_guest(username) is None:
+    account = _account(username)
+    if not account:
         print(f"User '{username}' not found.")
         return
     try:
-        deleted = workspaces.delete_account(username, release_now=True)
+        deleted = workspaces.delete_account(account[0], release_now=True)
     except workspaces.FinalCopyError as e:
         print(f"Refused: {e}")
         sys.exit(2)
@@ -173,30 +184,26 @@ def sweep_guests(everyone=False):
 
 
 def rename_user(old, new):
-    """Rename an account: every row that names it, and its backup tasks.
-    Sessions and share tokens keep working; no workspace directory moves
-    (they are named by id)."""
-    from gamma import backup_schedule
+    """Rename an account: its username (and a personal workspace named
+    after it). Everything else names the account by its id, so sessions,
+    share links, tokens and tasks keep working and no file moves."""
     from gamma.routers.admin import rename_account
 
-    if _is_guest(old):
+    account = _account(old)
+    if not account:
+        print(f"User '{old}' not found.")
+        return
+    if account[1]:
         print("A guest account cannot be renamed.")
         return
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", new):
         print("New username must be 1-64 chars of letters, digits, '_', '.', '-'.")
         return
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (old,)).fetchone():
-            print(f"User '{old}' not found.")
-            return
-        if conn.execute("SELECT 1 FROM users WHERE username = ?", (new,)).fetchone():
+        if account_id(conn, new):
             print(f"User '{new}' already exists.")
             return
-        try:
-            rename_account(conn, old, new)
-        except backup_schedule.TaskBusy as e:
-            print(str(e))
-            return
+        rename_account(conn, account[0], new)
     print(f"Renamed user '{old}' -> '{new}'")
 
 
@@ -205,14 +212,15 @@ def set_password(username, password):
         print("Password cannot be empty.")
         return
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+        user_id = account_id(conn, username)
+        if not user_id:
             print(f"User '{username}' not found.")
             return
         pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (pwhash, username))
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pwhash, user_id))
         # Match the admin API: a password reset invalidates existing access.
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM integration_tokens WHERE username = ?", (username,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
         conn.commit()
     print(f"Password set for '{username}'.")
 
@@ -220,8 +228,9 @@ def set_password(username, password):
 def list_identities():
     """Which accounts are linked to a Gamma Cloud account."""
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT username, subject, email, claims, last_login_at FROM identities "
-                            "WHERE provider = ? ORDER BY username", (cloud_auth.PROVIDER,)).fetchall()
+        rows = conn.execute("SELECT u.username, i.subject, i.email, i.claims, i.last_login_at FROM identities i "
+                            "JOIN users u ON u.id = i.user_id WHERE i.provider = ? ORDER BY u.username",
+                            (cloud_auth.PROVIDER,)).fetchall()
     if not rows:
         print("No account is linked to Gamma Cloud.")
     for username, subject, email, claims, last in rows:
@@ -232,28 +241,32 @@ def list_identities():
 def link_identity(username, subject, cloud_username, email=""):
     """Link an account to a Gamma Cloud subject by hand (the sign-in flow
     does it itself; this is for a locked-out admin)."""
+    account = _account(username)
+    if not account:
+        print(f"User '{username}' not found.")
+        return
+    if account[1]:
+        print("A guest account cannot be linked.")
+        return
     with connect_users_db() as conn:
-        row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            print(f"User '{username}' not found.")
-            return
-        if row[0]:
-            print("A guest account cannot be linked.")
-            return
-        cloud_auth.link(conn, username, {"sub": subject, "preferred_username": cloud_username, "email": email,
-                                         "email_verified": True})
+        cloud_auth.link(conn, account[0], {"sub": subject, "preferred_username": cloud_username, "email": email,
+                                           "email_verified": True})
         conn.commit()
     print(f"Linked '{username}' to Gamma Cloud subject {subject} (cloud username {cloud_username}).")
 
 
 def unlink_identity(username):
     """Detach an account's Gamma Cloud identity and sign it out everywhere."""
-    subject, held = cloud_auth.grant_of(username)
+    account = _account(username)
+    if not account:
+        print(f"User '{username}' not found.")
+        return
+    subject, held = cloud_auth.grant_of(account[0])
     with connect_users_db() as conn:
-        if not cloud_auth.unlink(conn, username):
+        if not cloud_auth.unlink(conn, account[0]):
             print(f"'{username}' is not linked to Gamma Cloud.")
             return
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (account[0],))
         conn.commit()
     cloud_sync.release(subject, held)
     print(f"Unlinked '{username}'. Set a password with set-password if it has none.")
@@ -264,9 +277,9 @@ def setup():
     workspace files recreated. Guest accounts are made per visitor by the
     server (gamma/guests.py), never here."""
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT username, is_guest FROM users").fetchall()
-    for user, is_guest in rows:
-        ws = workspaces.ensure_personal(user, welcome=bool(is_guest))
+        rows = conn.execute("SELECT id, username, is_guest FROM users").fetchall()
+    for user_id, user, is_guest in rows:
+        ws = workspaces.ensure_personal(user_id, welcome=bool(is_guest))
         if not (ws_dir(ws) / "pages.db").exists():
             print(f"  repaired: created missing files for '{user}' ({ws})")
     print("Setup complete.")

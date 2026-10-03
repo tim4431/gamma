@@ -8,7 +8,7 @@ from contextlib import closing
 
 import pytest
 
-from conftest import make_user
+from conftest import account_of, make_user
 from gamma import auth, db
 from gamma.db import BUSY_TIMEOUT_S, connect_data_db, connect_pages_db, connect_users_db
 
@@ -56,7 +56,7 @@ def test_a_new_workspace_is_wal_before_anyone_opens_it():
     """Switching a file to WAL needs it to itself: requests opening a fresh
     workspace's databases together must never be the ones to switch it."""
     from gamma import workspaces
-    ws = workspaces.create("WAL from the start", USER)["id"]
+    ws = workspaces.create("WAL from the start", account_of(USER))["id"]
     for name in ("pages.db", "data.db"):
         with closing(sqlite3.connect(db.ws_db_path(ws, name))) as conn:
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal", name
@@ -75,7 +75,7 @@ def test_a_rollback_file_opened_while_in_use_is_switched_later(ws):
         holder.execute("SELECT count(*) FROM sqlite_master").fetchone()
         with connect_data_db(ws) as conn:
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
-            assert conn.execute("SELECT count(*) FROM chats").fetchone()[0] >= 0
+            assert conn.execute("SELECT count(*) FROM page_snaps").fetchone()[0] >= 0
         holder.rollback()
     with connect_data_db(ws) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
