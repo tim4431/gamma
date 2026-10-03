@@ -613,29 +613,33 @@ async function uploadBlob(tabId, blob, url, expectedOrigin) {
 
 async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
   const settings = await getSettings();
-  // The popup names the folder (an id, or a typed new one's path); the
-  // shortcut and the context menu save into the default one, if the
-  // library still has it (checkedDefaultFolder: a deleted one is forgotten).
-  const filing = folder != null ? { folder, folder_path: folder_path || "" } : await checkedDefaultFolder(settings);
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   // A PDF tab has no title of its own; the registry record previewed for the
   // popup names the page right away (auto_title — the metadata lookup may
   // still replace it, a user rename never is).
   const st = tabId != null ? await getTabState(tabId) : {};
   const previewTitle = st.preview && st.preview.title || "";
-  const payload = {
-    source_url: cand.source_url || source_url || "",
-    pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
-    title: title != null ? title : (cand.title || previewTitle),
-    ...filing,
-    labels: labels != null ? labels : settings.labels,
-    allow_oa: settings.allowOa, save_copy: settings.saveCopy,
-  };
   // The URL this browser could download itself: the tab that *is* a PDF, or
   // the page's advertised PDF link.
   const fetchUrl = cand.pdf_url || (cand.is_pdf_tab ? cand.source_url : "");
   if (tabId != null) await progress(tabId, "resolving…");
+  // Everything that talks to the server runs inside this try, so an
+  // unreachable server or an expired sign-in ends the same way wherever it
+  // shows up: the tab's error set, a 401 forgetting the signed-in state.
+  let filing;
   try {
+    // The popup names the folder (an id, or a typed new one's path); the
+    // shortcut and the context menu save into the default one, if the
+    // library still has it (checkedDefaultFolder: a deleted one is forgotten).
+    filing = folder != null ? { folder, folder_path: folder_path || "" } : await checkedDefaultFolder(settings);
+    const payload = {
+      source_url: cand.source_url || source_url || "",
+      pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
+      title: title != null ? title : (cand.title || previewTitle),
+      ...filing,
+      labels: labels != null ? labels : settings.labels,
+      allow_oa: settings.allowOa, save_copy: settings.saveCopy,
+    };
     if (cand.is_pdf_tab && fetchUrl) {
       // The tab is the PDF — upload the bytes the browser already has access
       // to instead of making the server re-download (it may not be able to).

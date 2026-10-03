@@ -5,7 +5,7 @@ backend (chatgpt.py)."""
 import json
 from urllib.request import Request as URLRequest
 
-from .base import TOOL_IMAGES_NOTE, Protocol, as_int, parse_tool_args, tool_image_turns
+from .base import TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args, tool_image_turns
 
 
 def responses_input(messages, pdf_b64s=None, images=None) -> list:
@@ -151,6 +151,9 @@ class ResponsesWire(Protocol):
             response = event.get("response") or {}
             state["stop"] = response.get("status") or "completed"
             state["usage"] = self.usage(response.get("usage")) or state["usage"]
+            # The finished response names the tier that served it (OpenAI's
+            # "default" / "flex" / "priority"), whatever was asked for.
+            note_speed(state, response.get("service_tier"))
         elif kind in ("response.failed", "error"):
             error = (event.get("response") or {}).get("error") or {} if kind == "response.failed" else event
             raise RuntimeError(error.get("message") or "stream error")

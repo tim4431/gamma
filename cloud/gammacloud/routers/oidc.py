@@ -105,15 +105,15 @@ def authorize_login(body: AuthorizeLogin, request: Request):
     """Sign in on the authorize page; answers ``{redirect}`` for the page to
     follow. Also sets the portal cookie, so the next server's sign-in is one
     click."""
-    who = body.login.strip().lower()[:254]
     ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
+    who_key = f"login:who:{accounts.login_bucket(body.login)}"  # one window with /api/login
     ratelimit.check(ip_key, 10, 300)
-    ratelimit.check(f"login:who:{who}", 10, 300)
+    ratelimit.check(who_key, 10, 300)
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
         if not req:
             raise HTTPException(400, EXPIRED)
-        account = accounts.by_login(conn, who)
+        account = accounts.by_login(conn, body.login)
         if not accounts.password_ok(account, body.password):
             raise HTTPException(401, "Wrong e-mail, username or password.")
         token = sessions.create(conn, account["id"], request)
@@ -125,7 +125,7 @@ def authorize_login(body: AuthorizeLogin, request: Request):
         redirect = oidc.finish(conn, req, account)
         conn.commit()
     ratelimit.reset(ip_key)
-    ratelimit.reset(f"login:who:{who}")
+    ratelimit.reset(who_key)
     resp = JSONResponse({"redirect": redirect})
     sessions.set_cookie(resp, token)
     return resp

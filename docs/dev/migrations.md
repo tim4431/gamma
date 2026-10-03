@@ -85,7 +85,7 @@ has them. Do it once your own deployments have passed the new floor.
 | 28 | `chats_and_notes_index` | Every workspace's `pages.db` takes the AI chats and the notes index ([user_db.md](user_db.md) "pages.db", "The notes index"): `chats` (`block_id` renamed `bucket`; a row without a title gets `''`) and `chat_history` are copied in from the workspace's `data.db` and dropped there once the copy is committed (`normalize.pages_db_chats`), the notes index is created in `pages.db` — the view `block_fts_src`, the external-content FTS5 table `block_fts`, its three triggers — and built from the blocks (`normalize.block_fts`), and `data.db` drops its own `block_fts`, `block_fts_meta` and `block_fts_rows` (`normalize_data_db`). A restored older backup goes through the same. The step applies no frozen pages.db statements first (`_each_pages_db(..., schema=())`): its files are at step 27's shape. Re-runnable: rows already copied are kept, the index is built again. data.db is left holding only derived data |
 | 29 | `folder_blocks` | Folders and labels become blocks ([home_library.md](home_library.md) "Folders and labels"). Every workspace's `pages.db`, one transaction per normalizer: the generated `kind` gains its `folder` / `label` cases (`normalize.block_columns` drops the outdated column with its index, and `doc_id` after it, and adds them again in a fresh table's order), then `normalize.folder_blocks`: the reserved rows `folders` and `labels`; a folder block for every path the pages' `properties.folder` (comma-separated `/` paths, in the library and in Recently deleted) and the folder chats' `home:<path>` buckets name — so an empty folder's chat keeps its folder —, nested by segment, new siblings ordered by name under ids derived from the path (`normalize.tree_block_id`: two copies converted apart name a folder alike); a label block for every name of `properties.category`; each page's filing rewritten to `properties.folders` / `labels` (ids, in the old order) without stamping or touching the page (refiling is no edit); each folder chat's bucket moved to its folder's id (`home:` alone to `home`; a conversation whose new bucket has one already is filed into that bucket's history); a `live` row of the change log for each tree, so a mirror pulls them. Then in `users.db`, per workspace: a folder share names its folder's id (a path no folder answers to — its pages filed elsewhere since — deletes the share and its invitations), and each account's `pinned-folders` pref (`[{path, at}]`) becomes `properties.pinned` on those folder blocks — the newest pin of any member, a folder being one block for all of them — before every `pinned-folders` row is deleted. The step applies no frozen pages.db statements (`schema=()`). A restored older backup goes through `block_columns` and `folder_blocks` too. Re-runnable: a converted file has nothing of the old shape, and the users.db half resolves what it finds against the trees (an id stays, a path is looked up) |
 | 30 | `highlight_shape` | The highlight shape ([api.md](api.md) "The highlight shape", `gamma/highlights.py`). Every workspace's `pages.db`, one transaction per normalizer: the generated `kind`'s `highlight` case reads a `pdf_position` object instead of a `highlight_id` (`block_columns`), then `normalize.highlight_shape` over the rows a `LIKE` finds: every `pdf_position` in the stored shape (`highlights.from_scaled`: the page and its size once from the position's or its first measured rect's size, a rect measured at another size scaled into it, no `pageNumber` / `width` / `height` per rect, `area` at the top, the page from `pdf_page` when the position named none; one with no page anywhere goes); a highlight (a `highlight_id`) with no position but a `pdf_page` keeps its page as `pdf_position: {pageNumber}`; `highlight_id` goes, and `pdf_page` but on a text box (its only page); a link region's `link_highlight_id` becomes `link_block_id`, the block that had that highlight id on the page it links to (`link_page_id`; the block of that id when there is one, else the first by id), a note's `linked_highlight_id` the block that had it on its own page — one that resolves to nothing goes; a `source_url` that is the row's `doc_id`'s stored copy (`/api/uploads/<doc_id>.pdf`) goes. Nothing is stamped or touched (a shape is no edit): what a row becomes depends on the file's rows alone, so a mirror and its remote upgraded apart rewrite their copies of a page alike and the next round finds nothing to send (a filtered mirror may resolve a link to a page only one side has differently). `users.db` is untouched. `schema=()`. A restored older backup goes through `block_columns` and `highlight_shape` too, after the content normalizers (whose oldest step still writes a page's `sourceUrl` as `source_url`). Re-runnable: a converted row rewrites to itself |
-| 31 | `session_columns` | `sessions` loses `guest_date`, a column the guest login wrote and nothing read: the table is rebuilt in its current shape with its rows, so no one is signed out. Step 25 builds the table without it from the start, so a directory it brought up is left as it is |
+| 31 | `session_columns` | `sessions` loses `guest_date`, a column the guest login wrote and nothing read: the table is rebuilt in its current shape with its rows, so no one is signed out. Step 25 builds the table as its own time had it, column included (`_V25_USERS_SCHEMA`), so every upgrade passes through here; a table without the column is left as it is |
 
 ## Backups (`gamma/backups.py`)
 
@@ -177,10 +177,17 @@ SCHEMA_VERSION = 3   # gamma/db.py
   An older step that creates a table from those lists must keep creating
   the shape of its time, so when a step changes a table's shape, freeze the
   statements the older steps used. Steps 1–24 create users.db tables from
-  `migrations._V24_USERS_SCHEMA` (users.db at version 24). Step 1 and
-  `_each_pages_db` apply `migrations._V25_PAGES_SCHEMA` (pages.db at
-  version 25) unless the step passes `schema=()`, as steps 28–30 do: that
-  list still has `deleted_pages`, which step 27 drops. A later step that
+  `migrations._V24_USERS_SCHEMA` (users.db at version 24). Step 25 rebuilds
+  the users.db tables it re-keys from `migrations._V25_USERS_SCHEMA` (those
+  tables at versions 25–30: `sessions` still with `guest_date`); step 31,
+  the newest, rebuilds `sessions` from `db.USERS_SCHEMA` itself
+  (`migrations._rebuild_table` takes the list), and the next step that
+  changes a users.db table freezes what step 31 used. `_each_pages_db`
+  applies `migrations._V25_PAGES_SCHEMA` (pages.db at version 25) to every
+  workspace's file before the step's own work — the steps up to 27 that
+  walk the workspaces (22, 23, 25–27) rely on it — unless the step passes
+  `schema=()`, as steps 28–30 do: that list still has `deleted_pages`,
+  which step 27 drops. A later step that
   walks the workspaces passes `schema=()` or freezes the statements of its
   own time. A pages.db connection a step
   opens has `db.register_functions` (`_each_pages_db` registers them): the
@@ -198,7 +205,13 @@ SCHEMA_VERSION = 3   # gamma/db.py
   one (drop its index, `ALTER TABLE DROP COLUMN`, add it again, re-index —
   with every generated column after it, keeping a fresh table's column
   order): a step that redefines `kind` changes it there and runs
-  `block_columns` again, as steps 29 and 30 do.
+  `block_columns` again, as steps 29 and 30 do. The normalizers read the
+  current definitions on purpose (`folder_blocks` inserts
+  `blocks_store.STORED_COLUMNS`, `block_columns` adds `BLOCK_HOT_COLUMNS`),
+  and they run on files of every older shape, so a step that adds a stored
+  block column defines it in `BLOCK_HOT_COLUMNS`: `block_columns`, which
+  runs before every other block normalizer, then gives an older file the
+  column before `folder_blocks` writes it.
 - A change to the search normalization (`textnorm.normalize_text`) is a
   step too: the notes index's triggers delete a row's old text as the
   current rules make it, so every workspace's index must be rebuilt

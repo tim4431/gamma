@@ -590,6 +590,15 @@ def account_id(conn: sqlite3.Connection, username: str) -> str:
     return row[0] if row else ""
 
 
+def delete_shares(conn: sqlite3.Connection, where: str, params) -> int:
+    """Delete the shares ``WHERE where`` together with their invitations
+    (``share_users``, keyed by token): the two always go together, or an
+    invitation is left pointing at a token that no longer exists. Returns
+    how many shares went."""
+    conn.execute(f"DELETE FROM share_users WHERE token IN (SELECT token FROM shares WHERE {where})", params)
+    return conn.execute(f"DELETE FROM shares WHERE {where}", params).rowcount
+
+
 def account_name(conn: sqlite3.Connection, user_id: str) -> str:
     """The username of the account ``user_id``; "" when there is none (a
     deleted account, an actor that is no account)."""

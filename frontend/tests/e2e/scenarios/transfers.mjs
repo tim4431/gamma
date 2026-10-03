@@ -479,7 +479,9 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await choice(one, "Close Export").click();
       await one.waitFor({ state: "detached" });
 
-      // 3. Export the folder as one bibliography.
+      // 3. Export the folder as one bibliography. The folder is shared, so
+      //    the review can show the link that keeps serving its .bib.
+      const { token: bibShare } = await alice.api(`/api/share/folder/${folderId}`, { method: "POST" });
       await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
       await page.waitForSelector(".folderNewBtn");
       // A folder's dialog is named after it, so openDialog's exact "Export" misses.
@@ -529,6 +531,22 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       }
       assert(!everything.includes("Bib note page"), "a page with no metadata is not an entry");
 
+      // 5b. The shared folder's bibliography link, under "Keep this .bib up
+      //     to date": the export URL with the share token, in a CopyField
+      //     whose button copies it.
+      await dialog.getByText("Keep this .bib up to date", { exact: true }).click();
+      const link = dialog.getByRole("textbox", { name: "Bibliography link", exact: true });
+      await link.waitFor();
+      const bibUrl = new URL(await link.inputValue());
+      assertEq(bibUrl.pathname, `/api/folders/${folderId}/export`, "the folder's export endpoint");
+      assertEq(bibUrl.searchParams.get("mode"), "bibtex", "in bibtex mode");
+      assertEq(bibUrl.searchParams.get("share"), bibShare, "through the folder's share token");
+      assert((await dialog.innerText()).includes("Anyone with the link can read the folder"), "the folder wording");
+      if (flags.keep) await dialog.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex-link.png` });
+      await dialog.getByRole("button", { name: "Copy the bibliography link", exact: true }).click();
+      assertEq(await page.evaluate(() => navigator.clipboard.readText()), bibUrl.href, "the clipboard holds the link");
+      await dialog.locator(".integrationCopy.on").waitFor();
+
       // 6. And the download is the file itself.
       const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
       const download = page.waitForEvent("download");
@@ -567,7 +585,10 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assertEq(await choice(other, "BibTeX").count(), 0, "no record, no BibTeX card");
       await choice(other, "Close Export").click();
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/share-settings/folder/${folderId}`, { method: "DELETE" }).catch(() => {});
+    }
   });
 
 }

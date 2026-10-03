@@ -639,9 +639,111 @@ _V25_RENAMED = ("sessions", "identities", "integration_tokens", "publisher_sessi
 # The users.db columns that keep their name and hold the id from step 25 on.
 _V25_PEOPLE = (("workspaces", "created_by"), ("workspace_members", "added_by"),
                ("pending_memberships", "invited_by"), ("mirrors", "owner"), ("jobs", "owner"))
-# Columns step 31 drops. Step 25 rebuilds these tables in db.USERS_SCHEMA's
-# shape, which has not got them, so it leaves them out as well.
-_V31_DROPPED = {"sessions": ("guest_date",)}
+# The users.db tables step 25 rebuilds or creates, as schema versions 25-30
+# shaped them, frozen: step 25 builds them from this, never from
+# db.USERS_SCHEMA, whose ``sessions`` step 31 moved on (``guest_date`` went).
+# The tables step 25 leaves standing (mirrors, workspaces, jobs, ...) are not
+# here: it only rewrites their rows.
+_V25_USERS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT '',
+        provider_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        input INTEGER NOT NULL DEFAULT 0,
+        output INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        cache_write INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS ai_usage_user_at ON ai_usage (user_id, at)",
+    """CREATE TABLE IF NOT EXISTS integration_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'read'
+    )""",
+    """CREATE TABLE IF NOT EXISTS publisher_sessions (
+        user_id TEXT NOT NULL,
+        host TEXT NOT NULL,
+        encrypted TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS users (
+        id TEXT NOT NULL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        is_guest INTEGER NOT NULL DEFAULT 0,
+        is_admin INTEGER NOT NULL DEFAULT 0,
+        max_upload_mb INTEGER,
+        quota_mb INTEGER,
+        default_workspace TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS identities (
+        provider TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        email TEXT NOT NULL DEFAULT '',
+        claims TEXT NOT NULL DEFAULT '{}',
+        refresh_token TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        last_login_at TEXT NOT NULL,
+        revoked_at TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (provider, subject)
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS identities_account ON identities(provider, user_id)""",
+    """CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        guest_date TEXT,
+        created_at TEXT NOT NULL,
+        via TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS workspace_members (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        role TEXT NOT NULL,
+        added_by TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_wm_user ON workspace_members(user_id)",
+    """CREATE TABLE IF NOT EXISTS shares (
+        token TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        folder TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''",
+    """CREATE TABLE IF NOT EXISTS share_users (
+        token TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        PRIMARY KEY (token, user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_prefs (
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, workspace_id, key)
+    )""",
+]
 # mcp_oauth records that name an account (an assistant's consent and code, a
 # cloud sign-in that links): minutes-long, dropped rather than rewritten.
 _V25_NAMED_OAUTH = ("consent", "code", "cloud_login")
@@ -677,16 +779,18 @@ def _v25_account_ids(conn: sqlite3.Connection) -> None:
             temp.replace(path)
 
 
-def _v25_rebuild(conn, table: str, columns: str, select: str) -> None:
-    """Recreate ``table`` in its db.USERS_SCHEMA shape, with its indexes,
-    from the rows ``select`` reads out of the old one (into ``columns``)."""
-    create = next(s for s in USERS_SCHEMA if s.startswith(f"CREATE TABLE IF NOT EXISTS {table} ("))
+def _rebuild_table(conn, schema: list, table: str, columns: str, select: str) -> None:
+    """Recreate ``table`` as the ``schema`` statements shape it, with its
+    indexes, from the rows ``select`` reads out of the old one (into
+    ``columns``). ``schema`` is the list of the step's time: a frozen one
+    for a step a later step moved past, db.USERS_SCHEMA for the newest."""
+    create = next(s for s in schema if s.startswith(f"CREATE TABLE IF NOT EXISTS {table} ("))
     conn.execute(f"DROP TABLE IF EXISTS {table}_new")
     conn.execute(create.replace(f"IF NOT EXISTS {table} (", f"{table}_new (", 1))
     conn.execute(f"INSERT INTO {table}_new ({columns}) {select}")
     conn.execute(f"DROP TABLE {table}")
     conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
-    for stmt in USERS_SCHEMA:
+    for stmt in schema:
         if re.search(rf" ON {table} ?\(", stmt):
             conn.execute(stmt)
 
@@ -697,17 +801,18 @@ def _v25_users_db(conn) -> None:
     for name, in conn.execute("SELECT username FROM users").fetchall():
         conn.execute("UPDATE users SET id = ? WHERE username = ?", (new_account_id(), name))
     cols = _columns(conn, "users")
-    _v25_rebuild(conn, "users", ", ".join(cols), f"SELECT {', '.join(cols)} FROM users")
+    _rebuild_table(conn, _V25_USERS_SCHEMA, "users", ", ".join(cols), f"SELECT {', '.join(cols)} FROM users")
     for table in _V25_RENAMED:
-        cols = [c for c in _columns(conn, table) if c not in _V31_DROPPED.get(table, ())]
+        cols = _columns(conn, table)
         new = ", ".join("user_id" if c == "username" else c for c in cols)
         old = ", ".join("u.id" if c == "username" else f"t.{c}" for c in cols)
-        _v25_rebuild(conn, table, new, f"SELECT {old} FROM {table} t JOIN users u ON u.username = t.username")
+        _rebuild_table(conn, _V25_USERS_SCHEMA, table, new,
+                       f"SELECT {old} FROM {table} t JOIN users u ON u.username = t.username")
     conn.execute("DELETE FROM jobs WHERE owner != '' AND owner NOT IN (SELECT username FROM users)")
     for table, column in _V25_PEOPLE:
         conn.execute(f"UPDATE {table} SET {column} = "
                      f"COALESCE((SELECT u.id FROM users u WHERE u.username = {table}.{column}), '')")
-    conn.execute(next(s for s in USERS_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS share_users (")))
+    conn.execute(next(s for s in _V25_USERS_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS share_users (")))
     for token, allowed in conn.execute("SELECT token, allowed_users FROM shares WHERE allowed_users != ''").fetchall():
         for item in allowed.split(","):
             name, _, role = item.strip().partition(":")
@@ -716,8 +821,8 @@ def _v25_users_db(conn) -> None:
                          (token, role if role in ("view", "edit") else "view", name))
     cols = [c for c in _columns(conn, "shares") if c != "allowed_users"]
     old = ", ".join("COALESCE(u.id, '')" if c == "created_by" else f"s.{c}" for c in cols)
-    _v25_rebuild(conn, "shares", ", ".join(cols),
-                 f"SELECT {old} FROM shares s LEFT JOIN users u ON u.username = s.created_by")
+    _rebuild_table(conn, _V25_USERS_SCHEMA, "shares", ", ".join(cols),
+                   f"SELECT {old} FROM shares s LEFT JOIN users u ON u.username = s.created_by")
     conn.execute(f"DELETE FROM mcp_oauth WHERE kind IN ({', '.join('?' * len(_V25_NAMED_OAUTH))})", _V25_NAMED_OAUTH)
     _v25_reseal_publisher_sessions(conn)
 
@@ -904,13 +1009,13 @@ def _v30_workspace(pdb: sqlite3.Connection) -> None:
 
 def _v31_session_columns(conn: sqlite3.Connection) -> None:
     """``sessions`` loses ``guest_date``, a column the guest login wrote and
-    nothing read (``_V31_DROPPED``): the table is rebuilt in its
-    db.USERS_SCHEMA shape with its rows, so every session stays signed in.
-    A directory that step 25 brought past this already is left as it is."""
-    for table, dropped in _V31_DROPPED.items():
-        cols = [c for c in _columns(conn, table) if c not in dropped]
-        if len(cols) < len(_columns(conn, table)):
-            _v25_rebuild(conn, table, ", ".join(cols), f"SELECT {', '.join(cols)} FROM {table}")
+    nothing read: the table is rebuilt in its db.USERS_SCHEMA shape with its
+    rows, so every session stays signed in. This is the newest step, so it
+    builds from the live statements; a step that moves ``sessions`` on
+    again freezes them. A table without the column is left as it is."""
+    cols = [c for c in _columns(conn, "sessions") if c != "guest_date"]
+    if len(cols) < len(_columns(conn, "sessions")):
+        _rebuild_table(conn, USERS_SCHEMA, "sessions", ", ".join(cols), f"SELECT {', '.join(cols)} FROM sessions")
     conn.commit()
 
 

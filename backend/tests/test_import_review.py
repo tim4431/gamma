@@ -58,21 +58,24 @@ def uploads(ws):
     return {p.name for p in ws_uploads_dir(ws).glob("*")}
 
 
-def test_zotero_selection_upload_once_and_commit_retry(guest):
-    ws = workspace_of(guest_name())
+def test_zotero_selection_upload_once_and_commit_retry(accounts):
+    # Its own account: the session-wide guest also runs test_zotero_import,
+    # whose RDF this is, and a page of it imported here would merge there.
+    owner = accounts["review-owner"]
+    ws = workspace_of("review-owner")
     before, before_files = rows(ws), uploads(ws)
     rdf = RDF.replace("s41586-000-00000-0", "selected-zotero")
-    plan = review(guest, archive({"library.rdf": rdf, "files/3/unique.pdf": _annotated_pdf(b"Selected Zotero paper")}), "zotero")
+    plan = review(owner, archive({"library.rdf": rdf, "files/3/unique.pdf": _annotated_pdf(b"Selected Zotero paper")}), "zotero")
     assert rows(ws) == before and uploads(ws) == before_files
     paper = next(p for p in plan["pages"] if p["kind"] == "pdf")
     assert any(p["missing"] for p in plan["pages"])
-    job = commit(guest, plan, paper["selection_ids"])
+    job = commit(owner, plan, paper["selection_ids"])
     data = report(job)
     assert data["items"] == 1 and data["pages_created"] == 1
     assert all(w["title"] != "Proximal Policy Optimization" for w in data["warnings"])
-    again = start(guest, plan, paper["selection_ids"])  # a retried request answers the same job
+    again = start(owner, plan, paper["selection_ids"])  # a retried request answers the same job
     assert again.status_code == 200 and again.json()["id"] == job["id"]
-    assert start(guest, plan, []).status_code == 409
+    assert start(owner, plan, []).status_code == 409
 
 
 def test_empty_selection_and_bad_ids_do_not_import(guest):

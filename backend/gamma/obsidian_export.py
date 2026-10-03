@@ -27,6 +27,7 @@ Upload references are rewritten by the caller with ``collect_and_rewrite``
 import json
 import re
 
+from . import bibtex as bibtex_mod
 from .blocks_store import page_attachment
 from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
@@ -211,7 +212,7 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
 
     lines = ["---", *fm, "---", ""] if fm else []
     if props.get("bibtex"):
-        lines += ["```bibtex", (props["bibtex"] or "").strip(), "```", ""]
+        lines += ["```bibtex", bibtex_mod.page_entry(props), "```", ""]
 
     r = _Renderer(ctx, page_id, pdf_leaf, highlights, notes)
     for child in page["children"]:

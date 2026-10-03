@@ -14,7 +14,7 @@ import pytest
 
 import gamma.app as app_mod
 from gamma import backups, config, migrations
-from gamma.db import SCHEMA_VERSION, SchemaOutdated, connect_users_db, page_now, register_functions
+from gamma.db import SCHEMA_VERSION, USERS_SCHEMA, SchemaOutdated, connect_users_db, page_now, register_functions
 
 OLD = "2024-01-01T00:00:00.000000Z"
 
@@ -961,24 +961,54 @@ def test_backup_with_uploads_zip_and_restore(data_dir):
     assert backups.delete(b["name"]) is True and backups.delete(b["name"]) is False
 
 
-def test_v31_drops_the_dead_session_column(data_dir):
+def test_v31_drops_the_dead_session_column(data_dir, monkeypatch):
     # sessions loses guest_date, which the guest login wrote and nothing read;
-    # the rows stay, so no one is signed out. Step 25 builds the table without
-    # it, so a directory it brought up (v24_users_db + ensure_current) is left
-    # alone; a v30 directory that still has it (an older build of step 25)
-    # gets the rebuild. A second run changes nothing.
+    # the rows stay, so no one is signed out. Step 25 builds the table as its
+    # own time shaped it (_V25_USERS_SCHEMA), guest_date included, so a
+    # directory stopped at version 30 still has the column and step 31 is what
+    # takes it away. A second run changes nothing.
     v24_users_db()
-    migrations.ensure_current()
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
-        assert "guest_date" not in [r[1] for r in conn.execute("PRAGMA table_info(sessions)")]
-        conn.execute("ALTER TABLE sessions ADD COLUMN guest_date TEXT")
-        conn.execute("INSERT INTO users (id, username, password_hash, created_at) VALUES ('u31', 'alice31', 'x', ?)", (OLD,))
-        conn.execute("INSERT INTO sessions (token, user_id, guest_date, created_at, via) VALUES (?, ?, ?, ?, ?)",
-                     ("tok-31", "u31", "2026-01-01", OLD, "cloud"))
-        conn.execute("PRAGMA user_version = 30")
+        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES ('alice31', 'x', ?)", (OLD,))
+        conn.execute("INSERT INTO sessions (token, username, guest_date, created_at, via) VALUES (?, ?, ?, ?, ?)",
+                     ("tok-31", "alice31", "2026-01-01", OLD, "cloud"))
         conn.commit()
+    with monkeypatch.context() as m:
+        m.setattr(migrations, "STEPS", [step for step in migrations.STEPS if step[0] <= 30])
+        assert migrations.ensure_current()["applied"][-1] == "highlight_shape"
+    assert migrations.data_version() == 30
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
+        assert [r[1] for r in conn.execute("PRAGMA table_info(sessions)")] == ["token", "user_id", "guest_date", "created_at", "via"]
+        (alice,) = conn.execute("SELECT id FROM users WHERE username = 'alice31'").fetchone()
     assert migrations.ensure_current()["applied"] == ["session_columns"]
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         assert [r[1] for r in conn.execute("PRAGMA table_info(sessions)")] == ["token", "user_id", "created_at", "via"]
-        assert conn.execute("SELECT user_id, created_at, via FROM sessions WHERE token = 'tok-31'").fetchone() == ("u31", OLD, "cloud")
+        assert conn.execute("SELECT user_id, created_at, via FROM sessions WHERE token = 'tok-31'").fetchone() == (alice, OLD, "cloud")
     assert migrations.ensure_current()["applied"] == []
+
+
+def users_db_shape(conn) -> dict:
+    """Every table of a users.db with its columns (name, type, not null,
+    default, primary key) and the indexes on it, as PRAGMA reports them."""
+    tables = sorted(r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"))
+    return {table: {
+        "columns": [tuple(r[1:]) for r in conn.execute(f"PRAGMA table_info({table})")],
+        "indexes": sorted((r[0], tuple(c[2] for c in conn.execute(f"PRAGMA index_info({r[0]})")))
+                          for r in conn.execute(f"PRAGMA index_list({table})") if r[3] == "c"),
+    } for table in tables}
+
+
+def test_an_upgraded_users_db_has_a_fresh_installs_shape(data_dir):
+    # the frozen statements the steps build from end where db.USERS_SCHEMA
+    # is: a users.db brought up from version 24, rows and all, has the same
+    # tables, columns (names, types, constraints, order) and indexes as one a
+    # fresh install creates
+    build_v24_accounts()
+    assert migrations.ensure_current()["applied"][0] == "account_ids"
+    with closing(sqlite3.connect(":memory:")) as fresh:
+        for stmt in USERS_SCHEMA:
+            fresh.execute(stmt)
+        expected = users_db_shape(fresh)
+    with connect_users_db() as conn:
+        assert users_db_shape(conn) == expected

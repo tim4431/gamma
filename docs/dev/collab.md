@@ -75,9 +75,11 @@ or a label is the one change that reaches pages, so it has its own
 endpoint: `DELETE /folders/{id}` / `DELETE /labels/{id}`
 (`routers/folders.py`, [api.md](api.md) "Folders and labels"). One
 transaction runs the subtree's `delete` on the tree and one `set` per page
-that carried an id of it (`ops.apply_batches`), and files the folder chats
-into the library chat's history. The folder's shares stop after the
-commit. A tree has everything a page has: its op log
+that carried an id of it (`ops.apply_batches`). The tree's `delete` op
+itself files the folder chats into the library chat's history and
+`ops.after_commit` stops the folder's shares, so a folder deleted by a
+plain tree batch (a mirror round or the iPad relaying one) is cleaned up
+the same way; only the pages' refiling is the endpoint's own. A tree has everything a page has: its op log
 (`GET /pages/folders/ops?since=`), its row of the change log (touched
 `live` by every batch), its room (`/ws/page/folders`) and a subtree read
 with `seq` (`GET /blocks/folders/subtree`). Only members reach a tree: no

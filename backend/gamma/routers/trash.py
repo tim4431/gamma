@@ -6,7 +6,7 @@ a page. Share links never reach it."""
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import trash
-from ..auth import require_ws
+from ..auth import actor_of, require_ws
 from ..db import connect_pages_db
 from ..ops import OpError, restore_page
 
@@ -29,7 +29,7 @@ def restore_deleted(page_id: str, request: Request):
     ws = require_ws(request, write=True)
     try:
         with connect_pages_db(ws) as conn:
-            return restore_page(ws, conn, page_id, actor=request.state.user_id or "")
+            return restore_page(ws, conn, page_id, actor=actor_of(request))
     except OpError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -41,7 +41,7 @@ def delete_forever(page_id: str, request: Request):
     the orphan check (gamma/upload_gc.py) → ``{ok, id}``. 404 when it is not
     in Recently deleted."""
     ws = require_ws(request, write=True)
-    if trash.purge(ws, page_id, actor=request.state.user_id or "") is None:
+    if trash.purge(ws, page_id, actor=actor_of(request)) is None:
         raise HTTPException(status_code=404, detail="not in Recently deleted")
     return {"ok": True, "id": page_id}
 
@@ -50,4 +50,4 @@ def delete_forever(page_id: str, request: Request):
 def empty_trash(request: Request):
     """Delete every page of Recently deleted for good → ``{deleted: [ids]}``."""
     ws = require_ws(request, write=True)
-    return {"deleted": trash.empty(ws, actor=request.state.user_id or "")}
+    return {"deleted": trash.empty(ws, actor=actor_of(request))}

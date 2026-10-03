@@ -28,7 +28,7 @@ pages' subtrees and assets (share_grant / share_scope).
 The token lives until "Stop sharing" (DELETE; sharing again mints a new
 one). A folder share names its folder by id, so a rename or a move changes
 nothing about it; it dies with the folder (``delete_folder_shares``, run by
-DELETE /folders/{id}). Unknown tokens are counted
+``ops.after_commit`` for every path that deletes one). Unknown tokens are counted
 per IP (gamma/auth.py note_share_miss). A change that can take access away
 re-checks the open page sockets of the workspace (``collab.revalidate``),
 so a stopped share stops the live updates too.
@@ -44,7 +44,7 @@ from pydantic import BaseModel
 from .. import collab
 from ..auth import SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws, share_access, share_lookup
 from ..blocks_store import FOLDERS, TRASH, page_attachment
-from ..db import account_name, account_names, connect_pages_db, connect_users_db, page_now
+from ..db import account_name, account_names, connect_pages_db, connect_users_db, delete_shares, page_now
 
 router = APIRouter(prefix="/api", tags=["shares"])
 
@@ -215,28 +215,25 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
 def _delete(ws: str, target: ShareScope) -> dict:
     """Stop sharing: the token dies; sharing again mints a new one."""
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM share_users WHERE token IN (SELECT token FROM shares "
-                     "WHERE workspace_id = ? AND page_id = ? AND folder = ?)", (ws, target.page, target.folder))
-        cur = conn.execute("DELETE FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
-                           (ws, target.page, target.folder))
+        removed = delete_shares(conn, "workspace_id = ? AND page_id = ? AND folder = ?",
+                                (ws, target.page, target.folder))
         conn.commit()
     collab.revalidate(ws)
-    return {"ok": True, "removed": cur.rowcount}
+    return {"ok": True, "removed": removed}
 
 
 def delete_folder_shares(ws: str, folder_ids) -> int:
-    """The shares of folders that are gone (DELETE /folders/{id}: the folder
-    and the folders below it) die with them. Returns how many went."""
-    ids = json.dumps(sorted(folder_ids))
+    """The shares of folders that are gone (the folder and the folders below
+    it; ``ops.after_commit`` runs this for the tree batch that deleted them,
+    DELETE /folders/{id}'s or a mirror's) die with them. Returns how many
+    went."""
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM share_users WHERE token IN (SELECT token FROM shares WHERE workspace_id = ? "
-                     "AND folder IN (SELECT value FROM json_each(?)))", (ws, ids))
-        cur = conn.execute("DELETE FROM shares WHERE workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
-                           (ws, ids))
+        removed = delete_shares(conn, "workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
+                                (ws, json.dumps(sorted(folder_ids))))
         conn.commit()
-    if cur.rowcount:
+    if removed:
         collab.revalidate(ws)
-    return cur.rowcount
+    return removed
 
 
 # ---- folder shares (before the page routes: "folder" is a static segment) ---

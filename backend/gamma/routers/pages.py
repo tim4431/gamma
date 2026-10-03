@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import pdf_index, publish
-from ..auth import require_ws
+from ..auth import actor_of, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
     TRASH,
@@ -91,7 +91,7 @@ def create_page_endpoint(payload: PageCreate, request: Request):
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
             return JSONResponse(status_code=402, content=refusal)
-        return create_page(conn, payload.title, props, actor=request.state.user_id or "", block_id=payload.id)
+        return create_page(conn, payload.title, props, actor=actor_of(request), block_id=payload.id)
 
 
 class DocsLookup(BaseModel):
@@ -146,7 +146,7 @@ def page_from_file(payload: FromFile, request: Request):
         # the chip's text is the display name; the stored name is a hash, so
         # take the title from the request's ``original`` when given
         result = markdown_page(ws, conn, path.read_bytes(), payload.original or original, payload.folder,
-                               actor=request.state.user_id or "")
+                               actor=actor_of(request))
         row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (result["block_id"],)).fetchone()
     return {"page": block_to_dict(row), "created": True, "imported": result["imported"]}
 
@@ -196,7 +196,7 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         op = {"op": "set", "id": page_id, "props": props_patch(page["properties"], props)}
         if content != page["content"]:
             op["content"] = content
-        result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=request.state.user_id or ""))
+        result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
 
 
@@ -218,6 +218,6 @@ def detach_pdf(page_id: str, request: Request):
             props.pop(key, None)
         result = after_commit(ws, conn, apply_ops(
             conn, page_id, [{"op": "set", "id": page_id,
-                             "props": props_patch(page["properties"], props)}], actor=request.state.user_id or ""))
+                             "props": props_patch(page["properties"], props)}], actor=actor_of(request)))
         pdf_index.purge_unused(ws, conn)
     return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}

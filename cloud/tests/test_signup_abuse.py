@@ -1,13 +1,14 @@
 """What stands between open registration and one person making accounts
-without limit: alias-aware uniqueness, the throwaway-domain list, and a
-rate-limit bucket an IPv6 prefix cannot walk out of."""
+without limit: alias-aware uniqueness, the throwaway-domain list, and
+rate-limit buckets that neither an IPv6 prefix nor a mail alias can walk
+out of."""
 
 from contextlib import closing
 
 import pytest
 from conftest import invite, last_link, set_setting
 
-from gammacloud import accounts, db, mail, ratelimit, settings
+from gammacloud import accounts, db, mail, ratelimit
 
 
 def signup(client, email, username, code=None):
@@ -158,3 +159,54 @@ def test_the_password_form_and_provider_sign_up_count_separately(client):
                          headers=ip).status_code for i in range(6)]
     assert codes == [201] * 5 + [429]
     assert client.post("/api/oauth/signup", json={"username": "someone"}, headers=ip).status_code != 429
+
+
+# --- one inbox, one allowance -------------------------------------------------
+# by_login and by_email resolve every alias of an inbox to the one account, so
+# the per-name windows count the inbox (accounts.login_bucket), not the spelling.
+
+ALIASES = ("foo@gmail.com", "foo+1@gmail.com", "f.oo@gmail.com", "F.O.O+x@googlemail.com")
+
+
+def test_login_bucket_is_the_inbox_or_the_username():
+    assert len({accounts.login_bucket(a) for a in ALIASES}) == 1
+    assert accounts.login_bucket("a+b@example.org") == "a+b@example.org"  # unlisted domain: taken literally
+    assert accounts.login_bucket("  Alice ") == "alice"
+
+
+def test_login_aliases_share_one_allowance(client):
+    signup(client, "foo@gmail.com", "foo")
+    client.post("/api/verify", json={"token": last_link("/verify")})
+    client.post("/api/logout")
+    # ten wrong guesses, each under another spelling and from another address,
+    # so only the per-name window can be what refuses the eleventh
+    for i in range(10):
+        r = client.post("/api/login", json={"login": ALIASES[i % len(ALIASES)], "password": "wrong"},
+                        headers={"cf-connecting-ip": f"203.0.113.{i + 1}"})
+        assert r.status_code == 401, i
+    r = client.post("/api/login", json={"login": "foo+11@gmail.com", "password": "correct horse battery"},
+                    headers={"cf-connecting-ip": "203.0.113.100"})
+    assert r.status_code == 429
+    # the authorize page's sign-in counts in the same window
+    from test_oidc import authorize_params, pkce, request_id_from
+    rid = request_id_from(client.get("/authorize", params=authorize_params(pkce()[1])).text)
+    r = client.post("/authorize/login", json={"request_id": rid, "login": "f.o.o@gmail.com",
+                                              "password": "correct horse battery"},
+                    headers={"cf-connecting-ip": "203.0.113.101"})
+    assert r.status_code == 429
+    # another inbox is not affected
+    r = client.post("/api/login", json={"login": "bar@gmail.com", "password": "wrong"},
+                    headers={"cf-connecting-ip": "203.0.113.102"})
+    assert r.status_code == 401
+
+
+def test_reset_mails_to_one_inbox_share_one_allowance(client):
+    signup(client, "foo@gmail.com", "foo")
+    mail.outbox.clear()
+    # three an hour per inbox; the per-IP window (five) is not what trips here
+    for alias in ALIASES[:3]:
+        assert client.post("/api/reset/request", json={"email": alias}).status_code == 200, alias
+    assert client.post("/api/reset/request", json={"email": ALIASES[3]}).status_code == 429
+    assert [m["to"] for m in mail.outbox] == ["foo@gmail.com"] * 3
+    # another inbox from the same address still gets its mail
+    assert client.post("/api/reset/request", json={"email": "bar@gmail.com"}).status_code == 200

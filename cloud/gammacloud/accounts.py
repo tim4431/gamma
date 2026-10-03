@@ -174,6 +174,17 @@ def by_login(conn, login: str):
     return by_username(conn, login)
 
 
+def login_bucket(login: str) -> str:
+    """The name a per-account rate limit counts, for the login the form sent
+    or the address a reset names. An address is cut to the inbox it reaches
+    (``email_canon``): ``by_email`` answers to every alias of one inbox, so
+    the aliases must spend one allowance, not one each. A username is used
+    as typed, lowercased. ``/api/login`` and ``/authorize/login`` build the
+    same key from it and so share their window."""
+    login = (login or "").strip().lower()[:254]
+    return email_canon(login) if "@" in login else login
+
+
 def email_taken(conn, email: str, exclude_id: str = "") -> bool:
     """Whether an account already has this address or another alias of the
     same inbox. A deleted account keeps its address for the grace period,

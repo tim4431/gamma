@@ -536,10 +536,13 @@ def label_names(conn) -> dict[str, str]:
 
 def named(children: list, name: str) -> list:
     """The children (``(id, name)`` pairs) called ``name``: exactly, else
-    ignoring case."""
+    ignoring case. ``lower()``, not ``casefold()``: the web app
+    (``findNamed``) and the extension (``folderByPath``) compare with
+    JavaScript's ``toLowerCase()``, and the three must agree on which
+    folder a typed path names ("Straße" is not "STRASSE" to any of them)."""
     name = name.strip()
     exact = [c for c in children if c[1].strip() == name]
-    return exact or [c for c in children if c[1].strip().casefold() == name.casefold()]
+    return exact or [c for c in children if c[1].strip().lower() == name.lower()]
 
 
 def descend(kids: dict, start: str, names) -> tuple[list[str], list[str]]:

@@ -143,7 +143,8 @@ import {
   findPageForUrl,
   folderChain,
   folderPath,
-  folderPosition,
+  folderPositions,
+  folderEntries,
   folderSubtree,
   inFolder,
   labelName,
@@ -1382,16 +1383,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       : t("Moved {n} folders to “{to}”.", { n: moving.length, to }));
   }
 
-  // Put a folder right before or after a sibling (dropped on the sibling's
-  // edge in the custom order): one `move` with a fractional key between its
-  // new neighbours, which every member sees in the same order.
-  async function placeFolder(id, target, after) {
+  // Put folders right before or after a sibling (dropped on the sibling's
+  // edge in the custom order), in the order they are listed: one `move`
+  // each with a fractional key between the new neighbours, in one batch on
+  // the folder tree, which every member sees in the same order. A folder
+  // never lands below itself.
+  async function placeFolders(ids, target, after) {
     const parent = libTree.folders.get(target)?.parent ?? "";
-    const order = childFolders(libTree, parent).filter((f) => f !== id);
+    const listed = (id) => childFolders(libTree, libTree.folders.get(id).parent).indexOf(id);
+    const moving = ids.filter((id) => libTree.folders.has(id) && id !== target && !(parent && inFolder(libTree, parent, id)))
+      .sort((a, b) => listed(a) - listed(b));
+    if (!moving.length) return;
+    const order = childFolders(libTree, parent).filter((f) => !moving.includes(f));
     const before = after ? order[order.indexOf(target) + 1] || "" : target;
+    const positions = folderPositions(libTree, parent, before, moving);
     try {
-      await treeOps("folders", [{ op: "move", id, parent: parent || "folders",
-        position: folderPosition(libTree, parent, before, id) }]);
+      await treeOps("folders", moving.map((id, i) => ({ op: "move", id, parent: parent || "folders", position: positions[i] })));
     } catch (err) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
@@ -1442,7 +1449,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setFolderDragOver(null);
     const folders = droppedFolders(e);
     if (folders) {
-      if (edge) { if (!folders.includes(target)) placeFolder(folders[0], target, edge === "after"); }
+      if (edge) { if (!folders.includes(target)) placeFolders(folders, target, edge === "after"); }
       else moveFolders(folders, target);
       return;
     }
@@ -4947,7 +4954,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setShareGate(null);
       setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
                      audience: data.audience || "anyone", viewer: data.viewer || "",
-                     viewerIsGuest: Boolean(data.viewer_is_guest) });
+                     viewerIsGuest: Boolean(data.viewer_is_guest), workspace: data.workspace_id || "" });
       if (!data.viewer || data.viewer_is_guest) {
         // No account behind this visitor: a per-browser display name labels
         // their presence and edits (X-Gamma-Name / the socket's ?name=).
@@ -5547,10 +5554,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function commitLabelInput() {
     const name = labelInput.trim();
     if (!name) return;
-    const folders = [...libTree.folders.values()];
     const label = findNamed(libTree.labels.values(), name);
-    const folder = findNamed(folders.map((f) => ({ id: f.id, name: folderPath(libTree, f.id) })), name)
-      || findNamed(folders, name);
+    const folder = findNamed(folderEntries(libTree), name) || findNamed(libTree.folders.values(), name);
     pickLabelSuggestion(label ? { kind: "label", id: label.id }
       : folder ? { kind: "folder", id: folder.id } : { kind: "newLabel", name });
   }
@@ -7085,7 +7090,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // inside a label → that label's pages only. Date sorts rank a container by
   // its most recent content; an empty folder has no timestamps and sinks to
   // the bottom. The custom order keeps the folders' own order (dragged by
-  // hand, placeFolder) ahead of the pages in the library's. The search box
+  // hand, placeFolders) ahead of the pages in the library's. The search box
   // doesn't drop anything: matches are floated to the top of the sort and
   // the rest are flagged for dimming.
   const homeItems = useMemo(() => {
@@ -7748,8 +7753,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const labelSugs = q ? [...libTree.labels.values()]
                       .filter((l) => l.name.toLowerCase().includes(ql) && !filed.labels.includes(l.id))
                       .sort((a, b) => a.name.localeCompare(b.name)) : [];
-                    const folderSugs = q ? [...libTree.folders.keys()]
-                      .map((id) => ({ id, name: folderPath(libTree, id) }))
+                    const folderSugs = q ? folderEntries(libTree)
                       .filter((f) => f.name.toLowerCase().includes(ql) && !filed.folders.includes(f.id))
                       .sort((a, b) => a.name.localeCompare(b.name)) : [];
                     // A name no label has can become one, or a top-level folder.
@@ -9687,9 +9691,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ? t("This is your page — open it in your library instead of the shared view")
                 : t("This is your folder — open it in your library instead of the shared view")}
               onClick={() => {
+                // Out of the share view (no token) into the share's workspace,
+                // named by ws=: a page deep link finds its workspace on its
+                // own (chooseWorkspace), a folder's has no such lookup.
+                const ws = shareInfo.workspace ? `&ws=${encodeURIComponent(shareInfo.workspace)}` : "";
                 window.location.href = focusedBlockId
-                  ? `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`
-                  : homeUrlFor(sharedFolder?.name || "", "");
+                  ? `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}${ws}`
+                  : `${window.location.pathname}?folder=${encodeURIComponent(sharedFolder?.id || "")}${ws}`;
               }}
             >{t("Open in my library")}</button>
           ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (

@@ -13,6 +13,7 @@ import re
 # aliased: _render_readable_block has a local ``quote`` (the highlight text)
 from urllib.parse import quote as urlquote
 
+from . import bibtex as bibtex_mod
 from .blocks_store import block_to_dict, page_attachment
 from .highlights import is_highlight, page_of
 from .note_markup import obsidian_image_sizes
@@ -105,7 +106,7 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
 
     lines = ["---", *fm, "---", "", f"# {title}", ""]
     if props.get("bibtex"):
-        lines += ["```bibtex", (props["bibtex"] or "").strip(), "```", ""]
+        lines += ["```bibtex", bibtex_mod.page_entry(props), "```", ""]
 
     for child in page["children"]:
         _render_readable_block(child, 0, lines, highlights, notes,

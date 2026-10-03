@@ -582,6 +582,7 @@ class _ZoteroBuilder(_Builder):
                    or (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"#gamma_item_{n}"),
             "title": title,
             "meta": meta or {},
+            "cite_key": bibtex_mod.pinned_key(props),
             "tags": self.filing.tags(props),
             "folders": self.filing.folders(props),
             "pdf_path": pdf_arc,
@@ -818,16 +819,11 @@ class _BibtexBuilder(_Builder):
 
     def add_page(self, n, rows, page):
         props = page.get("properties") or {}
-        meta = props.get("meta") if isinstance(props.get("meta"), dict) else None
-        pin = bibtex_mod.clean_key(props.get("cite_key") or "")
-        text = (props.get("bibtex") or "").strip() or (bibtex_mod.build_entry(meta, pin) if meta else "")
+        text = bibtex_mod.page_entry(props)
         if not text:
             self.skip(page, "page has no paper metadata")
             return
-        # The cached entry may predate the pin, or carry a registrar's own key.
-        if pin:
-            text = bibtex_mod.with_key(text, pin)
-        self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(pin),
+        self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(bibtex_mod.pinned_key(props)),
                              "page_id": page["id"], "title": (page.get("content") or "").strip()})
 
     def keyed_records(self) -> list[dict]:

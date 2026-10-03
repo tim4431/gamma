@@ -174,10 +174,11 @@ def _person(seq, name: str):
 
 def build_rdf(items: list[dict]) -> str:
     """items: one dict per page —
-    ``{key, title, meta, tags, folders, pdf_path, notes}`` where ``folders``
-    are the collection paths it is in (each a list of names from the top),
-    ``pdf_path`` is the zip path relative to the .rdf (or None) and
-    ``notes`` is a list of HTML strings. → the .rdf document text."""
+    ``{key, title, meta, cite_key, tags, folders, pdf_path, notes}`` where
+    ``folders`` are the collection paths it is in (each a list of names
+    from the top), ``cite_key`` the citation key pinned on the page ("" for
+    none), ``pdf_path`` the zip path relative to the .rdf (or None) and
+    ``notes`` a list of HTML strings. → the .rdf document text."""
     root = ET.Element(_q("rdf", "RDF"))
 
     folder_paths = set()
@@ -217,6 +218,12 @@ def build_rdf(items: list[dict]) -> str:
                     _person(seq, str(name))
 
         _sub(el, "dc", "title", item["title"])
+        if item.get("cite_key"):
+            # Zotero's Extra field travels as dc:description; Better BibTeX
+            # pins its key there as a "Citation Key:" line, which is what the
+            # import reads back (zotero_import._citation_key) — so a library
+            # that goes out and comes back keeps citing the same keys.
+            _sub(el, "dc", "description", f"Citation Key: {item['cite_key']}")
         year = str(meta.get("year") or "").strip()
         if year:
             _sub(el, "dc", "date", year)

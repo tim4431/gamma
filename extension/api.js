@@ -72,10 +72,17 @@ export async function checkedDefaultFolder(settings) {
 }
 
 // The id of the folder a path names ("a/b", split as POST /api/clip splits
-// it) among GET /api/library/folders' `folders` ({id, path}), or "".
+// it: blank names left out, the rest trimmed) among GET /api/library/folders'
+// `folders` ({id, path}), or "". Compared name by name, so a folder itself
+// named "a/b" is not what typed "a/b" (folder a, subfolder b) files into.
+// An exact match first, else one differing only in case — as the server
+// (blocks_store.named) and the app (libraryUtils.findNamed) match names.
 export function folderByPath(folders, path) {
-  const names = path.split("/").map((name) => name.trim()).filter(Boolean).join("/");
-  const found = folders.find((f) => f.path.join("/") === names);
+  const names = path.split("/").map((name) => name.trim()).filter(Boolean);
+  const matches = (same) => (f) => f.path.length === names.length
+    && f.path.every((name, i) => same(name.trim(), names[i]));
+  const found = folders.find(matches((a, b) => a === b))
+    || folders.find(matches((a, b) => a.toLowerCase() === b.toLowerCase()));
   return found ? found.id : "";
 }
 

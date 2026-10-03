@@ -83,6 +83,14 @@ export async function folderScenarios(env) {
       assertEq((await tree("folders")).find((f) => f.content === "Alpha").children.map((f) => f.content).join("|"), "Gamma");
       await page.reload();
       await until(async () => (await order()).join("|") === "Empty one|Alpha|Beta|Lab, renamed / 2026", { what: "the order stays" });
+      // several selected folders dropped on an edge all land there, in their listed order (Beta picked first)
+      await row(page, "Beta").click();
+      await row(page, "Alpha").click({ modifiers: ["Control"] });
+      await drag(page, row(page, "Beta"), row(page, "Empty one"), "before");
+      await until(async () => (await order()).join("|") === "Alpha|Beta|Empty one|Lab, renamed / 2026",
+        { what: "Alpha and Beta land before Empty one" });
+      assertEq((await tree("folders")).map((f) => f.content).join("|"), "Alpha|Beta|Empty one|Lab, renamed / 2026",
+        "the tree keeps the order");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

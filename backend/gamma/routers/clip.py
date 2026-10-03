@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import require_user_id, require_ws
+from ..auth import actor_of, require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -278,7 +278,7 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
 # Sync on purpose: resolving and downloading run in FastAPI's threadpool.
 @router.post("/clip")
 def clip(payload: ClipRequest, request: Request):
-    return save_clip(require_ws(request, write=True), request.state.user_id or "", payload)
+    return save_clip(require_ws(request, write=True), actor_of(request), payload)
 
 
 def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
@@ -486,10 +486,10 @@ def clip_note(payload: ClipNoteRequest, request: Request):
                 "AND json_extract(properties, '$.web_clips') = 1 ORDER BY created_at, id LIMIT 1"
             ).fetchone()
             page_id = row[0] if row else create_page(conn, WEB_CLIPS_TITLE, {"web_clips": 1},
-                                                     actor=request.state.user_id or "")["id"]
+                                                     actor=actor_of(request))["id"]
         block_id = new_block_id()
         after_commit(ws, conn, apply_ops(conn, page_id, [
             {"op": "insert", "id": block_id, "parent": page_id, "content": content}],
-            actor=request.state.user_id or ""))
+            actor=actor_of(request)))
     return {"block_id": block_id, "page_id": page_id,
             "open_url": f"/?block={urllib.parse.quote(block_id)}"}

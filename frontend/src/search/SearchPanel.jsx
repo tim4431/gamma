@@ -23,7 +23,7 @@ import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
-import { filedIn, filingChips, folderPath, folderSubtree, pageAttachment } from "../library/libraryUtils";
+import { filedIn, filingChips, folderEntries, folderSubtree, pageAttachment } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -81,7 +81,7 @@ export default function SearchPanel({
   // filed in it or below), {kind, id, name} — a folder named by its path
   const chipOptions = useMemo(() => [
     ...[...tree.labels.values()].map((l) => ({ kind: "label", id: l.id, name: l.name })),
-    ...[...tree.folders.keys()].map((id) => ({ kind: "folder", id, name: folderPath(tree, id) })),
+    ...folderEntries(tree).map((f) => ({ kind: "folder", ...f })),
   ].sort((a, b) => a.name.localeCompare(b.name)), [tree]);
   const suggestions = useMemo(() => {
     const qq = q.toLowerCase();

@@ -43,7 +43,9 @@ nearby, since most are extensions of existing code rather than new systems.
 **Built since this survey** — a `bibtex` export mode for a page or a folder,
 unique keys, a pinned `cite_key`, and a share-link URL that always serves the
 current `.bib`. See
-[import_export.md](../dev/import_export.md#bibtex-bibliography). The rest of
+[import_export.md](../dev/import_export.md#bibtex-bibliography). The "Copy
+BibTeX" action on a multi-selection proposed below (and in the suggested
+order) is still unbuilt: the library view has no such command. The rest of
 this entry is the survey as written.
 
 **Zotero.** Select any items, a collection or the whole library and export

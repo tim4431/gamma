@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
   NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
-  firstFolderPath, folderChain, folderPath, folderPosition, folderSubtree, formatFullDate, formatRelativeTime, formatShortDate,
+  firstFolderPath, folderChain, folderEntries, folderPath, folderPosition, folderPositions, folderSubtree, formatFullDate, formatRelativeTime, formatShortDate,
   inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
@@ -46,6 +46,7 @@ test("paths read as names joined, never split; labels by id, No label by its tit
   const tree = libraryTree(listing);
   assert.equal(folderPath(tree, "qec"), "Physics / QEC / codes, 2026");
   assert.equal(folderPath(tree, "gone"), "");
+  assert.deepEqual(folderEntries(tree), [{ id: "phys", name: "Physics" }, { id: "qec", name: "Physics / QEC / codes, 2026" }, { id: "bio", name: "Biology" }]);
   assert.deepEqual(folderChain(tree, "qec"), ["phys", "qec"]);
   assert.deepEqual(folderChain(tree, "gone"), []);
   assert.ok(inFolder(tree, "qec", "phys") && inFolder(tree, "phys", "phys"));
@@ -84,6 +85,15 @@ test("folderPosition orders by fractional keys: last, before a sibling, a siblin
   const between = folderPosition(tree, "", "bio", "phys");
   assert.ok(between < k2, "physics moved before biology stays before it");
   assert.ok(folderPosition(tree, "bio") > "", "into an empty folder");
+});
+
+test("folderPositions: several folders in order between the same two neighbours, the moved ones counted out", () => {
+  const tree = libraryTree(listing);
+  const [a, b] = folderPositions(tree, "", "bio", ["qec", "phys"]);
+  assert.ok(a < b && b < k2, "both before biology, in order");
+  assert.deepEqual(folderPositions(tree, "", "", ["qec"]).map((p) => p > k2), [true], "after the last");
+  assert.deepEqual(folderPositions(tree, "", "bio", []), [], "nothing to place");
+  assert.equal(folderPositions(tree, "", "bio", ["phys"])[0], folderPosition(tree, "", "bio", "phys"));
 });
 
 test("formatShortDate: today with the time, yesterday, a day this year, else the year", () => {

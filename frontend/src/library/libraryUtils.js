@@ -1,7 +1,7 @@
 // Pure application-domain helpers. Keeping these outside App makes the rules
 // usable by dialogs, home views, and future tests without coupling them to React.
 
-import { generateKeyBetween } from "fractional-indexing";
+import { generateNKeysBetween } from "fractional-indexing";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
@@ -49,6 +49,9 @@ export const siblingFolders = (tree, parent) => childFolders(tree, parent).map((
 export const folderPath = (tree, id) => tree.folders.get(id)?.path.join(PATH_SEP) || "";
 // A label's name, the "No label" pseudo-label's title included.
 export const labelName = (tree, id) => (id === NO_LABEL ? NO_LABEL_TITLE : tree.labels.get(id)?.name || "");
+// Every folder as {id, name}, named by its path: what a typed name is
+// matched against and what a folder picker or filter lists.
+export const folderEntries = (tree) => [...tree.folders.keys()].map((id) => ({ id, name: folderPath(tree, id) }));
 
 // The folders from the top down to `id`, ids; [] when it is no folder.
 export function folderChain(tree, id) {
@@ -100,15 +103,20 @@ export function findNamed(items, name) {
     || list.find((it) => it.name.trim().toLowerCase() === want.toLowerCase()) || null;
 }
 
-// The position (a fractional key) for a folder put among `parent`'s
-// folders before `before`, else last; `moving` is the folder itself when it
-// is already among them.
-export function folderPosition(tree, parent, before = "", moving = "") {
-  const siblings = siblingFolders(tree, parent).filter((folder) => folder.id !== moving);
+// The positions (fractional keys, in order) for the `moving` folders put
+// among `parent`'s folders before `before`, else last — those of them
+// already among the siblings are counted out first, so a drop beside a
+// neighbour lands between the right two.
+export function folderPositions(tree, parent, before = "", moving = []) {
+  const skip = new Set(moving);
+  const siblings = siblingFolders(tree, parent).filter((folder) => !skip.has(folder.id));
   const at = siblings.findIndex((folder) => folder.id === before);
   const idx = at < 0 ? siblings.length : at;
-  return generateKeyBetween(siblings[idx - 1]?.position || null, siblings[idx]?.position || null);
+  return generateNKeysBetween(siblings[idx - 1]?.position || null, siblings[idx]?.position || null, moving.length);
 }
+// The position for one folder put before `before`, else last; `moving` is
+// the folder itself when it is already among them.
+export const folderPosition = (tree, parent, before = "", moving = "") => folderPositions(tree, parent, before, [moving])[0];
 
 // A stored timestamp → a Date (a bare one is UTC, as the server writes it).
 const parseStamp = (iso) => new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);

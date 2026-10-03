@@ -516,7 +516,10 @@ effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
 `effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
 token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
 — a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
-tooltip names the tier, since the glyph carries no text).
+tooltip names the tier, since the glyph carries no text). The line comes a
+second time, corrected, when the provider's report says the turn ran at
+another speed than the one asked for (see "Speed" below); the chat keeps
+the latest.
 `GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
 offline server; the browser suite sets it); model facts then come from the
 providers' listings alone.
@@ -553,10 +556,26 @@ alternative, a table of model names in the repository, would go stale.
 `speedFor` in `chat/modelPrefs.js` sends the preference only when the model
 has that tier. Unlike effort there is no nearest tier: paying for a speed
 the model doesn't offer, and silently dropping to the cheap one, are both
-decisions that are the user's to make. What a reply reports is what was
-*asked for* — a provider may serve the request at standard speed anyway
-(OpenAI says so in the response's own `service_tier`), which Gamma does not
-read.
+decisions that are the user's to make.
+
+What a reply reports is the speed that *served* it, as far as the provider
+says. Each wire reads the tier out of its response — OpenAI's
+`service_tier` (on the completion body and on every streamed chunk, and on
+the Responses API's finished `response`), Anthropic's `usage.speed` (`fast`
+/ `standard`, present once a speed was asked for) — and
+`ai_protocols.base.served_speed_name` maps it onto `SPEED_ORDER`: `priority`
+and `fast` are `fast`, `flex` is `flex`, anything else the provider calls it
+(`default`, `standard`, `scale`) is `""`, the usual routing. The name rides on
+the turn's token report as `speed` (`Protocol.events`, `read_reply`) and the
+chat route (`_served_speed` in `routers/ai.py`) lifts it off before the
+`{usage}` line goes out — that line stays counts only — and makes it the
+reply's `speed`, re-sending the `{model}` line when it changed; over an
+agent reply's rounds the last report wins. A provider that says nothing
+leaves standing what the wire asked for, which is the requested tier only
+when the wire has it on that endpoint (`_sent_speed`, `Protocol.speed_tiers`):
+fast mode asked of an OpenAI-compatible server or of a service speaking
+Anthropic's API behind another host is never sent, so the reply says `""`
+rather than claim a tier nobody was asked for.
 
 ### Selected PDF passages
 

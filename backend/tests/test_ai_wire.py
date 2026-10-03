@@ -578,3 +578,86 @@ def test_hosted_search_streams_report_the_pages_found():
     assert events == [("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
                       ("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
                       ("text", "done")]
+
+
+def test_streams_report_the_speed_the_provider_served():
+    """The tier that actually served a turn rides on its token report as
+    ``speed`` (a SPEED_ORDER name, "" for the usual routing): Anthropic's
+    usage.speed, Chat Completions' per-chunk service_tier, the Responses
+    API's response.service_tier. A provider that names none leaves the key
+    out, so the caller keeps what it asked for."""
+    def reported(stream, wire):
+        return [u for k, u in sse_events(stream, wire) if k == "usage"][0]
+
+    # Anthropic: asked for fast, served standard — on either usage object.
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5, "speed": "standard"}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}})
+    assert reported(stream, "anthropic") == {"input": 5, "output": 2, "cache_read": 0, "cache_write": 0, "speed": ""}
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                  "usage": {"output_tokens": 2, "speed": "fast"}})
+    assert reported(stream, "anthropic")["speed"] == "fast"
+    # Chat Completions: every chunk names the tier; "priority" is fast mode, "default" the usual route.
+    stream = sse({"choices": [{"delta": {"content": "hi"}}], "service_tier": "priority"},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}, "service_tier": "priority"})
+    assert reported(stream, "openai")["speed"] == "fast"
+    stream = sse({"choices": [{"delta": {"content": "hi"}}], "service_tier": "default"},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}, "service_tier": "default"})
+    assert reported(stream, "openai")["speed"] == ""
+    # Responses API (OpenAI's and the Codex backend): the finished response says.
+    for wire in ("openai-responses", "chatgpt"):
+        stream = sse({"type": "response.output_text.delta", "delta": "hi"},
+                     {"type": "response.completed", "response": {
+                         "status": "completed", "service_tier": "flex",
+                         "usage": {"input_tokens": 3, "output_tokens": 2}}})
+        assert reported(stream, wire)["speed"] == "flex"
+    # Nothing said: no key — not even "" — on any wire.
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}})
+    assert "speed" not in reported(stream, "anthropic")
+    stream = sse({"choices": [{"delta": {"content": "hi"}}]},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}})
+    assert "speed" not in reported(stream, "openai")
+    stream = sse({"type": "response.output_text.delta", "delta": "hi"},
+                 {"type": "response.completed", "response": {
+                     "status": "completed", "usage": {"input_tokens": 3, "output_tokens": 2}}})
+    assert "speed" not in reported(stream, "openai-responses")
+
+
+def test_whole_replies_report_the_speed_the_provider_served():
+    """The non-streamed body too: Anthropic's usage.speed, Chat Completions'
+    top-level service_tier (a compatible server's body, without it, names
+    no speed). A tier Gamma has no name for counts as the usual routing."""
+    from gamma.ai_protocols.base import served_speed_name
+
+    class Body:
+        def __init__(self, data):
+            self._data = json.dumps(data).encode()
+
+        def read(self):
+            return self._data
+
+    heard = []
+    text = WIRES["anthropic"].read_reply(Body({
+        "content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn",
+        "usage": {"input_tokens": 4, "output_tokens": 1, "speed": "fast"}}), heard.append)
+    assert text == "hi" and heard == [{"input": 4, "output": 1, "cache_read": 0, "cache_write": 0, "speed": "fast"}]
+    heard = []
+    WIRES["openai"].read_reply(Body({
+        "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}, "service_tier": "default"}), heard.append)
+    assert heard[0]["speed"] == ""
+    heard = []
+    WIRES["openai"].read_reply(Body({
+        "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}}), heard.append)
+    assert "speed" not in heard[0]
+    # The mapping itself: Gamma's names, the providers' spellings, the rest.
+    assert served_speed_name("fast") == "fast" and served_speed_name("priority") == "fast"
+    assert served_speed_name("flex") == "flex" and served_speed_name("Priority ") == "fast"
+    assert served_speed_name("standard") == "" and served_speed_name("default") == ""
+    assert served_speed_name("scale") == ""
+    assert served_speed_name("") is None and served_speed_name(None) is None and served_speed_name(3) is None

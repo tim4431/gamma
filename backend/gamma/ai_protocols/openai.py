@@ -8,7 +8,7 @@ import re
 from urllib.request import Request as URLRequest
 
 from .base import (EMPTY_REPLY_HINT, TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, multipart_body,
-                   parse_tool_args, tool_image_turns)
+                   note_speed, parse_tool_args, served_speed_name, tool_image_turns)
 from .responses import OPENAI_RESPONSES
 
 # Listings include models the chat endpoint can't use.
@@ -121,11 +121,18 @@ class OpenAIChat(Protocol):
                  "cache_write": 0}
         return usage if (usage["input"] or usage["output"]) else None
 
+    def served_speed(self, data):
+        # The completion says which tier served it ("default", "flex",
+        # "priority", "scale") — what was asked for may have been routed
+        # elsewhere; a compatible server leaves the field out.
+        return served_speed_name(data.get("service_tier"))
+
     def stream_event(self, event, state):
         if event.get("error"):
             raise RuntimeError((event["error"] or {}).get("message") or "stream error")
         if event.get("usage"):
             state["usage"] = self.usage(event["usage"]) or state["usage"]
+        note_speed(state, event.get("service_tier"))  # every chunk carries the served tier
         choice = (event.get("choices") or [{}])[0]
         delta = choice.get("delta") or {}
         if delta.get("content"):

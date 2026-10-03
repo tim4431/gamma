@@ -16,7 +16,8 @@ own: `.github/workflows/cloud.yml`, dispatched from ANY branch, runs the
 [docs/dev/github_actions.md](../../../docs/dev/github_actions.md).
 
 The folder's `data/` is the service's whole state and its secret (signing
-keys, token hashes) and `.env` holds the SMTP/Turnstile/OAuth credentials —
+keys, token hashes; the sign-up settings, Turnstile keys included, are in
+`cloud.db`) and `.env` holds the SMTP and Google/GitHub OAuth credentials —
 never read them out, copy them off the host, or overwrite them. The same
 goes for `share.env` (the share host's client secret) and `share-data/`
 (its published pages); the `share` service is a Gamma image pinned by tag

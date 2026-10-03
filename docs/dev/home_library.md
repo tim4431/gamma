@@ -172,10 +172,11 @@ root).
 tree, which every member sees alike, then the pages in the library's order
 (labels keep the label tree's). In it, a folder dropped on the leading or
 trailing edge of a listed folder (a row's top or bottom quarter, a tile's
-left or right one; `folderDropEdge`) lands beside it. That is one `move`
-with a fractional key between its new neighbours (`folderPosition`,
-`placeFolder`), and the edge shows a line (`.dropBefore` / `.dropAfter`).
-A drop in the middle moves it in. A folder drag carries its id
+left or right one; `folderDropEdge`) lands beside it; a selection of
+several lands there in its listed order. That is one `move` per folder,
+in one batch, with fractional keys between the new neighbours
+(`folderPositions`, `placeFolders`), and the edge shows a line
+(`.dropBefore` / `.dropAfter`). A drop in the middle moves them in. A folder drag carries its id
 under its own type (`FOLDER_DRAG_TYPE`) beside the text payload, since a
 drag-over can read only the types.
 

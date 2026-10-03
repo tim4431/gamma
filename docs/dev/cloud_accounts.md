@@ -73,10 +73,10 @@ worker. A write goes through `settings.update`, and the admin router drops
 the cache after the commit, so no reader caches a value that rolls back. A
 `registration` row with a bad value reads as `invite`.
 
-The upgrade step `db._step_settings` imported the environment variables
-these replaced, once. They are not read otherwise, and `app.py` warns at
-startup about any still set (`config.RETIRED_ENV`). A fresh database takes
-the defaults.
+The environment variables these replaced (`config.RETIRED_ENV`) are not
+read; `app.py` warns at startup about any still set. A fresh database takes
+the defaults. `manage.py settings` shows and sets the same values from the
+shell.
 
 The Docker image (`cloud/Dockerfile`) runs uvicorn on 9002. The client
 address (rate limits, the address on a device or browser row) is
@@ -216,7 +216,7 @@ page) and the **app** shell (a sidebar and a content column):
     revealed the same way.
   - Password.
   - Deletion in a danger zone, its form revealed by a first click.
-- **Admin** (`/admin`, `is_admin` only, 404 otherwise): four tabs.
+- **Admin** (`/admin`, `is_admin` only, 404 otherwise): five tabs.
   - Accounts: search by username, e-mail or id, paged; plan select,
     verify, resend, admin on/off, rename, delete. A deleted account (the
     `deleted` pill) offers only Restore and Purge now.
@@ -256,11 +256,16 @@ page) and the **app** shell (a sidebar and a content column):
   Turnstile, the per-IP limits, one account per inbox (`email_canon`), the
   throwaway-domain list, and Cloudflare's rate rules (deploy README).
 - **Sign in** (`POST /api/login`): e-mail or username plus password; limits
-  per IP and per name, reset on success. Any alias of the account's inbox
-  names it (`accounts.by_email`), and a reset mail goes only to the stored
-  address. An account without a password is refused like a wrong password.
+  per IP and per name (ten in five minutes each), reset on success. Any
+  alias of the account's inbox names it (`accounts.by_email`), so the
+  per-name key is the inbox (`accounts.login_bucket`: `email_canon` of an
+  address, the username otherwise) and `f.oo+1@gmail.com` cannot buy
+  `foo@gmail.com` a fresh window; `/authorize/login` counts in the same
+  one. A reset mail goes only to the stored address. An account without a
+  password is refused like a wrong password.
 - **Reset** (`/api/reset/request` → mail → `/api/reset/confirm`): the
-  request answers the same whether the address exists. Confirming sets the
+  request answers the same whether the address exists; five an hour per IP
+  and three per inbox (`login_bucket` again, so aliases share the three). Confirming sets the
   password, marks the e-mail verified (the mail reached them), signs every
   session and device out, and signs this browser in.
 - **Change e-mail**: the link goes to the new address; the old one is told
@@ -424,7 +429,8 @@ other page keeps `no-referrer`.
   (`accounts.confirm_ok`). Deleting an account drops its links at once.
 
 Rate limits are the in-process fixed windows of `ratelimit.py` (per IP —
-`client_ip`, see "Running" — per name, per account; the `oauth-callback:ip`
+`client_ip`, see "Running" — per name, where an address counts as its inbox
+(`accounts.login_bucket`), per account; the `oauth-callback:ip`
 window is shared by `one_tap`); Cloudflare's rate rules in front are the
 first line. Mail (`mail.py`) has three backends; every message is plain text plus
 an HTML alternative from `mail.compose` (portal palette, a button for the
@@ -563,12 +569,14 @@ Clients tab and can delete it there.
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
-`clients`, `delete-client`, `rotate-key`. Every command but `setup` and
+`clients`, `delete-client`, `rotate-key`, `settings`. Every command but `setup` and
 `migrate` refuses an outdated `cloud.db`. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
-patch accounts (plan, admin, verified), resend a verify mail, delete;
-invites; OIDC clients; the audit log. The portal's Admin page, the API and
-`manage.py` are one surface: the page and the CLI call the same functions.
+patch accounts (plan, admin, verified), resend a verify mail, delete,
+restore, purge; invites; `GET`/`PATCH /settings` (the sign-up gate,
+`settings.admin_view` / `settings.update`); OIDC clients; the audit log.
+The portal's Admin page, the API and `manage.py` are one surface: the page
+and the CLI call the same functions.
 
 ## Tests
 
@@ -585,14 +593,15 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
   form of an address and the aliases it folds, one Gmail inbox refused a
   second account, an unlisted domain keeping its tagged addresses apart,
   the throwaway-domain list and the admin's additions, the IPv6 /64 bucket,
-  and the upgrade's backfill.
+  the login and reset windows counted per inbox across aliases, and the
+  upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
   decoded ID token, refresh rotation, code replay, redirect and PKCE
   checks, the unverified gate, sign-in on the authorize page, cancel, a
   confidential client with basic auth and revoke, key rotation.
 - `test_admin.py`: gating, the admin flows, that a bearer token never
   reaches the admin API.
-- `test_manage.py`: the CLI, purge, the newer-file refusal.
+- `test_manage.py`: the CLI including `settings`, purge, the newer-file refusal.
 - `test_external.py`: Google/GitHub with the provider stubbed — signup,
   linking by a trusted address, claiming an unconfirmed account, the
   authorize page's path, state and `next` checks, one tap with a real

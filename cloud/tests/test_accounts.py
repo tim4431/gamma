@@ -2,7 +2,7 @@ from conftest import invite, last_link, make_admin, register, set_setting, verif
 
 from fastapi.testclient import TestClient
 
-from gammacloud import accounts, config, mail, ratelimit
+from gammacloud import accounts, mail, ratelimit
 
 
 def test_register_verify_login_flow(client):

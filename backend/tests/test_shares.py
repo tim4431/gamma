@@ -423,6 +423,11 @@ def test_anyone_edit_link_lets_a_stranger_write_under_a_display_name(bob, guest,
     r = anon.post("/api/blocks", params=q, headers={"X-Gamma-Name": "N" * 80},
                   json={"parent_id": page["id"], "content": "capped"})
     assert r.status_code == 200 and bob.get(f"/api/pages/{page['id']}/ops").json()["batches"][-1]["actor"] == "link:" + "N" * 40
+    # a bulk write (the subtree replace, logged as a reload) carries the same name
+    r = anon.put(f"/api/blocks/{line['id']}/children", params=q, headers={"X-Gamma-Name": "Otter"},
+                 json={"blocks": [{"content": "replaced by a stranger"}]})
+    assert r.status_code == 200, r.text
+    assert bob.get(f"/api/pages/{page['id']}/ops").json()["batches"][-1]["actor"] == "link:Otter"
     assert anon.post("/api/blocks", params=q, json={"parent_id": other["id"], "content": "x"}).status_code == 403
     assert anon.put(f"/api/blocks/{page['id']}", params=q, json={"properties": {"doc_id": "evil"}}).status_code == 403
     assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == "open_doc"

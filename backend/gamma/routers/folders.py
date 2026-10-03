@@ -20,20 +20,20 @@ from ..auth import actor_of, require_ws
 from ..blocks_store import FOLDERS, LABELS, fetch_subtree, filing, write_lock
 from ..db import connect_pages_db
 from ..ops import OpError, after_commit, apply_batches
-from . import chats, shares
 
 router = APIRouter(prefix="/api", tags=["folders"])
 
 
 def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str) -> dict:
     """Delete the folder or label ``block_id`` of ``tree`` with everything
-    below it, take the ids off the pages that carry them and file the folder
-    chats into the library's history, in one transaction; then stop the
-    folder's shares. Returns ``{ids, pages,
-    chats, shares}`` — the blocks deleted, the pages refiled, the
-    conversations filed into the library's history, the share links
-    stopped. 404 unless it is a block of the tree (the reserved row is
-    none)."""
+    below it and take the ids off the pages that carry them, in one
+    transaction. The folder chats are filed into the library's history by
+    the tree's ``delete`` op and the folder's shares stop after the commit
+    (``ops.after_commit``), as for any tree batch that deletes a folder.
+    Returns ``{ids, pages, chats, shares}`` — the blocks deleted, the pages
+    refiled, the conversations filed into the library's history, the share
+    links stopped. 404 unless it is a block of the tree (the reserved row
+    is none)."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         try:
@@ -52,15 +52,14 @@ def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str) -> dict:
                 results = apply_batches(conn, [(tree, [{"op": "delete", "id": block_id}]), *refiled], actor=actor)
             except OpError as e:
                 raise HTTPException(status_code=e.status, detail=e.detail)
-            filed = chats.file_into_home(conn, ids) if tree == FOLDERS else 0
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
         for result in results:
             after_commit(ws, conn, result)
-    stopped = shares.delete_folder_shares(ws, ids) if tree == FOLDERS else 0
-    return {"ids": sorted(ids), "pages": [p for p, _ in refiled], "chats": filed, "shares": stopped}
+    return {"ids": sorted(ids), "pages": [p for p, _ in refiled],
+            "chats": results[0]["chats_filed"], "shares": results[0].get("shares_stopped", 0)}
 
 
 def _writer(request: Request) -> str:

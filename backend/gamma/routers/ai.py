@@ -206,6 +206,36 @@ def _resolve_speed(requested: str) -> str:
     return requested if requested in SPEED_LEVELS else ""
 
 
+def _sent_speed(speed: str, rt: dict, entry: dict, tools) -> str:
+    """The speed the call's wire actually asks the provider for: the
+    requested tier when the wire has it on this endpoint (``Protocol.
+    speed_tiers`` — an OpenAI-compatible server or a service speaking
+    Anthropic's API elsewhere is never sent one), else "" — the usual
+    routing, which is what the reply then reports rather than a tier
+    nobody was asked for."""
+    conf = rt["providers"].get(entry["provider"]) or {}
+    if not speed or not conf:
+        return ""
+    return speed if speed in ai_protocols.get(_wire_protocol(rt, entry, tools)).speed_tiers(conf) else ""
+
+
+def _served_speed(answered: dict, usage) -> bool:
+    """Take the tier a provider turn was served at off its token report
+    (the ``speed`` ``Protocol.events`` / ``read_reply`` put there, "" = the
+    usual routing) and make it the reply's ``speed``; the report goes on
+    without the key (the ``usage`` line is counts only). True when the
+    reply's speed changed — the stream then re-sends its ``model`` line.
+    A turn the provider said nothing about keeps the speed asked for.
+    Over an agent reply's rounds the last report wins."""
+    if not isinstance(usage, dict) or "speed" not in usage:
+        return False
+    served = usage.pop("speed")
+    if served is None or served == answered["speed"]:
+        return False
+    answered["speed"] = served
+    return True
+
+
 def _failure(error: Exception, what: str = "AI call failed") -> str:
     """The error line a stream ends with: a call Gamma refused (a used-up
     shared allowance, too many calls at once) says so in its own words (the
@@ -1708,9 +1738,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
     ) if tools and scope["delegates"] else None
     # Which model answers, at what effort and speed, with tools or not — the
     # reply's footer names them, and the coverage chip's advice depends on
-    # the tools.
-    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "speed": speed,
-                "tools": bool(tools)}
+    # the tools. The speed starts as the one the wire asks for and becomes
+    # the one the provider says it served (_served_speed).
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort,
+                "speed": _sent_speed(speed, rt, entry, tools), "tools": bool(tools)}
 
     def prepared(allow_native, drop=0):
         """_chat_prompt, keeping the coverage report and the pictures."""
@@ -1809,6 +1840,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         if head:
                             yield head
                         for kind, data in agent_events(resp):
+                            if kind == "usage" and _served_speed(answered, data):
+                                yield json.dumps({"model": answered}) + "\n"
                             yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
@@ -1829,8 +1862,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             usage.append(data)
                         elif kind == "stop" and truncated_stop(data):
                             yield json.dumps({"truncated": True}) + "\n"
-                    # The provider's token report closes the stream.
+                    # The provider's token report closes the stream — after
+                    # the model line again when it served another speed.
                     for u in usage:
+                        if _served_speed(answered, u):
+                            yield json.dumps({"model": answered}) + "\n"
                         count_usage(u)
                         yield json.dumps({"usage": u}) + "\n"
                 except Exception as e:
@@ -1851,6 +1887,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 elif kind == "action":
                     actions.append(data)
                 elif kind == "usage":
+                    _served_speed(answered, data)
                     usage = _add_usage(usage, data)
                 elif kind == "truncated":
                     truncated = True
@@ -1864,6 +1901,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         with open_with_fallback(False) as resp2:
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
+            _served_speed(answered, u)
             count_usage(u)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {}),

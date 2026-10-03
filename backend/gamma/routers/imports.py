@@ -920,7 +920,7 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
     try:
         result = import_embedded_annotations(ws, payload.block_id, pdf_path, payload.strip,
-                                             request.state.user_id or "")
+                                             actor_of(request))
     except HTTPException:
         raise
     except Exception as e:

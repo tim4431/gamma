@@ -123,8 +123,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Manifest parses and the zip builds; the scripts are ES modules that
-      # only run inside Chrome, so there is no useful `node --check` here.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # The pure modules' unit tests (docs/dev/extension.md#testing); the
+      # .e2e.mjs files need Playwright's full Chromium and are run by hand.
+      - run: node --test extension/tests/*.test.mjs
+      # Manifest parses and the zip builds; the other scripts only run
+      # inside Chrome, so there is no useful `node --check` here.
       - run: |
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
           cd extension && zip -qr ../gamma-connector-check.zip . -x "STORE.md" "README.md" "*.DS_Store" && unzip -l ../gamma-connector-check.zip | tail -1

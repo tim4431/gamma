@@ -62,7 +62,8 @@ proxy's rate limits. A host whose default network predates the pin needs
    curl -O https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/compose.yml
    curl -O https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/Caddyfile
    curl -o .env https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/.env.example
-   # fill in .env: SMTP, Turnstile; CADDY_HOST is the hostname above
+   # fill in .env: public URL, SMTP, Google/GitHub; CADDY_HOST is the hostname above
+   # (Turnstile and the registration mode are set later on the Admin page, not here)
    chmod 600 .env
    # the network Caddy shares with the demo (demo/README.md), once per host
    docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge
@@ -100,11 +101,10 @@ proxy's rate limits. A host whose default network predates the pin needs
 The registration mode (`open` / `invite` / `closed`), the Cloudflare
 Turnstile keys and extra blocked mail domains are edited on the **Admin
 page → Settings**. They live in `cloud.db` and take effect without a
-restart. The environment variables that once set them
-(`GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*`,
-`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS`) were imported once by the upgrade and
-are not read since. The startup log names any still set so they can be
-deleted.
+restart. `GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
+`GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` in `.env` are not read; the startup
+log names any still set so they can be deleted. `manage.py settings`
+shows and sets the same values from the shell.
 
 ### Opening registration
 

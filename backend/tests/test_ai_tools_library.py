@@ -87,6 +87,17 @@ def test_cite_prefers_the_stored_entry_and_flags_unverified_records(org):
     assert text.startswith("error") and "outside" in text and action["error"]
 
 
+def test_cite_prints_the_stored_entry_under_the_pinned_key(org):
+    """A cached entry may predate the pin or carry a registrar's own key; the
+    chat prints the key the .bib export will carry (bibtex.page_entry)."""
+    c, ids = org
+    page = _page(c, "pinned cite", {"folders": [ids["readout"]], "cite_key": "smithAttention",
+                                    "meta": {"title": "Pinned", "authors": ["S. Smith"], "year": "2020"},
+                                    "bibtex": "@article{smith2020,\n  title = {Pinned}\n}"})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page]})
+    assert "@article{smithAttention," in text and "smith2020" not in text
+
+
 # --- save_paper ------------------------------------------------------------------------
 
 def test_save_paper_saves_files_and_never_duplicates(org, upstream):

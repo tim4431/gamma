@@ -5,7 +5,7 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import Protocol, as_int, attach_index, parse_tool_args
+from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name
 
 API_VERSION = "2023-06-01"
 # Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
@@ -168,12 +168,21 @@ class Anthropic(Protocol):
                  "cache_read": cache_read, "cache_write": cache_write}
         return usage if (usage["input"] or usage["output"]) else None
 
+    def served_speed(self, data):
+        # ``usage.speed`` ("fast" / "standard") says which speed served the
+        # turn once one was asked for; without a request it is absent.
+        return served_speed_name((data.get("usage") or {}).get("speed"))
+
     def stream_event(self, event, state):
         kind = event.get("type")
         if kind == "message_start":
             # Input counts arrive up front; the output count comes with the
-            # final message_delta (cumulative, so the last one wins).
-            state["usage"] = self.usage((event.get("message") or {}).get("usage"))
+            # final message_delta (cumulative, so the last one wins). The
+            # served speed rides on either usage object.
+            raw_usage = (event.get("message") or {}).get("usage")
+            state["usage"] = self.usage(raw_usage)
+            if isinstance(raw_usage, dict):
+                note_speed(state, raw_usage.get("speed"))
         elif kind == "content_block_start":
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
@@ -203,6 +212,8 @@ class Anthropic(Protocol):
                                 "arguments": parse_tool_args(tool["json"])})
         elif kind == "message_delta":
             state["stop"] = (event.get("delta") or {}).get("stop_reason") or state["stop"]
+            if isinstance(event.get("usage"), dict):
+                note_speed(state, event["usage"].get("speed"))
             delta_usage = self.usage(event.get("usage"))
             if delta_usage:
                 usage = state["usage"] or {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}

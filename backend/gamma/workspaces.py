@@ -50,7 +50,7 @@ import urllib.parse
 
 from . import collab, jobs
 from .config import WORKSPACES_DIR
-from .db import account_name, connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
+from .db import account_name, connect_users_db, delete_shares, page_now, safe_ws_id, ws_dir, ws_uploads_dir
 from .logbuf import log
 from .seed import create_workspace_files, seed_welcome
 
@@ -723,8 +723,7 @@ def _delete_rows(conn, ws: str) -> None:
     conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
-    conn.execute("DELETE FROM share_users WHERE token IN (SELECT token FROM shares WHERE workspace_id = ?)", (ws,))
-    conn.execute("DELETE FROM shares WHERE workspace_id = ?", (ws,))
+    delete_shares(conn, "workspace_id = ?", (ws,))
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
 

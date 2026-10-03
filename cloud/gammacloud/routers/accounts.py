@@ -125,19 +125,19 @@ class LoginBody(BaseModel):
 @router.post("/login")
 def login(body: LoginBody, request: Request):
     ip = ratelimit.client_ip(request)
-    who = body.login.strip().lower()[:254]
     ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
+    who_key = f"login:who:{accounts.login_bucket(body.login)}"
     ratelimit.check(ip_key, 10, 300)
-    ratelimit.check(f"login:who:{who}", 10, 300)
+    ratelimit.check(who_key, 10, 300)
     with closing(db.connect()) as conn:
-        account = accounts.by_login(conn, who)
+        account = accounts.by_login(conn, body.login)
         if not accounts.password_ok(account, body.password):
             raise HTTPException(401, "Wrong e-mail, username or password.")
         token = sessions.create(conn, account["id"], request)
         db.audit(conn, "account.login", account["id"], account["id"], ip)
         conn.commit()
     ratelimit.reset(ip_key)
-    ratelimit.reset(f"login:who:{who}")
+    ratelimit.reset(who_key)
     resp = JSONResponse({"account": accounts.public(account)})
     sessions.set_cookie(resp, token)
     return resp
@@ -286,7 +286,8 @@ def reset_request(body: ResetRequestBody, request: Request):
     if not captcha.verify(body.turnstile, ip):
         raise HTTPException(400, "The anti-bot check failed. Reload and try again.")
     email = accounts.norm_email(body.email)
-    ratelimit.check(f"reset:email:{email}", 3, 3600)
+    # Per inbox, not per address as typed: by_email answers to every alias.
+    ratelimit.check(f"reset:email:{accounts.login_bucket(email)}", 3, 3600)
     with closing(db.connect()) as conn:
         account = accounts.by_email(conn, email)
         if account:

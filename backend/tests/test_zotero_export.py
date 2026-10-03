@@ -213,7 +213,7 @@ def test_folder_zotero_export_scopes_collections(guest):
 def test_zotero_export_reimports_via_the_real_endpoint(guest):
     roundtrip = make_folder(guest, "roundtrip")
     make_page(guest, "Paper one", properties={
-        "folders": [roundtrip],
+        "folders": [roundtrip], "cite_key": "lovelace:notes",
         "meta": {"title": "Paper one", "authors": ["Ada Lovelace"], "year": "1843",
                  "venue": "Notes", "doi": "10.1000/rt1"},
     })
@@ -233,6 +233,8 @@ def test_zotero_export_reimports_via_the_real_endpoint(guest):
     by_title = {p["title"]: p for p in d["pages"]}
     one = guest.get(f"/api/blocks/{by_title['Paper one']['id']}").json()["properties"]
     assert one["meta"]["authors"] == ["Ada Lovelace"]
+    # the pinned key went out as Better BibTeX's "Citation Key:" line and came back
+    assert one["cite_key"] == "lovelace:notes" and "@article{lovelace:notes," in one["bibtex"]
     assert one["meta"]["doi"] == "10.1000/rt1" and one["meta"]["venue"] == "Notes"
     paths = folder_names(guest)
     assert [paths[f] for f in one["folders"]] == [["zimported"]]

@@ -234,6 +234,7 @@ class _Batch:
         self.dropped: set[str] = set()
         self.added: set[str] = set()
         self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
+        self.chats_filed = 0  # folder chats a tree delete filed into the library's history
 
     def refs_changed(self, old: set, new: set) -> None:
         self.dropped |= old - new
@@ -463,6 +464,13 @@ class _Batch:
             self.deleted.append(r[0])
             self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "")
         self.dropped |= subtree_refs(rows)
+        if self.page_id == FOLDERS:
+            # A folder's conversations are never dropped with it, whichever
+            # path deletes it (DELETE /folders/{id}, or a tree batch as a
+            # mirror or the iPad relays one): filed into the library chat's
+            # history in this transaction. Local import: the router imports ops.
+            from .routers.chats import file_into_home
+            self.chats_filed += file_into_home(self.conn, [r[0] for r in rows])
         self.applied.append({"op": "delete", "id": block_id})
 
 
@@ -568,8 +576,10 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
               share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "") -> dict:
     """Apply one batch inside one transaction (committed here) and log it.
     Returns ``{page_id, seq, at, actor, client, ops (as applied), deleted_ids,
-    dropped_uploads, doc_deleted, cursor?}`` — hand it to ``after_commit``
-    for the derived-data work and the room fan-out. ``dropped_uploads``: the
+    dropped_uploads, doc_deleted, chats_filed, cursor?}`` — hand it to
+    ``after_commit`` for the derived-data work and the room fan-out.
+    ``chats_filed``: the folder conversations a tree delete filed into the
+    library chat's history (``after_commit`` adds ``shares_stopped``). ``dropped_uploads``: the
     upload names the batch stopped referencing (the names it started
     referencing have their orphan rows cleared in the same transaction —
     gamma/upload_gc.py); ``doc_deleted``: a deleted block carried a PDF.
@@ -659,7 +669,7 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     seq = _log(conn, page_id, actor, client, now, batch.applied)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
-              "doc_deleted": batch.doc_deleted}
+              "doc_deleted": batch.doc_deleted, "chats_filed": batch.chats_filed}
     if cursor is not None:
         result["cursor"] = cursor
     return result
@@ -691,10 +701,15 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     data.db's rows of papers nothing carries any more go
     (``pdf_index.purge_unused``; it may wait on data.db's lock). A batch
     that changed what a folder holds — a page refiled, a folder moved or
-    deleted — re-checks the room peers a folder share admitted."""
+    deleted — re-checks the room peers a folder share admitted, and the
+    shares of folders that are gone stop (``shares_stopped`` in the
+    result), whichever path deleted them."""
     collab.publish_ops(ws, result)
     if _refiles(result):
         collab.revalidate_shares(ws)
+    if result["page_id"] == FOLDERS and result["deleted_ids"]:
+        from .routers.shares import delete_folder_shares  # local: the router imports ops' neighbours
+        result["shares_stopped"] = delete_folder_shares(ws, result["deleted_ids"])
     upload_gc.schedule(ws, result["dropped_uploads"])
     if result["doc_deleted"]:
         pdf_index.purge_unused(ws, conn)

@@ -1,6 +1,6 @@
 import React from "react";
-import { FileIcon, HighlightIcon, LinkIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
-import { PictureChoices, Step, SubDialog, Toggle } from "../settings/SettingsKit";
+import { FileIcon, HighlightIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
+import { CopyField, PictureChoices, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, ImportPreview, FormatIllustration } from "../shared/illustrations";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { copyText } from "../shared/lib/utils";
@@ -143,18 +143,9 @@ function BibtexReview({ bib, folder, summary, copied, onCopy }) {
 // Sharing itself stays in the share popover, where the audience is chosen —
 // this only reports whether a link exists.
 function BibtexSteps({ url, folder }) {
-  const [copied, flash] = useCopied();
   return <details className="transferHelp"><summary>{t("Keep this .bib up to date")}</summary><div className="importSteps">
     {url ? <>
-      <div className="bibLinkRow">
-        <LinkIcon size={14} />
-        <input value={url} readOnly onFocus={(e) => e.target.select()} aria-label={t("Bibliography link")} />
-        <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`}
-          title={t("Copy the bibliography link")} aria-label={t("Copy the bibliography link")}
-          onClick={() => copyText(url).then((ok) => { if (ok) flash(); })}>
-          {copied ? t("Copied") : t("Copy")}
-        </button>
-      </div>
+      <CopyField label={t("Bibliography link")} value={url} action={t("Copy the bibliography link")} rows={1} />
       <Step n={1} title={t("In Overleaf: Upload → From External URL")}
         hint={t("Paste this link and name the file references.bib. The Refresh button next to it fetches the current entries again.")} />
       <Step n={2} title={t("Cite as usual")}

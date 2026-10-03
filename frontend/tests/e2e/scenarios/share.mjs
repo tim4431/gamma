@@ -124,6 +124,19 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await dctx.close();
     const refused = await fetch(`${server.base}/api/blocks/${outside.id}?share=${folderToken}`);
     assertEq(refused.status, 403, "a page outside the folder is refused");
+
+    // the owner on their own link: Open in my library leaves the share for the folder itself
+    const octx = await alice.context(browser);
+    const o = await openPage(octx, `${server.base}/?share=${folderToken}`);
+    await o.locator(".fileRow", { hasText: "Folder share paper A" }).waitFor({ timeout: 15000 });
+    await o.getByRole("button", { name: "Open in my library" }).click();
+    await until(async () => !o.url().includes("share=") && new URL(o.url()).searchParams.get("folder") === sharedlab,
+      { what: "the owner's library, at the folder" });
+    assertEq(new URL(o.url()).searchParams.get("ws"), alice.ws, "in the share's workspace");
+    await o.locator(".fileRow", { hasText: "Folder share paper A" }).waitFor({ timeout: 15000 });
+    assert(await o.locator(".folderNewBtn").count() > 0, "the owner's own listing, editable");
+    assertNoProblems(o);
+    await octx.close();
     await alice.api(`/api/share-settings/folder/${sharedlab}`, { method: "DELETE" });
   });
 

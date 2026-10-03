@@ -5379,22 +5379,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .bibPaperSkipped:hover { background: transparent; }
 .bibPaperSkipped .bibPaperKey { font-family: inherit; }
 .bibPaneEmpty { margin: 4px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
-@media (max-width: 720px) {
+/* One column on a phone, at the import review's breakpoint (importReview.css). */
+@media (max-width: 640px) {
   .bibColumns { grid-template-columns: minmax(0, 1fr); }
   .bibPaperList, .bibEntryPane { height: 180px; }
-}
-/* The URL that keeps serving the current .bib (what Overleaf refreshes from). */
-.bibLinkRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin: 0 0 12px;
-}
-.bibLinkRow input {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
 }
 
 /* --- paper metadata popover --- */

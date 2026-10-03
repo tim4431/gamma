@@ -161,6 +161,17 @@ test("a folder path names the folder whose names it joins, as the clip splits it
   assert.equal(folderByPath(folders, " Reading / 2026/ "), "f2");
   assert.equal(folderByPath(folders, "Reading"), "f1");
   assert.equal(folderByPath(folders, "Missing"), "");
+  // Typed "a/b" names folder a's subfolder b, as the clip files it — not a
+  // top-level folder whose own name is "a/b".
+  assert.equal(folderByPath(folders, "a/b"), "");
+  assert.equal(folderByPath([...folders, { id: "f4", path: ["a", "b"] }], "a/b"), "f4");
+  assert.equal(folderByPath([...folders, { id: "f4", path: ["a", "b"] }], "a"), "");
+  assert.equal(folderByPath(folders, "Reading/2026/more"), "");
+  // A path differing only in case names the folder too, as the server files
+  // it — but an exactly spelled folder wins over one that differs in case.
+  assert.equal(folderByPath(folders, "reading/2026"), "f2");
+  assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "reading"), "f5");
+  assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "READING"), "f1");
 });
 
 test("a save's folder becomes the server's default, a path by the id it now has", async (t) => {

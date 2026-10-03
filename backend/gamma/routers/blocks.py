@@ -219,7 +219,7 @@ def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Reques
     with connect_pages_db(ws) as conn:
         return get_or_create_doc_page(
             conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
-            folder=payload.folder or "", ws=ws, actor=request.state.user_id or "")
+            folder=payload.folder or "", ws=ws, actor=actor_of(request))
 
 
 def _not_found(conn, block_id: str) -> JSONResponse:
@@ -522,7 +522,7 @@ def ub_delete_block(block_id: str, request: Request):
             # reload, which surfaces the 404.
             if scope is not None:
                 raise HTTPException(status_code=403, detail="share editors cannot delete the shared page")
-            actor = request.state.user_id or ""
+            actor = actor_of(request)
             if cloud_auth.settings()["share_host"]:
                 delete_page(ws, conn, block_id, actor=actor)
                 return {"ok": True, "id": block_id}
@@ -592,7 +592,7 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
             upload_gc.claim(conn, new_refs - old_refs)
             # the reload is logged and the page touched in the same
             # transaction as the rows: the change feed never misses a replace
-            note_reload(ws, conn, page_id, request.state.user_id or "")
+            note_reload(ws, conn, page_id, actor_of(request))
         except BaseException:
             conn.rollback()
             raise
@@ -638,7 +638,7 @@ def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request)
                 raise HTTPException(status_code=400, detail="cannot move a block into its own subtree")
             new_pos = free_position(conn, parent, new_pos, block_id)  # re-keyed like an op's move
             move_across_pages(ws, conn, block_id, parent, new_pos, src_page, dst_page,
-                              actor=request.state.user_id or "")
+                              actor=actor_of(request))
             return {"ok": True, "id": block_id, "position": new_pos}
     result = _ops(ws, src_page, [{"op": "move", "id": block_id, "parent": parent,
                                     "position": new_pos}], request, scope)

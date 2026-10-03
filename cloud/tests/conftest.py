@@ -15,7 +15,7 @@ for _name in ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from gammacloud import config, db, mail, ratelimit, settings  # noqa: E402
+from gammacloud import db, mail, ratelimit, settings  # noqa: E402
 from gammacloud.app import create_app  # noqa: E402
 from gammacloud.accounts import make_invite  # noqa: E402
 

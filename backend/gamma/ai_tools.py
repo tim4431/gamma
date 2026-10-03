@@ -228,11 +228,11 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
         if not _filed_in(_reach(conn, scope), [text]):
             return None, "error: that folder is outside this chat's folder"
         return {"id": text, "path": PATH_SEP.join(paths[text])}, None
-    own = [name.casefold() for name in paths.get(base, [])]
+    own = [name.lower() for name in paths.get(base, [])]  # as blocks_store.named compares
     missing = []
     for names in dict.fromkeys(tuple(n.strip() for n in text.split(sep) if n.strip())
                                for sep in (PATH_SEP, "/")):
-        if own and [n.casefold() for n in names[:len(own)]] == own:
+        if own and [n.lower() for n in names[:len(own)]] == own:
             names = names[len(own):]  # the chat's own path, then below it
         level, rest = descend(kids, base or FOLDERS, names)
         if len(level) > 1:
@@ -976,7 +976,7 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
         if meta.get("unverified"):
             lines.append("Unverified: nothing tied this record to the page's PDF (it may be a cited "
                          "work's, or an AI reading) — say so and suggest checking it before it is cited.")
-        lines.append("```bibtex\n" + (props.get("bibtex") or bibtex_mod.build_entry(meta, props.get("cite_key") or "")).strip() + "\n```")
+        lines.append(f"```bibtex\n{bibtex_mod.page_entry(props)}\n```")
         if str(props.get("ppt_cite") or "").strip():
             lines.append("Slide citation: " + props["ppt_cite"].strip())
         entries.append("\n".join(lines))

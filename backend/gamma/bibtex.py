@@ -10,7 +10,9 @@ assembling many entries into one `.bib` file whose keys are unique.
 cached entries of a page or a folder into the bibliography a LaTeX document
 cites — see [import_export.md](../../docs/dev/import_export.md).
 `ai_tools.py` (`cite`) and the Zotero import (`routers/imports.py`) build
-entries the same way.
+entries the same way. Every surface that prints a page's entry — the .bib
+export, `cite`, the Markdown and Obsidian exports — takes it from
+`page_entry`, so the key the chat shows is the key the file carries.
 
 A citation key is normally generated (first author's surname + year), which
 means two papers by the same author in the same year would collide in one
@@ -60,6 +62,27 @@ def with_key(text: str, key: str) -> str:
     if not key or not text:
         return text
     return _HEAD.sub(lambda m: f"{m.group(1)}{key}", text.lstrip(), count=1)
+
+
+def pinned_key(props: dict) -> str:
+    """The citation key pinned on a page (``properties.cite_key``), cleaned,
+    or "" when none is."""
+    return clean_key((props or {}).get("cite_key") or "")
+
+
+def page_entry(props: dict) -> str:
+    """The BibTeX entry of a page as every surface prints it — the .bib
+    export, the AI ``cite`` tool, the Markdown and Obsidian exports: the
+    cached entry (``properties.bibtex``) or, failing that, one built from
+    the metadata record, keyed by the pinned key when there is one. The
+    cached entry may predate the pin or carry a registrar's own key, so the
+    pin is applied here rather than trusted to be in the text. "" when the
+    page has neither an entry nor a record."""
+    props = props or {}
+    meta = props.get("meta") if isinstance(props.get("meta"), dict) else None
+    pin = pinned_key(props)
+    text = (props.get("bibtex") or "").strip() or (build_entry(meta, pin) if meta else "")
+    return with_key(text, pin) if pin else text
 
 
 def build_entry(meta: dict, key: str = "") -> str:

@@ -230,6 +230,25 @@ def test_deleting_a_folder_refiles_its_pages_and_keeps_its_chats(owner):
     assert c.delete(f"/api/folders/{FOLDERS}").status_code == 404
 
 
+def test_a_tree_batch_deleting_a_folder_files_its_chats_and_stops_its_shares(owner):
+    """The plain op path (a mirror round, the iPad relaying a delete) cleans
+    up like DELETE /folders/{id}: the chats go to the library's history and
+    the share dies; only the pages' refiling is the endpoint's own."""
+    c, ws = owner
+    top = _folder(c, "Relayed")
+    sub = _folder(c, "Below", parent=top)
+    assert c.put(f"/api/chats/{sub}", json={"messages": [{"role": "user", "text": "relayed chat"}]}).status_code == 200
+    share = c.post(f"/api/share/folder/{sub}").json()["token"]
+    r = c.post(f"/api/pages/{FOLDERS}/ops", json={"ops": [{"op": "delete", "id": top}]})
+    assert r.status_code == 200, r.text
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM chats WHERE bucket IN (?, ?)", (top, sub)).fetchone()[0] == 0
+    assert "relayed chat" in {s["preview"] for s in c.get("/api/chat-history?bucket=home").json()["sessions"]}
+    with connect_users_db() as conn:
+        assert not conn.execute("SELECT 1 FROM shares WHERE token = ?", (share,)).fetchone()
+    assert c.get(f"/api/share/{share}").status_code == 404
+
+
 def test_deleting_a_label_takes_it_off_every_page(owner):
     c, _ws = owner
     gone, kept = _label(c, "gone"), _label(c, "kept too")

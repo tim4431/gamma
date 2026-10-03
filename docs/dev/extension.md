@@ -455,7 +455,9 @@ signed in to the same server works the same way.
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
   the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`, plus
-  API settings, the default folder and origin guards.
+  API settings, the default folder, folder paths and origin guards. The
+  `check` workflow runs them on every PR ([github_actions.md](github_actions.md#checkyml));
+  the `.e2e.mjs` files below are run by hand.
 - `node extension/tests/folders.e2e.mjs` — full Chromium against a fake
   server answering `/api/library/folders` and `/api/clip`: the options page
   and the popup list folders by path, a save sends the picked folder's id,

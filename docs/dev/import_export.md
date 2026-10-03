@@ -472,8 +472,9 @@ invite-only ones work too. Two entry points:
   there is still a paper.
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
   library" (the same function on `window.location.href`). The page's owner
-  gets "Open in my library" instead, a plain jump to `?page=<id>`, since the
-  page is already theirs. A visitor with no account gets "Sign in" (the
+  gets "Open in my library" instead, a plain jump to `?page=<id>` (a folder
+  share's to `?folder=<id>`) with the share's workspace as `ws=` and no
+  token, since the page is already theirs. A visitor with no account gets "Sign in" (the
   share's own sign-in gate), after which the link opens again with the
   import button.
 
@@ -594,12 +595,18 @@ document cites, so the export has no switches and no bundling.
   must not take the key with it: the user's `.tex` files cite that key. It
   outranks both the generated key and a registrar's own, is cleaned of what
   BibTeX breaks on (`bibtex.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
-  and clearing the record clears the pin too. The metadata lookup, a hand
-  edit, the AI `cite` tool and this export all read the same pin.
+  and clearing the record clears the pin too. The metadata lookup and a
+  hand edit write it into the cached entry; every surface that prints the
+  entry — this export, the AI `cite` tool, the Markdown and Obsidian
+  exports — goes through `bibtex.page_entry`, which applies the pin to a
+  cached entry that predates it or carries a registrar's own key, so the
+  chat and the `.bib` file never disagree on a key.
   A Zotero import brings one along when Better BibTeX left a
   `Citation Key:` line in the item's Extra field
   (`zotero_import._citation_key`, carried as RDF `dc:description`), so a
-  migrated library keeps citing papers by the names its documents use.
+  migrated library keeps citing papers by the names its documents use; the
+  Zotero RDF export writes the same line for a pinned key, so a library
+  that goes out and comes back keeps its keys.
 - **Order**: sorted by citation key, then title. An unchanged library
   re-exports byte-identically — the header comment counts the entries and
   names the folder but carries no timestamp — so a `.bib` kept in a
