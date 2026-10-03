@@ -44,7 +44,7 @@ ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
 class PageCreate(BaseModel):
     title: str = ""
     folders: list[str] = []   # folder ids to file it in
-    id: str = ""              # a mirror bringing a page over keeps its id (409 when a live block has it)
+    id: str = ""              # a mirror bringing a page over keeps its id, /page the one its link names (409 when a live block has it)
     properties: dict = {}     # ...and its page properties
 
 

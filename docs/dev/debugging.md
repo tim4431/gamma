@@ -78,17 +78,38 @@ requirements-s3.txt`. The variables, read at startup:
 - `GAMMA_S3_PRESIGN` (default on): the uploads route answers a browser with
   a 302 to a presigned URL, so the bucket serves the bytes; `0` streams
   them through the node from its cache instead, and the bucket needs no
-  CORS.
+  CORS. The URL is valid 5 minutes and the browser keeps the redirect for
+  4 (`Cache-Control: private, max-age=240`). Each object is stored with its
+  media type and `Cache-Control: private, max-age=31536000, immutable` (a
+  name is its content's hash), so an image shown again within those 4
+  minutes costs the node and the bucket no request.
 
 A server that cannot use the bucket (no bucket of that name, no
 credentials, a key refused, an endpoint out of reach, a cache directory it
 cannot create) logs the reason and does not start. The check is one
 listing of the bucket, made at startup before the data directory is
 upgraded (`blobs.check`, from `app.create_app`). The job artifacts
-(`jobs/`) and the backup zips stay on the node's disk. Moving an existing
-data directory's files into a bucket is not automated: copy each
-`workspaces/<id>/uploads/<name>` to `<prefix>/uploads/<id>/<name>` before
-switching.
+(`jobs/`) and the backup zips stay on the node's disk.
+
+An existing data directory's files are moved into the bucket by `manage.py
+uploads-push`, run with the `GAMMA_BLOBS=s3` and `GAMMA_S3_*` variables the
+server will have. It walks each workspace's `workspaces/<id>/uploads/` and
+puts every file the bucket lacks at `<prefix>/uploads/<id>/<name>`
+(streamed, in parts past 8 MB, with the media type and Cache-Control an
+upload gets), printing a count per workspace; `--check` only counts what
+is missing. Names are content hashes, so a run that stopped half way is
+run again and puts only the rest. It reads no database, so it works on a
+data directory of any version, while the server still serves the local
+files. Run it once with the server up, then stop the server, run it again
+for what was uploaded meanwhile, and start the server on the bucket. The
+local files stay where they are: delete `workspaces/<id>/uploads/` once the
+server works from the bucket. In Docker, with the variables in the
+compose file:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python gamma manage.py uploads-push --check
+docker compose run --rm --no-deps --entrypoint python gamma manage.py uploads-push
+```
 
 With presigning on, the browser follows the redirect to the bucket's
 origin. The redirected request keeps the `X-Gamma-Workspace` header that

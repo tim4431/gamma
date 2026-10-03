@@ -142,7 +142,7 @@ def test_invites_by_cloud_username_need_cloud_sign_in(ann, ben, cid, lab, monkey
     assert not any(m.get("pending") for m in ann.get(f"/api/workspaces/{lab}").json()["members"])
 
 
-def test_several_personal_workspaces(ann, ben, boss):
+def test_several_personal_workspaces(ann, ben, boss, lab):
     """work / life / play: all personal, all metered against the account;
     the first is the default until another is made default; the last one
     cannot be deleted."""
@@ -180,9 +180,9 @@ def test_several_personal_workspaces(ann, ben, boss):
     assert ann.delete(f"/api/workspaces/{play['id']}").status_code == 200
     assert ann.get("/api/session").json()["default_workspace"] == home
     assert ann.delete(f"/api/workspaces/{home}").status_code == 400
-    # a shared workspace cannot be made someone's default
-    lab_ws = next(w for w in ann.get("/api/session").json()["workspaces"] if w["kind"] == "shared")
-    assert ann.put(f"/api/workspaces/{lab_ws['id']}", json={"default": True}).status_code == 400
+    # a shared workspace cannot be made someone's default (this module's own: another
+    # module's public one would answer 403, ann being no member of it)
+    assert ann.put(f"/api/workspaces/{lab}", json={"default": True}).status_code == 400
 
 
 def test_admin_converts_between_kinds(boss, ann, ben):

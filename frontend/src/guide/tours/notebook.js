@@ -1,5 +1,5 @@
 import { T } from "../../shared/i18n/i18n.js";
-// Offered once a sheet of paper is made (a new notebook, +, /page, or
+// Offered once a sheet of paper is made (a new notebook, +, /note, or
 // writing low on the last sheet). Started from the Tours menu on a page
 // without one, the first step has the user make one for the rest to point
 // at. The next page arriving under your hand cannot be seen standing still,
@@ -21,7 +21,7 @@ export default {
   offer: { title: T("You have a page to write on"), line: T("Pages that add themselves, and the notebook view.") },
   steps: [
     { id: "nb-make", anchor: "dock.notes", placement: "left", creates: "notes.sheet",
-      title: T("Type /page in a note"),
+      title: T("Type /note in your notes"),
       body: T("Or choose Add > New notebook."),
       advanceOn: { event: "sheet.created" } },
     { id: "nb-grow", anchor: "notes.sheet", placement: "left",

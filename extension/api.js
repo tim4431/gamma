@@ -126,15 +126,22 @@ export async function hasServerPermission(origin) {
 
 async function readError(res) {
   let message = `${res.status} ${res.statusText}`;
+  let detail = false;
   try {
     const data = await res.json();
-    if (data && data.detail) message = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    if (data && data.detail) {
+      detail = true;
+      message = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    }
   } catch {
     try {
       const text = await res.text();
       if (text) message = text.slice(0, 200);
     } catch {}
   }
+  // A 413 without Gamma's {detail} is a proxy's (Cloudflare's HTML page):
+  // its request-body limit refused the bytes, not Gamma's max_upload_mb.
+  if (res.status === 413 && !detail) message = "refused as too large by a proxy in front of the server, not by Gamma (HTTP 413)";
   return new ApiError(res.status, message);
 }
 

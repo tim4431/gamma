@@ -23,7 +23,7 @@ export const EVENTS = [
   "ink.options",      // the armed tool's options row opened
   "ink.erased",       // handwriting was erased
   "ink.undone",       // a handwriting change was undone
-  "sheet.created",    // {id}: a sheet of paper was added to a page (a new notebook, +, /page, or writing low on the last one)
+  "sheet.created",    // {id}: a sheet of paper was added to a page (a new notebook, +, /note, or writing low on the last one)
   "job.started",      // {kind}: a background job was started on the server (an export, a backup, a restore, an import)
   "paper.fetched",    // a paper was fetched from an address (a URL, a DOI, an arXiv id) and filed in the library
   "approval.shown",   // {tool}: the assistant asked before a change

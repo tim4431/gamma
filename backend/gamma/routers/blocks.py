@@ -57,9 +57,10 @@ class TreeJSON(JSONResponse):
     """The tree reads' answer (a page's subtree, a block's children, the
     library listing), encoded by orjson (docs/dev/api.md has the timings).
     The handler builds it, so the encoding runs in its worker thread: a
-    returned dict is encoded on the event loop. NaN and the infinities go
-    out as null. A lone surrogate a stored row may hold goes out as U+FFFD
-    (``ops.storable``): UTF-8 has no encoding for one. What orjson still
+    returned dict is encoded on the event loop. NaN and the infinities a
+    stored row may hold go out as null (a write refuses them now). A lone
+    surrogate goes out as U+FFFD (``ops.storable``, told to let the NaN
+    through): UTF-8 has no encoding for one. What orjson still
     refuses goes through the standard encoder: nesting past 255 levels (a
     tree about 125 blocks deep), an integer past 64 bits."""
 
@@ -67,7 +68,7 @@ class TreeJSON(JSONResponse):
         try:
             return orjson.dumps(content)
         except orjson.JSONEncodeError:
-            content = storable(content)
+            content = storable(content, finite=False)
         try:
             return orjson.dumps(content)
         except orjson.JSONEncodeError:

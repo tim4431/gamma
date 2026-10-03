@@ -5,8 +5,10 @@ on."""
 import io
 import zipfile
 
+import pytest
+
 from gamma.markdown_import import md_to_blocks
-from conftest import folder_names, label_names, make_folder
+from conftest import folder_names, label_names, login, make_folder, make_user
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 NOTION_HOME = "Home 0123456789abcdef0123456789abcdef"
@@ -153,18 +155,27 @@ def test_notion_wrapper_folder_and_part_zips_are_unpacked(guest):
     assert "folders" not in _subtree(guest, report["pages"][0]["id"])["properties"]
 
 
-def test_plain_zipped_folder_of_notes(guest):
+@pytest.fixture
+def own_library():
+    """An account of the test's own, whose library has no folders yet: the
+    shared guest may hold a "Projects" another module made, which an
+    import's "projects" would be filed in (folder names match without case)."""
+    make_user("mzi_plain", "pw-mzi-plain")
+    return login("mzi_plain", "pw-mzi-plain")
+
+
+def test_plain_zipped_folder_of_notes(own_library):
     buf = _zip({
         "vault/daily/2026-09-01.md": "- woke up\n- [[wiki style]] stays as typed\n",
         "vault/projects/gamma.md": "---\ntitle: Gamma plans\n---\n# Gamma plans\n\nSee [daily](../daily/2026-09-01.md).\n",
     })
-    report = _import(guest, buf)
+    report = _import(own_library, buf)
     by_title = {p["title"]: p for p in report["pages"]}
     # the single common root ("vault") is dropped, the rest become folders
     assert by_title["2026-09-01"]["folders"] == [["daily"]]
     assert by_title["Gamma plans"]["folders"] == [["projects"]]
-    assert _filed(guest, by_title["Gamma plans"]["id"]) == [["projects"]]
-    plans = _subtree(guest, by_title["Gamma plans"]["id"])
+    assert _filed(own_library, by_title["Gamma plans"]["id"]) == [["projects"]]
+    plans = _subtree(own_library, by_title["Gamma plans"]["id"])
     assert plans["children"][0]["content"] == f"See [[{by_title['2026-09-01']['id']}]]."
 
 

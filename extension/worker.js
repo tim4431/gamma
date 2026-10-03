@@ -602,13 +602,34 @@ async function bytesFromTab(url, tabId) {
   throw lastErr;
 }
 
+// Past this a PDF goes up in parts (gamma/upload_parts.py): a proxy in
+// front of the server caps a request's body (Cloudflare at 100 MB). The
+// web app's shared/lib/uploadParts.js speaks the same protocol.
+const PART_BYTES = 32 * 1024 * 1024;
+
 async function uploadBlob(tabId, blob, url, expectedOrigin) {
-  const form = new FormData();
   const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
-  form.append("file", blob, name);
   if (tabId != null) await progress(tabId, "uploading…");
-  const up = await api("/uploads", { form, expectedOrigin });
-  return up.doc_id;
+  if (blob.size <= PART_BYTES) {
+    const form = new FormData();
+    form.append("file", blob, name);
+    return (await api("/uploads", { form, expectedOrigin })).doc_id;
+  }
+  const opened = await api("/uploads/parts", { json: { size: blob.size, name }, expectedOrigin });
+  const partBytes = Math.max(1, Math.min(PART_BYTES, opened.part_bytes || PART_BYTES));
+  try {
+    for (let offset = 0; offset < blob.size;) {
+      const form = new FormData();
+      form.append("offset", String(offset));
+      form.append("part", blob.slice(offset, Math.min(offset + partBytes, blob.size)), "part");
+      offset = (await api(`/uploads/parts/${opened.token}`, { form, expectedOrigin })).received;
+      if (tabId != null) await progress(tabId, `uploading… ${Math.round((offset / blob.size) * 100)}%`);
+    }
+    return (await api(`/uploads/parts/${opened.token}/finish`, { method: "POST", expectedOrigin })).doc_id;
+  } catch (err) {
+    api(`/uploads/parts/${opened.token}`, { method: "DELETE", expectedOrigin }).catch(() => {});
+    throw err;
+  }
 }
 
 async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {

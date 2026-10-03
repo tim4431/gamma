@@ -109,6 +109,13 @@ engine can match on them against a server of any version.
 Lone UTF-16 surrogates (half an emoji) in any string of a batch are stored
 as U+FFFD (`ops.storable`, also on the block create and update bodies).
 SQLite cannot encode them, and one would fail its batch on every retry.
+A number that is not finite (`NaN`, `Infinity`, `-Infinity`, or `1e999`,
+too big for a float) fails its batch with 400 `not a finite number: NaN`,
+and nothing is written. Python's JSON reader takes them bare, SQLite would
+store them, and no JSON answer can carry one back. The block create and
+update bodies refuse one with the same 400 and wording, as do the other
+bodies built on `ops.StorableBody` (the metadata edit, the chat writes).
+A value stored before the rule stays; the tree reads send it as null.
 
 Only touched rows get `updated_at`; the page is touched once per batch
 (`blocks_store.touch_page`: the root's stamp — home-feed order — and the

@@ -178,11 +178,23 @@ planned, the item says so under *Built*.
 14. *Cluster only:* a placement table overriding the hash, and a relocate
     job.
 
-The same survey found three frontend items, not part of this list and not
-built: splitting the main chunk by surface, state owners with a normalized
-block map (the owners are planned in
-[frontend-refactor.md](../dev/frontend-refactor.md)), and one multiplexed
-socket per tab.
+The same survey found three frontend items, not part of this list. Splitting
+the main chunk by surface is built (October 2026): 2.7 MB became 1.9 MB,
+with Settings, the chat, the guide, the dialogs and pdf.js fetched on first
+use ([bundle.md](bundle.md) has the measurements and what stayed in, and
+[frontend-refactor.md](../dev/frontend-refactor.md#lazy-boundaries) the
+rule). Not built: state owners with a normalized block map (the owners are
+planned in [frontend-refactor.md](../dev/frontend-refactor.md)), and one
+multiplexed socket per tab.
+
+Follow-ups built the same day, after the cleanup pass: the API refuses
+NaN and Infinity with a 400 before anything is written (`ops.storable`);
+the upload purge checks only the due names under the write lock
+(`blobs.stat`) instead of listing the workspace; a presigned redirect is
+cacheable for its validity and bucket objects carry an immutable
+`Cache-Control`; `manage.py uploads-push` moves an existing deployment's
+files into the bucket; the admin's Server pane shows the store and the
+last copy round as read-only rows (`GET /api/admin/server-info`).
 
 What stays as it is: the block table and its hot columns, the per-page op
 log and `seq`, the external-content FTS5 index maintained by triggers, the

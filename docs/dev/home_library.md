@@ -247,6 +247,15 @@ label view. Committing inserts the folder block, last among its siblings:
 an empty folder is real, shared and synced like any; a name a sibling has
 already makes nothing. The toolbar is filter box → sort → kind → list/grid.
 
+**/page** in a block's editor makes a page too, as in Notion (App's
+`createLinkedPage`). The block's text gets the `[[id]]` link at once, under
+an id minted in the browser; the chip's label is cached with it, so the id
+is never looked up before the page exists. Then `POST /api/pages {id,
+folders}` files the page in the open page's folders, and it opens like a
+New page, with its title ready to type; Back returns to the link. A
+creation that fails takes the link back out of the block. A share's editor
+does not offer the command.
+
 In the compact layout (`.phoneUI`: phones and upright tablets,
 [ipad.md](ipad.md)) the toolbar wraps. At the library's root its label
 becomes a large "Library" heading (`homeListRoot`); a folder or label view

@@ -212,15 +212,7 @@ def write_atomic(path: Path, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        try:
-            os.replace(tmp, path)
-        except PermissionError:
-            # Windows refuses a rename over a name another thread is renaming
-            # into place at the same moment. The name is the content's hash,
-            # so a stored copy of the same size already is these bytes.
-            if not (path.is_file() and path.stat().st_size == len(data)):
-                raise
-            os.unlink(tmp)
+        _rename_over(tmp, path, len(data))
     except BaseException:
         try:
             os.unlink(tmp)
@@ -229,9 +221,43 @@ def write_atomic(path: Path, data: bytes) -> None:
         raise
 
 
-def _cut_short(ws: str, filename: str, data: bytes) -> bool:
-    """Whether a stored copy whose size differs from ``data`` is a write that
-    stopped early. Only a PDF is ever rewritten under its name (embedded
+def _rename_over(tmp: Path, path: Path, size: int) -> None:
+    """``tmp`` — complete, flushed, ``size`` bytes — renamed over ``path``."""
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        # Windows refuses a rename over a name another thread is renaming
+        # into place at the same moment. The name is the content's hash,
+        # so a stored copy of the same size already is these bytes.
+        if not (path.is_file() and path.stat().st_size == size):
+            raise
+        os.unlink(tmp)
+
+
+def place_file(tmp: Path, path: Path) -> None:
+    """Make the complete local file ``tmp`` the stored file ``path``:
+    flushed to disk, then renamed over the name like write_atomic's temp
+    file — ``tmp`` is one, in ``path``'s ``.partial/`` (an upload assembled
+    in parts, gamma/upload_parts.py), so this is a rename and never a copy
+    of the bytes. ``tmp`` is consumed whatever happens: renamed, or removed
+    when the rename fails."""
+    try:
+        size = tmp.stat().st_size
+        with open(tmp, "rb+") as f:
+            os.fsync(f.fileno())
+        _rename_over(tmp, path, size)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _cut_short(ws: str, filename: str, size: int, head) -> bool:
+    """Whether a stored copy whose size differs from the new data's ``size``
+    is a write that stopped early (``head(n)``: the new data's first ``n``
+    bytes). Only a PDF is ever rewritten under its name (embedded
     annotations stripped, routers/imports.py), so any other file of the
     wrong size is not what its name says; a PDF is cut short when its bytes
     are the beginning of the real ones."""
@@ -239,32 +265,54 @@ def _cut_short(ws: str, filename: str, data: bytes) -> bool:
         return True
     path = blobs.open_path(ws, filename)
     stored = path.read_bytes() if path else b""  # gone meanwhile: written again
-    return len(stored) < len(data) and data.startswith(stored)
+    return len(stored) < size and head(len(stored)) == stored
 
 
-def _store(ws: str, filename: str, data: bytes) -> bool:
-    """Write ``data`` as the workspace's upload ``filename`` unless it is
+def _store_with(ws: str, filename: str, size: int, head, put) -> bool:
+    """Store the workspace's upload ``filename`` (``size`` bytes, their
+    first ``n`` read by ``head(n)``, written by ``put()``) unless it is
     stored already; returns whether it was. A stored copy is re-dated
     (``blobs.touch``): the upload→reference window gets its grace again and
     an unreferenced file's retention starts over (gamma/upload_gc.py). A
     copy an earlier, non-atomic write left short is rewritten. The storage
     limits gate new bytes only (check_upload_allowed raises 413/507 past
     them)."""
-    size = blobs.size(ws, filename)
-    if size is not None and size != len(data) and _cut_short(ws, filename, data):
-        log.warning(f"[uploads] {filename} in workspace {ws} held {size} of {len(data)} bytes — rewritten")
-        blobs.put(ws, filename, data)
+    stored = blobs.size(ws, filename)
+    if stored is not None and stored != size and _cut_short(ws, filename, size, head):
+        log.warning(f"[uploads] {filename} in workspace {ws} held {stored} of {size} bytes — rewritten")
+        put()
         return True
-    if size is not None:
+    if stored is not None:
         from . import upload_gc  # local: upload_gc imports this module
 
         with upload_gc.guard(ws):  # never between the purge's check and its delete
             if blobs.touch(ws, filename):
                 return True
             # purged a moment ago (gamma/upload_gc.py): store it again
-    check_upload_allowed(ws, len(data))
-    blobs.put(ws, filename, data)
+    check_upload_allowed(ws, size)
+    put()
     return False
+
+
+def _store(ws: str, filename: str, data: bytes) -> bool:
+    """``_store_with`` for bytes in memory."""
+    return _store_with(ws, filename, len(data), lambda n: data[:n], lambda: blobs.put(ws, filename, data))
+
+
+def _head_of(path: Path, n: int) -> bytes:
+    with open(path, "rb") as f:
+        return f.read(n)
+
+
+def _store_path(ws: str, filename: str, path: Path, size: int) -> bool:
+    """``_store_with`` for a complete file in ``blobs.partial_dir(ws)``,
+    stored by ``blobs.put_path`` (a rename, locally) and consumed whatever
+    the outcome: a dedup hit or a failed put removes it."""
+    try:
+        return _store_with(ws, filename, size, lambda n: _head_of(path, n),
+                           lambda: blobs.put_path(ws, filename, path))
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def put_upload(ws: str, name: str, data: bytes) -> None:
@@ -292,6 +340,17 @@ def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
     doc_id = content_digest(data)
     already_existed = _store(ws, f"{doc_id}.pdf", data)
     pdf_meta.schedule(ws, doc_id)  # the viewer's manifest, ready before the first open
+    return doc_id, already_existed
+
+
+def store_pdf_path(ws: str, path: Path, size: int, doc_id: str) -> tuple[str, bool]:
+    """:func:`store_pdf` for a PDF assembled on disk — an upload in parts
+    (gamma/upload_parts.py): ``path``, in ``blobs.partial_dir(ws)``, holds
+    ``size`` bytes whose content digest is ``doc_id`` (the caller hashed
+    them as they arrived and checked the PDF header), so storing it is a
+    rename, never a copy. ``path`` is consumed either way."""
+    already_existed = _store_path(ws, f"{doc_id}.pdf", path, size)
+    pdf_meta.schedule(ws, doc_id)
     return doc_id, already_existed
 
 

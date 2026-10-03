@@ -485,11 +485,11 @@ export async function triggeredGuideScenarios(env) {
     await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "A note" } });
     const { ctx, page } = await open(`&page=${pg.id}`, { seen: ["add-paper", "tables", "workspaces"] });
     try {
-      // "/page" in an empty block of its own: the block becomes a sheet.
+      // "/note" in an empty block of its own: the block becomes a sheet.
       await editRow(page, "A note");
       await page.keyboard.press("Enter");
-      await page.keyboard.type("/page");
-      await page.locator(".slashMenu .slashMenuItem", { hasText: "Page to write on" }).click();
+      await page.keyboard.type("/note");
+      await page.locator(".slashMenu .slashMenuItem", { hasText: "Handwritten note" }).click();
       await page.waitForSelector('[data-guide="notes.sheet"]');
       await page.waitForSelector('[data-guide-offer="notebook"] .guideCard');
       await page.getByRole("button", { name: "Show me" }).click();

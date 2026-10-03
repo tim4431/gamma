@@ -122,7 +122,7 @@ test("a new page goes right after its block, folded, on the paper of the sheet b
   assert.equal(insertSheetAfter(tree, "missing", "x"), tree);
 });
 
-test("'/page' turns an empty block into a sheet: text gone, the paper before it, folded unless it has children", () => {
+test("'/note' turns an empty block into a sheet: text gone, the paper before it, folded unless it has children", () => {
   const out = blockToSheet(tree, "intro");
   assert.deepEqual(out[0], { id: "intro", content: "", properties: { sheet: DEFAULT_PAPER, collapsed: true }, children: [] });
   const open = blockToSheet(tree, "g1");

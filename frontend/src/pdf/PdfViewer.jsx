@@ -2,15 +2,11 @@
 // annotations, text search, and the selection popup. Extracted from
 // App.jsx to keep the God component shrinking.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-// The legacy build, not the default one: it ships the core-js polyfills the
-// modern build assumes (Promise.withResolvers is Safari 17.4+, and pdf.js
-// calls it the moment a loading task is created). Without it every iPad below
-// iOS 17.4 threw here at module scope and the whole app rendered blank.
-// The worker is the matching legacy build, bundled by Vite as a content-hashed
-// asset (?url): always the installed pdfjs-dist version, and served immutable
-// for a year like every other asset — a copy under public/ was revalidated on
-// every page load, 1.3 MB each time, and that was most of a warm reopen.
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// The worker is the legacy build matching the engine below, bundled by Vite
+// as a content-hashed asset (?url): always the installed pdfjs-dist version,
+// and served immutable for a year like every other asset — a copy under
+// public/ was revalidated on every page load, 1.3 MB each time, and that was
+// most of a warm reopen.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
@@ -32,22 +28,43 @@ import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { installViewerZoom } from "../shared/lib/viewerZoom.js";
-// Bypass immutable responses cached with text/plain before the server MIME
-// fix. Keep this stable: Vite's content hash handles later worker upgrades.
-pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
+// The engine: pdf.js (the legacy build, not the default one: it ships the
+// core-js polyfills the modern build assumes — Promise.withResolvers is
+// Safari 17.4+, and pdf.js calls it the moment a loading task is created) and
+// its worker. A chunk of its own (docs/dev/frontend-refactor.md, "Lazy
+// boundaries"), so the library's first screen neither downloads nor parses
+// it: App preloads it at startup when the address opens a page, else once
+// the library is idle, and a document opening fetches it if neither has.
+// Until it loads, `pdfjsLib` is null; everything below that reads it runs on
+// an open document, so after the load.
+let pdfjsLib = null;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
 // a document's destroy() only tears down a worker pdf.js created itself, so
-// a shared one outlives every DOC_CACHE eviction. Created at module scope,
-// which is also what starts its script downloading alongside the app.
-// Guarded: a throw at module scope takes down every route, PDF or not.
+// a shared one outlives every DOC_CACHE eviction. Created with the engine,
+// which is what starts its script downloading.
 let PDF_WORKER = null;
-try {
-  PDF_WORKER = new pdfjsLib.PDFWorker({ name: "gamma-pdf" });
-  // Startup can fail before a document opens. getDocument still receives
-  // the rejection and reports it through the load-status UI when needed.
-  PDF_WORKER.promise.catch(() => {});
-} catch {}
+let enginePending = null;
+export function loadPdfEngine() {
+  enginePending ||= import("pdfjs-dist/legacy/build/pdf.mjs").then((lib) => {
+    // Bypass immutable responses cached with text/plain before the server
+    // MIME fix. Keep this stable: Vite's content hash handles later upgrades.
+    lib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
+    try {
+      PDF_WORKER = new lib.PDFWorker({ name: "gamma-pdf" });
+      // Startup can fail before a document opens. getDocument still receives
+      // the rejection and reports it through the load-status UI when needed.
+      PDF_WORKER.promise.catch(() => {});
+    } catch {}
+    pdfjsLib = lib;
+    return lib;
+  }, (error) => {
+    enginePending = null; // a failed fetch is retried by the next open
+    throw error;
+  });
+  return enginePending;
+}
+export const preloadPdfEngine = () => { loadPdfEngine().catch(() => {}); };
 // getDocument parameters every open shares.
 const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } : params);
 
@@ -710,6 +727,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           commitDoc(url, live.doc, live.heights, live.widths, true);
           return;
         }
+        // The engine, when the app has not loaded it ahead, travels with the
+        // manifest and the bytes; awaited just before pdf.js is called.
+        const engine = loadPdfEngine();
+        engine.catch(() => {});
         // The manifest and the bytes travel in parallel. On a cold open the
         // manifest alone lays the document out, while pdf.js is still
         // fetching; for an uncached upload it also decides the transport.
@@ -736,6 +757,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             if (!data || cancelled) return;
           }
         }
+        await engine;
+        if (cancelled) return;
         report({ phase: "parsing" });
         let doc;
         if (openedByRange) {

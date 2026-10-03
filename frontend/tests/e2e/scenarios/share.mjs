@@ -346,6 +346,11 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await until(async () => (await page.textContent("body")).includes("Can edit"), { what: "edit badge" });
     await editRow(page, "figure");
     await page.keyboard.type(" edited by bob");
+    // A share's editor makes no page in the owner's library.
+    await page.keyboard.type(" /page");
+    await page.waitForSelector(".slashMenu");
+    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 0, "/page offers no new page in a share");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("Backspace");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(account, pdfPageId)).includes("edited by bob"), { what: "bob's edit saved to alice's page" });
     assertNoProblems(page);

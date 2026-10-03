@@ -43,15 +43,15 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 
 ## Take notes
 
-<a href="./docs/user_guide.md#notes"><img alt="Type markdown, a page link and a live LaTeX equation, then /page drops a sheet of paper into the notes and a pen sketches the result on it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
+<a href="./docs/user_guide.md#notes"><img alt="Type markdown, a page link and a live LaTeX equation, then /note drops a sheet of paper into the notes and a pen sketches the result on it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
 
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
 - **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
 - **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables and Mermaid diagrams render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
 - **Pictures, tables and diagrams** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown; double-click a diagram to edit its source.
-- **Pages to write on** — type `/page` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
-- **Link and embed** — `[[page]]` mentions, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
+- **Pages to write on** — type `/note` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
+- **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
 → Guide: [Notes](./docs/user_guide.md#notes)
 
@@ -215,7 +215,7 @@ cd ../backend
 GAMMA_STATIC_DIR=../frontend/dist uvicorn app:app --host 127.0.0.1 --port 9001
 ```
 
-Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy, set it to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file). Otherwise every visitor shares the proxy's rate-limit bucket. The build ships Brotli and gzip copies of its assets. The backend serves them itself, and a proxy that serves `dist` directly can too ([serving the build](docs/dev/debugging.md#serving-the-build)).
+Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain. If you use HTTP/3, consider limiting Caddy to `protocols h1 h2` — a Chrome QUIC bug can make large PDFs crawl. A proxy's request-body limit (Cloudflare's 100 MB, nginx's `client_max_body_size`) does not cap your PDFs: a file past 32 MiB goes up in parts of that size, so the proxy only has to allow that much per request, and the per-file limit stays Gamma's own (Settings → Server, 50 MB by default). An upload a proxy does refuse says so in its error instead of looking like Gamma's limit. Gamma's login throttle counts per client address, which it takes from the proxy's `X-Forwarded-For` only when the proxy's own address is in `FORWARDED_ALLOW_IPS` (below). Behind a proxy, set it to the proxy's address, or in Docker to the subnet of the compose network the proxy container shares with Gamma (pin that subnet in the compose file). Otherwise every visitor shares the proxy's rate-limit bucket. The build ships Brotli and gzip copies of its assets. The backend serves them itself, and a proxy that serves `dist` directly can too ([serving the build](docs/dev/debugging.md#serving-the-build)).
 
 </details>
 

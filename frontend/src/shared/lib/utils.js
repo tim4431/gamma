@@ -316,13 +316,24 @@ async function apiError(r) {
   let err;
   try {
     const j = JSON.parse(text);
-    err = new Error(typeof j?.detail === "string" ? j.detail : text || `HTTP ${r.status}`);
+    err = new Error(proxyRefusal(r.status, j) || (typeof j?.detail === "string" ? j.detail : text || `HTTP ${r.status}`));
     err.data = j;
   } catch {
-    err = new Error(text || `HTTP ${r.status}`);
+    err = new Error(proxyRefusal(r.status, null) || text || `HTTP ${r.status}`);
   }
   err.status = r.status;
   return err;
+}
+
+// A 413 whose body is not Gamma's JSON came from a proxy in front of the
+// server (Cloudflare's or nginx's HTML page), whose request-body limit is
+// smaller than the file; Gamma's own 413 carries {detail: "file too large
+// (max N MB)"}. Named, since the bare status reads as Gamma's limit — the
+// reader would raise max_upload_mb and get the same answer. Big PDFs go up
+// in parts for this reason (shared/lib/uploadParts.js).
+function proxyRefusal(status, data) {
+  if (status !== 413 || typeof data?.detail === "string") return "";
+  return t("refused as too large by a proxy in front of the server, not by Gamma (HTTP 413)");
 }
 
 // The share view (/?share=<token>): every same-origin API call carries the
@@ -408,4 +419,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

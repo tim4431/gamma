@@ -276,7 +276,7 @@ of three endings:
 - **Pasted.** The redirect page fails to load and the user pastes its
   address; a paste that doesn't parse leaves the sign-in waiting.
 
-The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+The form (`useProviderEditor` in `settings/providerEditor.js`) asks `status` every 2.5 s
 while the server may catch the sign-in, and calls `complete` with an empty
 `callback` once it is `ready`. A paste of a callback address connects without
 the Connect button, and in Chromium the address is also picked up from the

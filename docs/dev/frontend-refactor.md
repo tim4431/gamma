@@ -8,6 +8,59 @@ with one step taken: the block tree holds the document only, and the
 viewer's own state (the open editor, their folding) is App's `view` beside
 it (`shared/model/blockModel.js`, [collab.md](collab.md)).
 
+## Lazy boundaries
+
+Built, unlike the plan below. The startup bundle is `main.jsx` plus the
+`App` chunk it imports once the locale catalog is in. What the first screen
+does not show comes in chunks of its own, through `lazySurface` and
+`LazyBoundary` (`shared/ui/lazy.jsx`):
+
+| Surface | Mounts | Shown while it loads |
+|---|---|---|
+| Settings dialog and its panes | on first opening, then stays mounted (`useLatch`) | nothing |
+| Chat dock | with its dock window | the window's frame (`DockWindow`), body empty |
+| Guide overlay (`guide.css`) | when a tour, offer or finish card first shows, then stays | nothing |
+| Ctrl+P / Ctrl+Shift+P palette | on first opening, then stays | nothing |
+| Import, Export, import review, Recently deleted, Report a problem | while open | nothing |
+| Share popover | while open | nothing |
+| pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
+
+Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
+
+The preload rule: no click waits on the network for a chunk, and the first
+screen downloads only what it paints.
+
+- A surface opened from a button is fetched when the pointer enters or focus
+  reaches the button: the account button (Settings, Tours, Report a problem,
+  and the View rows a phone shows there), the View menu (Import/Export, the
+  AI Chat toggle), Share, Recently deleted. The import review is fetched
+  while the Import dialog is open, since a picked file opens it already
+  uploading. The palette has no button: it is fetched when the main thread
+  is idle after the library is up.
+- A surface on the first screen is fetched with the startup requests: the
+  chat dock on a desktop, the PDF engine when the address names a page, a
+  share or a PDF. On the library the engine waits until the listing has been
+  in for 1.5 s and the main thread is idle, so it is warm for the first PDF
+  without competing with the library.
+- What every page paints at first render stays in the `App` chunk: the
+  block editor (BlockTree and CodeMirror; an empty page opens with its seed
+  block in the editor), note rendering (react-markdown, rehype-raw and its
+  parse5, KaTeX, highlight.js), the PDF viewer component, the ink and markup
+  layers.
+
+Adding one: import the module only through `lazySurface` (one static import
+anywhere in the `App` chunk's graph puts it back), and move the small
+exports App itself needs into a module of their own, as
+`settings/providerEditor.js`, `settings/workspaceRoles.js` and the
+`settingsNavigation.js` / `settingsSearch.js` split did. A surface that
+used to stay mounted while closed mounts on first use and then stays, so its
+state between openings is kept. CSS imported by a lazy module ships with its
+chunk and is appended after the `App` CSS: check that none of its rules ties
+with one that used to follow it. A chunk that cannot be fetched (a deploy
+replaced the hashed files under an open tab) leaves the fallback in place
+instead of unmounting the app; a reload fetches the new files. Sizes and
+what each first screen downloads: [the bundle note](../research/bundle.md).
+
 ## Goal and current constraints
 
 `frontend/src/app/App.jsx` still combines session checks,

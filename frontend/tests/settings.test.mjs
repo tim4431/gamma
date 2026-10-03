@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizePerm, permStates, permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
-import { resolveSettingsPane, searchSettings } from "../src/settings/settingsNavigation.js";
+import { resolveSettingsPane } from "../src/settings/settingsNavigation.js";
+import { searchSettings } from "../src/settings/settingsSearch.js";
 
 test("permission presets cover each chat kind's tools, and changes ask unless told otherwise", () => {
   for (const kind of ["folder", "pdf", "notes"]) {

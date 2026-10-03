@@ -1,14 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import PdfViewer from "../pdf/PdfViewer";
+import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
-import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
-import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { useTasks } from "../tasks/useTasks";
 import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
@@ -34,14 +32,12 @@ import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
-import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
+import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines } from "../transfers/FileChip";
+import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, ViewToggle } from "../library/FileBrowser";
-import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
-import QuickOpen from "../library/QuickOpen";
 import LibraryEmpty from "../library/LibraryEmpty";
-import RecentlyDeleted from "../library/RecentlyDeleted";
 import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -92,7 +88,7 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandChord } from "./commands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
-import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
+import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
@@ -122,15 +118,12 @@ import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
-import SettingsDialog from "../settings/SettingsDialog";
-import { modelList, useProviderEditor } from "../settings/SettingsAi";
-import ReportProblem from "../support/ReportProblem";
+import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
-import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
 import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
 import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
-import { SharePopover } from "../sharing/SharePopover";
+import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
 import {
@@ -167,6 +160,28 @@ import {
   PATH_SEP,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
+
+// Surfaces fetched on first use, each mounted inside a LazyBoundary
+// (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
+// one ahead: on hover or focus of what opens it, at startup for the chat
+// dock a desktop shows from the start, when idle for the Ctrl+P palette.
+const ChatDock = lazySurface(() => import("../chat/ChatDock"));
+const SettingsDialog = lazySurface(() => import("../settings/SettingsDialog"));
+const GuideOverlay = lazySurface(() => import("../guide/GuideOverlay"));
+const QuickOpen = lazySurface(() => import("../library/QuickOpen"));
+const RecentlyDeleted = lazySurface(() => import("../library/RecentlyDeleted"));
+const ReportProblem = lazySurface(() => import("../support/ReportProblem"));
+const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) => m.SharePopover);
+const ImportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ImportDialog);
+const ExportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ExportDialog);
+const ImportReviewDialog = lazySurface(() => import("../transfers/ImportReviewDialog"));
+// What a header menu opens, fetched when the pointer or focus reaches its
+// button so nothing waits on the network after the click: the account menu
+// (Settings, Tours, Report a problem and, on a phone, the View rows) and the
+// View menu (Import/Export, the AI Chat toggle).
+const preloading = (...surfaces) => () => { for (const surface of surfaces) surface.preload(); };
+const preloadAccountMenu = preloading(SettingsDialog, GuideOverlay, ReportProblem, ImportDialog, ChatDock);
+const preloadViewMenu = preloading(ImportDialog, ChatDock);
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -3601,6 +3616,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
     };
   }, [isPhone]);
+  // What the startup bundle leaves out (docs/dev/frontend-refactor.md, "Lazy
+  // boundaries"), fetched before it is needed. A desktop shows the chat dock
+  // from the start: its module goes out with the session check. The PDF
+  // engine too when the address opens a page or a share; on the library it
+  // waits until the listing has been in for a moment (the first screen
+  // painted) and the main thread is idle, with the Ctrl+P palette, which has
+  // no button to hover.
+  useEffect(() => {
+    if (!isPhone) ChatDock.preload();
+    if (initialUrl || initialShare || initialBlockId) preloadPdfEngine();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!homeLoaded) return undefined;
+    return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); }, 1500);
+  }, [homeLoaded]);
   // Phone: drag-on-PDF mode — text selection (default) or rectangle drawing.
   // Desktop expresses this by holding Ctrl; a phone has no Ctrl, so it gets a
   // sticky toggle button in the viewer's zoom column instead.
@@ -4486,10 +4516,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function resolvePdfSource({ file, url }, taskId) {
     if (file) {
       const filename = uploadLeafName(file, "upload.pdf");
-      const form = new FormData();
-      form.append("file", file, filename);
-      // An XHR so the task row gets byte progress and a stop button.
-      const data = await xhrUpload(`${API}/uploads`, form, {
+      // One request, or in parts past PART_BYTES (shared/lib/uploadParts.js);
+      // XHRs either way, so the task row gets byte progress and a stop button.
+      const data = await uploadPdf(file, filename, {
         onProgress: (loaded, total) => updateTask(taskId, {
           info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
         }),
@@ -4737,17 +4766,47 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, ...(folder ? { folders: [folder] } : {}) }),
       });
-      await fetchHomeBlocks();
       if (title) {
+        await fetchHomeBlocks();
         await openBlock(created.id, { pushNav: true });
         return;
       }
-      await openBlock(created.id, { pushNav: true, focusTitle: true });
-      setTitleDraft("");
-      setTitleEditing(true);
+      await openNewPage(created.id);
     } catch (err) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
     }
+  }
+  // A page just made, opened Notion-style with its title ready to type;
+  // Back returns to where it was made from.
+  async function openNewPage(id) {
+    await fetchHomeBlocks();
+    await openBlock(id, { pushNav: true, focusTitle: true });
+    setTitleDraft("");
+    setTitleEditing(true);
+  }
+
+  // "/page" in a block's editor (Notion's): a new page made under `id`, the
+  // id the [[link]] typed into block `fromId` already names, filed in the
+  // open page's folders, then opened. A page that could not be made takes
+  // its link back out of the block.
+  async function createLinkedPage(id, fromId) {
+    try {
+      const created = await apiJson(`${API}/pages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: "", ...(pageFolders.length ? { folders: pageFolders } : {}) }),
+      });
+      onCacheRef(id, { content: created.content, page_title: created.content });
+    } catch (err) {
+      const link = `[[${id}]]`;
+      setBlocks((prev) => {
+        const b = findBlock(prev, fromId);
+        return b?.content?.includes(link) ? setBlockText(prev, fromId, b.content.replace(link, "")) : prev;
+      });
+      setStatus(t("Create failed: {err}", { err: err.message || err }));
+      return;
+    }
+    await openNewPage(id);
   }
 
   // "New notebook": a page with one sheet of paper, opened in the notebook
@@ -4766,10 +4825,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           content: "", props: sheet.properties }] }) });
       setNotebookView(created.id, true);
       guideEvents.emit("sheet.created", { id: sheet.id });
-      await fetchHomeBlocks();
-      await openBlock(created.id, { pushNav: true, focusTitle: true });
-      setTitleDraft("");
-      setTitleEditing(true);
+      await openNewPage(created.id);
     } catch (err) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
     }
@@ -6362,8 +6418,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const last = nbSheetsRef.current.at(-1);
     return last ? addSheetAfter(last.id) : "";
   }
-  // "/page" in a block's editor (`rest`: its text without the command): the
-  // block becomes the page when nothing else is in it, else a page goes in
+  // "/note" in a block's editor (`rest`: its text without the command): the
+  // block becomes the sheet when nothing else is in it, else a sheet goes in
   // after it.
   function insertSheetAt(blockId, rest) {
     if (readOnly) return;
@@ -6895,6 +6951,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // second tab or the desktop app beside the browser.
   const othersHere = !!focusedBlockId && collab.peers.some((p) => !p.user || p.user !== authUser?.user);
   useEffect(() => { if (othersHere) guideEvents.emit("peer.joined"); }, [othersHere]);
+  // Lazy surfaces that were always mounted while their modules came with the
+  // app mount when first wanted and then stay (shared/ui/lazy.jsx).
+  const quickOpenMounted = useLatch(!!quickOpen);
+  const guideMounted = useLatch(guide.running || !!guide.offer || !!guide.finishCard);
+  const settingsMounted = useLatch(!!settingsOpen);
+  // A file picked in the Import dialog opens its review at once, already
+  // uploading: fetch the review's module while the dialog is up.
+  useEffect(() => { if (importOpen) ImportReviewDialog.preload(); }, [importOpen]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
   // menu. Each site adds its own className, tip, time and extras.
@@ -7564,6 +7628,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // link button — the open page's, or the open folder's; the citation
   // section is App's (metadata + copy state).
   const sharePopover = (
+    <LazyBoundary>
     <SharePopover
       target={shareTarget?.kind === "page" ? { ...shareTarget, title: pageTitle }
         : shareTarget && { ...shareTarget, name: folderPath(libTree, shareTarget.id) }}
@@ -7644,6 +7709,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </Section>
       ) : null}
     />
+    </LazyBoundary>
   );
 
   // Notion-style tail under the block tree: clicking the empty space below
@@ -8395,7 +8461,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <ViewToggle view={homeView} onChange={changeHomeView} />
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
-                    aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}>
+                    aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}
+                    onPointerEnter={RecentlyDeleted.preload} onFocus={RecentlyDeleted.preload}>
                     <Trash2Icon size={16} />
                   </button>
                 ) : null}
@@ -8719,6 +8786,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   sheetNumbers,
                   inlineSheets: !notebook,
                   onInsertSheet: readOnly ? undefined : insertSheetAt,
+                  // "/page": a share's editor makes no library page.
+                  onNewPage: readOnly || shareMode ? undefined : createLinkedPage,
                   onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
@@ -9074,13 +9143,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       );
     }
     if (id === "chat") {
+      const closeChat = () => (isPhone ? setPhonePanel(null) : setChatHidden(true));
       return (
+        // Until the chat's module is in, its window frame with an empty body.
+        <LazyBoundary fallback={(
+          <DockWindow title={t("Chat")} guide="chat.grip" {...common} onClose={closeChat}>
+            <div className="chatPanel chatWindow" />
+          </DockWindow>
+        )}>
         <ChatDock
           {...common}
           session={chatSession}
           readOnly={shareMode}
           canSave={canWriteWorkspace}
-          onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
+          onClose={closeChat}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
           openTabs={openTabs}
           onOpenPage={openPageLink}
@@ -9117,6 +9193,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             loadBlocksForBlock(focusedBlockId);
           }}
         />
+        </LazyBoundary>
       );
     }
     return null;
@@ -9219,6 +9296,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <button
         className={`iconBtn ${openPopover === "menu" ? "activeIcon" : ""}`}
         onClick={() => setOpenPopover((p) => (p === "menu" ? null : "menu"))}
+        onPointerEnter={preloadViewMenu}
+        onFocus={preloadViewMenu}
         title={t("View — windows, import, export")}
         data-guide="header.view"
         aria-label={t("View")}
@@ -9355,6 +9434,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
+            onPointerEnter={SharePopover.preload}
+            onFocus={SharePopover.preload}
             disabled={loading}
             data-guide="header.share"
             title={t("Share")}
@@ -9373,6 +9454,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
+            onPointerEnter={SharePopover.preload}
+            onFocus={SharePopover.preload}
             title={t("Share this folder")}
             aria-label={t("Share this folder")}
           >
@@ -9405,6 +9488,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               if (opening) { refreshQuota(); refreshAiModels(); } // fresh storage and AI meters on open
               setOpenPopover(opening ? "user" : null);
             }}
+            onPointerEnter={preloadAccountMenu}
+            onFocus={preloadAccountMenu}
             data-guide="header.account"
             // The name stays put (every script finds the button by it); the
             // hover title counts what wants a look.
@@ -10123,6 +10208,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <div className="dockPreview" style={dockPreview} />
       ) : null}
       {importOpen ? (
+        <LazyBoundary>
         <ImportDialog
           hasPdf={!!docId && !!focusedBlockId}
           stripDefault={embAnnots === "strip"}
@@ -10130,14 +10216,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onCancel={() => setImportOpen(false)}
           onImport={runImport}
         />
+        </LazyBoundary>
       ) : null}
-      {importReview ? <ImportReviewDialog {...importReview} folderPath={(id) => folderPath(libTree, id)} tasks={tasks}
-        onClose={() => setImportReview(null)} /> : null}
+      {importReview ? <LazyBoundary><ImportReviewDialog {...importReview} folderPath={(id) => folderPath(libTree, id)} tasks={tasks}
+        onClose={() => setImportReview(null)} /></LazyBoundary> : null}
       {trashOpen ? (
+        <LazyBoundary>
         <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}
           tree={libTree} onRestored={() => fetchHomeBlocks()} />
+        </LazyBoundary>
       ) : null}
       {exportOpen ? (
+        <LazyBoundary>
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
@@ -10159,6 +10249,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             if (job) retryTask(job, "auto").then((again) => { if (again) setExportJobId(again.id); });
           }}
         />
+        </LazyBoundary>
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
@@ -10359,7 +10450,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         </div>
       ) : null}
-      <QuickOpen
+      {/* Mounted once first wanted, then kept, as when they loaded with the
+          app (useLatch): closed, they render nothing and run no requests. */}
+      {quickOpenMounted ? <LazyBoundary><QuickOpen
         open={!!quickOpen}
         prefix={quickOpen?.prefix || ""}
         commands={paletteCommands}
@@ -10375,9 +10468,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onOpenLabel={(id) => { if (!homeMode) goHome(); openLabel(id, ""); }}
         onSearch={openSearchWith}
         onCreate={lib.organize ? (title) => createPage(homeMode ? folderFilter : "", title) : null}
-      />
-      <GuideOverlay guide={guide} keybindings={keybindings} />
-      <SettingsDialog
+      /></LazyBoundary> : null}
+      {guideMounted ? <LazyBoundary><GuideOverlay guide={guide} keybindings={keybindings} /></LazyBoundary> : null}
+      {settingsMounted ? <LazyBoundary><SettingsDialog
         activePane={settingsOpen}
         profileSync={profileSync}
         notices={notices}
@@ -10578,8 +10671,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         } : null}
         diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog,
           openReport: () => { setSettingsOpen(null); setReportOpen(true); } }}
-      />
+      /></LazyBoundary> : null}
       {reportOpen ? (
+        <LazyBoundary>
         <ReportProblem onClose={() => setReportOpen(false)} setStatus={setStatus}
           facts={{
             build: authUser?.build,
@@ -10591,6 +10685,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             events: sysLog,
             isAdmin: !!authUser?.is_admin,
           }} />
+        </LazyBoundary>
       ) : null}
       {tabMenu ? (() => {
         // Two pins: the tab pin (this device's tab strip, synced with the

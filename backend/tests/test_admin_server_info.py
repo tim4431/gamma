@@ -123,3 +123,84 @@ def test_a_release_build_never_asks_about_a_branch(infoadmin, monkeypatch):
     monkeypatch.setattr(version, "_get_json", lambda url: pytest.fail(f"asked {url}"))
     info = infoadmin.get("/api/admin/server-info").json()
     assert info["latest_build"] is None and info["update_available"] is False
+
+
+# --- the stored files and the databases' copies (read-only, set by the environment) ----
+
+@pytest.fixture
+def store():
+    """``use(store)`` makes ``store`` the active blob driver for the test;
+    the one before comes back after it. The copies' last round starts
+    unrecorded."""
+    from gamma import blobs, db_copies
+
+    before = blobs.driver()
+    last = db_copies._last_round
+    db_copies._last_round = None
+    yield blobs.use
+    blobs.use(before)
+    db_copies._last_round = last
+
+
+def test_server_info_reports_local_storage_and_the_copies_off(infoadmin, infouser, store, monkeypatch):
+    from gamma import blobs, config
+
+    monkeypatch.delenv("GAMMA_DB_COPIES", raising=False)
+    monkeypatch.delenv("GAMMA_BLOBS", raising=False)
+    store(blobs.LocalBlobs())
+    info = infoadmin.get("/api/admin/server-info").json()
+    assert info["storage"] == {"kind": "local", "presign": False,
+                               "where": str((config.DATA_DIR / "workspaces/<id>/uploads/").absolute())}
+    assert info["db_copies"] == {"enabled": False}
+    assert infouser.get("/api/admin/server-info").status_code == 403
+
+
+def test_server_info_reports_a_bucket_its_cache_and_the_copies(infoadmin, infouser, store, s3_bucket, tmp_path,
+                                                               monkeypatch):
+    from gamma import blobs, db_copies
+    from conftest import S3_TEST_BUCKET
+
+    monkeypatch.setenv("GAMMA_DB_COPIES", "1")
+    monkeypatch.setenv("GAMMA_DB_COPIES_INTERVAL", "900")
+    monkeypatch.setenv("GAMMA_DB_COPIES_KEEP", "3")
+    bucket = blobs.S3Blobs(S3_TEST_BUCKET, region="us-east-1", access_key="testing", secret_key="testing",
+                           prefix="prod", cache_dir=tmp_path / "cache", cache_bytes=10_000, presign=False)
+    bucket.put("ws-info", "a.bin", b"x" * 1234)  # stored, and its bytes left in the node's cache
+    store(bucket)
+    info = infoadmin.get("/api/admin/server-info").json()
+    assert info["storage"] == {"kind": "s3", "where": f"s3://{S3_TEST_BUCKET}/prod/", "presign": False,
+                               "cache": {"bytes": 1234, "cap": 10_000}}
+    # on, but no round has finished in this process yet
+    assert info["db_copies"] == {"enabled": True, "interval_s": 900, "keep": 3,
+                                 "last_round_at": None, "copied": None, "failed": None}
+    monkeypatch.setattr(db_copies, "_last_round", {"stamp": "20261003T140000Z", "copied": 2, "failed": 1})
+    info = infoadmin.get("/api/admin/server-info").json()
+    assert info["db_copies"] == {"enabled": True, "interval_s": 900, "keep": 3,
+                                 "last_round_at": "2026-10-03T14:00:00Z", "copied": 2, "failed": 1}
+    r = infouser.get("/api/admin/server-info")
+    assert r.status_code == 403 and "storage" not in r.text
+
+
+def test_a_round_is_what_the_copies_status_reports(data_dir, store, monkeypatch):
+    """The status opens no database: a round records how it went, and the
+    status reads that back (and the environment)."""
+    import sqlite3
+    from contextlib import closing
+    from unittest import mock
+
+    from gamma import blobs, db_copies
+
+    monkeypatch.setenv("GAMMA_DB_COPIES", "1")
+    monkeypatch.delenv("GAMMA_DB_COPIES_INTERVAL", raising=False)
+    monkeypatch.delenv("GAMMA_DB_COPIES_KEEP", raising=False)
+    monkeypatch.setattr(db_copies, "_stamp", lambda: "20261003T150000Z")
+    store(blobs.LocalBlobs())  # its objects under data_dir, the test's own
+    with closing(sqlite3.connect(data_dir / "users.db")) as conn:
+        conn.execute("CREATE TABLE t (x)")
+        conn.commit()
+    with mock.patch("sqlite3.connect", side_effect=AssertionError("the status opened a database")):
+        assert db_copies.status()["last_round_at"] is None
+    assert db_copies.tick()["copied"] == ["users.db"]
+    with mock.patch("sqlite3.connect", side_effect=AssertionError("the status opened a database")):
+        assert db_copies.status() == {"enabled": True, "interval_s": 3600, "keep": 7,
+                                      "last_round_at": "2026-10-03T15:00:00Z", "copied": 1, "failed": 0}

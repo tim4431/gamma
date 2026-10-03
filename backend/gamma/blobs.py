@@ -13,15 +13,21 @@
   bucket on a miss and kept under ``GAMMA_BLOB_CACHE_BYTES`` by evicting
   the copies used longest ago. The uploads route sends a browser to the
   bucket with a presigned URL (``url``), so the bucket serves the bytes and
-  their Range requests.
+  their Range requests. Every object carries its media type and
+  OBJECT_CACHE_CONTROL: a name is its content's hash, so a browser may keep
+  what one presigned URL gave it. ``put_file`` (this driver only) streams a
+  local file up without caching it: ``manage.py uploads-push``.
 
 The interface, every call naming a workspace and a file name (checked here
 by ``check_name``; what a name says about its bytes is ``storage.matches_name``,
-at the callers): ``put``, ``exists``, ``size``, ``open_path``, ``delete``,
+at the callers): ``put``, ``exists``, ``size``, ``stat`` (``(size,
+mtime)`` of one file, asked of the store), ``open_path``, ``delete``,
 ``delete_workspace``, ``list`` (``(name, size, mtime)``), ``touch`` (the
 upload GC's re-date), ``usage`` (bytes stored), ``url`` (a presigned GET,
-None when the browser should ask the node) and ``sweep_partial`` (dead
-temp files). A store that fails raises ``BlobError``, an OSError.
+None when the browser should ask the node), ``partial_dir`` (where a file
+is assembled before it is stored) and ``put_path`` (a file assembled there,
+stored by a rename) and ``sweep_partial`` (dead temp files). A store that
+fails raises ``BlobError``, an OSError.
 ``check`` runs at startup (``app.create_app``) and refuses a store that
 cannot work.
 
@@ -42,11 +48,11 @@ from __future__ import annotations  # the drivers have a method named list
 import os
 import secrets
 import shutil
-import stat
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from stat import S_ISREG  # not ``import stat``: the module's own stat() would shadow it
 
 from . import config
 from .db import safe_ws_id, ws_uploads_dir
@@ -58,6 +64,8 @@ KNOWN_TTL_S = 600              # a file this process saw in the bucket is taken 
 KNOWN_MAX = 20000
 FETCH_LOCKS = 32               # one download at a time per file: two readers of a miss share it
 OBJECT_SPACES = ("dbcopies",)  # the object calls' namespaces, beside the stored files' uploads/
+# what a bucket's object of a stored file is served with: its name never holds other bytes
+OBJECT_CACHE_CONTROL = "private, max-age=31536000, immutable"
 
 
 class BlobError(OSError):
@@ -161,7 +169,7 @@ def _files(folder: Path):
             st = f.stat()
         except OSError:
             continue
-        if stat.S_ISREG(st.st_mode):
+        if S_ISREG(st.st_mode):
             yield f.name, st
 
 
@@ -233,7 +241,14 @@ class LocalBlobs:
             st = self._path(ws, name).stat()
         except FileNotFoundError:
             return None
-        return st.st_size if stat.S_ISREG(st.st_mode) else None
+        return st.st_size if S_ISREG(st.st_mode) else None
+
+    def stat(self, ws: str, name: str) -> tuple[int, float] | None:
+        try:
+            st = self._path(ws, name).stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_size, st.st_mtime) if S_ISREG(st.st_mode) else None
 
     def open_path(self, ws: str, name: str) -> Path | None:
         path = self._path(ws, name)
@@ -277,8 +292,19 @@ class LocalBlobs:
             ttl: int = 300) -> str | None:
         return None
 
+    def partial_dir(self, ws: str) -> Path:
+        return ws_uploads_dir(ws) / ".partial"
+
+    def put_path(self, ws: str, name: str, path: Path) -> None:
+        from .storage import place_file  # local: storage imports this module
+
+        stamp, before = self._stamp(ws), self.size(ws, name) or 0
+        size = Path(path).stat().st_size
+        place_file(Path(path), self._path(ws, name))
+        self._adjust(ws, stamp, size - before)
+
     def sweep_partial(self, ws: str, max_age_s: float) -> int:
-        return _sweep(ws_uploads_dir(ws) / ".partial", max_age_s)
+        return _sweep(self.partial_dir(ws), max_age_s)
 
     # -- the object calls: files under root
 
@@ -307,7 +333,7 @@ class LocalBlobs:
                     st = f.stat()
                 except OSError:
                     continue
-                if stat.S_ISREG(st.st_mode):
+                if S_ISREG(st.st_mode):
                     out.append((key, st.st_size, st.st_mtime))
         return sorted(out)
 
@@ -466,6 +492,12 @@ class S3Blobs:
 
     # -- the cache
 
+    @property
+    def cache_used(self) -> int:
+        """Bytes the node's copies take now; ``cache_bytes`` is the cap."""
+        with self._lock:
+            return self._bytes
+
     def _cache_path(self, ws: str, name: str) -> Path:
         return self.cache_dir / safe_ws_id(ws) / check_name(name)
 
@@ -527,10 +559,21 @@ class S3Blobs:
 
     # -- the interface
 
+    @staticmethod
+    def _object_meta(name: str) -> dict:
+        """What every object of a stored file is written with: the media
+        type its name says and OBJECT_CACHE_CONTROL."""
+        from .storage import upload_media_type  # local: storage imports this module
+
+        dot = name.rfind(".")
+        media = upload_media_type(name[dot:].lower()) if dot > 0 else None
+        return {"CacheControl": OBJECT_CACHE_CONTROL, "ContentType": media or "application/octet-stream"}
+
     def put(self, ws: str, name: str, data: bytes) -> None:
         from .storage import write_atomic  # local: storage imports this module
 
-        self._call(f"PUT {name}", self.client.put_object, Bucket=self.bucket, Key=self._key(ws, name), Body=data)
+        self._call(f"PUT {name}", self.client.put_object, Bucket=self.bucket, Key=self._key(ws, name), Body=data,
+                   **self._object_meta(name))
         self._know(ws, name, len(data))
         self._usage_set(ws, name, len(data))
         key, path = (ws, name), self._cache_path(ws, name)
@@ -553,6 +596,13 @@ class S3Blobs:
 
     def exists(self, ws: str, name: str) -> bool:
         return self.size(ws, name) is not None
+
+    def stat(self, ws: str, name: str) -> tuple[int, float] | None:
+        # always a HEAD: what this process remembers of the bucket is sizes,
+        # never dates, and no missing file (``exists`` asks again too)
+        head = self._call(f"HEAD {name}", self.client.head_object, Bucket=self.bucket, Key=self._key(ws, name))
+        self._know(ws, name, head["ContentLength"] if head else None)
+        return (head["ContentLength"], head["LastModified"].timestamp()) if head else None
 
     def open_path(self, ws: str, name: str) -> Path | None:
         key, path = (ws, name), self._cache_path(ws, name)
@@ -629,11 +679,12 @@ class S3Blobs:
 
     def touch(self, ws: str, name: str) -> bool:
         # an object's date is when it was written: a copy onto itself with
-        # new metadata writes it again (the bytes never leave the bucket)
+        # new metadata writes it again (the bytes never leave the bucket);
+        # REPLACE drops the media type and Cache-Control unless given again
         key = self._key(ws, name)
         done = self._call(f"COPY {name}", self.client.copy_object, Bucket=self.bucket, Key=key,
                           CopySource={"Bucket": self.bucket, "Key": key}, MetadataDirective="REPLACE",
-                          Metadata={"touched": str(int(time.time()))})
+                          Metadata={"touched": str(int(time.time()))}, **self._object_meta(name))
         if done is None:
             self._know(ws, name, None)
             return False
@@ -655,8 +706,46 @@ class S3Blobs:
             params["ResponseContentDisposition"] = disposition
         return self.client.generate_presigned_url("get_object", Params=params, ExpiresIn=int(ttl))
 
+    def partial_dir(self, ws: str) -> Path:
+        return self.cache_dir / safe_ws_id(ws) / ".partial"
+
+    def put_path(self, ws: str, name: str, path: Path) -> None:
+        # streamed up by boto3's managed transfer (in parts past 8 MB), then
+        # the file becomes the node's cached copy: read again soon, mostly
+        path, size = Path(path), Path(path).stat().st_size
+        try:
+            self.client.upload_file(str(path), self.bucket, self._key(ws, name), ExtraArgs=self._object_meta(name))
+        except (self._client_error, self._boto_error, self._transfer_error) as e:
+            path.unlink(missing_ok=True)
+            raise BlobError(f"PUT {name} in {self.where}: {e}") from e
+        self._know(ws, name, size)
+        self._usage_set(ws, name, size)
+        key, cached = (ws, name), self._cache_path(ws, name)
+        try:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, cached)
+        except OSError as e:
+            self._uncache(key)  # never an older copy of the name
+            path.unlink(missing_ok=True)
+            log.warning(f"[blobs] {name} is stored but not cached on this node: {e}")
+            return
+        self._admit(key, size)
+
     def sweep_partial(self, ws: str, max_age_s: float) -> int:
-        return _sweep(self.cache_dir / safe_ws_id(ws) / ".partial", max_age_s)
+        return _sweep(self.partial_dir(ws), max_age_s)
+
+    def put_file(self, ws: str, name: str, path: Path) -> None:
+        """Store the local file ``path`` as ``name``, streamed by boto3's
+        managed transfer (in parts past 8 MB) and left where it is, with no
+        copy in the cache: ``manage.py uploads-push`` moving a data
+        directory's uploads into the bucket."""
+        size = Path(path).stat().st_size
+        try:
+            self.client.upload_file(str(path), self.bucket, self._key(ws, name), ExtraArgs=self._object_meta(name))
+        except (self._client_error, self._boto_error, self._transfer_error) as e:
+            raise BlobError(f"PUT {name} in {self.where}: {e}") from e
+        self._know(ws, name, size)
+        self._usage_set(ws, name, size)
 
     # -- the object calls: <prefix><key>, streamed by boto3's managed transfers
     #    (in parts past 8 MB), never through the cache
@@ -749,6 +838,14 @@ def size(ws: str, name: str) -> int | None:
     return driver().size(ws, name)
 
 
+def stat(ws: str, name: str) -> tuple[int, float] | None:
+    """``(size, mtime)`` of the stored file, None when there is none, asked
+    of the store each time (a HEAD under S3): the purge's last look at one
+    due file's date (gamma/upload_gc.py), where a listing of the workspace
+    would hold the write lock for a paginated LIST."""
+    return driver().stat(ws, name)
+
+
 def open_path(ws: str, name: str) -> Path | None:
     """A local file holding the stored file's bytes, None when there is
     none: the file itself (local) or the node's cached copy, downloaded on
@@ -786,9 +883,27 @@ def url(ws: str, name: str, *, media_type: str, disposition: str | None = None, 
     return driver().url(ws, name, media_type=media_type, disposition=disposition, ttl=ttl)
 
 
+def partial_dir(ws: str) -> Path:
+    """The directory on this node's disk where the workspace's files in
+    progress live — the uploads directory's ``.partial/`` (local) or the
+    cache's (s3): where an upload in parts is assembled
+    (gamma/upload_parts.py) so that ``put_path`` is a rename. Made by the
+    caller; what is left there goes with ``sweep_partial``."""
+    return driver().partial_dir(ws)
+
+
+def put_path(ws: str, name: str, path: Path) -> None:
+    """Store the complete local file ``path``, lying in ``partial_dir(ws)``,
+    as ``name``, consuming it: renamed into place (local), or streamed to
+    the bucket and moved into the cache (s3). An existing file of the name
+    is replaced whole, like ``put``'s."""
+    driver().put_path(ws, name, path)
+
+
 def sweep_partial(ws: str, max_age_s: float) -> int:
     """Remove the workspace's temp files of writes or downloads older than
-    ``max_age_s`` (a killed process left them); how many went."""
+    ``max_age_s`` (a killed process left them, or an upload in parts that
+    never finished); how many went."""
     return driver().sweep_partial(ws, max_age_s)
 
 

@@ -58,7 +58,7 @@ the shared cases in `tests/shared/paper.json`, and e2e
     one right after it, so there is always paper below.
   - **Add page** at the end of the notebook view, and a sheet's **+**, add
     one after that sheet.
-  - **/page** in a block's editor ("Page to write on", under Insert) makes
+  - **/note** in a block's editor ("Handwritten note", under Insert) makes
     the block a sheet when nothing else is in it, and otherwise puts one
     right after it. **Add page below** in any block's handle menu does the
     same from that block.
@@ -217,7 +217,7 @@ No schema change: sheets are blocks and properties.
     with `once`. A text box made on a sheet is inserted as the sheet's
     last child the same way (`markup/useTextBoxes.js` `onBoxCreate`).
   - `addSheetAfter` (right after a block), `addPageAtEnd` (after the last
-    sheet), `insertSheetAt` ("/page"), `setSheetPaper` and
+    sheet), `insertSheetAt` ("/note"), `setSheetPaper` and
     `applyPaperToAll` (every sheet, at any depth) are thin `setBlocks`
     wrappers over `notebook.js`'s pure tree edits (`sheetAfterPlan` and
     `insertSheetAfter`, `blockToSheet`, `withSheetPaper`,
@@ -232,7 +232,10 @@ No schema change: sheets are blocks and properties.
   sheet reads "Page N"), draws a `NoteSheet` in a sheet's row when
   `inlineSheets`, keeps a press on it from opening the editor, and offers
   "Add page below" in the handle menu. `editor/SlashMenu.jsx` has
-  `/page` (a command's own name ranks before words that mention it).
+  `/note` (a command's own name ranks before words that mention it, so
+  it comes before the callout and the links). `/page` is the new library
+  page ([home_library.md](home_library.md)); "page" is among `/note`'s
+  words, so typing "/page" lists the sheet too, after the new page.
 
 ## Not built yet
 

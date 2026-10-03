@@ -32,6 +32,9 @@ Usage:
                                                    # put copies back in place (server stopped!); the files
                                                    #   there are moved aside as <name>.pre-restore-<time>
   python manage.py litestream-config [--out <path>]   # a litestream.yml for the GAMMA_S3_* bucket
+  python manage.py uploads-push [--check]          # put the workspaces' local uploads/ files the GAMMA_S3_*
+                                                   #   bucket lacks into it (--check: only count them);
+                                                   #   the local files stay
 
 Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder). Commands
 name accounts by username; storage names them by id (``users.id``).
@@ -460,6 +463,63 @@ def litestream_config(args: list):
     print(f"Wrote {out}: {count} database(s). Restart Litestream to replicate them.")
 
 
+def uploads_push(args: list):
+    """Put every file of the workspaces' local ``uploads/`` directories that
+    the bucket lacks into it, under the same name: a data directory moving
+    to GAMMA_BLOBS=s3. Names are content hashes, so a second run puts only
+    what the first did not. ``--check`` only counts what is missing. The
+    local files stay; the operator deletes them (docs/dev/debugging.md
+    "Stored files in a bucket")."""
+    import tempfile
+
+    from gamma import blobs, config
+
+    env = config.blob_env()
+    if env["kind"] != "s3":
+        print("Set GAMMA_BLOBS=s3 and the GAMMA_S3_* variables of the bucket first: the files go there.")
+        sys.exit(2)
+    # a cache of its own, never used (put_file streams the local file): a driver
+    # made on the server's would sweep the files in progress there as it starts
+    with tempfile.TemporaryDirectory(prefix="gamma-uploads-push-") as cache:
+        try:
+            store = blobs.S3Blobs.from_env({**env, "cache_dir": cache})
+            store.check()
+        except blobs.BlobConfigError as e:
+            print(f"The store cannot be used: {e}")
+            sys.exit(2)
+        _push_uploads(store, check="--check" in args)
+
+
+def _push_uploads(store, check: bool):
+    from gamma import blobs
+    from gamma.db import workspace_ids, ws_uploads_dir
+
+    local, count, size = blobs.LocalBlobs(), 0, 0
+    try:
+        for ws in workspace_ids():
+            files = local.list(ws)
+            if not files:
+                continue
+            held = {name for name, _, _ in store.list(ws)}  # one listing, not a HEAD per file
+            missing = [(name, n) for name, n, _ in files if name not in held]
+            if check:
+                print(f"  {ws}: {len(missing)} of {len(files)} file(s) missing from the bucket")
+            else:
+                for name, _ in missing:
+                    store.put_file(ws, name, ws_uploads_dir(ws) / name)
+                print(f"  {ws}: put {len(missing)} file(s), {len(files) - len(missing)} there already")
+            count, size = count + len(missing), size + sum(n for _, n in missing)
+    except OSError as e:  # the bucket out of reach or refusing a write: a second run goes on from here
+        print(f"Failed: {e}")
+        sys.exit(2)
+    if check:
+        print(f"{count} file(s) ({size / (1 << 20):.1f} MB) missing from {store.where}."
+              + (" Run uploads-push without --check to put them there." if count else ""))
+    else:
+        print(f"Put {count} file(s) ({size / (1 << 20):.1f} MB) into {store.where}. The local copies stay "
+              "in workspaces/<id>/uploads/: delete them once the server works from the bucket.")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -478,6 +538,9 @@ def main():
         return
     if cmd == "litestream-config":
         litestream_config(args)
+        return
+    if cmd == "uploads-push":  # files only: before the switch, whatever the databases' version
+        uploads_push(args)
         return
     _guard_schema()
     if cmd == "create-user":

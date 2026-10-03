@@ -12,7 +12,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `blocks.py`   | `/api/blocks/*`                     | the block tree (CRUD, children, subtree, by-doc) |
 | `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/{id}/attachment` | page-first endpoints: create a page, attach/detach its document, which pages carry which PDFs |
 | `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |
-| `uploads.py`  | `/api/uploads/*`, `/upload-file`    | PDF / image / any-file upload + serving (content-addressed; executables refused) |
+| `uploads.py`  | `/api/uploads/*`, `/upload-file`    | PDF / image / any-file upload + serving (content-addressed; executables refused); a PDF's upload in parts (`/uploads/parts`, gamma/upload_parts.py) |
 | `pdf.py`      | `/api/resolve-pdf`                  | find a real PDF url (arXiv → meta tag → Unpaywall OA) |
 | `metadata.py` | `/api/metadata/fetch`, `/cite`      | paper metadata + BibTeX + PPT citation (cached on the page) |
 | `ai.py`       | `/api/ai/chat`, `/models`, providers | chat orchestration, AI settings, OAuth |

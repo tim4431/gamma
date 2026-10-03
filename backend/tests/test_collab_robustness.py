@@ -232,6 +232,43 @@ def test_a_lone_surrogate_is_stored_as_a_replacement_character(guest):
     assert r.status_code == 200 and guest.get(f"/api/blocks/{r.json()['id']}").json()["content"] == "new �"
 
 
+def test_a_number_that_is_not_finite_is_refused(guest):
+    """Python's JSON reader takes a bare NaN or Infinity (and 1e999), which
+    a stored row would hand to every answer naming the block. The op batch
+    and the block create and update bodies refuse it with one 400, and
+    write nothing."""
+    page = make_page(guest, "Not a number")
+    assert _ops(guest, page["id"], [{"op": "insert", "id": "nfA", "parent": page["id"], "content": "a"}]).status_code == 200
+    seq = guest.get(f"/api/pages/{page['id']}/ops").json()["seq"]
+    pages = len(guest.get("/api/blocks/root/children").json()["children"])
+
+    def raw(path, body, method="POST"):  # json.dumps writes NaN and Infinity bare, as a client could
+        text = body if isinstance(body, str) else json.dumps(body)
+        return guest.request(method, path, content=text, headers={"Content-Type": "application/json"})
+
+    for value, word in ((float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")):
+        refused = (400, f"not a finite number: {word}")
+        r = raw(f"/api/pages/{page['id']}/ops", {"client": "t", "ops": [
+            {"op": "set", "id": "nfA", "content": "changed", "props": {"x": value}}]})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw(f"/api/pages/{page['id']}/ops", {"client": "t", "ops": [
+            {"op": "insert", "id": "nfB", "parent": page["id"], "content": "b", "props": {"x": {"y": [value]}}}]})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks/nfA", {"content": "changed", "properties": {"x": [1, value]}}, method="PUT")
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks", {"parent_id": page["id"], "content": "new", "properties": {"x": value}})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks", {"parent_id": "root", "content": "new page", "properties": {"x": value}})
+        assert (r.status_code, r.json()["detail"]) == refused
+    r = raw("/api/blocks/nfA", '{"properties": {"x": 1e999}}', method="PUT")  # too big for a float: inf
+    assert (r.status_code, r.json()["detail"]) == (400, "not a finite number: Infinity")
+    # nothing written: the block as it was, no new block or page, no batch logged
+    children = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
+    assert [(c["id"], c["content"], c["properties"]) for c in children] == [("nfA", "a", {})]
+    assert guest.get(f"/api/pages/{page['id']}/ops").json()["seq"] == seq
+    assert len(guest.get("/api/blocks/root/children").json()["children"]) == pages
+
+
 # --- the socket ------------------------------------------------------------------
 
 def _hello(ws):

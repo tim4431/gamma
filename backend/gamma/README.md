@@ -17,6 +17,7 @@ onboarding/        welcome.md, the seeded Welcome page (docs/dev/onboarding.md)
 blocks_store.py    block tree helpers: subtrees, the change log (touch_page), the folder and label trees
 highlights.py      a block's place on a PDF page: the pdf_position shape (highlights, link regions, ink)
 storage.py         uploads (content-addressed, written atomically) + the upload-reference grammar
+upload_parts.py    a PDF's upload in parts: the sessions, the parts appended and hashed, stored by a rename
 upload_gc.py       unreferenced uploads: recorded, kept 30 days, then purged (background thread)
 trash.py           Recently deleted: the trashed pages, their 30-day purge (background sweeper)
 ink.py             the gamma-ink stroke file: schema, codec, geometry, renderers, the three-way stroke merge

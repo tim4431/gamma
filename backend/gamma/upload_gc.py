@@ -33,8 +33,10 @@ Who notices what:
   RECONCILE_EVERY_S after: the safety net for writers that bypass the op
   path (imports, a restore, a mirror).
 - The purge reads the references again under the write lock, so no batch
-  can add one while it deletes, and refuses a database that looks wrong
-  (``purge_blocker``): logged as a warning, nothing deleted.
+  can add one while it deletes, and each due file's date (``blobs.stat``:
+  one HEAD under S3, never a listing of the workspace while writers wait),
+  and refuses a database that looks wrong (``purge_blocker``): logged as a
+  warning, nothing deleted.
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -190,12 +192,18 @@ def purge_blocker(conn, due: int, stored: int) -> str:
         return "its pages.db has no root row"
     if not conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
         return "its pages.db has no pages"
-    if due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored):
+    if _too_many(due, stored):
         return f"{due} of its {stored} files at once is more than one purge may delete"
     result = conn.execute("PRAGMA quick_check").fetchone()[0]
     if result != "ok":
         return f"its pages.db fails quick_check ({result})"
     return ""
+
+
+def _too_many(due: int, stored: int) -> bool:
+    """Whether ``due`` of ``stored`` files are more than one purge may
+    delete; true for every larger ``due`` once true."""
+    return due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored)
 
 
 def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
@@ -207,13 +215,22 @@ def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
     try:
         refs = referenced(conn)  # again: no batch can add a reference while we hold the lock
         now = time.time()
-        files = _stored(ws)  # dated again too: re-dated by an upload meanwhile
-        gone = [name for name in due
-                if name in files and name.lower() not in refs and now - files[name] >= RETAIN_S]
-        blocker = purge_blocker(conn, len(gone), stored) if gone else ""
+        unreferenced = [name for name in due if name.lower() not in refs]
+        gone, count = [], 0
+        for name in unreferenced:
+            st = blobs.stat(ws, name)  # dated again, the due names alone: re-dated by an upload meanwhile
+            if st is not None and now - st[1] >= RETAIN_S:
+                gone.append(name)
+                if _too_many(len(gone), stored):
+                    # refused whatever the rest's dates say (so nothing is deleted): ask
+                    # for no more of them, and count every unreferenced due file
+                    gone, count = [], len(unreferenced)
+                    break
+        count = count or len(gone)
+        blocker = purge_blocker(conn, count, stored) if count else ""
         if blocker:
             conn.rollback()
-            log.warning(f"[uploads] workspace {ws}: not purging {len(gone)} file(s) unreferenced for "
+            log.warning(f"[uploads] workspace {ws}: not purging {count} file(s) unreferenced for "
                         f"{RETAIN_S // 86400} days — {blocker}; they are kept")
             return [], blocker
         purged = []

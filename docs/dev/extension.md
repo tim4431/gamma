@@ -17,7 +17,8 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
    (`/?block=<id>`).
 2. **Save the PDF you are looking at.** The tab *is* a PDF, possibly behind
    an institutional login the server can't reach: the bytes are fetched with
-   the browser's session → `POST /api/uploads` → `POST /api/clip {doc_id}`,
+   the browser's session → `POST /api/uploads` (in parts past 32 MiB:
+   `/api/uploads/parts`, [api.md](api.md)) → `POST /api/clip {doc_id}`,
    automatically — browser-first on PDF tabs, and as a fallback on any page
    whose PDF the server fails to fetch (no checkbox; see the pipeline below).
 3. **Right-click**: *Save link to Gamma* (link), *Save page to Gamma* (page),
@@ -132,7 +133,7 @@ Popup → `save` message → `savePaper()` in the worker (so it survives the pop
 closing; progress is written to the tab state and the popup renders it):
 
 ```
-PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort)
+PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort; past 32 MiB in parts, /api/uploads/parts)
 POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder | folder_path, labels, allow_oa, save_copy }
   └─ 400 and no doc_id yet? → fetch bytes in the browser → POST /api/uploads → retry /api/clip with doc_id
 → { block_id, doc_id, title, existed, open_url, folders, labels, note? }

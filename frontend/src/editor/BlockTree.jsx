@@ -787,6 +787,7 @@ function BlockRow({
   view,
   inlineSheets,
   onInsertSheet,
+  onNewPage,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -1094,7 +1095,7 @@ function BlockRow({
     const m = ta.value.slice(0, cursor).match(/(?:^|\s)\/([a-zA-Z0-9-]*)$/);
     if (!m || findMathAtCursor(ta.value, cursor) || fenceInnerAt(ta.value, cursor)) { setSlashMenu(null); return; }
     const start = cursor - m[1].length - 1;
-    const items = filterSlashCommands(m[1]);
+    const items = filterSlashCommands(m[1], { newPage: !!onNewPage, sheet: !!onInsertSheet });
     if (!items.length) { setSlashMenu(null); return; }
     const anchor = ta.caretCoords(start);
     setSlashMenu((prev) => {
@@ -1130,9 +1131,16 @@ function BlockRow({
           setRefSelectedIdx(0);
         });
       },
-      // "/page": the block becomes a page when nothing else is in it, else
-      // a page goes in after it (App's onInsertSheet).
-      insertPage: () => onInsertSheet?.(block.id, value.slice(0, start) + value.slice(cursor)),
+      // "/note": the block becomes a sheet of paper when nothing else is in
+      // it, else a sheet goes in after it (App's onInsertSheet).
+      insertSheet: () => onInsertSheet(block.id, value.slice(0, start) + value.slice(cursor)),
+      // "/page": its [[link]] is in the text already. The chip knows its
+      // label before the page exists (an unknown id would be asked about,
+      // and called missing); App's onNewPage makes the page and opens it.
+      newPage: (id) => {
+        onCacheRef?.(id, { content: t("Untitled"), page_title: t("Untitled") });
+        onNewPage(id, block.id);
+      },
       // The file dialog blurs the editor (which exits edit mode), so the
       // upload appends to the value captured here, with "/image" removed.
       pickImage: () => {

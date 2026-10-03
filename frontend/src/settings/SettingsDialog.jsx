@@ -21,7 +21,8 @@ import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
-import { resolveSettingsPane, searchSettings } from "./settingsNavigation";
+import { resolveSettingsPane } from "./settingsNavigation";
+import { searchSettings } from "./settingsSearch.js";
 import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,

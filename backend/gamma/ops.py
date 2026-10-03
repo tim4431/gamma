@@ -71,10 +71,12 @@ everything a page's viewers see comes from one code path and one log.
 """
 
 import json
+import math
 import re
 from datetime import timedelta
 from typing import Annotated, Literal, Union
 
+from fastapi import HTTPException
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
@@ -126,32 +128,42 @@ class OpError(Exception):
         self.index: int | None = None
 
 
-def storable(value):
+def storable(value, *, finite: bool = True):
     """``value`` with every lone UTF-16 surrogate in its strings (dict keys
     and nested values too) replaced by U+FFFD. A browser can send half an
     emoji ("\\ud83d" in JSON); SQLite cannot encode it, so one such string
-    would fail its whole batch on every retry."""
+    would fail its whole batch on every retry. A number that is not finite
+    is refused, OpError(400): Python's JSON reader takes a bare ``NaN`` or
+    ``Infinity`` (and ``1e999``), which would be stored and which no JSON
+    answer can carry back. ``finite=False`` lets one through, for the tree
+    reads that send a stored one as null (routers/blocks.py ``TreeJSON``)."""
     if isinstance(value, str):
         if not _SURROGATE.search(value):
             return value
         # a high + low half that arrived as two escapes become the one character
         return value.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     if isinstance(value, dict):
-        return {storable(k): storable(v) for k, v in value.items()}
+        return {storable(k, finite=finite): storable(v, finite=finite) for k, v in value.items()}
     if isinstance(value, list):
-        return [storable(v) for v in value]
+        return [storable(v, finite=finite) for v in value]
+    if finite and isinstance(value, float) and not math.isfinite(value):
+        raise OpError(400, f"not a finite number: {json.dumps(value)}")
     return value
 
 
 class StorableBody(BaseModel):
     """A request body whose strings are made ``storable`` as it is parsed:
     half an emoji becomes U+FFFD before it can reach SQLite (or a JSON
-    answer, which cannot encode it either)."""
+    answer, which cannot encode it either), and a NaN or an infinity is
+    refused with the op batch's 400 and wording rather than a 422."""
 
     @model_validator(mode="before")
     @classmethod
     def _storable(cls, data):
-        return storable(data)
+        try:
+            return storable(data)
+        except OpError as e:  # not a ValueError, so pydantic passes the 400 on as it is
+            raise HTTPException(status_code=e.status, detail=e.detail) from None
 
 
 class SetOp(BaseModel):

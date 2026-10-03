@@ -233,4 +233,36 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assertNoProblems(page);
     await ctx.close();
   });
+
+  // A PDF past one part's size (shared/lib/uploadParts.js PART_BYTES, 32 MiB)
+  // goes up in parts — a proxy in front of the server caps a request's body —
+  // and opens like any other upload; the task row reports the whole's bytes.
+  await step("tasks: a PDF past one part's size goes up in parts and opens like any other", async () => {
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    const parts = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/uploads/parts")) parts.push(`${request.method()} ${url.pathname.replace(/\/[A-Za-z0-9_-]{20,}/, "/<token>")}`);
+      else if (url.pathname === "/api/uploads" && request.method() === "POST") parts.push("POST /api/uploads");
+    });
+    const big = makePdf([["Uploaded in parts"], ["Page two of the big one"]], { padBytes: 33 * 1024 * 1024 });
+    await page.click("button[aria-label='Add']");
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
+    await (await chooser).setFiles([{ name: "in-parts.pdf", mimeType: "application/pdf", buffer: Buffer.from(big) }]);
+    await waitForPdf(page, 1);
+    const text = await page.textContent(`[data-page="1"] .textLayer`);
+    assert(text.includes("Uploaded in parts"), `the viewer shows the assembled file: ${text.slice(0, 60)}`);
+    assertEq(parts.filter((p) => p === "POST /api/uploads").length, 0, "never one request for the whole");
+    assertEq(parts[0], "POST /api/uploads/parts", `opened first: ${parts.join(", ")}`);
+    assertEq(parts.filter((p) => p === "POST /api/uploads/parts/<token>").length, 2, `two parts of 32 MiB: ${parts.join(", ")}`);
+    assertEq(parts[parts.length - 1], "POST /api/uploads/parts/<token>/finish", `finished last: ${parts.join(", ")}`);
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow.done", { hasText: "in-parts.pdf" }); // not the metadata lookup's row
+    await until(async () => /33(\.\d+)? MB/.test(await row.innerText()), { what: "the upload's row reports the whole file's size" });
+    assertNoProblems(page);
+    await ctx.close();
+  });
 }

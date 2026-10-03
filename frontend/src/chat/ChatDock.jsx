@@ -28,7 +28,7 @@ import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
-import { aiServiceTiles } from "../settings/SettingsAi";
+import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, speedFor } from "./modelPrefs";
@@ -283,7 +283,7 @@ function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove,
 }
 
 // No AI connected: what the chat is for, then one tile per way to connect
-// (settings/SettingsAi.jsx aiServiceTiles over GET /api/ai/settings). A tile
+// (settings/providerEditor.js aiServiceTiles over GET /api/ai/settings). A tile
 // opens Settings → Connections with the connect dialog set to that service.
 // An account that can't store keys (a guest) can only ask for a shared one;
 // an admin may also share one with the whole server.

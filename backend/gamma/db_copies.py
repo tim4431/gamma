@@ -34,7 +34,8 @@ workspace's pages.db and data.db through the store's object calls
 
 ``restore`` (``manage.py db-copies --restore``, the server stopped) puts
 copies back in place; ``litestream_config`` writes a Litestream
-configuration for the same bucket (``manage.py litestream-config``).
+configuration for the same bucket (``manage.py litestream-config``);
+``status`` is what Settings → Server shows of the copies.
 """
 
 import json
@@ -58,6 +59,10 @@ WORK_DIR = ".dbcopies"                   # under backups/: the copies on their w
 STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
 _COPY_RE = re.compile(r"^(\d{8}T\d{6}Z)(?:-(pages|data))?\.db$")
 KINDS = ("pages", "data")                # a workspace's databases; users.db is kind ""
+
+# The newest round this process finished, {stamp, copied, failed} (``status``):
+# the state file says what each copy saw, not how a round went.
+_last_round: dict | None = None
 
 
 class RestoreError(ValueError):
@@ -257,7 +262,25 @@ def tick() -> dict:
             failed = [f"{label} ({why})" for label, why in done["failed"].items()]
             parts.append(f"failed: {_some(failed, 3)}")
         (log.warning if done["failed"] else log.info)(f"[dbcopies] {'; '.join(parts)}")
+    global _last_round
+    _last_round = {"stamp": stamp, "copied": len(done["copied"]), "failed": len(done["failed"])}
     return done
+
+
+def status() -> dict:
+    """The copies as Settings → Server shows them (``GET
+    /api/admin/server-info``), opening no database and no file: ``{"enabled":
+    False}`` with them off, else ``{enabled, interval_s, keep,
+    last_round_at, copied, failed}``, the last three the newest round this
+    process finished (its UTC time, how many databases it copied, how many
+    failed), None until the startup round has."""
+    settings = config.db_copies_env()
+    if not settings["on"]:
+        return {"enabled": False}
+    last = _last_round or {}
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.strptime(last["stamp"], "%Y%m%dT%H%M%SZ")) if last else None
+    return {"enabled": True, "interval_s": settings["interval"], "keep": settings["keep"],
+            "last_round_at": at, "copied": last.get("copied"), "failed": last.get("failed")}
 
 
 # --- listing and restoring (manage.py db-copies) -------------------------------------

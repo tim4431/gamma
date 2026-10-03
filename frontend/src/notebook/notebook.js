@@ -205,7 +205,7 @@ export function insertSheetAfter(tree, afterId, id) {
   return insertSibling(tree, afterId, newSheet(id, paperBefore(tree, afterId)), true);
 }
 
-// The tree with block `blockId` turned into a sheet ("/page" in a block
+// The tree with block `blockId` turned into a sheet ("/note" in a block
 // with nothing else in it): its text goes, it takes the paper of the sheet
 // nearest before it, and it folds when it has no children. The same tree
 // when the block is not there.

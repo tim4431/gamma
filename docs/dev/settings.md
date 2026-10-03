@@ -329,7 +329,7 @@ AI:
   and the add dialog comes up set to the tile's service once the key list
   has loaded (a chat error card's fix opens an entry's form the same way,
   `openAiKeysEditor({entry})`); the card's tiles and the dialog's service tiles are one list
-  (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
+  (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
 - **Chat**: three sections. **Chat** holds the default reasoning effort,
@@ -409,7 +409,9 @@ Administration (admins only):
 - **Users**: accounts, each with its personal workspaces and
   labelled Storage / Edit buttons.
 - **Server**: the dashboard (build, uptime, warnings, the update
-  check), the public server URL, storage defaults (each box saves on Enter
+  check, and two read-only rows the server's environment sets: Stored
+  files, local or a bucket, and Database copies, off or their interval and
+  last round), the public server URL, storage defaults (each box saves on Enter
   or blur), **Guests**, the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file, the
   damaged ones listed under the row), server backups and the log with its
@@ -481,7 +483,7 @@ Cloud" row (`CloudIdentityRow`): the linked username and plan with an Unlink
 button, or a "Link Gamma Cloud account" button that round-trips through the
 account server ([cloud_accounts.md](cloud_accounts.md)).
 
-Search is backed by [settingsNavigation.js](../../frontend/src/settings/settingsNavigation.js).
+Search is backed by [settingsSearch.js](../../frontend/src/settings/settingsSearch.js).
 Each entry names its pane, the setting's label, its section, its one-line
 hint (the row's own words) and English synonyms. A setting one level down
 (in a workspace's Manage page, a row's menu) also names the `target` on the

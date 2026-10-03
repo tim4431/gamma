@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, integrity, jobs, workspaces
+from .. import ai_settings, backups, blobs, chatgpt_oauth, cloud_auth, config, db_copies, integrity, jobs, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -98,15 +98,30 @@ def _check_password(password: str) -> str:
     return password
 
 
+def _storage() -> dict:
+    """Where the stored files live (gamma/blobs.py), read-only: ``kind``
+    (local or s3), ``where`` (the uploads directories on this disk, or the
+    bucket and prefix), ``presign`` (a browser is sent to the bucket) and,
+    with a bucket, ``cache`` (the node's copies: bytes held and the cap)."""
+    store = blobs.driver()
+    where = str((config.DATA_DIR / store.where).absolute()) if store.kind == "local" else store.where
+    info = {"kind": store.kind, "where": where, "presign": bool(getattr(store, "presign", False))}
+    if store.kind == "s3":
+        info["cache"] = {"bytes": store.cache_used, "cap": store.cache_bytes}  # the driver's own running total
+    return info
+
+
 @router.get("/server-info")
 def server_info(request: Request, refresh: bool = False):
     """The Settings → Server dashboard: build, uptime, log counts by level,
     the latest GitHub release, for a ``-dev`` build its branch's newest
     build, and whether either is newer (``update``, ``update_available``:
-    True/False, or None for an unversioned build). ``refresh=1`` bypasses
-    the cache. Sync on purpose: the update check is a network call."""
+    True/False, or None for an unversioned build); the stored files'
+    ``storage`` and the databases' copies (``db_copies``), set by the
+    environment and shown as they are. ``refresh=1`` bypasses the cache.
+    Sync on purpose: the update check is a network call."""
     require_admin(request)
-    return version.server_info(refresh=refresh)
+    return {**version.server_info(refresh=refresh), "storage": _storage(), "db_copies": db_copies.status()}
 
 
 @router.get("/logs")

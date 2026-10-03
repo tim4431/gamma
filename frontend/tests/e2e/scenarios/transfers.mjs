@@ -20,7 +20,11 @@ export async function transferScenarios({ server, browser, alice, bob, makePdf, 
     const view = page.locator('[data-popover="menu"] > button');
     await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
     await page.getByRole("button", { name: `${name}…`, exact: true }).click();
-    return page.getByRole("dialog", { name, exact: true });
+    // The dialogs are a chunk fetched on first use (docs/dev/frontend-refactor.md,
+    // "Lazy boundaries"): a click right after the menu opened can beat it.
+    const dialog = page.getByRole("dialog", { name, exact: true });
+    await dialog.waitFor();
+    return dialog;
   }
   const choice = (dialog, name) => dialog.getByRole("button", { name, exact: true });
   const toggle = (dialog, name) => dialog.getByRole("checkbox", { name, exact: true });
@@ -110,7 +114,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await page.waitForSelector(".folderNewBtn");
       let release;
       const gate = new Promise(resolve => { release = resolve; });
-      await page.route("**/api/import/review", async route => {
+      // `*`: the upload's URL carries the workspace (?ws=…).
+      await page.route("**/api/import/review*", async route => {
         const response = await route.fetch();
         await Promise.race([gate, new Promise(resolve => setTimeout(resolve, 3000))]);
         await route.fulfill({ response });

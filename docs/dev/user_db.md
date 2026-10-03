@@ -418,12 +418,15 @@ nothing uses, and `gamma/blobs.py` is where they live.
   file under `<GAMMA_S3_PREFIX>uploads/<workspace>/<name>`, through boto3.
   Only that driver imports boto3 (`requirements-s3.txt`; the Docker image
   has it, the desktop app does not). The calls are `put`, `exists`, `size`,
-  `open_path`, `delete`, `delete_workspace`, `list` (name, size, mtime),
-  `touch`, `usage`, `url` and `sweep_partial`, and every read and write of
-  a stored file goes through them. The writers are `storage.store_pdf` /
-  `store_file` (hashed names, dedup, quota) and `storage.put_upload` (bytes
-  under a name chosen elsewhere: the proxy's cache, a clip, a mirror's
-  pull, a restore, a stripped PDF, the AI chat's re-download).
+  `stat` (size and mtime of one file), `open_path`, `delete`, `delete_workspace`, `list` (name, size, mtime),
+  `touch`, `usage`, `url`, `partial_dir` / `put_path` (a file assembled on
+  the node's disk, stored by a rename) and `sweep_partial`, and every read
+  and write of a stored file goes through them. The writers are
+  `storage.store_pdf` / `store_file` (hashed names, dedup, quota),
+  `storage.store_pdf_path` (the same for an upload in parts, below) and
+  `storage.put_upload` (bytes under a name chosen elsewhere: the proxy's
+  cache, a clip, a mirror's pull, a restore, a stripped PDF, the AI chat's
+  re-download).
   `storage.find_upload_file` gives a file on disk to read. The presence
   checks, the GC's listing and purge, the quota, the backup zips, a
   workspace's deletion and the uploads route's redirect call `blobs`
@@ -456,6 +459,25 @@ nothing uses, and `gamma/blobs.py` is where they live.
   file that a later upload of the same bytes would take for stored. An S3
   object is written whole by the bucket; the node's copy of it goes through
   `write_atomic` like a local file.
+- **In parts.** A PDF past 32 MiB comes in parts (`gamma/upload_parts.py`,
+  `POST /api/uploads/parts`, [api.md](api.md)): a proxy in front of the
+  server caps a request's body (Cloudflare at 100 MB), and a part stays
+  well under that. The parts are appended, one request each and in order,
+  to a file in the store's partial directory (`blobs.partial_dir`:
+  `uploads/.partial/`, or the cache's under S3) and hashed as they land;
+  finishing checks the PDF header and stores the file under its digest by
+  a rename (`storage.store_pdf_path` → `blobs.put_path`; under S3 boto3
+  streams it to the bucket and the file becomes the node's cached copy),
+  so the last request is as quick as a small upload's. The size and quota
+  checks run when the upload is opened, before a byte travels; a dedup hit
+  at the end adds nothing, like a re-upload. The sessions live in the
+  process (one per token, bound to the workspace, at most 8 open per
+  workspace, dropped after an hour untouched); a restart forgets them and
+  the client starts over, and the files they left go with the partial
+  sweep below. The web client (`shared/lib/uploadParts.js`) resends a part
+  the network lost from the byte the server says it holds and asks the
+  server to drop an upload it stopped; the browser extension speaks the
+  same protocol (`extension/worker.js`).
 - **Dedup repairs.** A dedup hit compares the sizes and rewrites a copy an
   older write left short. For a PDF only when the stored bytes are the start
   of the new ones: a PDF whose embedded annotations were stripped keeps its
@@ -499,13 +521,17 @@ nothing uses, and `gamma/blobs.py` is where they live.
   records unreferenced files older than the 15-minute upload grace (an
   upload is stored before the block that names it). It clears the records
   of files that are referenced again or gone, removes day-old temp files
-  from `.partial/` (the cache's, under S3), and purges. A workspace whose
+  from `.partial/` (the cache's, under S3; an upload in parts that never
+  finished among them), and purges. A workspace whose
   pages.db cannot be opened is logged as an error and the pass goes on to
   the next.
 - **The purge.** A file whose record and mtime are both more than 30 days
   old is deleted through the store (an object and the node's copy of it).
-  The references and the files' dates are read again under the workspace's
-  write lock first, so no batch can add one meanwhile. The purge refuses (a
+  The references are read again under the workspace's write lock first, so
+  no batch can add one meanwhile, and each due file's date with them, one
+  file at a time (`blobs.stat`: a HEAD under S3, never a listing of the
+  workspace while writers wait; once the purge is sure to be refused it
+  asks no more). The purge refuses (a
   warning in the server log, nothing deleted) when the pages.db looks wrong:
   no root row, no pages, a failing `PRAGMA quick_check`, or more files at
   once than one purge may take (over 100, or over 10 and a fifth of the
@@ -623,9 +649,12 @@ each workspace's own to the server), `backups` (list, naming automatic and damag
 ones; `--create [--uploads]`, `--delete`, `--restore`, `--prune` — the
 automatic pre-upgrade snapshots only), `db-copies` (`--list [ws|users]`,
 `--restore <ws|users|all> [--at <stamp>]`: the database copies in the
-bucket, [debugging.md](debugging.md) "Database copies in the bucket") and
-`litestream-config [--out <path>]`. Every command but `migrate`, `backups`,
-`db-copies` and `litestream-config` refuses an outdated data directory.
+bucket, [debugging.md](debugging.md) "Database copies in the bucket"),
+`litestream-config [--out <path>]` and `uploads-push [--check]` (put the
+files of every workspace's local `uploads/` that the bucket lacks into it,
+the local files left in place; [debugging.md](debugging.md) "Stored files
+in a bucket"). Every command but `migrate`, `backups`, `db-copies`,
+`litestream-config` and `uploads-push` refuses an outdated data directory.
 
 `rename-user` changes the account's username and nothing else that names
 it: every row, file and op log names the id. The one convention that
@@ -716,6 +745,19 @@ and the log's "Warnings" filter shows them. An admin who never opens the
 pane still hears of a newer release and of logged errors: both are notices
 (`gamma/notices.py`, `GET /api/notices`), the red dot on the account
 button that leads to this pane — [settings.md](settings.md) "Notices".
+
+Under the Updates row come two read-only rows and a line saying the
+server's environment sets them (`GAMMA_BLOBS`, `GAMMA_DB_COPIES`; there is nothing to change
+in the pane). **Stored files** names the store ([Stored files](#stored-files)):
+"local" and the uploads directories' path, or the bucket and prefix,
+whether browsers are redirected to it (`GAMMA_S3_PRESIGN`) and how much of
+the node's cache is used of its cap. **Database copies** is "off", or the
+interval, how many copies of each database are kept, and the newest round
+this process finished, with how many databases it copied and how many
+failed ([debugging.md](debugging.md#database-copies-in-the-bucket)). The
+state file records what each copy saw, not how a round went, so the round
+is kept in memory (`db_copies.status`). It reads no database, and after a
+restart the startup round fills it in again.
 
 **Databases** (`POST /api/admin/check-databases`, `gamma/integrity.py`):
 "Check now" runs SQLite's `PRAGMA quick_check` on `users.db` and on every

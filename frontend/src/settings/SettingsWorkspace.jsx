@@ -12,8 +12,9 @@
 // conversion and join-as-owner in `admin` mode. Also exported from here:
 // useAccounts, useCloudSignIn, useWorkspace (one workspace's state + every
 // call on it, incl. invitations by Gamma Cloud username), AccessRows,
-// StorageRow, MembersList, InviteDialog, NameDialog, the role tables and
-// workspaceMeta (the switcher's one-line description).
+// StorageRow, MembersList, InviteDialog, NameDialog and the access tables;
+// the role tables and workspaceMeta (the switcher's one-line description)
+// are in workspaceRoles.js.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -24,19 +25,9 @@ import {
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 import { T, t, tn } from "../shared/i18n/i18n.js";
+import { ROLE_LABEL, ROLE_OPTIONS, workspaceMeta } from "./workspaceRoles.js";
 
-// Workspace roles as the UI words them (docs/dev/workspaces.md); the account
-// menu's switcher in App.jsx reads the same table.
-export const ROLE_OPTIONS = [["owner", t("Owner")], ["editor", t("Can edit")], ["viewer", t("View only")]];
-export const ROLE_LABEL = { owner: t("owner"), editor: t("can edit"), viewer: t("view only") };
 const ROLE_TEXT = { owner: t("you own it"), editor: t("you can edit"), viewer: t("you can view") };
-// One line under a switcher entry / workspace row: what kind it is and, for
-// a shared one, your role.
-export function workspaceMeta(w) {
-  if (w.mirror_of) return t("clone of {mirror_of}", { mirror_of: w.mirror_of });
-  if (w.personal) return w.default ? t("personal · default") : t("personal");
-  return w.access === "public" ? t("public · {role}", { role: ROLE_LABEL[w.role] || w.role }) : ROLE_LABEL[w.role] || w.role;
-}
 export const ACCESS_OPTIONS = [["private", t("Private"), UsersIcon], ["public", t("Public"), GlobeIcon]];
 export const PUBLIC_ROLE_OPTIONS = [["viewer", t("Everyone can view")], ["editor", t("Everyone can edit")]];
 
