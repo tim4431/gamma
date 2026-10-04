@@ -251,14 +251,14 @@ All state is SQLite + files on disk under a data directory (env
 - `backups/integrity.json` — the latest failed integrity check per database
   file (`gamma/integrity.py`), what the admins' `db-damage` notice reads;
   `backups/tasks/` holds the backup tasks.
-- `backups/dbcopies.json` — the off-site copies' state
+- `backups/offsite.json` — the off-site copies' state
   (`gamma/offsite.py`): the bucket it is about, the mtime and size of each
   database and its WAL at its last copy, the mtime of each workspace's
   `uploads/` when its files last all went up, this directory's first round
   and how the last round went. Losing it costs one round that copies every
   database again and lists every workspace's files in the bucket.
-  `backups/.dbcopies/` holds a round's database copies on their way up. The
-  copies live in the bucket, under `<prefix>dbcopies/` and
+  `backups/.offsite/` holds a round's database copies on their way up. The
+  copies live in the bucket, under `<prefix>offsite/` and
   `<prefix>uploads/` ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
 
 **The notes index.** `block_fts` in pages.db is an FTS5 table with

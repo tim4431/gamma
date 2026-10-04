@@ -926,6 +926,8 @@ export async function settingsScenarios(env) {
 
   // Settings → Backups › Off-site copies (OffsiteCopies.jsx, gamma/offsite.py,
   // docs/dev/settings.md): an admin's section in a pane every account has.
+  // Three rows: the switch, the bucket's summary with Set up… / Edit… (the
+  // editor dialog), the rounds' status with Copy now.
   const offsite = (page) => page.locator('.settingsPane .setSection[data-setting="Off-site copies"]');
   // The rows under the section's rule, up to the next section's.
   const offsiteRows = (page) => offsite(page).evaluate((head) => {
@@ -957,7 +959,9 @@ export async function settingsScenarios(env) {
       const sections = await page.locator(".settingsPane .setSection").evaluateAll((els) => els.map((el) => el.dataset.setting));
       const at = sections.indexOf("Off-site copies");
       assertEq(sections.slice(at - 1, at + 2).join(" › "), "Periodic backup tasks › Off-site copies › Saved snapshots", "where the section sits");
-      assertEq((await offsiteRows(page)).join(), "Copy to a bucket", "while off, the section is its switch alone");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,No bucket yet", "while nothing is saved, the switch and the summary");
+      assertEq(await row(page, "No bucket yet").getByRole("button").innerText(), "Set up…", "nothing saved yet: Set up…");
+      assertEq(await offsite(page).getByRole("button").count(), 0, "no Save on the rule");
       assert(!await toggle.isChecked(), "the copies start off");
       // From another pane, the search finds the section and lands on it.
       await nav(page, "Appearance").click();
@@ -983,7 +987,7 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: Off-site copies saves a bucket with a write-only secret, tests it, and Copy now shows the failed round", async () => {
+  await step("settings: Off-site copies are set up in a dialog with a write-only secret, tested there, and Copy now shows the failed round", async () => {
     server.manage("set-admin", "settings-user", "on");
     const before = (await user.api("/api/admin/offsite")).settings;
     // Copy now goes to a stand-in bucket that holds its first request until
@@ -1010,74 +1014,93 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await nav(page, "Backups").click();
-      const section = offsite(page);
-      const save = section.getByRole("button", { name: "Save", exact: true });
-      const saved = () => until(() => section.getByRole("button").count().then((n) => n === 0), { what: "the save to land (no Save on the rule)" });
-      const field = (name, label = name) => row(page, name).getByLabel(label, { exact: true });
       const toggle = page.getByRole("checkbox", { name: "Copy to a bucket", exact: true });
-      await toggle.check();
-      await field("Bucket").waitFor();
-      assertEq((await offsiteRows(page)).join(),
-        "Copy to a bucket,Bucket,Endpoint,Region,Access key,Prefix,How often,Copies kept,Test connection", "switched on, the rows follow");
-      // On without a bucket: the server's refusal, in its words.
+      const setUp = page.getByRole("dialog", { name: "Set up off-site copies", exact: true });
+      const edit = page.getByRole("dialog", { name: "Edit off-site copies", exact: true });
+      const field = (dialog, label) => dialog.getByLabel(label, { exact: true });
+      const often = (dialog) => dialog.getByRole("button", { name: "How often", exact: true });
+      const editButton = () => row(page, "gamma-e2e").getByRole("button", { name: "Edit…", exact: true });
+      // With no bucket the switch opens the set-up rather than saving.
+      await toggle.waitFor();
+      await toggle.click();
+      await setUp.waitFor();
+      assert(!await toggle.isChecked(), "the switch waits for a bucket");
+      await setUp.press("Escape");
+      await setUp.waitFor({ state: "detached" });
+      await row(page, "No bucket yet").getByRole("button", { name: "Set up…", exact: true }).click();
+      await setUp.waitFor();
+      // Saved without a bucket: the server's refusal, in its words, in the dialog.
+      const save = setUp.getByRole("button", { name: "Save", exact: true });
       await save.click();
-      const refusal = page.locator(".settingsPane").getByRole("alert").filter({ hasText: "Set a bucket before turning off-site copies on." });
+      const refusal = setUp.getByRole("alert").filter({ hasText: "Set a bucket before turning off-site copies on." });
       await refusal.waitFor();
-      await field("Bucket").fill("gamma-e2e");
-      await field("Endpoint").fill("http://127.0.0.1:1");
-      await field("Region").fill("auto");
-      await field("Access key", "Access key ID").fill("AKIAE2EOFFSITE");
-      await field("Access key", "Secret key").fill("e2e-offsite-secret");
-      await row(page, "How often").getByRole("button", { name: "How often", exact: true }).click();
+      await field(setUp, "Bucket").fill("gamma-e2e");
+      await field(setUp, "Endpoint").fill("http://127.0.0.1:1");
+      await field(setUp, "Region").fill("auto");
+      await field(setUp, "Access key ID").fill("AKIAE2EOFFSITE");
+      await field(setUp, "Secret key").fill("e2e-offsite-secret");
+      await often(setUp).click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "Every 6 hours", exact: true }).click();
-      await field("Copies kept").fill("3");
+      await field(setUp, "Copies kept").fill("3");
       await save.click();
-      await saved();
-      assertEq(await refusal.count(), 0, "a good save clears the refusal");
+      await setUp.waitFor({ state: "detached" });
       const stored = (await user.api("/api/admin/offsite")).settings;
       for (const [key, value] of Object.entries({ enabled: true, bucket: "gamma-e2e", endpoint: "http://127.0.0.1:1", region: "auto",
         access_key: "AKIAE2EOFFSITE", prefix: "", interval_s: 21600, keep: 3, secret_set: true })) {
         assertEq(stored[key], value, `the server stored ${key}`);
       }
-      // Reopened, the pane reads them back; the secret stays on the server.
+      assert(await toggle.isChecked(), "saving the first bucket turns the copies on");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,gamma-e2e,Status", "the summary names the bucket; the status follows");
+      assertEq(await row(page, "gamma-e2e").locator(".settingDesc").innerText(), "127.0.0.1:1/gamma-e2e · every 6 h · 3 kept");
+      // Reopened, Edit… reads them back; the secret stays on the server.
       await nav(page, "Appearance").click();
       await nav(page, "Backups").click();
-      await field("Bucket").waitFor();
-      assert(await toggle.isChecked(), "the switch reads back on");
-      assertEq(await field("Bucket").inputValue(), "gamma-e2e");
-      assertEq(await field("Endpoint").inputValue(), "http://127.0.0.1:1");
-      assertEq(await field("Region").inputValue(), "auto");
-      assertEq(await field("Access key", "Access key ID").inputValue(), "AKIAE2EOFFSITE");
-      assertEq(await field("Access key", "Secret key").inputValue(), "", "the secret never comes back");
-      assertEq(await field("Access key", "Secret key").getAttribute("placeholder"), "secret set — type to replace");
-      assertEq(await row(page, "How often").getByRole("button", { name: "How often", exact: true }).innerText(), "Every 6 hours");
-      assertEq(await field("Copies kept").inputValue(), "3");
-      assertEq(await section.getByRole("button").count(), 0, "nothing waits to be saved");
+      await editButton().click();
+      await edit.waitFor();
+      assertEq(await field(edit, "Bucket").inputValue(), "gamma-e2e");
+      assertEq(await field(edit, "Endpoint").inputValue(), "http://127.0.0.1:1");
+      assertEq(await field(edit, "Region").inputValue(), "auto");
+      assertEq(await field(edit, "Access key ID").inputValue(), "AKIAE2EOFFSITE");
+      assertEq(await field(edit, "Secret key").inputValue(), "", "the secret never comes back");
+      assertEq(await field(edit, "Secret key").getAttribute("placeholder"), "secret set — type to replace");
+      assertEq(await field(edit, "Prefix").inputValue(), "");
+      assertEq(await often(edit).innerText(), "Every 6 hours");
+      assertEq(await field(edit, "Copies kept").inputValue(), "3");
+
+      // Test tries the dialog's values once and answers beside its button.
+      await edit.getByRole("button", { name: "Test connection", exact: true }).click();
+      const failure = edit.locator(".aiKeyCheck.aiKeysError");
+      await failure.waitFor({ timeout: 20000 });
+      assert(/cannot reach s3:\/\/gamma-e2e\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
+        `the failure names the endpoint: ${await failure.innerText()}`);
+      // The result is about the values tested: an edit clears it.
+      await field(edit, "Prefix").fill("e2e");
+      await until(async () => (await edit.locator(".aiKeyCheck").count()) === 0, { what: "an edit to clear the test's result" });
+      // Cancel with an unsaved edit asks first; discarded, nothing is sent.
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await edit.getByRole("alertdialog", { name: "Unsaved changes" }).waitFor();
+      await edit.getByRole("button", { name: "Keep editing", exact: true }).click();
+      assertEq(await field(edit, "Prefix").inputValue(), "e2e", "Keep editing keeps the edit");
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await edit.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await edit.waitFor({ state: "detached" });
+      assertEq((await user.api("/api/admin/offsite")).settings.prefix, "", "a discarded edit is not saved");
       const status = row(page, "Status");
       const statusLine = status.locator(".settingDesc");
       assert((await statusLine.innerText()).includes("no round yet"), `the status before any round: ${await statusLine.innerText()}`);
 
-      // Test tries the endpoint once and answers in its row's hint.
-      const test = row(page, "Test connection");
-      const testHint = test.locator(".settingDesc");
-      await test.getByRole("button", { name: "Test", exact: true }).click();
-      const failure = testHint.locator(".aiKeysError");
-      await failure.waitFor({ timeout: 20000 });
-      assert(/cannot reach s3:\/\/gamma-e2e\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
-        `the failure names the endpoint: ${await failure.innerText()}`);
-      // The result is about the values tested: an edit puts the hint back.
-      await field("Prefix").fill("e2e");
-      await until(async () => (await testHint.innerText()) === "Reach the bucket with the settings above, saved or not",
-        { what: "an edit to clear the test's result" });
-      await field("Prefix").fill("");
-      await saved();
-
-      // Copy now. The endpoint changes without retyping the secret: a save
-      // without one keeps the stored secret (else the server would refuse
-      // an access key without its secret).
-      await field("Endpoint").fill(`http://127.0.0.1:${refusing.address().port}`);
-      await save.click();
-      await saved();
+      // Copy now. The endpoint changes without retyping the secret, and
+      // Enter saves: a save without one keeps the stored secret (else the
+      // server would refuse an access key without its secret).
+      const port = refusing.address().port;
+      await editButton().click();
+      await field(edit, "Endpoint").fill(`http://127.0.0.1:${port}`);
+      await field(edit, "Endpoint").press("Enter");
+      await edit.waitFor({ state: "detached" });
+      const moved = (await user.api("/api/admin/offsite")).settings;
+      assertEq(moved.endpoint, `http://127.0.0.1:${port}`, "Enter saved the new endpoint");
+      assert(moved.secret_set && moved.enabled, "the secret and the switch stay as they were");
+      assertEq(await row(page, "gamma-e2e").locator(".settingDesc").innerText(), `127.0.0.1:${port}/gamma-e2e · every 6 h · 3 kept`);
       await status.getByRole("button", { name: "Copy now", exact: true }).click();
       const copying = status.getByRole("button", { name: "Copying…", exact: true });
       await copying.waitFor();
@@ -1113,7 +1136,7 @@ export async function settingsScenarios(env) {
   // second server of its own (about 2 s to start). GAMMA_OFFSITE=off keeps
   // it from running a round at startup, the unreachable endpoint from ever
   // reaching AWS.
-  await step("settings: with GAMMA_S3_BUCKET in the server's environment, Off-site copies shows its values read-only", async () => {
+  await step("settings: with GAMMA_S3_BUCKET in the server's environment, Off-site copies shows a read-only summary", async () => {
     const managed = new Server({ env: { GAMMA_S3_BUCKET: "gamma-env", GAMMA_S3_ENDPOINT: "http://127.0.0.1:1", GAMMA_S3_REGION: "auto",
       GAMMA_S3_ACCESS_KEY: "AKIAE2EENV", GAMMA_S3_SECRET_KEY: "e2e-env-secret", GAMMA_OFFSITE: "off",
       GAMMA_OFFSITE_INTERVAL: "900", GAMMA_OFFSITE_KEEP: "5" } });
@@ -1131,23 +1154,22 @@ export async function settingsScenarios(env) {
       await nav(page, "Backups").click();
       const toggle = page.getByRole("checkbox", { name: "Copy to a bucket", exact: true });
       await toggle.waitFor();
-      assert((await row(page, "Copy to a bucket").innerText()).includes("Set by GAMMA_S3_BUCKET in the server's environment"),
-        "the switch's hint names the variable");
       assert(await toggle.isDisabled() && !await toggle.isChecked(), "the switch is the environment's (GAMMA_OFFSITE=off)");
-      // Off, the rows still show what the environment sets, none editable.
-      const field = (name, label = name) => row(page, name).getByLabel(label, { exact: true });
-      for (const [name, label, value] of [["Bucket", "Bucket", "gamma-env"], ["Endpoint", "Endpoint", "http://127.0.0.1:1"],
-        ["Region", "Region", "auto"], ["Access key", "Access key ID", "AKIAE2EENV"], ["Access key", "Secret key", ""],
-        ["Prefix", "Prefix", ""], ["Copies kept", "Copies kept", "5"]]) {
-        assertEq(await field(name, label).inputValue(), value, `${label} from the environment`);
-        assert(await field(name, label).isDisabled(), `${label} is read-only`);
-      }
-      assertEq(await field("Access key", "Secret key").getAttribute("placeholder"), "secret set — type to replace");
-      const often = row(page, "How often").getByRole("button", { name: "How often", exact: true });
-      assertEq(await often.innerText(), "Every 15 minutes");
-      assert(await often.isDisabled(), "How often is read-only");
+      // The summary names the environment's bucket and the variable; what
+      // the environment sets is its hover title. Nothing opens an editor.
+      const summary = row(page, "gamma-env");
+      assertEq(await summary.locator(".settingDesc").innerText(), "Set by GAMMA_S3_BUCKET in the server's environment",
+        "the summary's hint names the variable");
+      assertEq(await summary.getAttribute("title"), "127.0.0.1:1/gamma-env · every 15 min · 5 kept", "the environment's values");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,gamma-env", "no status while the copies are off");
+      assertEq(await summary.getByRole("button", { name: /^(Edit|Set up)…$/ }).count(), 0, "no Edit… or Set up…");
       assertEq(await offsite(page).getByRole("button").count(), 0, "no Save on the rule");
-      assertEq(await row(page, "Status").count(), 0, "no status while the copies are off");
+      // Test tries the environment's bucket and answers in the summary's hint.
+      await summary.getByRole("button", { name: "Test", exact: true }).click();
+      const failure = summary.locator(".aiKeysError");
+      await failure.waitFor({ timeout: 20000 });
+      assert(/cannot reach s3:\/\/gamma-env\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
+        `the failure names the environment's endpoint: ${await failure.innerText()}`);
       const refused = await admin.api("/api/admin/offsite", { method: "PUT", body: { bucket: "gamma-other" } }).catch((e) => e);
       assertEq(refused.status, 409, "the server refuses a save");
       assertNoProblems(page);

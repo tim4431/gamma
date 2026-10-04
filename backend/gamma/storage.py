@@ -237,17 +237,30 @@ def write_atomic(path: Path, data: bytes) -> None:
         raise
 
 
+REPLACE_ATTEMPTS = 10   # a rename over a file a reader holds open (Windows) is retried this often
+REPLACE_RETRY_S = 0.05
+
+
 def _rename_over(tmp: Path, path: Path, size: int) -> None:
     """``tmp`` — complete, flushed, ``size`` bytes — renamed over ``path``."""
-    try:
-        os.replace(tmp, path)
-    except PermissionError:
-        # Windows refuses a rename over a name another thread is renaming
-        # into place at the same moment. The name is the content's hash,
-        # so a stored copy of the same size already is these bytes.
-        if not (path.is_file() and path.stat().st_size == size):
-            raise
-        os.unlink(tmp)
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # Windows refuses a rename over a name another thread is renaming
+            # into place at the same moment. The name is the content's hash,
+            # so a stored copy of the same size already is these bytes.
+            if path.is_file() and path.stat().st_size == size:
+                os.unlink(tmp)
+                return
+            # A rewrite under the name (a PDF with its embedded annotations
+            # stripped, routers/imports.py) can meet a reader that has the
+            # file open for a moment (the manifest walk right after an
+            # upload): Windows refuses that too, and the reader is quick.
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_RETRY_S)
 
 
 def place_file(tmp: Path, path: Path) -> None:

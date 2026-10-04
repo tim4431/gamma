@@ -5,7 +5,7 @@ set -e
 # Optional PUID/PGID (linuxserver.io convention): when either is set, own the
 # data volume as that uid:gid and drop root before starting, so files Gamma
 # creates on a bind mount belong to the host user instead of root. Unset →
-# runs as root, exactly as before. setpriv ships in the base image; the
+# runs as root. setpriv ships in the base image; the
 # dropped uid needs no passwd entry, so HOME moves somewhere writable.
 AS_USER=""
 if [ -n "${PUID}${PGID}" ]; then

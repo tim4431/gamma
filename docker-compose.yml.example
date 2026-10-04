@@ -23,50 +23,19 @@ services:
       # proxy needs no compression of its own for the app's files: Gamma
       # sends the Brotli or gzip copies its build made.
       # FORWARDED_ALLOW_IPS: 10.203.0.0/24
-      # Off-site copies: the databases and the uploaded files copied to an
-      # S3-compatible bucket (AWS S3, Cloudflare R2, MinIO) every hour, the
-      # newest seven copies of each database kept; Gamma keeps running on
-      # the data volume. An admin can set this in Settings -> Backups
-      # instead; with GAMMA_S3_BUCKET set, these variables decide and the
-      # pane shows them read-only. The bucket needs no CORS rule.
-      # `manage.py offsite` lists and restores the copies
-      # (docs/dev/debugging.md "Off-site copies in a bucket").
-      # GAMMA_S3_BUCKET: gamma-backups
-      # GAMMA_S3_ENDPOINT: https://<account>.r2.cloudflarestorage.com   # unset for AWS
-      # GAMMA_S3_REGION: auto
-      # GAMMA_S3_ACCESS_KEY: ...
-      # GAMMA_S3_SECRET_KEY: ...
-      # GAMMA_S3_PREFIX: gamma                 # optional: one prefix per server sharing the bucket
-      # GAMMA_OFFSITE: "1"                     # the default with a bucket; "0" turns the copies off
-      # GAMMA_OFFSITE_INTERVAL: "3600"         # seconds, at least 60
-      # GAMMA_OFFSITE_KEEP: "7"
+      # Off-site copies of the databases and uploaded files to an S3-compatible
+      # bucket are set up by an admin in Settings -> Backups; a container can
+      # set them with GAMMA_S3_BUCKET and the other GAMMA_S3_* / GAMMA_OFFSITE*
+      # variables instead (docs/dev/debugging.md "Off-site copies in a bucket").
     restart: unless-stopped
-
-  # Litestream, for when seconds of loss matter: it streams every database
-  # to the off-site bucket as it changes (the copies above are the simpler
-  # default, and the only ones of the uploaded files). Write its
-  # configuration first, and again, followed by `docker compose restart
-  # litestream`, whenever a workspace is added or deleted, since Litestream
-  # does not watch it:
-  #   docker exec gamma python manage.py litestream-config --out /data/litestream.yml
-  # docs/dev/debugging.md "Litestream".
-  # litestream:
-  #   container_name: gamma-litestream
-  #   image: litestream/litestream
-  #   command: replicate -config /data/litestream.yml
-  #   volumes:
-  #     - gamma-data:/data                   # the same volume, at the same path
-  #   environment:                           # the keys the configuration names
-  #     GAMMA_S3_ACCESS_KEY: ...
-  #     GAMMA_S3_SECRET_KEY: ...
-  #   restart: unless-stopped
 
   # Keeps the gamma container on the newest image: Watchtower polls the
   # registry every six hours, pulls a new image and restarts gamma, which
-  # upgrades its data directory at startup (a snapshot of the databases is
-  # taken first; see docs/dev/migrations.md). Scoped to this container, so
-  # it never touches others on the host. Remove the service to update by
-  # hand with `docker compose pull && docker compose up -d`.
+  # runs an upgrade's global steps as it starts and each workspace's own as
+  # the workspace is first opened (a snapshot of the databases is taken
+  # first; see docs/dev/migrations.md). Scoped to this container, so it
+  # never touches others on the host. Remove the service to update by hand
+  # with `docker compose pull && docker compose up -d`.
   watchtower:
     container_name: gamma-watchtower
     image: containrrr/watchtower

@@ -15,8 +15,10 @@ WORKSPACES_DIR = DATA_DIR / "workspaces"
 # The pre-workspace layout (users/<username>/...). Read ONLY by the schema
 # migration that moves it into WORKSPACES_DIR (gamma/migrations.py).
 LEGACY_USERS_DIR = DATA_DIR / "users"
-# Database snapshots the migration runner takes before changing the data
-# directory (gamma/migrations.py backup()).
+# Snapshots and backup state: the migration runner's pre-upgrade copies
+# (gamma/backups.py), workspace snapshots and their scheduled tasks
+# (gamma/ws_backup.py, gamma/backup_schedule.py), the off-site copies'
+# state (gamma/offsite.py).
 BACKUPS_DIR = DATA_DIR / "backups"
 
 # Built frontend (vite dist/). When set and the directory exists, the backend
@@ -124,9 +126,9 @@ def sync_interval_s() -> int:
 
 
 def offsite_env() -> dict:
-    """The off-site copies as the environment sets them, read at each use;
-    ``gamma/offsite.py`` ``settings`` is their one reader, which merges them
-    with the saved settings. With ``GAMMA_S3_BUCKET`` set every field comes
+    """The off-site copies as the environment sets them, read at each use
+    by gamma/offsite.py, whose ``settings`` merges them with the saved
+    settings. With ``GAMMA_S3_BUCKET`` set every field comes
     from here and the saved settings are not used: ``GAMMA_S3_ENDPOINT``
     (unset for AWS itself), ``GAMMA_S3_REGION``, ``GAMMA_S3_ACCESS_KEY`` /
     ``GAMMA_S3_SECRET_KEY`` (both unset: boto3's own chain, the ``AWS_*``

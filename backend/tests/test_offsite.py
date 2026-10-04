@@ -64,13 +64,12 @@ def _lines(seq):
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
-    """No off-site variables from the outside, and no round, settings or
-    schedule this process remembers."""
+    """No off-site variables from the outside, and no round or schedule
+    this process remembers."""
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(offsite, "_last_round", None)
     monkeypatch.setattr(offsite, "_next_round_at", None)
-    monkeypatch.setattr(offsite, "_current", None)
 
 
 @pytest.fixture
@@ -130,16 +129,16 @@ def test_a_round_copies_changed_databases_and_missing_uploads(data, monkeypatch)
     first = offsite.tick()
     assert sorted(first["copied"]) == ["users.db", "ws-a/data.db", "ws-a/pages.db", "ws-b/data.db", "ws-b/pages.db"]
     assert first["uploads_copied"] == 2 and first["failed"] == {} and first["unchanged"] == 0
-    assert data.keys("dbcopies/") == [
-        "dbcopies/users/20261003T100001Z.db", "dbcopies/ws-a/20261003T100001Z-data.db",
-        "dbcopies/ws-a/20261003T100001Z-pages.db", "dbcopies/ws-b/20261003T100001Z-data.db",
-        "dbcopies/ws-b/20261003T100001Z-pages.db"]
+    assert data.keys("offsite/") == [
+        "offsite/users/20261003T100001Z.db", "offsite/ws-a/20261003T100001Z-data.db",
+        "offsite/ws-a/20261003T100001Z-pages.db", "offsite/ws-b/20261003T100001Z-data.db",
+        "offsite/ws-b/20261003T100001Z-pages.db"]
     assert data.keys("uploads/") == sorted(f"uploads/{ws}/{n}" for ws, names in data.uploads.items() for n in names)
     assert data.body(f"uploads/ws-a/{data.uploads['ws-a'][0]}") == b"paper one" * 100
     got = root / "got.db"
-    got.write_bytes(data.body("dbcopies/ws-a/20261003T100001Z-pages.db"))
+    got.write_bytes(data.body("offsite/ws-a/20261003T100001Z-pages.db"))
     assert _rows(got) == ["ws-a page"]
-    assert not (root / "backups" / ".dbcopies").exists()  # the temp copies are gone
+    assert not (root / "backups" / ".offsite").exists()  # the temp copies are gone
     line, = _lines(seq)
     assert "copied" in line["msg"] and "2 upload(s)" in line["msg"] and line["level"] == "INFO"
 
@@ -165,7 +164,7 @@ def test_a_round_copies_changed_databases_and_missing_uploads(data, monkeypatch)
         _make_db(root / "users.db", ["bob"])
         done = offsite.tick()
         assert sorted(done["copied"]) == ["users.db", "ws-a/pages.db"] and done["unchanged"] == 3
-        stamp = sorted(data.keys("dbcopies/ws-a/"))[-1]
+        stamp = sorted(data.keys("offsite/ws-a/"))[-1]
         got.write_bytes(data.body(stamp))
         assert _rows(got) == ["ws-a page", "second"]
     finally:
@@ -179,7 +178,7 @@ def test_the_copies_off_do_nothing(data, monkeypatch):
     monkeypatch.setenv("GAMMA_OFFSITE", "off")
     assert offsite.tick() == {"copied": [], "uploads_copied": 0, "failed": {}, "unchanged": 0, "pruned": 0}
     assert data.keys() == [] and not (data.root / "backups").exists()
-    assert offsite.status()["enabled"] is False and offsite.run_now() == {
+    assert offsite.status(offsite.settings())["enabled"] is False and offsite.run_now() == {
         "started": False, "message": "off-site copies are off"}
 
 
@@ -188,7 +187,7 @@ def test_copies_are_pruned_to_the_keep_count_never_past_the_first_round(data, mo
     monkeypatch.setenv("GAMMA_OFFSITE_KEEP", "3")
     older = root / "older.db"
     _make_db(older)
-    data.raw.upload_file(str(older), BUCKET, "tenant-1/dbcopies/users/20200101T000000Z.db")  # another directory's
+    data.raw.upload_file(str(older), BUCKET, "tenant-1/offsite/users/20200101T000000Z.db")  # another directory's
     for n in range(5):
         _make_db(root / "users.db", [f"change {n}"])
         done = offsite.tick()
@@ -219,7 +218,7 @@ def test_a_copy_that_fails_its_check_and_uploads_that_fail_are_tried_again(data,
         return "*** in database main ***\nPage 3 is never used" if str(src) == damaged else result
 
     def put(self, key, path):
-        if key.startswith(("dbcopies/ws-b/", "uploads/ws-b/")):
+        if key.startswith(("offsite/ws-b/", "uploads/ws-b/")):
             raise s3.S3Error("PUT refused: the bucket is out of reach")
         real_put(self, key, path)
 
@@ -231,14 +230,14 @@ def test_a_copy_that_fails_its_check_and_uploads_that_fail_are_tried_again(data,
     assert "Page 3 is never used" in done["failed"]["ws-a/pages.db"]
     assert "out of reach" in done["failed"]["ws-b/pages.db"] and "ws-b/data.db" in done["failed"]
     assert "out of reach" in done["failed"]["ws-b/uploads"]
-    assert data.keys("dbcopies/") == ["dbcopies/users/20261003T100001Z.db", "dbcopies/ws-a/20261003T100001Z-data.db"]
+    assert data.keys("offsite/") == ["offsite/users/20261003T100001Z.db", "offsite/ws-a/20261003T100001Z-data.db"]
     assert data.keys("uploads/ws-b/") == []
     warned = [e for e in tail(seq) if e["level"] == "WARNING"]
     assert any("workspaces/ws-a/pages.db failed its check" in e["msg"] for e in warned)  # gamma/integrity.py
     round_line, = _lines(seq)
     assert round_line["level"] == "WARNING" and "failed: " in round_line["msg"]
     assert "workspaces/ws-a/pages.db" in integrity._read()  # the admins' db-damage notice
-    shown = offsite.status()
+    shown = offsite.status(offsite.settings())
     assert shown["copied"] == 2 and shown["uploads_copied"] == 2 and shown["failed"] == 4
     assert shown["error"].startswith("ws-a/pages.db: the copy failed its check")
 
@@ -248,7 +247,7 @@ def test_a_copy_that_fails_its_check_and_uploads_that_fail_are_tried_again(data,
     assert sorted(done["copied"]) == ["ws-a/pages.db", "ws-b/data.db", "ws-b/pages.db"]
     assert done["uploads_copied"] == 1 and done["failed"] == {}  # ws-b's file, its directory untouched since
     assert "workspaces/ws-a/pages.db" not in integrity._read()
-    assert offsite.status()["error"] is None
+    assert offsite.status(offsite.settings())["error"] is None
 
 
 def test_a_bucket_that_cannot_be_used_is_the_rounds_error(data, monkeypatch):
@@ -257,7 +256,7 @@ def test_a_bucket_that_cannot_be_used_is_the_rounds_error(data, monkeypatch):
     done = offsite.tick()
     assert "both the access key and the secret key" in done["error"] and done["copied"] == []
     assert any("no round" in e["msg"] for e in _lines(seq))
-    shown = offsite.status()
+    shown = offsite.status(offsite.settings())
     assert shown["last_round_at"] == "2026-10-03T10:00:01Z" and "both the access key" in shown["error"]
     assert not (data.root / "backups" / offsite.STATE_FILE).exists()
 
@@ -274,14 +273,14 @@ def test_the_status_opens_no_database_and_survives_a_restart(data, monkeypatch):
     before = time.time()
     assert offsite.wait_s() == 3600  # what the every() loop waits after the round
     with mock.patch("sqlite3.connect", side_effect=AssertionError("the status opened a database")):
-        shown = offsite.status()
+        shown = offsite.status(conf)
     assert {k: shown[k] for k in ("last_round_at", "copied", "uploads_copied", "failed", "error")} == {
         "last_round_at": "2026-10-03T10:00:01Z", "copied": 5, "uploads_copied": 3, "failed": 0, "error": None}
     next_at = calendar.timegm(time.strptime(shown["next_round_at"], "%Y-%m-%dT%H:%M:%SZ"))
     assert before + 3590 < next_at < time.time() + 3610
     # a restart: the state file still says how the last round went
     monkeypatch.setattr(offsite, "_last_round", None)
-    assert offsite.status()["last_round_at"] == "2026-10-03T10:00:01Z" and offsite.status()["copied"] == 5
+    assert offsite.status(conf)["last_round_at"] == "2026-10-03T10:00:01Z" and offsite.status(conf)["copied"] == 5
     # another bucket: that round was not its
     monkeypatch.setenv("GAMMA_S3_PREFIX", "tenant-2")
     assert offsite.status(offsite.settings())["last_round_at"] is None
@@ -299,15 +298,16 @@ def test_copy_now_runs_one_round_at_a_time(data, monkeypatch):
     monkeypatch.setattr(offsite, "_round", slow_round)
     assert offsite.run_now() == {"started": True}
     assert entered.wait(10)
-    assert offsite.status()["running"] is True
+    assert offsite.status(offsite.settings())["running"] is True
     assert offsite.run_now() == {"started": False, "message": "a round is running"}
     assert offsite.tick()["skipped"] == "a round is running"  # the scheduled round passes this one by
     release.set()
     for _ in range(200):
-        if not offsite.status()["running"]:
+        if not offsite.status(offsite.settings())["running"]:
             break
         time.sleep(0.05)
-    assert offsite.status()["running"] is False and offsite.status()["copied"] == 5
+    shown = offsite.status(offsite.settings())
+    assert shown["running"] is False and shown["copied"] == 5
 
 
 # --- restoring -----------------------------------------------------------------------
@@ -380,7 +380,8 @@ def test_a_lost_disk_comes_back_whole_with_its_uploads(data):
     assert [(r["files"], r["bytes"] > 0) for r in done if "files" in r] == [(2, True), (1, True)]
     assert _rows(root / "users.db") == ["alice"] and _rows(root / "workspaces" / "ws-b" / "pages.db") == ["ws-b page"]
     for ws, names in data.uploads.items():
-        assert sorted(p.name for p in (root / "workspaces" / ws / "uploads").iterdir()) == sorted(names)
+        stored = [p.name for p in (root / "workspaces" / ws / "uploads").iterdir() if not p.name.startswith(".")]
+        assert sorted(stored) == sorted(names)  # beside the store's own .partial/
     assert (root / "workspaces" / "ws-a" / "uploads" / data.uploads["ws-a"][0]).read_bytes() == b"paper one" * 100
     # again, after a server ran: the databases come back, the files there already stay
     done = offsite.restore("ws-a", uploads=True)
@@ -474,7 +475,7 @@ def test_a_round_with_the_saved_settings(users_db, s3_bucket, monkeypatch):
     done = offsite.tick()
     assert done["copied"] == ["users.db"] and done["failed"] == {}
     listed = s3_bucket.list_objects_v2(Bucket=BUCKET, Prefix="gui/")
-    assert [o["Key"] for o in listed["Contents"]] == ["gui/dbcopies/users/20261003T120000Z.db"]
+    assert [o["Key"] for o in listed["Contents"]] == ["gui/offsite/users/20261003T120000Z.db"]
     assert offsite.test() == {"ok": True, "message": f"{BUCKET}: 1 object under gui/"}
     assert offsite.test({"prefix": "", "secret_key": ""}) == {"ok": True, "message": f"{BUCKET}: 1 object in the bucket"}
     assert offsite.test({"bucket": "missing-bucket"})["message"].startswith("there is no bucket 'missing-bucket'")
@@ -492,18 +493,18 @@ def test_the_bucket_client_says_why_it_cannot_work(s3_bucket, tmp_path):
     assert client.check() == (0, False) and client.where == f"s3://{BUCKET}/p/"
     src = tmp_path / "src"
     src.write_bytes(b"x" * 5000)
-    client.put_object("dbcopies/ws-1/one.db", src)
-    assert client.list_objects("dbcopies/")[0][:2] == ("dbcopies/ws-1/one.db", 5000)
-    assert client.get_object("dbcopies/ws-1/one.db", tmp_path / "back" / "one.db")
+    client.put_object("offsite/ws-1/one.db", src)
+    assert client.list_objects("offsite/")[0][:2] == ("offsite/ws-1/one.db", 5000)
+    assert client.get_object("offsite/ws-1/one.db", tmp_path / "back" / "one.db")
     assert (tmp_path / "back" / "one.db").read_bytes() == b"x" * 5000
-    assert not client.get_object("dbcopies/ws-1/none.db", tmp_path / "none.db")
+    assert not client.get_object("offsite/ws-1/none.db", tmp_path / "none.db")
     assert [p.name for p in tmp_path.iterdir() if "none" in p.name] == []  # no temp file left
-    client.delete_object("dbcopies/ws-1/one.db")
-    client.delete_object("dbcopies/ws-1/one.db")  # gone already: no error
-    assert client.list_objects("dbcopies/") == []
+    client.delete_object("offsite/ws-1/one.db")
+    client.delete_object("offsite/ws-1/one.db")  # gone already: no error
+    assert client.list_objects("offsite/") == []
     with pytest.raises(FileNotFoundError):
-        client.put_object("dbcopies/ws-1/two.db", tmp_path / "not-there")
-    for bad in ("dbcopies/../users.db", "a//b", "a\\b", "", "/abs"):
+        client.put_object("offsite/ws-1/two.db", tmp_path / "not-there")
+    for bad in ("offsite/../users.db", "a//b", "a\\b", "", "/abs"):
         with pytest.raises(ValueError):
             client.put_object(bad, src)
 

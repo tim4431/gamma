@@ -19,6 +19,10 @@ for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_A
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
             "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD"):
     os.environ.pop(var, None)
+# Nor a developer's off-site bucket: a test server's startup round must never
+# copy into it (gamma/offsite.py reads these at every round).
+for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_OFFSITE"))]:
+    os.environ.pop(var)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

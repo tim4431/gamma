@@ -19,18 +19,18 @@ interval as it ends, so a change applies from the next round, and a new
 interval from the pause after it. A round:
 
 - Copies users.db and each workspace's pages.db and data.db that changed
-  to ``<prefix>dbcopies/users/<stamp>.db`` and
-  ``<prefix>dbcopies/<ws>/<stamp>-pages.db`` / ``-data.db``, ``<stamp>`` the
+  to ``<prefix>offsite/users/<stamp>.db`` and
+  ``<prefix>offsite/<ws>/<stamp>-pages.db`` / ``-data.db``, ``<stamp>`` the
   round's UTC time (``20261003T140000Z``), one for every copy of a round.
   The newest ``keep`` copies of each database are kept.
 - Each copy is taken with the backup API into a temp file under
-  ``backups/.dbcopies/`` (consistent while the server writes:
+  ``backups/.offsite/`` (consistent while the server writes:
   ``backups.snapshot_db``), quick-checked and uploaded only when it passes.
   One that fails is skipped (the check's warning and the admins'
   ``db-damage`` notice, gamma/integrity.py) and tried again next round.
 - Only what changed is copied: a round compares each file's mtime and size,
   and its WAL's, with what they were when its last copy was taken (the
-  state file, ``backups/dbcopies.json``), so an unchanged database costs two
+  state file, ``backups/offsite.json``), so an unchanged database costs two
   stats. Before a copy a WAL with frames in it is checkpointed and
   truncated when nothing holds it (``db_maintenance.truncate_wal``, which
   never waits): the server folding the WAL into the file later, as its last
@@ -70,7 +70,7 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import InvalidToken
 
-from . import config, db, integrity, s3
+from . import config, db, integrity, s3, storage
 from .backups import snapshot_db
 from .db_maintenance import truncate_wal
 from .logbuf import log
@@ -81,10 +81,10 @@ SETTINGS_KEY = "offsite"                 # users.db ``settings``: the saved sett
 FIELDS = ("enabled", "bucket", "endpoint", "region", "access_key", "secret_key", "prefix", "interval_s", "keep")
 DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S = 3600, 60, 30 * 24 * 3600
 DEFAULT_KEEP, KEEP_MAX = 7, 1000
-SPACE = "dbcopies"                       # the databases' copies in the bucket, beside uploads/
+SPACE = "offsite"                        # the databases' copies in the bucket, beside uploads/
 UPLOADS = "uploads"                      # the uploaded files in the bucket: uploads/<ws>/<name>
-STATE_FILE = "dbcopies.json"             # under backups/: what each copy saw, since when, the last round
-WORK_DIR = ".dbcopies"                   # under backups/: the database copies on their way up
+STATE_FILE = "offsite.json"              # under backups/: what each copy saw, since when, the last round
+WORK_DIR = ".offsite"                    # under backups/: the database copies on their way up
 STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
 _COPY_RE = re.compile(r"^(\d{8}T\d{6}Z)(?:-(pages|data))?\.db$")
 KINDS = ("pages", "data")                # a workspace's databases; users.db is kind ""
@@ -98,7 +98,6 @@ _save_lock = threading.Lock()
 # failed, error}; the state file keeps the same (without where) across restarts.
 _last_round: dict | None = None
 _next_round_at: float | None = None      # when the every() loop runs the next round (``wait_s``)
-_current: dict | None = None             # the settings as ``settings`` last resolved them
 
 
 class RestoreError(ValueError):
@@ -164,7 +163,6 @@ def settings() -> dict:
     ``GAMMA_OFFSITE`` on unless 0/false/no/off, ``GAMMA_OFFSITE_INTERVAL``,
     ``GAMMA_OFFSITE_KEEP``); else the saved ones, off until an admin turns
     them on. The interval is 3600 s and the copies kept 7 by default."""
-    global _current
     env = config.offsite_env()
     if env["bucket"]:
         flag = env["enabled"].lower()
@@ -183,7 +181,6 @@ def settings() -> dict:
                 **{k: text(k) for k in ("bucket", "endpoint", "region", "access_key", "secret_key", "prefix")},
                 "interval_s": _number(saved.get("interval_s"), DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S),
                 "keep": _number(saved.get("keep"), DEFAULT_KEEP, 1, KEEP_MAX), "from_env": False}
-    _current = conf
     return conf
 
 
@@ -306,8 +303,8 @@ def test(fields: dict | None = None) -> dict:
 # --- naming --------------------------------------------------------------------------
 
 def key(group: str, kind: str, stamp: str) -> str:
-    """The object of one copy: ``dbcopies/users/<stamp>.db`` for users.db
-    (``kind`` ""), ``dbcopies/<ws>/<stamp>-<kind>.db`` for a workspace's."""
+    """The object of one copy: ``offsite/users/<stamp>.db`` for users.db
+    (``kind`` ""), ``offsite/<ws>/<stamp>-<kind>.db`` for a workspace's."""
     return f"{SPACE}/{group}/{stamp}{'-' + kind if kind else ''}.db"
 
 
@@ -345,25 +342,6 @@ def _signal(path: Path) -> list | None:
     return seen + [wal.st_mtime_ns, wal.st_size] if wal.st_size else seen
 
 
-def _upload_files(folder: Path) -> dict[str, int]:
-    """``{name: size}`` of the stored files in an uploads directory, its dot
-    files (``.partial/``, temp files) left out; {} when there is none."""
-    out = {}
-    try:
-        with os.scandir(folder) as entries:
-            for entry in entries:
-                if entry.name.startswith("."):
-                    continue
-                try:
-                    if entry.is_file(follow_symlinks=False):
-                        out[entry.name] = entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    continue
-    except (FileNotFoundError, NotADirectoryError):
-        return {}
-    return out
-
-
 def _some(names, n: int = 5) -> str:
     return ", ".join(names[:n]) + (f" and {len(names) - n} more" if len(names) > n else "")
 
@@ -384,12 +362,11 @@ def _load_state():
 def _read_state(where: str, stamp: str) -> dict:
     """``{store, since, files: {label: signal}, uploads: {ws: mtime},
     last_round}``; a fresh one (nothing copied, ``since`` this round) when
-    there is none or it was another bucket's."""
+    there is none, it is not of that shape or it was another bucket's."""
     state = _load_state()
-    if not isinstance(state, dict) or state.get("store") != where or not isinstance(state.get("files"), dict):
+    if not (isinstance(state, dict) and state.get("store") == where
+            and isinstance(state.get("files"), dict) and isinstance(state.get("uploads"), dict)):
         return {"store": where, "since": stamp, "files": {}, "uploads": {}}
-    if not isinstance(state.get("uploads"), dict):
-        state["uploads"] = {}  # a state file from before the uploads were copied: every workspace once
     return state
 
 
@@ -410,7 +387,7 @@ def _generations(bucket: s3.Client, group: str | None = None) -> dict:
     for object_key, size, _mtime in bucket.list_objects(f"{SPACE}/{group}/" if group else f"{SPACE}/"):
         parts = object_key.split("/")
         m = _COPY_RE.match(parts[2]) if len(parts) == 3 else None
-        if not m or (not m.group(2) and parts[1] != "users"):
+        if not m or (parts[1] == "users") != (not m.group(2)):  # users.db's under users/, a workspace's two elsewhere
             continue
         held.setdefault((parts[1], m.group(2) or ""), []).append((m.group(1), size))
     for gens in held.values():
@@ -504,7 +481,7 @@ def _copy_uploads(bucket: s3.Client, state: dict, done: dict) -> None:
             continue
         prefix = f"{UPLOADS}/{ws}/"
         try:
-            local = _upload_files(folder)
+            local = {name: size for name, size, _ in storage.list(ws)}
             held = {}
             if local:  # one listing of the workspace's objects, never a HEAD per file
                 held = {k[len(prefix):]: size for k, size, _ in bucket.list_objects(prefix)}
@@ -615,7 +592,7 @@ def run_now() -> dict:
 
 def wait_s() -> float:
     """The pause after a round, which the app's ``every()`` loop asks for as
-    each round ends: the saved interval, which also dates ``status``'s
+    each round ends: the interval in force, which also dates ``status``'s
     ``next_round_at``. Never raises."""
     global _next_round_at
     try:
@@ -627,17 +604,15 @@ def wait_s() -> float:
     return seconds
 
 
-def status(conf: dict | None = None) -> dict:
-    """What the pane shows of the rounds, opening no database: ``{enabled,
-    running, interval_s, keep, last_round_at, copied, uploads_copied,
-    failed, error, next_round_at}``. ``conf``: the settings just resolved
-    (default: as the last ``settings()`` call left them). The last round
-    is this process's newest, or after a restart the one the state file
-    records, of the bucket the settings name: its UTC time, how many
-    databases and files it copied, how many failed, and why the first did
-    (or why no round could run); all None before the first."""
-    conf = conf or _current or {"enabled": False, "bucket": "", "endpoint": "", "prefix": "",
-                                "interval_s": DEFAULT_INTERVAL_S, "keep": DEFAULT_KEEP}
+def status(conf: dict) -> dict:
+    """What the pane shows of the rounds of ``conf`` (the settings as
+    ``settings`` resolved them), opening no database: ``{enabled, running,
+    interval_s, keep, last_round_at, copied, uploads_copied, failed, error,
+    next_round_at}``. The last round is this process's newest, or after a
+    restart the one the state file records, of the bucket the settings
+    name: its UTC time, how many databases and files it copied, how many
+    failed, and why the first did (or why no round could run); all None
+    before the first."""
     here = s3.where(conf["bucket"], conf["endpoint"], conf["prefix"]) if conf["bucket"] else ""
     last = _last_round if _last_round and _last_round.get("where") == here else None
     if last is None and here:
@@ -672,7 +647,7 @@ def listing(group: str | None = None) -> dict:
     if group and group != "users":
         db.safe_ws_id(group)
     held = _generations(_bucket(), group)
-    return {_label(g, k): gens for (g, k), gens in sorted(held.items()) if group != "users" or not k}
+    return {_label(g, k): gens for (g, k), gens in sorted(held.items())}
 
 
 def uploads_held(ws: str) -> tuple[int, int]:
@@ -716,16 +691,19 @@ def _move_aside(path: Path, now: str) -> Path | None:
 
 def _fetch_uploads(bucket: s3.Client, ws: str) -> tuple[int, int]:
     """Download each of the workspace's files the bucket holds that its
-    ``uploads/`` lacks, each written whole; how many, and their bytes. The
+    ``uploads/`` lacks, each stored through the store (downloaded into its
+    ``.partial/``, then renamed into place); how many, and their bytes. The
     files there stay as they are."""
-    folder = db.ws_uploads_dir(ws)
-    folder.mkdir(parents=True, exist_ok=True)
-    have, prefix, count, size = _upload_files(folder), f"{UPLOADS}/{ws}/", 0, 0
+    partial = storage.partial_dir(ws)
+    partial.mkdir(parents=True, exist_ok=True)
+    have, prefix, count, size = {name for name, _, _ in storage.list(ws)}, f"{UPLOADS}/{ws}/", 0, 0
     for object_key, n, _mtime in bucket.list_objects(prefix):
         name = object_key[len(prefix):]
         if name in have or not _UPLOAD_NAME_RE.match(name):
             continue  # here already, or nothing an upload is named (in a folder, a dot file)
-        if bucket.get_object(object_key, folder / name):
+        tmp = partial / f"offsite-{secrets.token_hex(4)}"
+        if bucket.get_object(object_key, tmp):
+            storage.put_path(ws, name, tmp)
             count, size = count + 1, size + n
     return count, size
 
@@ -767,9 +745,7 @@ def restore(target: str, at: str | None = None, *, uploads: bool = False) -> lis
         except ValueError:
             raise RestoreError(f"{target!r} is no workspace id") from None
     bucket = _bucket()
-    held = {(group, kind): gens
-            for (group, kind), gens in _generations(bucket, None if target == "all" else target).items()
-            if target != "users" or not kind}
+    held = _generations(bucket, None if target == "all" else target)
     since = _read_state(bucket.where, "").get("since", "")
     if at is None and since:
         mixed = [gens for gens in held.values() if gens[0][0] < since <= gens[-1][0]]
@@ -830,7 +806,7 @@ def restore(target: str, at: str | None = None, *, uploads: bool = False) -> lis
         state["since"] = ""  # the copies are this data directory's now: older ones may be pruned
         _write_state(state)
     except OSError:
-        pass  # without it the next round starts a state of its own
+        pass  # the state stays as it was: the older copies are not pruned
     return done + files
 
 

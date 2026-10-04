@@ -67,8 +67,8 @@ install -r requirements-s3.txt`. The desktop app does not include it.
 **What is copied.** A round runs at startup and then once per interval:
 
 - users.db and each workspace's pages.db and data.db that changed since its
-  last copy, to `<prefix>dbcopies/users/<stamp>.db` and
-  `<prefix>dbcopies/<workspace>/<stamp>-pages.db` / `-data.db`. `<stamp>`
+  last copy, to `<prefix>offsite/users/<stamp>.db` and
+  `<prefix>offsite/<workspace>/<stamp>-pages.db` / `-data.db`. `<stamp>`
   is the round's UTC time, such as `20261003T140000Z`, and is the same for
   every copy the round takes. The newest copies of each database are kept
   (7 by default).
@@ -97,9 +97,9 @@ applies from the next round, and a new interval from the pause after it.
 comes from the environment and the pane shows them read-only:
 `GAMMA_S3_BUCKET`, `GAMMA_S3_ENDPOINT`, `GAMMA_S3_REGION`,
 `GAMMA_S3_ACCESS_KEY`, `GAMMA_S3_SECRET_KEY`, `GAMMA_S3_PREFIX`,
-`GAMMA_OFFSITE` (on unless `0`), `GAMMA_OFFSITE_INTERVAL` (seconds, default
-3600, at least 60) and `GAMMA_OFFSITE_KEEP` (default 7).
-`docker-compose.yml.example` has the block.
+`GAMMA_OFFSITE` (on unless `0`, `false`, `no` or `off`),
+`GAMMA_OFFSITE_INTERVAL` (seconds, default 3600, at least 60) and
+`GAMMA_OFFSITE_KEEP` (default 7).
 
 **The bucket.** Only the server talks to it, so it needs no CORS rule and
 no public access. The key must be allowed to list, read, write and delete
@@ -109,14 +109,14 @@ prefix each.
 **A round in detail.**
 
 - **A database copy.** Each database is copied with the SQLite backup API
-  into `backups/.dbcopies/`, which is consistent while the server writes.
+  into `backups/.offsite/`, which is consistent while the server writes.
   The copy is quick-checked, uploaded (boto3 sends it in parts past 8 MB)
   and then deleted. A copy that fails its check is not uploaded: the log
   gets a warning, the admins get the `db-damage` notice, and the next round
   tries again.
 - **Only what changed.** The round compares the mtime and size of each
   database file and of its WAL with what they were at its last copy, which
-  `backups/dbcopies.json` records. That is two stats per database, without
+  `backups/offsite.json` records. That is two stats per database, without
   opening it. Before a copy, a WAL with frames in it is checkpointed and
   truncated if nothing holds it (the maintenance tick's checkpoint, which
   never waits), so the server folding the WAL in later does not count as a
@@ -145,7 +145,7 @@ prefix each.
   the directory's own, and pruning goes on as usual.
 - **What stays in the bucket.** A file deleted from a workspace, and the
   copies and files of a deleted workspace, stay in the bucket. Remove
-  `dbcopies/<id>/` and `uploads/<id>/` by hand or with a lifecycle rule.
+  `offsite/<id>/` and `uploads/<id>/` by hand or with a lifecycle rule.
 - **What is not copied.** The job artifacts, the server snapshots and the
   workspace snapshot zips stay on the node's disk. `publisher-sessions.key`
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
@@ -226,8 +226,7 @@ docker exec gamma python manage.py litestream-config --out /data/litestream.yml
 ```
 
 Run Litestream as a sidecar on the same volume, at the same path, with
-the same keys (`docker-compose.yml.example` has the service, commented
-out):
+the same keys:
 
 ```yaml
   litestream:
@@ -250,7 +249,7 @@ restore, stop Gamma and Litestream, move the database and its `-wal` and
 `-shm` aside (Litestream does not write over an existing file), and run
 `docker compose run --rm litestream restore -config /data/litestream.yml
 /data/workspaces/<id>/pages.db` for each file. The rounds and Litestream
-can run together, under `dbcopies/` and `litestream/`.
+can run together, under `offsite/` and `litestream/`.
 
 ## Tests
 
@@ -274,6 +273,10 @@ them only after further relevant changes or when a failure needs investigation.
   than the change, e.g. a one-line edit in a shared module selects every
   group. Check that the intended steps actually ran. A pure-module change
   does not automatically require a build or browser run.
+- The iPad app: a change to the sync protocol, the uploads routes, the
+  integration tokens or the session's answer also runs the iPad checks
+  ([ipad.md](ipad.md) "Keeping the host in step": the contract test,
+  the core bundle's test and the `replica` browser group).
 - Shared contracts and helpers: include tests for affected consumers. For
   example, changes to shared normalization cases need both Python and Node
   coverage; auth, workspace access, migrations, and block storage may require

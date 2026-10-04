@@ -404,21 +404,33 @@ Library:
   missing or a database copy failed its check.
   Off-site copies sends the server's databases and uploaded files to an
   S3-compatible bucket, a backup target only: Gamma keeps running on its
-  local files. The section opens with the Copy to a bucket switch. Once it
-  is on or a bucket is saved, rows follow for the bucket, the endpoint
-  (empty for AWS S3), the region, the access key with its write-only secret
-  (the box reads "secret set — type to replace" while one is stored, and a
-  secret is sent only when typed), the prefix, how often (a `MenuSelect`:
-  every 15 minutes, 1, 6 or 24 hours) and the copies kept per database.
-  Test connection tries the form's values, saved or not, and answers in its
-  row's hint. While the copies are on, Status reads "last round … · 12
-  databases · 340 uploads · 0 failed · next round …" (or "no round yet",
-  with the round's error under it) beside Copy now, which is disabled while
-  a round runs. Edits are one draft with a Save button on the section rule,
-  like Sign-in. With `GAMMA_S3_BUCKET` set, the environment supplies every
-  field and the rows are read-only. `GET/PUT /api/admin/offsite`, `POST
-  /api/admin/offsite/test` and `…/run`; the rounds themselves:
-  [debugging.md](debugging.md) "Off-site copies in a bucket".
+  local files. The section has three rows. The Copy to a bucket switch
+  saves at once; with no bucket saved, turning it on opens the set-up
+  instead. The summary row is named after the bucket ("No bucket yet"
+  before one is saved) and reads "s3://gamma-backups/prefix · every 1 h ·
+  7 kept", with the endpoint's host in place of `s3://` for R2 or MinIO.
+  Its Set up… or Edit… button opens the editor `SubDialog` ("Set up
+  off-site copies" / "Edit off-site copies"), laid out like the shared AI
+  key editor: the bucket, the endpoint (empty for AWS S3), the region, the
+  access key ID, the write-only secret key (the box reads "secret set —
+  type to replace" while one is stored, and a secret is sent only when
+  typed), the prefix, how often (a `MenuSelect`: every 15 minutes, 1, 6 or
+  24 hours) and the copies kept per database, then Test connection, which
+  tries the dialog's values, saved or not, and answers beside its button.
+  Save (or Enter) closes the dialog once the server takes the values and
+  shows its refusal in the dialog otherwise. Saving the first bucket turns
+  the copies on, as connecting an AI service does; later edits leave the
+  switch as it is. Closing the dialog with unsaved edits asks first. While
+  the copies are on, Status reads "last round … · 12 databases · 340
+  uploads · 0 failed · next round …" (or "no round yet", with the round's
+  error under it) beside Copy now, which is disabled while a round runs.
+  With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
+  switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
+  server's environment" (the summary line is its hover title), and its one
+  button is Test, which tries the environment's bucket. `GET/PUT
+  /api/admin/offsite`, `POST /api/admin/offsite/test` and `…/run`; the
+  rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
+  bucket".
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, search-index rebuilding and the per-paper metadata / text / index
   health table.
@@ -592,10 +604,11 @@ accept a `draft` value for dismissal protection. See
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
 shared chat settings, mobile layout, administrator account separation, and
-Backups › Off-site copies: an admin's alone, saved and read back with its
-write-only secret, Test against an unreachable endpoint, Copy now against a
-stand-in bucket that refuses, and the read-only rows of a second server
-started with `GAMMA_S3_BUCKET`.
+Backups › Off-site copies: an admin's alone, set up in its dialog and read
+back there with its write-only secret, the unsaved-edit question on Cancel,
+Test against an unreachable endpoint, Copy now against a stand-in bucket
+that refuses, and the read-only summary of a second server started with
+`GAMMA_S3_BUCKET`.
 Use `--keep` to retain desktop/mobile screenshots. For concurrent development,
 build into a private directory and set `GAMMA_E2E_DIST` to that directory so
 another build cannot replace the assets while the suite runs.

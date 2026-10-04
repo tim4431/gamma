@@ -191,7 +191,7 @@ async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
     ``seconds``: a number, or a callable asked after each round, in a
     worker thread too, for the pause before the next (the off-site copies'
-    saved interval; it must not raise). A round that raises is logged
+    interval; it must not raise). A round that raises is logged
     (``failed``) and the next one comes anyway."""
     stop = asyncio.Event()
 
