@@ -220,7 +220,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       const file = await download; // the dialog watches the job: its file comes by itself
       assertEq(fs.readFileSync(await file.path()).subarray(0, 5).toString(), "%PDF-");
       await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
-      assert((await dialog.innerText()).includes("1 page exported."), "the finished step counts the pages");
+      // the finished step counts the pages (the job's result, fetched once it ended)
+      await dialog.getByText("1 page exported.", { exact: true }).waitFor();
       await choice(dialog, "Done").click();
       await dialog.waitFor({ state: "detached" });
       assertNoProblems(page);
@@ -563,8 +564,11 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assert(written.startsWith("% 3 entries from E2E bibtex, exported from Gamma"), `the .bib names what it holds: ${written.slice(0, 80)}`);
 
       await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+      // The ended job's result (what was exported, what was left out) is
+      // fetched once the heading says it is ready, so it shows a moment later.
+      await dialog.getByText("3 pages exported.", { exact: true }).waitFor();
       const done = await dialog.innerText();
-      assert(done.includes("3 pages exported.") && done.includes("1 page left out") && done.includes("Bib note page"),
+      assert(done.includes("1 page left out") && done.includes("Bib note page"),
         `the finished step lists the page it could not cite: ${done}`);
       assert(done.includes("Put it beside your .tex file"), "and says what to do with the file");
       assertEq(plain(written), everything, "the file is what Copy all copied");

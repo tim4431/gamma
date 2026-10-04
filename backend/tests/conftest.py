@@ -480,3 +480,11 @@ def recv(sock, kind, skip=None):
             return msg
         assert skip is None or msg["t"] in skip, msg
     raise AssertionError(f"no {kind} message")
+
+
+def recv_hello(sock):
+    """A fresh page socket's hello. Another peer's presence (join, leave,
+    cursor) may come first: the socket is in the room before the server
+    reads the log position the hello carries, and the hello's peer list
+    replaces whatever presence came before it (collabSession.js)."""
+    return recv(sock, "hello", ("join", "leave", "cursor"))

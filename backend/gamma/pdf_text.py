@@ -53,7 +53,38 @@ MAX_PAGES = 5000
 # pypdfium2's finalizer template is wrapped at import to take the same lock
 # (_serialize_finalizers) — a finalizer on the walking thread re-enters the
 # RLock, one on any other thread waits its turn.
-_lock = threading.RLock()
+class _PdfiumLock:
+    """The one pdfium lock, handed over in turn between a walk's pages.
+
+    A bare RLock is not fair: the walker releases it after a page and takes
+    it back microseconds later, before a waiting thread has even woken up,
+    so on Linux a page count still waited out the whole book. A thread
+    taking the lock fresh therefore queues at the door first and holds the
+    door while it waits; the walker's next page queues behind it there, so
+    every waiter is in within one page. A thread that already holds the
+    lock re-enters without the door, and so do the finalizers (a GC between
+    the door and the lock runs them on that very thread): whoever holds the
+    lock never waits at the door, so the two locks cannot deadlock."""
+
+    def __init__(self):
+        self.rlock = threading.RLock()
+        self._door = threading.Lock()
+
+    def _is_owned(self) -> bool:
+        return self.rlock._is_owned()
+
+    def __enter__(self):
+        if self.rlock._is_owned():
+            self.rlock.acquire()
+        else:
+            with self._door:
+                self.rlock.acquire()
+
+    def __exit__(self, *exc):
+        self.rlock.release()
+
+
+_lock = _PdfiumLock()
 
 
 def _serialize_finalizers() -> None:
@@ -66,7 +97,7 @@ def _serialize_finalizers() -> None:
         return
 
     def locked_close(*args, **kwargs):
-        with _lock:
+        with _lock.rlock:
             return inner(*args, **kwargs)
 
     locked_close._gamma_locked = True

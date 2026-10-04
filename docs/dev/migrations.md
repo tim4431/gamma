@@ -173,7 +173,10 @@ in it, whether uploads are included, `auto` for the runner's, and
 snapshot later (each written under a dot-name and renamed once whole) are
 listed as lines of `workspaces.jsonl` beside the manifest, and the listing
 counts them among its files. The snapshot is written as `.<name>.part` and renamed
-once the manifest, written last, is in. A failure removes it, so a full disk
+once the manifest, written last, is in. Making that directory claims the name:
+a second snapshot of the same label in the same second (another thread, or
+`manage.py` beside the server) takes the next second's name instead of
+writing into the first one's copy. A failure removes it, so a full disk
 never leaves a half copy. A directory without a manifest (a crash mid-copy)
 is never listed or pruned; delete it by hand. A database SQLite cannot read
 is copied byte for byte instead of failing the whole snapshot, and its

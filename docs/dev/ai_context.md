@@ -134,7 +134,11 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   and takes the process down (`pdf_text.py`). The walks over every page
   take the lock per page, not per document, so a chat's extraction runs
   between the pages of a book being indexed instead of after it (measured:
-  `/pdf-text-status` during a 5,000-page reindex, 5.6 s → 77 ms).
+  `/pdf-text-status` during a 5,000-page reindex, 5.6 s → 77 ms). The lock
+  is handed over in turn: a bare `RLock` is unfair, and on Linux the walk
+  took it back after each page before a waiting thread woke. So a fresh
+  taker queues at a second lock (the "door") and holds it while it waits,
+  and the walk's next page lines up behind it.
 
 ## Known limits
 
