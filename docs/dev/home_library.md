@@ -149,8 +149,9 @@ whose path or name it is, else makes a new label. Each pick writes the
 page at once, a folder with the same refinement as dropping the page on
 it; a name may hold any character, "," and "/" included. Backspace in the
 empty field takes the last label off. The browser suite's `folders` group
-(`e2e/scenarios/folders.mjs`) covers the folder and label flows, and its
-harness files pages by path through `Account.folder` / `label` / `file`.
+(`frontend/tests/e2e/scenarios/folders.mjs`) covers the folder and label
+flows, and its harness files pages by path through `Account.folder` /
+`label` / `file`.
 
 ## Listing, sorting, filtering
 
@@ -467,4 +468,4 @@ there is none. The chip then shows the page's title struck through
 page is in Recently deleted; a click opens the notice with Restore. An id
 nothing holds renders as the unlinked chip, its card as "Embedded note not
 found." (BlockTree's `refLabelOf`). The browser suite's `trash` group
-(`e2e/scenarios/trash.mjs`) covers the flow.
+(`frontend/tests/e2e/scenarios/trash.mjs`) covers the flow.

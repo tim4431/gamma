@@ -1,6 +1,6 @@
 # Gamma PDF for Codex, Claude Code, and DeepSeek Harness
 
-Search and read your Gamma pages, notes, highlights and PDF text from either assistant.
+Search and read your Gamma pages, notes, highlights and PDF text from these assistants.
 
 ## Connect your library
 
@@ -53,10 +53,10 @@ moving the source can break plugin discovery even when the plugin is cached.
 
 Open the desktop Plugins Directory, select **Gamma PDF**, and install the plugin.
 Start a new chat. Installing the workflow alone does not connect your library.
-Paste a Gamma page or share link with your question. In Gamma, use **Copy for
-assistant** in the page menu to include your reading position, or in a note or
-highlight menu to include that passage. The assistant reads it through your
-authorized workspace connection.
+Paste a Gamma page or share link with your question. In Gamma, use **Copy
+link** in the page menu, or **Copy link to block** in a note's ⋮⋮ menu to point
+at that passage. The assistant reads it through your authorized workspace
+connection.
 This package contains no credentials and does not publish a public directory listing.
 
 ## Publish this marketplace on GitHub

@@ -8,23 +8,23 @@ launcher, and desktop release workflows use these locations.
 | `backend/gamma/` | FastAPI application, routers, and backend logic |
 | `backend/tests/` | Backend tests using temporary data directories |
 | `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)) |
-| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, folder paths, the ink and text merges, notebook paper, the mirror's tree rules), read by both test suites |
+| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites |
 | `frontend/src/` | React code grouped by function (`editor/`, `pdf/`, `settings/`, etc.), orchestration in `app/`, reused code/assets in `shared/`; [source map](../../frontend/src/README.md) |
 | `frontend/public/` | Files copied as-is into the frontend build |
 | `cloud/` | The Gamma Cloud account server (`gammacloud` package, `manage.py`, `tests/`, its own Dockerfile and requirements); imports nothing from `backend/` ([cloud_accounts.md](cloud_accounts.md)) |
 | `desktop/` | Electron shell and desktop packaging |
 | `ipad/` | The native iPad app: Swift host, the bundle entry of the shared JavaScript, XcodeGen project ([ipad/README.md](../../ipad/README.md)) |
 | `extension/` | Browser connector, loaded unpacked without a build step |
-| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` ([sites/README.md](../../sites/README.md)) |
+| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, `docs/dev/` and `docs/research/` as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
-| `docs/user_guide.md` | User documentation |
+| `docs/user_guide.md` | User documentation, published at gammapdf.com/docs |
 | `docs/assets/` | Documentation images and animations |
 | `tools/readme-media/` | README capture scripts, renderers, and recording recipes |
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
 | `tools/branding/` | Unified asset generation and consistency checks; README and Store layout recipes |
-| `tools/*codex*` | Codex plugin packaging, release and installer scripts with their unit tests |
-| `plugins/gamma/` | The Codex plugin source (`.codex-plugin/plugin.json`, the `gamma` skill) |
+| `tools/*codex*`, `tools/*plugins*` | Assistant plugin (Codex, Claude Code, DeepSeek Harness) packaging, release and installer scripts with their unit tests; `codex-plugin.yml` runs them and `desktop.yml` builds the release assets |
+| `plugins/gamma/` | The assistant plugin source: the `gamma` skill, its `.codex-plugin/` and `.claude-plugin/` manifests, and the DeepSeek Harness layer (`dsh-skill.js`, `cordis.patch.yml`) |
 | `artifacts/` | Ignored local sources and outputs; [retention guide](../../artifacts/README.md) |
 | `data/` | Ignored runtime databases and uploads, controlled by `GAMMA_DATA_DIR` |
 
@@ -40,6 +40,17 @@ design rationale in [research notes](../research/README.md). Label plans and
 dated inventories so they are not mistaken for the current implementation.
 The root `CLAUDE.md` is an ignored local guide for machine setup and general
 working rules; shared project documentation belongs here.
+
+The user guide, `docs/dev/` and `docs/research/` are also pages of
+gammapdf.com (`/docs/`, `/docs/dev/<name>/`, `/docs/research/<name>/`),
+rendered from these files by the website build on every push to `main`
+([sites/README.md](../../sites/README.md)). Link between documents with
+relative paths to the `.md` files and use GitHub's heading anchors; the
+build turns those into site links and leaves a link to any other file in the
+repository pointing at GitHub. A link or anchor that resolves to nothing
+fails the site's check, so a renamed heading needs its links updated. The
+developer guide's topic table is also the order and the labels of the
+developer sidebar there.
 
 The root README is for users: plain headings without emoji or icons, "Read
 from any place" first, pictures linked to the matching section of the

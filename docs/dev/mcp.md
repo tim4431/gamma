@@ -8,14 +8,14 @@ servers, and connecting Codex does not invoke Gamma's AI provider.
 
 | File | Owns |
 |---|---|
-| `gamma/mcp_server.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export |
-| `gamma/mcp_oauth.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base` |
+| `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export; `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
+| `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspace |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
 | `gamma/routers/integrations.py` | the session-only token management API |
-| `users.db` tables `integration_tokens`, `mcp_oauth` | migrations 6 and 7 ([migrations.md](migrations.md)) |
+| `users.db` tables `integration_tokens`, `mcp_oauth` | part of the baseline schema (steps 0–19 are folded into it, [migrations.md](migrations.md) "Versions") |
 | `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the consent screen |
 | `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, and their packaging |
 
@@ -51,8 +51,8 @@ Gamma server's MCP URL, with quoting for the selected terminal platform:
 claude mcp add --transport http --scope user gamma https://gamma.example.com/mcp
 ```
 
-The same tab explains where the plugin appears (`/plugin`), how to invoke it
-(`/gamma:gamma`), and how to install it from an extracted release. Expand
+The same tab explains how to invoke the plugin (`/gamma:gamma`) and, under
+**Install the plugin (once)**, how to install it from an extracted release. Expand
 **Changed the server address?** for commands that replace the user-scoped MCP
 connection without reinstalling the plugin. Confirm a changed remote public URL
 in **Settings → Server** first, then reopen the setup tab and sign in again.
@@ -204,7 +204,7 @@ the text line. Files over `EXPORT_MAX_BYTES` (50 MB) are refused with a
 pointer to the Export dialog, rather than inflated into one JSON response.
 Nothing is stored.
 
-### Send a page to either assistant
+### Send a page to an assistant
 
 Paste a Gamma page, block, or share URL with your question. `read_gamma_link`
 validates the server and workspace, resolves the reference locally, and reads the
@@ -243,7 +243,7 @@ a page, folder or topic without a URL.
 
 Open Gamma at its public HTTPS address, then sign in as an administrator and
 open **Settings → Server → Public server URL**. The field
-suggests the browser's origin. Check it and click **Confirm address** once.
+suggests the browser's origin. Check it and click **Confirm** once.
 Gamma stores the address in `users.db` and immediately uses it for OAuth,
 MCP links, and the MCP hostname allowlist. No environment variables or restart
 are needed. Merely opening the settings page does not trust an address.

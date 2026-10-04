@@ -156,9 +156,9 @@ Only text boxes and the ink menu enlarge for `(pointer: coarse)`.
   - The compact shell, the pen-only default and every `(hover: none)` rule
     depend on which is right. **Device check.**
 - **Browser zoom.** Safari tabs ignore `user-scalable=no`, so a pinch
-  outside the two viewers may zoom the whole app. ipad.md says the meta
-  prevents it. Gesture events are blocked only in the compact layout.
-  **Device check**, including the installed app.
+  outside the two viewers may zoom the whole app. ipad.md now says so too
+  (it once said the meta prevents it). Gesture events are blocked only in
+  the compact layout. **Device check**, including the installed app.
 - **WebKit selection.** The PDF text layer is a bare `pdfjsLib.TextLayer`,
   without `TextLayerBuilder`'s end-of-content element and its
   `selectionchange` fix, which keep WebKit selections from jumping while a
@@ -181,11 +181,17 @@ Only text boxes and the ink menu enlarge for `(pointer: coarse)`.
 - **The editing bar** answers the inserting, structure and undo gaps for an
   open editor ([dev/ipad.md](../dev/ipad.md) "The editing bar"). For
   formatting it adds buttons for bold, italic, link and inline math.
+- A note row's editor hands `beforeinput` `historyUndo` / `historyRedo` to
+  the block history (`editor/BlockCmEditor.jsx`), so the keyboard's undo
+  key and the three-finger swipes undo notes.
 - Inline code and strike still have no touch way in, and nothing handles
   `beforeinput` `formatBold`.
 - Indent and outdent keep the editor open, and a Backspace in an empty
   block moves on to the block above.
 - The native app's notes have the same bar ([dev/ipad.md](../dev/ipad.md)
   "Editing the notes"), with "Handwritten note" in its Insert menu.
+- `tests/e2e/scenarios/ipad.mjs` covers the bar by touch: structure,
+  inserts, formatting and notes undo, with a stand-in for the soft
+  keyboard's viewport.
 - The typing aids (`contentAttributes`), the hidden handle, the menus,
   hover-only tools, target sizes and one-off gaps above are as found.

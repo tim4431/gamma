@@ -1,6 +1,6 @@
 # GitHub Actions
 
-Eight workflows live in `.github/workflows/`. A merge to `main` publishes
+Nine workflows live in `.github/workflows/`. A merge to `main` publishes
 only the Docker image and, when the site or its inputs changed, the website. The desktop app, with the browser extension on the same
 release, is released by dispatching `desktop.yml` — the `release` skill
 does that — and nothing is bumped or tagged by hand: versions are computed
@@ -21,19 +21,20 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
-| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
+| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders) or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink, notebook or replica modules, or the frontend's dependencies; manual dispatch | pass/fail on macOS: the shared JavaScript bundled and run bare, the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
-| `Codex plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
+| `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
-The `desktop` workflow also builds the versioned Codex plugin ZIP, its setup
-scripts for Windows and macOS/Linux, and checksums
-(`tools/release_codex_plugin.py`), and the browser extension zip, and uploads
+The `desktop` workflow also builds the versioned assistant plugin assets —
+the Codex and Claude Code plugin zips, the DeepSeek Harness tarball, the
+Codex setup scripts for Windows and macOS/Linux, and checksums
+(`tools/release_plugins.py`) — and the browser extension zip, and uploads
 them onto the same release.
 
 ```
 PR → main ──▶ check (pytest, npm test + build, e2e, extension zip)   ← merge skill waits for this
 merge ───────▶ docker.yml  ghcr :latest                              ← every merge (not cloud/- or sites/-only ones)
-         └──▶ site.yml    check → gammapdf.com                      ← only when sites/ or its inputs changed
+         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/ or PRIVACY.md changed
 PR touching cloud/ ──▶ cloud.yml: test                            ← instead of check, for cloud/-only PRs
 PR touching sites/ ──▶ site.yml: check                            ← instead of check, for sites/-only PRs
 build-site ──▶ site.yml --ref <branch>: check → gammapdf.com        ← no merge needed
@@ -182,7 +183,7 @@ test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend unit tests + build (Node 22,
 `npm test` then `npm run build`, then the iPad app's JavaScript bundled and
 run in a bare context, `ipad/scripts/core.test.mjs`), the browser suite
-(`npm run e2e -- --continue` against a backend started from the checkout with
+(`npm run e2e -- --continue --jobs 3` against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
 Chromium installed with its system deps; on a failure the harness's
@@ -253,12 +254,15 @@ dispatch, it needs the file on `main` once before the first run.
 ## `site.yml`
 
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
-app code, only on `sites/` and the files its build copies. `check`: `npm
-ci`, `npm run build`, the key pages present in `dist/` (index, 404,
-privacy, `_redirects`, `_headers`, the favicon), no `<!--#include` left
-unexpanded, and `wrangler deploy --dry-run` (bundles the Worker and reads
-`wrangler.jsonc` — no credentials). Runs on a PR touching those paths and
-first on every deploy. `deploy` (a push to `main` touching those paths, or
+app code, only on `sites/`, `PRIVACY.md` and `docs/`: the artwork the build
+copies and the documents it renders as pages (the user guide, `docs/dev/`,
+`docs/research/`), so a documentation change on `main` deploys the site.
+`check`: `npm ci`, `node build.mjs --strict` (fails on an internal link or
+anchor that resolves to nothing), the key pages present in `dist/` (index,
+404, privacy, the user and developer guides, the sitemap, `_redirects`,
+`_headers`, the favicon), no `<!--#include` left unexpanded, and `wrangler
+deploy --dry-run` (bundles the Worker and reads `wrangler.jsonc` — no
+credentials). Runs on a PR touching those paths and first on every deploy. `deploy` (a push to `main` touching those paths, or
 a dispatch from any branch — the `build-site` skill, `gh workflow run
 site.yml --ref dev`): builds again and `wrangler deploy`s with the
 `CLOUDFLARE_*` secrets. The live site is the last deploy from whichever
@@ -298,7 +302,7 @@ shows which exist.
 | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, optional `AZURE_SIGN_PUBLISHER` | `desktop.yml`, Windows leg: Azure Trusted Signing |
 | `MAC_CERT_P12`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | `desktop.yml`, macOS leg: Developer ID + notarization (replaces the ad-hoc signature) |
 | `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_SELLER_ID`, `PARTNER_CENTER_CLIENT_ID`, `PARTNER_CENTER_CLIENT_SECRET` | `desktop.yml`, Windows leg: Microsoft Store submission via `msstore` ([release.md](../../desktop/docs/release.md#microsoft-store) says where each value comes from) |
-| `GITHUB_TOKEN` (automatic) | releases and tags, the docker dispatch, the GHCR pushes (`gamma`, `gamma-cloud`) |
+| `GITHUB_TOKEN` (automatic) | releases and tags, the docker dispatch, the GHCR pushes (`gamma`, `gamma-cloud`, `gamma-fleet`) |
 
 Set them from a terminal with `gh secret set NAME` (prompts for the value);
 never paste secret values into chat or files.

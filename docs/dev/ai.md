@@ -71,8 +71,9 @@ ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
 `protocol`, never from the provider id; the default model is the account's
 own first model, else the server's first) — AI endpoints must use it, not
 module-level config constants for credentials or model routing. Env vars set
-each protocol's administrator-controlled default base URL, including
-`GAMMA_AI_CHATGPT_BASE_URL`.
+each protocol's administrator-controlled default base URL
+(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`,
+`GAMMA_AI_OPENAI_BASE_URL`, `GAMMA_AI_CHATGPT_BASE_URL`).
 
 Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 `services` with the settings) are form presets, data rather than code: a
@@ -350,8 +351,9 @@ maintenance.
 
 ## Chat endpoint
 
-`/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
-Completions API. Requests carry a model-registry id, optional `effort`
+`/api/ai/chat` speaks every wire in `ai_protocols/` (the Anthropic Messages
+API, OpenAI Chat Completions, the Responses API and the Codex backend; see
+"Protocol adapters"). Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
 set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, pasted `images`
@@ -469,7 +471,8 @@ was requested but the provider took text instead. Two more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window") and "Reply cut off at the output limit"
 (`{"truncated": true}`: the provider's stop reason was `max_tokens`,
-`length` or the Responses API's `incomplete` — `Protocol.events` ends every
+`length`, `max_output_tokens` or the Responses API's `incomplete`
+(`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
 stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
 it; the agent loop stops there rather than run a half-written tool call).
 `/api/ai/models` marks each model `native_pdf` (false for
@@ -1429,8 +1432,9 @@ changes nothing about its chat. No conversation is ever dropped with a
 folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
 pages too" alike) files the active conversation and the history of the
 folder and of every folder below it into the library chat's history
-(`home`, `chats.file_into_home`), where they stay findable. ChatDock's
-`chatKey` is the open page's id, else the open folder's id, else `home`.
+(`home`, `file_into_home` in `routers/chats.py`), where they stay
+findable. ChatDock's `chatKey` is the open page's id, else the open
+folder's id, else `home`.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1486,7 +1490,8 @@ pages.db, beside the pages they are about) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
 plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
-updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
+updated_at`). Routes: `gamma/routers/chats.py`, prefixes `/api/chats` (the
+active conversation) and `/api/chat-history` (the archive).
 
 - **New chat** (+ in the header) archives the conversation: it POSTs
   `/chat-history/archive` `{bucket, messages, title, updated_at}`, which

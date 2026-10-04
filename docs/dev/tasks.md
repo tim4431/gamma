@@ -40,10 +40,12 @@ in the worker thread and returns the result. It reports through
 `job.progress(done=, total=, unit=, phase=, item=)`:
 
 - `unit` names what `done` and `total` count: `pages`, `bytes`, `files`,
-  `items`, `papers`, `workspaces`.
+  `items`, `papers`, `workspaces`, the research job's `steps`.
 - `phase` is a short key the interface words (`packing`, `typesetting`,
   `unpacking`, `checking`, `saving`, `copying`, `restoring`, `annotations`,
-  `databases`, `files`; `PHASES` in `tasks/taskKinds.js`).
+  `databases`, `files`, the research job's `searching`, `reading` and
+  `filing`, the paper-handoff row's `browser` and `connector`; `PHASES` in
+  `tasks/taskKinds.js`).
 - `item` is the thing at hand, a page title or a workspace name.
 - A new phase or unit starts its own counts; a field left out is kept.
 

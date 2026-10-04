@@ -110,7 +110,7 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    raised past them; a data directory that old must first run the release
    named in `UPGRADE_VIA`, the newest one that still carries them, and the
    refusal says so. The floor is 19: a directory at 19 or later upgrades
-   here (steps 20 to 33). The normalizers are the one exception: they also
+   here (steps 20 to 34). The normalizers are the one exception: they also
    run on every backup restore (`/api/import-data`), because a backup can
    be older than any step, so they stay for as long as such backups are
    accepted. A restored copy stamped below the base (0: taken before the
@@ -297,7 +297,7 @@ SCHEMA_VERSION = 34   # gamma/db.py
   the same time, so a fresh install and an upgraded one end up identical.
   An older step that creates a table from those lists must keep creating
   the shape of its time, so when a step changes a table's shape, freeze the
-  statements the older steps used. Steps 1–24 create users.db tables from
+  statements the older steps used. Steps 20–24 create users.db tables from
   `migrations._V24_USERS_SCHEMA` (users.db at version 24). Step 25 rebuilds
   the users.db tables it re-keys from `migrations._V25_USERS_SCHEMA` (those
   tables at versions 25–30: `sessions` still with `guest_date`); step 31,

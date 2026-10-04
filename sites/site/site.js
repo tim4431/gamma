@@ -92,3 +92,17 @@
     })
     .catch(() => {});
 })();
+
+// The documentation sidebar starts folded on a narrow screen (it is written
+// open so it shows without this script).
+if (matchMedia('(max-width: 900px)').matches) {
+  document.querySelectorAll('details.docnav').forEach(d => { d.open = false; });
+}
+
+// A page's pictures carry no size, so the browser's own jump to #anchor can
+// land above the heading once they have loaded: jump again when they have.
+if (location.hash.length > 1) {
+  addEventListener('load', () => {
+    try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView(); } catch {}
+  });
+}

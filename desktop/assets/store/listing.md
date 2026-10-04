@@ -14,7 +14,7 @@ block you can nest, link, search, and share.
 
 Everything is stored on your own computer, in a local workspace on your
 disk. If you also run a Gamma server (on a NAS or a VPS), the app opens it
-as a second workspace and switches between them from the toolbar.
+next to your local one and switches between them from the toolbar.
 
 READ AND ANNOTATE
 • Open a paper by dropping in a PDF or pasting a link (arXiv, DOI, or a
@@ -87,7 +87,7 @@ Gamma is open source: https://github.com/tim4431/Gamma
 - Share an annotated paper by link with view or edit rights
 - Edit a page together, live, on a Gamma server
 - Import from Logseq and Zotero; export everything as a zip
-- Local workspaces on your disk, plus any Gamma server you host as another workspace
+- Local workspaces on your disk, plus any Gamma server you host, switched from the toolbar
 
 ## Short description / search terms
 

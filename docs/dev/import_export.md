@@ -291,8 +291,8 @@ destination's id.
 
 ## Zotero library import
 
-`POST /api/import/zotero` (⋮ → Import… → Zotero library): a zip of Zotero's
-File → Export Library → "Zotero RDF" (with Export Files/Notes).
+`POST /api/import/zotero` (View menu ≡ → Import… → Zotero library): a zip of
+Zotero's File → Export Library → "Zotero RDF" (with Export Files/Notes).
 `gamma/zotero_import.py` parses the RDF (items, journal records carrying the
 DOI, collections, tags, HTML notes) and tolerant zip-name lookup
 (cp437-mojibake, NFC/NFD, backslashes); the endpoint in `routers/imports.py`
@@ -453,7 +453,7 @@ adds nothing.
 A page it adds comes in whole and touched now (the change feed sees it); a
 block whose id the workspace already uses on another page gets a fresh id
 ([workspaces.md](workspaces.md) "Export and backups"). The
-⋮ Import dialog's "Gamma export (.zip)" source reviews the zip like the
+Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
@@ -498,9 +498,10 @@ Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF
 and Markdown, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
-(`illustrations/TransferPreview.jsx`, an example of the options, not a render
-of the document). Gamma has fixed contents, and a PDF without a stored copy
-can only be the original file, so both export straight from step one. Logseq
+(`shared/illustrations/TransferPreview.jsx`, an example of the options, not
+a render of the document). Gamma has fixed contents, and a PDF without a
+stored copy can only be the original file, so both export straight from step
+one. Logseq
 shows only the bundle switch. BibTeX has no switches but still gets a step:
 it previews the real bibliography
 ([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
@@ -570,7 +571,7 @@ downloads from the viewer's own URL (so it also works for a PDF that only
 exists behind the proxy).
 
 The dialog can also target a whole folder: opened from home with a folder open
-(the ⋮ Export… entry) or from a folder card's context menu (`exportFolder`
+(the View menu's Export…) or from a folder card's context menu (`exportFolder`
 state in App.jsx), it exports every page filed there or below, in any
 format. There Annotated PDF and BibTeX sit in their own "Papers" row: each
 paper's annotated PDF, with the Highlights and Notes switches, in one zip

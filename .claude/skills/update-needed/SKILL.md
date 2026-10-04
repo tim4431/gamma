@@ -65,7 +65,7 @@ What goes into each image (the Dockerfiles' `COPY` lines), as pathspecs:
 
 ```bash
 CLOUD="cloud/app.py cloud/manage.py cloud/gammacloud cloud/requirements.txt cloud/Dockerfile"
-IMG="backend/app.py backend/manage.py backend/gamma backend/requirements.txt frontend :!frontend/tests Dockerfile docker-entrypoint.sh"
+IMG="backend/app.py backend/manage.py backend/gamma backend/requirements.txt backend/requirements-s3.txt frontend :!frontend/tests Dockerfile docker-entrypoint.sh"
 ```
 
 A deployment needs an update when the image it runs differs from the

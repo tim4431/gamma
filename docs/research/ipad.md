@@ -62,7 +62,9 @@ Build (a) and keep (b) as the existing browser layer:
   PencilKit is the one the handwriting research already rejected.
 - A Swift app cannot be built, signed or run from this repository's
   Windows/Linux toolchain or CI; upstream needs a Mac per user and a
-  build agent. The web app is the product on every other platform too
+  build agent. (Since: `.github/workflows/ipad.yml` tests and builds the
+  app unsigned on a macOS runner; it is still built from source, with no
+  store release.) The web app is the product on every other platform too
   (the desktop is an Electron shell over it).
 - A `WKWebView` wrapper is a later distribution decision (App Store,
   share sheet), not a feature one; it would be built like the desktop

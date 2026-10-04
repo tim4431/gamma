@@ -53,8 +53,9 @@ All state is SQLite + files on disk under a data directory (env
     their own role ([api.md](api.md) "Shares");
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
-    preference `profile`, the active AI provider, the AI provider entries
-    and the machine-translation keys with their secrets, the seen notices).
+    preference `profile` and its sync base `profile-base`, the active AI
+    provider, the AI provider entries, the machine-translation and online
+    search services with their secrets, the seen notices).
     Everything that names a workspace's pages (open tabs, recents, reading
     positions) is kept in that workspace's pages.db (`workspace_prefs`,
     below) from migration step 34 on. The rows here with a workspace id are

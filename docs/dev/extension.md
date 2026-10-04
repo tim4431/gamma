@@ -76,7 +76,7 @@ helpers — never re-implement it in the extension.
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
+| `manifest.json` | MV3: module service worker, `<all_urls>` content scripts (`ids.js`, `detect.js`, `bridge.js`), popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
 | `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
@@ -90,7 +90,7 @@ helpers — never re-implement it in the extension.
 | `options.html/js` | server + host permission, account, saving defaults (the folder picked from the signed-in library) |
 | `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`) and the folder picker (`folderPicker`, a MenuSelect: "Library root", every folder by its path, optionally "New folder…") |
 | `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
-| `icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
+| `assets/icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
 ## Detection
 
@@ -511,13 +511,11 @@ signed in to the same server works the same way.
 
 ## Not done yet
 
-- Firefox build (`background.scripts` + `webextension-polyfill`). The
-  Chrome release zip `gamma-connector-<version>.zip` is built by
-  `.github/workflows/desktop.yml` and attached to the desktop release with
-  that release's version written into its manifest (`manifest.json`'s own
-  version is not used for releases); `chrome-store.yml` then submits it to
-  the Chrome Web Store once the store item exists
-  ([extension/STORE.md](../../extension/STORE.md),
-  [github_actions.md](github_actions.md)).
+- Firefox build (`background.scripts` + `webextension-polyfill`). Chrome
+  is released: `.github/workflows/desktop.yml` zips
+  `gamma-connector-<version>.zip` with the release's version in its
+  manifest and `chrome-store.yml` submits it to the Chrome Web Store
+  ([extension/README.md](../../extension/README.md),
+  [extension/STORE.md](../../extension/STORE.md)).
 - Detection is client-side only for the badge; `find_page` scans every root
   page per lookup (fine for personal libraries, index it if that changes).
