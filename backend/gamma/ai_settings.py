@@ -359,12 +359,10 @@ def provider_label(entry: dict) -> str:
     name = (entry.get("name") or "").strip()
     if name:
         return name
-    protocol = entry.get("protocol")
-    base = (entry.get("base_url") or "").strip().rstrip("/")
-    service = next((s for s in ai_protocols.SERVICES
-                    if s["protocol"] == protocol and s["base_url"] == base), None)
+    service = ai_protocols.service_of(entry)
     if service:
         return service["label"]
+    protocol = entry.get("protocol")
     proto = ai_protocols.PROTOCOLS.get(protocol)
     return proto.label if proto else protocol or ""
 

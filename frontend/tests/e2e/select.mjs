@@ -170,6 +170,8 @@ export const RULES = [
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/clip.py", []], // the browser extension's ingest
+  ["backend/gamma/offsite.py", ["settings"]], // the Off-site copies section of Backups
+  ["backend/gamma/s3.py", ["settings"]],
   // the core every scenario goes through: app, auth, db, migrations, workspaces, blocks, ops, uploads, prefs, collab …
   ["backend/gamma/**", ALL],
   ["backend/app.py", ALL],

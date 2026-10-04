@@ -1,14 +1,13 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
-// update check, where the stored files and the database copies go), the
-// storage defaults every account inherits, guests and demo mode
-// (SettingsGuests.jsx), the shared AI provider every account may use
-// (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
+// update check), the storage defaults every account inherits, guests and
+// demo mode (SettingsGuests.jsx), the shared AI provider every account may
+// use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
 // the database check, whole-data-directory snapshots (SettingsBackups.jsx
 // ServerBackups) and the scrubbed server log with a level filter. Per-account things — including each account's personal
 // workspaces — stay in Users; per-workspace backups in Backups.
 import React from "react";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson } from "../shared/lib/utils";
 import { PaneHead, Section, Row, Segmented, StatText, UnitInput, LogBox } from "./SettingsKit";
 import { WorkspacesAdmin } from "./SettingsWorkspacesAdmin";
 import { ServerBackups } from "./SettingsBackups";
@@ -16,7 +15,7 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
-import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, DatabaseIcon, HardDriveIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
+import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, DatabaseIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
@@ -76,31 +75,10 @@ function updateHint(info) {
   return t("checking…");
 }
 
-// Where the stored files live (`storage` of server-info): the uploads
-// directories on this disk, or a bucket with its redirects and the node's cache.
-function storageHint(storage) {
-  if (storage.kind !== "s3") return [t("local"), storage.where].join(" · ");
-  return [t("bucket {where}", { where: storage.where }), storage.presign ? t("redirects on") : t("redirects off"),
-    storage.cache ? t("cache {used} of {cap}", { used: fmtBytes(storage.cache.bytes), cap: fmtBytes(storage.cache.cap) }) : ""]
-    .filter(Boolean).join(" · ");
-}
-
-// The databases' copies (`db_copies`): off, or how often, how many kept and
-// how the newest round this server ran went.
-function copiesHint(copies) {
-  if (!copies.enabled) return t("off");
-  const round = copies.last_round_at
-    ? [t("last round {time}", { time: new Date(copies.last_round_at).toLocaleString() }),
-      t("{n} copied", { n: copies.copied }), t("{n} failed", { n: copies.failed })]
-    : [t("no round yet")];
-  return [t("every {interval}", { interval: fmtUptime(copies.interval_s) }), t("{n} kept", { n: copies.keep }), ...round].join(" · ");
-}
-
 // GET /api/admin/server-info: the build, uptime, log counts by level and the
 // GitHub release check (cached server-side; "Check now" refreshes). A
 // Docker server cannot update itself, so an available update is a hint
-// to pull the image; the desktop app updates on its own. Where the stored
-// files and the database copies go are deployment variables: shown, never set here.
+// to pull the image; the desktop app updates on its own.
 function ServerDashboard() {
   const [info, setInfo] = React.useState(null);
   const [error, setError] = React.useState("");
@@ -166,17 +144,6 @@ function ServerDashboard() {
           : t("Newer commits are on {branch}: build that branch's image and restart the container.", { branch: <code>{info.branch}</code> })}
       </div>
     ) : null}
-    {info.storage && info.db_copies ? <>
-      <Row icon={HardDriveIcon} label={t("Stored files")} hint={storageHint(info.storage)}
-        title={info.storage.kind === "s3"
-          ? t("Redirects: browsers fetch the files from the bucket itself. Cache: this server's copies of the files it reads itself.")
-          : t("Each workspace's uploads directory on this server's disk.")} />
-      <Row icon={DatabaseIcon} label={t("Database copies")} hint={copiesHint(info.db_copies)}
-        title={t("users.db and every workspace's databases, copied to the store whenever they changed. A failed copy is in the log below.")} />
-      <div className="settingsPaneHint">
-        {t("Set by {blobs} and {copies} in the server's environment.", { blobs: <code>GAMMA_BLOBS</code>, copies: <code>GAMMA_DB_COPIES</code> })}
-      </div>
-    </> : null}
   </>;
 }
 

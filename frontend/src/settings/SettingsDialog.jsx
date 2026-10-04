@@ -923,12 +923,21 @@ export default function SettingsDialog({
   }, [activePane, pane, query, notices]);
   React.useEffect(() => {
     if (!jump || query || !activePane) return;
-    const target = [...(paneRef.current?.querySelectorAll("[data-setting]") || [])]
-      .find((element) => element.dataset.setting === jump.label);
-    if (!target) return;
-    target.tabIndex = -1;
-    target.focus({ preventScroll: true });
-    target.scrollIntoView({ block: "center", behavior: "instant" });
+    const focusTarget = () => {
+      const target = [...(paneRef.current?.querySelectorAll("[data-setting]") || [])]
+        .find((element) => element.dataset.setting === jump.label);
+      if (!target) return false;
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      return true;
+    };
+    if (focusTarget() || !paneRef.current) return;
+    // A target that renders after a fetch (the Backups pane draws its
+    // sections once its workspace list arrives) is focused when it appears.
+    const observer = new MutationObserver(() => { if (focusTarget()) observer.disconnect(); });
+    observer.observe(paneRef.current, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [jump, pane, query, activePane]);
   // The account card's storage line: read it again whenever the dialog opens.
   React.useEffect(() => { if (activePane) users?.refreshQuota?.(); }, [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -74,21 +74,21 @@ module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
 
-Named services (`SERVICES` in `gamma/ai_protocols/__init__.py`, sent as `services` with the
-settings) are form presets: a protocol plus a fixed endpoint and its key
-hints, offered under the connect dialog's Other tile above "Custom
-endpoint". DeepSeek is
-the `openai` protocol at `https://api.deepseek.com`. An entry made from one
-stores only protocol + base URL; `provider_label` recognizes the pair and
-names the entry after the service when it has no name of its own. The
-`openai` wire follows the endpoint (`is_openai_platform` in `ai_protocols/openai.py`):
-only OpenAI itself gets `max_completion_tokens`, the Responses API for tool
-calls, and the gpt-/o-family filter on its model listing. Compatible servers
-get `max_tokens`, Chat Completions tools and their full listing (minus
-embedding/audio/image models). Anthropic subscription sign-in is deliberately
-absent: Anthropic's terms forbid third-party apps from routing requests
-through Free/Pro/Max plan credentials, so Claude is reached with a Console API
-key.
+Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
+`services` with the settings) are form presets, data rather than code: a
+protocol plus a fixed endpoint and its key hints. An entry made from one
+stores only protocol + base URL; `service_of(conf)` recognizes the pair
+again, and `provider_label` names the entry after the service when it has
+no name of its own. See "Other services" below for the list and what a
+preset's optional fields change. The `openai` wire follows the endpoint
+(`is_openai_platform` in `ai_protocols/openai.py`): only OpenAI itself gets
+`max_completion_tokens`, the Responses API for tool calls, and the
+gpt-/o-family filter on its model listing. Compatible servers get
+`max_tokens`, Chat Completions tools and their full listing (minus
+embedding/audio/image models). Anthropic subscription sign-in is
+deliberately absent: Anthropic's terms forbid third-party apps from routing
+requests through Free/Pro/Max plan credentials, so Claude is reached with a
+Console API key.
 
 The Connections pane also exposes `POST /api/ai/providers/{id}/usage`. For a
 ChatGPT OAuth entry it reads normalized subscription rate-limit windows
@@ -108,6 +108,70 @@ or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
 
+### Other services
+
+The connect dialog's Other tile lists the presets by vendor (`group`), then
+the vendor's plans (`plan`) when it has several, then "Custom endpoint".
+All of them ride the `openai` wire. The branches for OpenAI's and
+Anthropic's own endpoints (`is_openai_platform`, `is_anthropic_platform`)
+never apply to them.
+
+| Vendor | Plans (base URL) |
+|---|---|
+| DeepSeek | API key (`https://api.deepseek.com`) |
+| Kimi | API key (`https://api.moonshot.ai`), China (`https://api.moonshot.cn`), Kimi Code subscription (`https://api.kimi.com/coding/v1`) |
+| Qwen | Model Studio international (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), China (`https://dashscope.aliyuncs.com/compatible-mode/v1`), Coding Plan (`https://coding-intl.dashscope.aliyuncs.com/v1`, China `https://coding.dashscope.aliyuncs.com/v1`) |
+| GLM | Z.ai (`https://api.z.ai/api/paas/v4`), Zhipu China (`https://open.bigmodel.cn/api/paas/v4`), GLM Coding Plan (`…/api/coding/paas/v4` on either host) |
+| OpenRouter | API key (`https://openrouter.ai/api/v1`) |
+
+A subscription is an API key the vendor's console makes for its coding
+plan, pointed at the plan's own endpoint, so it is an ordinary key entry.
+Alibaba's terms allow the Qwen Coding Plan only inside coding tools; the
+preset's `note` says so under the Plan menu.
+
+A preset's optional fields are read by host-independent code. An absent
+field changes nothing:
+
+- `catalog`: the models.dev provider key, added to `Protocol.catalog_hints`
+  for hosts that name none (`dashscope.aliyuncs.com` → `alibaba-cn`).
+- `cache_key`: the endpoint takes OpenAI's `prompt_cache_key` (Kimi).
+- `max_tokens`: the chat's reply cap (`ai_catalog.reply_cap`). These
+  vendors' models count their thinking toward it, so the presets set
+  32,768, bounded by the model's own output limit from models.dev and left
+  at the default 8,192 when that limit is unknown. OpenAI, Anthropic,
+  OpenRouter and custom endpoints keep 8,192.
+- `note`: a sentence shown under the Plan menu. Plan labels and notes are a
+  fixed vocabulary the browser translates (`SERVICE_WORDING` in
+  `settings/providerEditor.js` names them for the catalog).
+
+Three host-independent rules make these endpoints work.
+
+**Paths.** `api_url` (`ai_protocols/base.py`) appends `/v1/…` to a base URL
+unless it already ends in a version segment. So GLM's `/api/paas/v4` is
+reachable, and a pasted `…/v1` stays one. The Anthropic wire keeps its
+fixed `/v1/messages`.
+
+**Thinking.** A compatible server streams the model's thinking as
+`reasoning_content` (DeepSeek, Kimi, Qwen, GLM) or `reasoning` (OpenRouter,
+Ollama), plus OpenRouter's signed `reasoning_details`. `OpenAIChat`
+collects them and yields `("reasoning", {field: value})` before the tool
+calls. The agent loop keeps it on the assistant turn it replays, and the
+wire echoes it back under the name it arrived by. A field that one
+assistant turn carries goes on every assistant turn of the request, empty
+where none was kept. DeepSeek refuses a request with tools when any
+earlier assistant turn lacks `reasoning_content`. Nothing is echoed to
+api.openai.com, and the Anthropic and Responses wires ignore the field.
+"Replay across turns" covers how it survives between messages.
+
+**Pictures.** Whether a model reads pictures is a model fact like its
+window (`ai_catalog.image_input`): OpenRouter's listing names
+`architecture.input_modalities`, else models.dev's `modalities.input` says.
+For a model that reads text only, the chat leaves out the user's pictures
+and selection crops and says how many in a line of the question. It arms
+no `PICTURE_TOOLS` (`view_pdf_page`, `view_ink`) and drops the pictures
+tool results carry, and the composer's file picker takes PDFs only. A
+model no source knows gets pictures.
+
 ### Protocol adapters
 
 Everything that differs between providers lives on one adapter per wire in
@@ -120,9 +184,9 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
 | speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
-| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
+| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds}]` (`listed_window` / `listed_efforts` / `listed_speeds` read whatever the listing carries), `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds, images}]` (`listed_window` / `listed_efforts` / `listed_speeds` / `listed_images` read whatever the listing carries), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
@@ -299,7 +363,9 @@ compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
-`{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
+`{"delta"}`/`{"error"}` parsed from the provider's SSE, and a
+`{"reasoning": {field: text}}` line per provider turn whose thinking the
+wire reported (see "Other services"); upstream failures
 before the first byte still return normal HTTP errors. Every AI NDJSON
 stream (chat, the tool loop, translation) runs through `keepalive_lines`
 (`routers/ai.py`), which pumps the source generator from a worker thread.
@@ -456,7 +522,8 @@ account and workspace into one opaque id per conversation that
   (`is_anthropic_platform`): a service speaking the API behind another
   host may reject the field.
 - OpenAI: `prompt_cache_key` on Chat Completions and on `/v1/responses`,
-  again only on the platform itself (`is_openai_platform`), never on a
+  again only on the platform itself (`is_openai_platform`) and on a named
+  service whose preset sets `cache_key` (Kimi), never on another
   compatible server.
 - The Codex backend: the same `prompt_cache_key` in the body and the
   `session_id` header, one per conversation like Codex CLI's (a fresh
@@ -474,7 +541,7 @@ estimates the prompt (`ai_context.prompt_tokens`: four ASCII characters or
 one other character — CJK, symbols — per token, 1,600 per picture; native
 PDF files are not counted) against the model's window
 (`ai_catalog.context_window`, the same lookup as the header's ring) less
-`_WINDOW_RESERVE` for the reply, and leaves the oldest history items out
+the reply cap (`ai_catalog.reply_cap`) and `_ESTIMATE_SLACK`, and leaves the oldest history items out
 (`build_messages(drop_turns=)`: two, then doubling; the kept history opens
 on a question, the document context moves to the oldest kept one) until it
 fits. A provider that still answers `too_long` (no source knew the window,
@@ -1106,6 +1173,15 @@ and `run_agent_tool` canonicalize the name before the permission check and
 dispatch, and the resulting action chip carries the current name. Old names
 are never offered as tools.
 
+A reply's thinking travels the same way. The chat keeps the reply's
+`{"reasoning"}` lines on the saved message as `reasoning` (`{field: text}`,
+rounds joined by a blank line; `addReasoning` in `ChatDock.jsx`) and sends
+it back in `history`. `build_messages` puts it on the reply's first
+replayed assistant turn (the tool calls it led to, else the reply itself),
+for the wire to echo, and counts it in the prompt estimate. Only the text
+crosses messages: OpenRouter's signed `reasoning_details` must match the
+original sequence, so they are replayed within one reply only.
+
 OpenAI-protocol calls that carry tools are rerouted to the platform
 `/v1/responses` (`OpenAIChat.wire`) — gpt-5.x rejects function tools on chat
 completions — but only against the official api.openai.com base URL; custom
@@ -1303,8 +1379,9 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   `context_length` / `max_model_len` of OpenRouter, vLLM, Groq, …). A
   listing without sizes (OpenAI's, DeepSeek's) falls back to the public
   models.dev catalog. There the provider this entry talks to wins
-  (`Protocol.catalog_hints`: the endpoint's host labels, OpenAI for the
-  ChatGPT backend), else the value most providers agree on. Both lookups
+  (`Protocol.catalog_hints`: the endpoint's host labels and a named
+  service's `catalog` key, OpenAI for the ChatGPT backend), else the value
+  most providers agree on. Both lookups
   are cached like the Codex version (6 h; a failed lookup retried after
   10 min, the last good answer kept). A model neither knows gets `null`: no
   ring, and the popover shows the token count alone. The client asks once

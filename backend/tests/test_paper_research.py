@@ -19,6 +19,7 @@ def _provider(ai_provider):
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
 
 
 def _reply(*blocks):

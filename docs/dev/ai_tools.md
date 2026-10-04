@@ -224,6 +224,9 @@ page's content. Shares the "Read pages" permission with `read_page`.
 
 ### view_pdf_page (both scopes)
 
+A model that reads text only is offered neither this nor `view_ink`
+(`PICTURE_TOOLS`, [ai.md](ai.md#other-services)).
+
 The model's eyes on a PDF: `page_id` + 1-based `pdf_page` rasterize that
 page through pdfium (`pdf_text.render_page`, under the same lock as every
 other pdfium walk) with its longer side at `RENDER_MAX_SIDE` px (1568 —

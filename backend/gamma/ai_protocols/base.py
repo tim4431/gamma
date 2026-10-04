@@ -8,7 +8,10 @@ resolved provider entry (``ai_settings.ai_runtime``): ``{protocol,
 base_url, api_key, name}`` plus protocol extras (``account_id``).
 
 Messages come in one common shape: ``{role, content}`` turns, an assistant
-turn may carry ``tool_calls`` ([{id, name, arguments-dict}]), and a
+turn may carry ``tool_calls`` ([{id, name, arguments-dict}]) and
+``reasoning`` (what the wire that produced the turn reported of the model's
+thinking, ``{wire field: value}`` — the wire echoes it back, others ignore
+it), and a
 ``{"role": "tool", "call_id", "content"}`` entry is a tool result, which may
 carry ``images`` ([(media_type, base64)] — a rendered PDF page). Tools are
 declared once as ``{name, description, parameters}`` (gamma/ai_tools.py);
@@ -19,11 +22,13 @@ Two knobs ride along with a call: ``effort`` (how hard the model thinks) and
 """
 
 import json
+import re
 import secrets
 import urllib.parse
 from urllib.request import Request as URLRequest
 
 from ..config import AI_BASE_URLS
+from .services import service_of
 
 # The OpenAI-style wires only accept text in a tool result, so the pictures
 # follow the round's results as one user turn the model reads in call order.
@@ -44,6 +49,25 @@ class NotAnAIStream(RuntimeError):
 # Together's / Fireworks' context_length, Mistral's max_context_length,
 # vLLM's max_model_len.
 WINDOW_KEYS = ("max_input_tokens", "context_window", "context_length", "max_context_length", "max_model_len")
+
+
+def api_url(base_url: str, path: str) -> str:
+    """An OpenAI-shaped endpoint under a base URL: ``{base}/v1{path}``, or
+    ``{base}{path}`` when the base already ends in a version segment — a
+    pasted ``…/v1`` stays one, and a service whose version is not ``v1``
+    (GLM's ``/api/paas/v4``) is reachable as documented."""
+    base = (base_url or "").rstrip("/")
+    return f"{base}{path}" if re.search(r"/v\d+$", base) else f"{base}/v1{path}"
+
+
+def reasoning_text(kept) -> dict:
+    """The text fields of a turn's ``reasoning`` (``{wire field: text}``):
+    what the chat streams, saves with the reply and sends back on later
+    turns. Structured parts (OpenRouter's signed ``reasoning_details``)
+    stay within the reply that produced them."""
+    if not isinstance(kept, dict):
+        return {}
+    return {k: v for k, v in kept.items() if isinstance(k, str) and isinstance(v, str) and v}
 
 
 def tool_image_turns(messages, make_turn):
@@ -125,7 +149,24 @@ def listed_efforts(row) -> list | None:
     if isinstance(levels, list):
         names = [(x.get("effort") if isinstance(x, dict) else x) for x in levels]
         return [str(n) for n in names if isinstance(n, str) and n]
+    # OpenRouter: ``reasoning.supported_efforts``, and a model whose
+    # ``supported_parameters`` name no reasoning control takes none.
+    reasoning = row.get("reasoning")
+    if isinstance(reasoning, dict) and isinstance(reasoning.get("supported_efforts"), list):
+        return [str(e) for e in reasoning["supported_efforts"] if isinstance(e, str) and e]
+    params = row.get("supported_parameters")
+    if isinstance(params, list) and not {"reasoning", "reasoning_effort"} & set(params):
+        return []
     return None
+
+
+def listed_images(row) -> bool | None:
+    """Whether a model listing row says the model reads pictures:
+    OpenRouter's ``architecture.input_modalities``. None when the row
+    doesn't say (no other listing does)."""
+    arch = row.get("architecture") if isinstance(row, dict) else None
+    inputs = arch.get("input_modalities") if isinstance(arch, dict) else None
+    return "image" in inputs if isinstance(inputs, list) else None
 
 
 # The speed (service) tiers a call may ask for, in the order the pickers
@@ -316,7 +357,10 @@ class Protocol:
 
     def events(self, response):
         """Yield ``("text", delta)``, ``("tool", {id, name, arguments})`` and
-        ``("tool_delta", {id, name, json})`` events from a streamed reply. A
+        ``("tool_delta", {id, name, json})`` events from a streamed reply,
+        and ``("reasoning", {wire field: value})`` before the tool calls
+        when the wire reports the model's thinking (the agent loop keeps it
+        on the assistant turn it replays). A
         ``tool_delta`` carries the tool call's arguments as streamed SO FAR
         (raw, possibly truncated JSON — ai_client.partial_json_object) so a
         consumer can preview a long argument while the model is still
@@ -363,19 +407,21 @@ class Protocol:
     def models_request(self, conf) -> URLRequest:
         """The provider's model listing — also the free way to check a
         credential (it 401s on a dead key without spending tokens)."""
-        return bearer_json_request(f"{conf['base_url']}/v1/models", conf["api_key"])
+        return bearer_json_request(api_url(conf["base_url"], "/models"), conf["api_key"])
 
     def models(self, data, conf) -> list:
         """The chat models of a listing body as ``[{id, context_window,
         efforts, speeds}]`` (0 = the listing names no window, efforts /
         speeds None = it names no effort levels / speed tiers —
-        listed_efforts, listed_speeds), in the order to offer them."""
+        listed_efforts, listed_speeds; images None = it doesn't say whether
+        the model reads pictures — listed_images), in the order to offer them."""
         rows = [r for r in (data.get("data") or []) if isinstance(r, dict) and r.get("id")]
         found = {}
         for row in rows:
             found.setdefault(str(row["id"]), row)
         return [{"id": mid, "context_window": listed_window(found[mid]),
-                 "efforts": listed_efforts(found[mid]), "speeds": listed_speeds(found[mid])}
+                 "efforts": listed_efforts(found[mid]), "speeds": listed_speeds(found[mid]),
+                 "images": listed_images(found[mid])}
                 for mid in sorted(found)]
 
     def ping_request(self, conf) -> URLRequest:
@@ -384,8 +430,12 @@ class Protocol:
 
     def catalog_hints(self, conf) -> list:
         """Names that pick this entry's provider among models.dev's listings
-        of one model: by default the endpoint's host."""
-        return [urllib.parse.urlparse(conf.get("base_url") or "").hostname or ""]
+        of one model: by default the endpoint's host, plus the models.dev
+        key a named service gives (``catalog``: dashscope.aliyuncs.com
+        names no "alibaba")."""
+        host = urllib.parse.urlparse(conf.get("base_url") or "").hostname or ""
+        catalog = (service_of(conf) or {}).get("catalog")
+        return [host, catalog] if catalog else [host]
 
     # --- account and extras --------------------------------------------------
 

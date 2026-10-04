@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from ..auth import require_user, resolve_ws, share_scope
 from ..db import connect_pages_db
-from .. import blobs, pdf_meta
+from .. import pdf_meta, storage
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
@@ -405,7 +405,7 @@ def proxy_pdf(source_url: str, request: Request):
     # requests). The browser follows a redirect with no help from the app, so
     # the query that named the workspace — a share token, or ?ws= — rides
     # along, or the copy would be looked for in the session's own library.
-    if blobs.exists(ws, stored_name):
+    if storage.exists(ws, stored_name):
         carried = {k: v for k, v in request.query_params.items() if k in ("share", "ws")}
         target = f"/api/uploads/{pdf_doc_id}.pdf" + (f"?{urllib.parse.urlencode(carried)}" if carried else "")
         return RedirectResponse(target, status_code=302)

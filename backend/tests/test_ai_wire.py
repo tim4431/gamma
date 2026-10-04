@@ -661,3 +661,121 @@ def test_whole_replies_report_the_speed_the_provider_served():
     assert served_speed_name("standard") == "" and served_speed_name("default") == ""
     assert served_speed_name("scale") == ""
     assert served_speed_name("") is None and served_speed_name(None) is None and served_speed_name(3) is None
+
+
+# --- other OpenAI-compatible services --------------------------------------------
+
+def test_openai_paths_follow_a_versioned_base_url():
+    """A base URL that already ends in a version keeps it: a pasted /v1 stays
+    one, and GLM's /api/paas/v4 is reachable as documented. The Anthropic
+    wire keeps its own fixed path."""
+    msgs = [{"role": "user", "content": "hi"}]
+    url = lambda base: openai_request({**CONF, "base_url": base}, msgs, "", "m").full_url  # noqa: E731
+    assert url("https://api.openai.com") == "https://api.openai.com/v1/chat/completions"
+    assert url("https://api.moonshot.ai/v1") == "https://api.moonshot.ai/v1/chat/completions"
+    assert url("https://api.z.ai/api/paas/v4") == "https://api.z.ai/api/paas/v4/chat/completions"
+    listing = WIRES["openai"].models_request({**CONF, "base_url": "https://api.z.ai/api/paas/v4"})
+    assert listing.full_url == "https://api.z.ai/api/paas/v4/models"
+    assert anthropic_request(CONF, msgs, "", "m").full_url == "https://example.test/v1/messages"
+
+
+def test_openai_stream_reports_the_thinking_ahead_of_the_calls():
+    stream = sse(
+        {"choices": [{"delta": {"reasoning_content": "Look "}}]},
+        {"choices": [{"delta": {"reasoning_content": "it up."}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "function": {"name": "list_pages", "arguments": "{}"}}]},
+            "finish_reason": "tool_calls"}]},
+    )
+    events = [(kind, data) for kind, data in sse_events(stream, "openai") if kind != "tool_delta"]
+    assert events == [("reasoning", {"reasoning_content": "Look it up."}),
+                      ("tool", {"id": "c1", "name": "list_pages", "arguments": {}}),
+                      ("stop", "tool_calls")]
+
+
+THOUGHT_TURNS = [
+    {"role": "user", "content": "tidy up"},
+    {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "list_pages", "arguments": {}}],
+     "reasoning": {"reasoning_content": "List first."}},
+    {"role": "tool", "call_id": "c1", "content": "Pages…"},
+    {"role": "assistant", "content": "Done."},
+    {"role": "user", "content": "and now?"},
+]
+
+
+def test_thinking_goes_back_to_a_compatible_server_only():
+    body = json.loads(openai_request({**CONF, "base_url": "https://api.deepseek.com"},
+                                     THOUGHT_TURNS, "", "m").data)
+    called, answered = [m for m in body["messages"] if m["role"] == "assistant"]
+    assert called["reasoning_content"] == "List first."
+    # Every assistant turn carries the field, empty where none was kept.
+    assert answered == {"role": "assistant", "content": "Done.", "reasoning_content": ""}
+    # OpenAI itself and the other wires send exactly what they sent before.
+    plain = [{k: v for k, v in m.items() if k != "reasoning"} for m in THOUGHT_TURNS]
+    official = {**CONF, "base_url": "https://api.openai.com"}
+    assert openai_request(official, THOUGHT_TURNS, "", "m").data == openai_request(official, plain, "", "m").data
+    for request in (anthropic_request, openai_responses_request, chatgpt_request):
+        assert json.loads(request(CONF, THOUGHT_TURNS, "", "m").data) == json.loads(request(CONF, plain, "", "m").data)
+
+
+def test_openrouter_thinking_details_are_kept_whole_and_sent_back():
+    stream = sse(
+        {"choices": [{"delta": {"reasoning": "Hm", "reasoning_details": [
+            {"type": "reasoning.text", "index": 0, "text": "Hm"}]}}]},
+        {"choices": [{"delta": {"reasoning": "m.", "reasoning_details": [
+            {"type": "reasoning.text", "index": 0, "text": "m.", "signature": "sig"}]}}]},
+        {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}]},
+    )
+    (kept,) = [data for kind, data in sse_events(stream, "openai") if kind == "reasoning"]
+    assert kept == {"reasoning": "Hmm.", "reasoning_details": [
+        {"type": "reasoning.text", "index": 0, "text": "Hmm.", "signature": "sig"}]}
+    turns = [{**m, "reasoning": kept} if m.get("tool_calls") else m for m in THOUGHT_TURNS]
+    body = json.loads(openai_request({**CONF, "base_url": "https://openrouter.ai/api/v1"}, turns, "", "m").data)
+    called, answered = [m for m in body["messages"] if m["role"] == "assistant"]
+    assert called["reasoning"] == "Hmm." and called["reasoning_details"] == kept["reasoning_details"]
+    assert answered["reasoning"] == "" and "reasoning_details" not in answered
+
+
+def test_openrouter_listing_names_windows_efforts_and_pictures():
+    data = {"data": [
+        {"id": "deepseek/deepseek-v4-pro", "context_length": 1_048_576,
+         "supported_parameters": ["reasoning", "tools"], "reasoning": {"supported_efforts": ["xhigh", "high"]},
+         "architecture": {"input_modalities": ["text"]}},
+        {"id": "meta/plain", "context_length": 8192, "supported_parameters": ["tools"],
+         "architecture": {"input_modalities": ["text", "image"]}},
+    ]}
+    rows = {m["id"]: m for m in WIRES["openai"].models(data, {**CONF, "base_url": "https://openrouter.ai/api/v1"})}
+    assert rows["deepseek/deepseek-v4-pro"] == {"id": "deepseek/deepseek-v4-pro", "context_window": 1_048_576,
+                                                "efforts": ["xhigh", "high"], "speeds": None, "images": False}
+    assert rows["meta/plain"]["efforts"] == [] and rows["meta/plain"]["images"] is True
+
+
+def test_a_named_service_that_takes_the_cache_key_gets_it():
+    msgs = [{"role": "user", "content": "hi"}]
+    body = lambda base: json.loads(openai_request(  # noqa: E731
+        {**CONF, "protocol": "openai", "base_url": base}, msgs, "", "m", cache_key="k1").data)
+    assert body("https://api.moonshot.ai")["prompt_cache_key"] == "k1"
+    assert "prompt_cache_key" not in body("https://api.deepseek.com")
+
+
+def test_build_messages_sends_a_replys_thinking_back():
+    """A saved reply's thinking rides on its first replayed assistant turn:
+    the tool calls it led to, else the reply itself. Anything but text is
+    dropped."""
+    from gamma.ai_context import prompt_tokens
+
+    history = [{"role": "user", "text": "tidy"},
+               {"role": "ai", "text": "Done.", "reasoning": {"reasoning_content": "List first.", "junk": 3},
+                "actions": [{"tool": "list_pages", "args": {}, "result": "Pages…"}]},
+               {"role": "user", "text": "thanks"},
+               {"role": "ai", "text": "Welcome.", "reasoning": {"reasoning_content": "Be brief."}},
+               {"role": "user", "text": "again"},
+               {"role": "ai", "text": "Sure.", "reasoning": "not a mapping"}]
+    messages = build_messages(payload(history), "", with_tools=True)
+    called = next(m for m in messages if m.get("tool_calls"))
+    assert called["reasoning"] == {"reasoning_content": "List first."}
+    replies = {m["content"]: m.get("reasoning") for m in messages
+               if m["role"] == "assistant" and not m.get("tool_calls")}
+    assert replies == {"Done.": None, "Welcome.": {"reasoning_content": "Be brief."}, "Sure.": None}
+    # The thinking counts toward the prompt's size.
+    assert prompt_tokens([{"role": "assistant", "content": "", "reasoning": {"reasoning_content": "x" * 400}}]) == 100

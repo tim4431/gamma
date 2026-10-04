@@ -1,5 +1,6 @@
-import { Account, FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, Server, fakeAiModels, wanted } from "../harness.mjs";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 
 export async function settingsScenarios(env) {
@@ -377,6 +378,64 @@ export async function settingsScenarios(env) {
       await ctx.close();
       const info = await user.api("/api/ai/settings");
       for (const p of info.providers.filter((p) => p.base_url === "https://api.deepseek.com")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
+  });
+
+  await step("settings: a vendor with several plans offers them under Plan, and a subscription connects at its own endpoint", async () => {
+    const { ctx, page } = await setup();
+    const kimiCode = "https://api.kimi.com/coding/v1";
+    try {
+      const calls = [];
+      await page.route("**/api/ai/model-catalog", async (route) => {
+        calls.push(route.request().postDataJSON());
+        await route.fulfill({ json: { models: ["kimi-for-coding"] } });
+      });
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "kimi-for-coding", latency_ms: 300 } }));
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
+      const pick = async (menu, option) => {
+        await dialog.getByRole("button", { name: menu, exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: option, exact: true }).click();
+      };
+      // One vendor, one plan: no Plan menu.
+      assertEq(await dialog.getByRole("button", { name: "Plan", exact: true }).count(), 0);
+      // Qwen's coding plan carries its terms note.
+      await pick("Service", "Qwen");
+      assert((await dialog.getByRole("button", { name: "Plan", exact: true }).innerText()).includes("API key"), "a vendor opens on its first plan");
+      await pick("Plan", "Coding plan subscription");
+      await dialog.getByText(/only inside coding tools such as Qwen Code/).waitFor();
+      // Kimi's subscription: its own endpoint and key page, no Base URL to fill.
+      await pick("Service", "Kimi");
+      await pick("Plan", "Coding plan subscription");
+      assertEq(await dialog.getByText(/only inside coding tools/).count(), 0);
+      assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
+      await dialog.getByRole("link", { name: "Get a key at www.kimi.com/code/console" }).waitFor();
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-kimi-code-e2e");
+      await dialog.getByRole("button", { name: "1 usable" }).waitFor();
+      assertEq(calls.at(-1).protocol, "openai");
+      assertEq(calls.at(-1).base_url, kimiCode);
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      const saved = page.locator(".aiProvRow").filter({ hasText: "sk-kimi-code-e2e".slice(-4) });
+      await saved.locator(".aiProvName").filter({ hasText: "Kimi Code" }).waitFor();
+      // Editing it opens on the same vendor and plan.
+      await saved.getByRole("button", { name: "Manage", exact: true }).click();
+      const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
+      await edit.waitFor();
+      assert((await edit.getByRole("button", { name: "Service", exact: true }).innerText()).includes("Kimi"), "the vendor");
+      assert((await edit.getByRole("button", { name: "Plan", exact: true }).innerText()).includes("Coding plan subscription"), "the plan");
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await until(() => edit.count().then((n) => n === 0));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      const info = await user.api("/api/ai/settings");
+      for (const p of info.providers.filter((p) => p.base_url === kimiCode)) {
         await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
       }
     }
@@ -863,6 +922,261 @@ export async function settingsScenarios(env) {
       assertEq(kept.length, 1, "the server keeps it as an automatic snapshot");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // Settings → Backups › Off-site copies (OffsiteCopies.jsx, gamma/offsite.py,
+  // docs/dev/settings.md): an admin's section in a pane every account has.
+  // Three rows: the switch, the bucket's summary with Set up… / Edit… (the
+  // editor dialog), the rounds' status with Copy now.
+  const offsite = (page) => page.locator('.settingsPane .setSection[data-setting="Off-site copies"]');
+  // The rows under the section's rule, up to the next section's.
+  const offsiteRows = (page) => offsite(page).evaluate((head) => {
+    const out = [];
+    for (let el = head.nextElementSibling; el && !el.classList.contains("setSection"); el = el.nextElementSibling) {
+      if (el.dataset.setting) out.push(el.dataset.setting);
+    }
+    return out;
+  });
+  await step("settings: Off-site copies is in Backups and the settings search for an admin only, between the tasks and the snapshots", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      await row(page, "Saved snapshots").waitFor();
+      assertEq(await offsite(page).count(), 0, "a member has no Off-site copies section");
+      const box = page.getByRole("searchbox", { name: "Search settings" });
+      await box.fill("bucket");
+      await page.getByText('No settings found. Try "model", "PDF", or "storage".', { exact: true }).waitFor();
+      assertEq(await page.locator(".settingsSearchResult").count(), 0, "a member's search finds no admin section");
+      await box.fill("");
+      server.manage("set-admin", "settings-user", "on");
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const toggle = page.getByRole("checkbox", { name: "Copy to a bucket", exact: true });
+      await toggle.waitFor();
+      const sections = await page.locator(".settingsPane .setSection").evaluateAll((els) => els.map((el) => el.dataset.setting));
+      const at = sections.indexOf("Off-site copies");
+      assertEq(sections.slice(at - 1, at + 2).join(" › "), "Periodic backup tasks › Off-site copies › Saved snapshots", "where the section sits");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,No bucket yet", "while nothing is saved, the switch and the summary");
+      assertEq(await row(page, "No bucket yet").getByRole("button").innerText(), "Set up…", "nothing saved yet: Set up…");
+      assertEq(await offsite(page).getByRole("button").count(), 0, "no Save on the rule");
+      assert(!await toggle.isChecked(), "the copies start off");
+      // From another pane, the search finds the section and lands on it.
+      await nav(page, "Appearance").click();
+      await box.fill("bucket");
+      const results = page.locator(".settingsSearchResult");
+      await results.first().waitFor();
+      assertEq(await results.count(), 1, "one match for an admin");
+      assertEq(await results.locator(".settingLabel").innerText(), "Off-site copies");
+      assertEq(await results.locator("small").innerText(), "Backups", "the match names its pane");
+      await results.click();
+      await offsite(page).waitFor();
+      assertEq(await nav(page, "Backups").getAttribute("aria-current"), "page", "the match opens Backups");
+      // The section renders once the pane has its workspace list; the jump
+      // waits for it, then focuses it and brings it into view.
+      await until(async () => offsite(page).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)),
+        { what: "the jump to focus the section" });
+      assert(await offsite(page).evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }),
+        "the section is in view");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      server.manage("set-admin", "settings-user", "off");
+    }
+  });
+
+  await step("settings: Off-site copies are set up in a dialog with a write-only secret, tested there, and Copy now shows the failed round", async () => {
+    server.manage("set-admin", "settings-user", "on");
+    const before = (await user.api("/api/admin/offsite")).settings;
+    // Copy now goes to a stand-in bucket that holds its first request until
+    // released, so the round is seen running, then refuses every request
+    // (403 AccessDenied). A round against the unreachable 127.0.0.1:1 would
+    // spend boto3's three attempts on each database (about 10 s apiece on
+    // Windows, where a refused connection takes seconds) and on each
+    // workspace's uploads.
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let requests = 0;
+    const refusing = http.createServer((req, res) => {
+      requests += 1;
+      const body = new Promise((resolve) => { req.on("end", resolve); req.on("error", resolve); });
+      req.resume();
+      Promise.all([body, held]).then(() => {
+        res.writeHead(403, { "Content-Type": "application/xml" });
+        res.end('<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Refused by the e2e bucket</Message></Error>');
+      });
+    });
+    refusing.unref();
+    await new Promise((resolve) => refusing.listen(0, "127.0.0.1", resolve));
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const toggle = page.getByRole("checkbox", { name: "Copy to a bucket", exact: true });
+      const setUp = page.getByRole("dialog", { name: "Set up off-site copies", exact: true });
+      const edit = page.getByRole("dialog", { name: "Edit off-site copies", exact: true });
+      const field = (dialog, label) => dialog.getByLabel(label, { exact: true });
+      const often = (dialog) => dialog.getByRole("button", { name: "How often", exact: true });
+      const editButton = () => row(page, "gamma-e2e").getByRole("button", { name: "Edit…", exact: true });
+      // With no bucket the switch opens the set-up rather than saving.
+      await toggle.waitFor();
+      await toggle.click();
+      await setUp.waitFor();
+      assert(!await toggle.isChecked(), "the switch waits for a bucket");
+      await setUp.press("Escape");
+      await setUp.waitFor({ state: "detached" });
+      await row(page, "No bucket yet").getByRole("button", { name: "Set up…", exact: true }).click();
+      await setUp.waitFor();
+      // Saved without a bucket: the server's refusal, in its words, in the dialog.
+      const save = setUp.getByRole("button", { name: "Save", exact: true });
+      await save.click();
+      const refusal = setUp.getByRole("alert").filter({ hasText: "Set a bucket before turning off-site copies on." });
+      await refusal.waitFor();
+      await field(setUp, "Bucket").fill("gamma-e2e");
+      await field(setUp, "Endpoint").fill("http://127.0.0.1:1");
+      await field(setUp, "Region").fill("auto");
+      await field(setUp, "Access key ID").fill("AKIAE2EOFFSITE");
+      await field(setUp, "Secret key").fill("e2e-offsite-secret");
+      await often(setUp).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Every 6 hours", exact: true }).click();
+      await field(setUp, "Copies kept").fill("3");
+      await save.click();
+      await setUp.waitFor({ state: "detached" });
+      const stored = (await user.api("/api/admin/offsite")).settings;
+      for (const [key, value] of Object.entries({ enabled: true, bucket: "gamma-e2e", endpoint: "http://127.0.0.1:1", region: "auto",
+        access_key: "AKIAE2EOFFSITE", prefix: "", interval_s: 21600, keep: 3, secret_set: true })) {
+        assertEq(stored[key], value, `the server stored ${key}`);
+      }
+      assert(await toggle.isChecked(), "saving the first bucket turns the copies on");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,gamma-e2e,Status", "the summary names the bucket; the status follows");
+      assertEq(await row(page, "gamma-e2e").locator(".settingDesc").innerText(), "127.0.0.1:1/gamma-e2e · every 6 h · 3 kept");
+      // Reopened, Edit… reads them back; the secret stays on the server.
+      await nav(page, "Appearance").click();
+      await nav(page, "Backups").click();
+      await editButton().click();
+      await edit.waitFor();
+      assertEq(await field(edit, "Bucket").inputValue(), "gamma-e2e");
+      assertEq(await field(edit, "Endpoint").inputValue(), "http://127.0.0.1:1");
+      assertEq(await field(edit, "Region").inputValue(), "auto");
+      assertEq(await field(edit, "Access key ID").inputValue(), "AKIAE2EOFFSITE");
+      assertEq(await field(edit, "Secret key").inputValue(), "", "the secret never comes back");
+      assertEq(await field(edit, "Secret key").getAttribute("placeholder"), "secret set — type to replace");
+      assertEq(await field(edit, "Prefix").inputValue(), "");
+      assertEq(await often(edit).innerText(), "Every 6 hours");
+      assertEq(await field(edit, "Copies kept").inputValue(), "3");
+
+      // Test tries the dialog's values once and answers beside its button.
+      await edit.getByRole("button", { name: "Test connection", exact: true }).click();
+      const failure = edit.locator(".aiKeyCheck.aiKeysError");
+      await failure.waitFor({ timeout: 20000 });
+      assert(/cannot reach s3:\/\/gamma-e2e\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
+        `the failure names the endpoint: ${await failure.innerText()}`);
+      // The result is about the values tested: an edit clears it.
+      await field(edit, "Prefix").fill("e2e");
+      await until(async () => (await edit.locator(".aiKeyCheck").count()) === 0, { what: "an edit to clear the test's result" });
+      // Cancel with an unsaved edit asks first; discarded, nothing is sent.
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await edit.getByRole("alertdialog", { name: "Unsaved changes" }).waitFor();
+      await edit.getByRole("button", { name: "Keep editing", exact: true }).click();
+      assertEq(await field(edit, "Prefix").inputValue(), "e2e", "Keep editing keeps the edit");
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await edit.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await edit.waitFor({ state: "detached" });
+      assertEq((await user.api("/api/admin/offsite")).settings.prefix, "", "a discarded edit is not saved");
+      const status = row(page, "Status");
+      const statusLine = status.locator(".settingDesc");
+      assert((await statusLine.innerText()).includes("no round yet"), `the status before any round: ${await statusLine.innerText()}`);
+
+      // Copy now. The endpoint changes without retyping the secret, and
+      // Enter saves: a save without one keeps the stored secret (else the
+      // server would refuse an access key without its secret).
+      const port = refusing.address().port;
+      await editButton().click();
+      await field(edit, "Endpoint").fill(`http://127.0.0.1:${port}`);
+      await field(edit, "Endpoint").press("Enter");
+      await edit.waitFor({ state: "detached" });
+      const moved = (await user.api("/api/admin/offsite")).settings;
+      assertEq(moved.endpoint, `http://127.0.0.1:${port}`, "Enter saved the new endpoint");
+      assert(moved.secret_set && moved.enabled, "the secret and the switch stay as they were");
+      assertEq(await row(page, "gamma-e2e").locator(".settingDesc").innerText(), `127.0.0.1:${port}/gamma-e2e · every 6 h · 3 kept`);
+      await status.getByRole("button", { name: "Copy now", exact: true }).click();
+      const copying = status.getByRole("button", { name: "Copying…", exact: true });
+      await copying.waitFor();
+      assert(await copying.isDisabled(), "Copying… is disabled while the round runs");
+      await until(async () => requests > 0 && (await user.api("/api/admin/offsite")).status.running,
+        { what: "the round to run, held on the bucket's first request" });
+      assert((await statusLine.innerText()).startsWith("copying now…"), `the status while copying: ${await statusLine.innerText()}`);
+      await page.waitForResponse((r) => r.url().endsWith("/api/admin/offsite") && r.request().method() === "GET", { timeout: 10000 });
+      assert(await copying.isDisabled(), "still disabled after a status poll");
+      release();
+      await status.getByRole("button", { name: "Copy now", exact: true }).waitFor({ timeout: 15000 });
+      await until(async () => (await statusLine.innerText()).includes("last round"), { what: "the finished round's line" });
+      const line = await statusLine.innerText();
+      assert(!line.includes("no round yet"), `the round replaces "no round yet": ${line}`);
+      assert(Number(line.match(/(\d+) failed/)?.[1]) >= 1, `the line counts the failed copies: ${line}`);
+      const roundError = page.locator('.settingsPane [data-setting="Status"] + p.aiKeysError');
+      await roundError.waitFor();
+      assert((await roundError.innerText()).includes("AccessDenied"), `the round's error under the status: ${await roundError.innerText()}`);
+      assertNoProblems(page, [/PUT \/api\/admin\/offsite -> 400/]);
+    } finally {
+      release();
+      await ctx.close();
+      refusing.closeAllConnections();
+      await new Promise((resolve) => refusing.close(resolve));
+      try {
+        const { secret_set: _secret, ...fields } = before;
+        await user.api("/api/admin/offsite", { method: "PUT", body: fields });
+      } finally { server.manage("set-admin", "settings-user", "off"); }
+    }
+  });
+
+  // GAMMA_S3_BUCKET hands every field to the server's environment: a
+  // second server of its own (about 2 s to start). GAMMA_OFFSITE=off keeps
+  // it from running a round at startup, the unreachable endpoint from ever
+  // reaching AWS.
+  await step("settings: with GAMMA_S3_BUCKET in the server's environment, Off-site copies shows a read-only summary", async () => {
+    const managed = new Server({ env: { GAMMA_S3_BUCKET: "gamma-env", GAMMA_S3_ENDPOINT: "http://127.0.0.1:1", GAMMA_S3_REGION: "auto",
+      GAMMA_S3_ACCESS_KEY: "AKIAE2EENV", GAMMA_S3_SECRET_KEY: "e2e-env-secret", GAMMA_OFFSITE: "off",
+      GAMMA_OFFSITE_INTERVAL: "900", GAMMA_OFFSITE_KEEP: "5" } });
+    let ctx = null;
+    try {
+      await managed.start();
+      managed.manage("create-user", "env-admin", "env-admin-pw");
+      managed.manage("set-admin", "env-admin", "on");
+      const admin = await new Account(managed, "env-admin", "env-admin-pw").login();
+      ctx = await admin.context(browser);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, managed.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const toggle = page.getByRole("checkbox", { name: "Copy to a bucket", exact: true });
+      await toggle.waitFor();
+      assert(await toggle.isDisabled() && !await toggle.isChecked(), "the switch is the environment's (GAMMA_OFFSITE=off)");
+      // The summary names the environment's bucket and the variable; what
+      // the environment sets is its hover title. Nothing opens an editor.
+      const summary = row(page, "gamma-env");
+      assertEq(await summary.locator(".settingDesc").innerText(), "Set by GAMMA_S3_BUCKET in the server's environment",
+        "the summary's hint names the variable");
+      assertEq(await summary.getAttribute("title"), "127.0.0.1:1/gamma-env · every 15 min · 5 kept", "the environment's values");
+      assertEq((await offsiteRows(page)).join(), "Copy to a bucket,gamma-env", "no status while the copies are off");
+      assertEq(await summary.getByRole("button", { name: /^(Edit|Set up)…$/ }).count(), 0, "no Edit… or Set up…");
+      assertEq(await offsite(page).getByRole("button").count(), 0, "no Save on the rule");
+      // Test tries the environment's bucket and answers in the summary's hint.
+      await summary.getByRole("button", { name: "Test", exact: true }).click();
+      const failure = summary.locator(".aiKeysError");
+      await failure.waitFor({ timeout: 20000 });
+      assert(/cannot reach s3:\/\/gamma-env\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
+        `the failure names the environment's endpoint: ${await failure.innerText()}`);
+      const refused = await admin.api("/api/admin/offsite", { method: "PUT", body: { bucket: "gamma-other" } }).catch((e) => e);
+      assertEq(refused.status, 409, "the server refuses a save");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await managed.stop();
+    }
   });
 
   // Settings → Workspaces → Data: the export and the merge are background

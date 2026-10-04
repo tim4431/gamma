@@ -11,7 +11,7 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, blobs, cloud_sync, config, db_copies, db_maintenance, guests, jobs, migrations
+from . import backup_schedule, cloud_sync, config, db_maintenance, guests, jobs, migrations, offsite
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -81,19 +81,6 @@ def _silence_windows_connection_reset():
             pass
 
     _ProactorBasePipeTransport._call_connection_lost = _quiet_call_connection_lost
-
-
-def _check_blob_store() -> None:
-    """The store the uploads live in (gamma/blobs.py), checked before the
-    data directory is touched: a bucket that cannot work stops the server
-    here with its reason, rather than after an account was seeded or at
-    the first upload."""
-    try:
-        if blobs.check() != "local":
-            log.info(f"[startup] stored files: {blobs.driver().where}")
-    except blobs.BlobConfigError as e:
-        log.error(f"[startup] stored files: {e}")
-        raise SystemExit(1)
 
 
 def _upgrade_data_directory() -> dict | None:
@@ -200,10 +187,12 @@ def _startup_maintenance():
 
 
 @asynccontextmanager
-async def every(seconds: float, fn, failed: str):
+async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
-    ``seconds``. A round that raises is logged (``failed``) and the next
-    one comes anyway."""
+    ``seconds``: a number, or a callable asked after each round, in a
+    worker thread too, for the pause before the next (the off-site copies'
+    interval; it must not raise). A round that raises is logged
+    (``failed``) and the next one comes anyway."""
     stop = asyncio.Event()
 
     async def loop():
@@ -212,8 +201,9 @@ async def every(seconds: float, fn, failed: str):
                 await asyncio.to_thread(fn)
             except Exception:
                 log.exception(failed)
+            wait = await asyncio.to_thread(seconds) if callable(seconds) else seconds
             try:
-                await asyncio.wait_for(stop.wait(), timeout=seconds)
+                await asyncio.wait_for(stop.wait(), timeout=wait)
             except asyncio.TimeoutError:
                 pass
 
@@ -234,7 +224,6 @@ def create_app() -> FastAPI:
     except ValueError as e:
         log.error(f"[startup] {e}")
         raise SystemExit(1)
-    _check_blob_store()
     guide = _upgrade_data_directory()
     if guide:
         return _blocked_app(guide)
@@ -251,7 +240,7 @@ def create_app() -> FastAPI:
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
-                every(db_copies.interval_s(), db_copies.tick, "[dbcopies] round failed"), \
+                every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"):
             with migrations.warming():  # the workspaces still behind on their steps, one by one

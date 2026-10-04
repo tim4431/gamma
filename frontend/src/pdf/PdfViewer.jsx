@@ -212,7 +212,7 @@ function backfillLocalCopy(url) {
   setTimeout(async () => {
     try {
       if (await diskCacheHas(url)) return;
-      const resp = await fetch(withShare(url), { credentials: "same-origin" });
+      const resp = await fetch(withShare(url), { credentials: "include" });
       if (resp.ok) diskCachePut(url, await resp.arrayBuffer());
     } catch {} finally {
       backfilling.delete(url);
@@ -242,7 +242,7 @@ async function fetchManifest(url) {
 // wait on it — a HEAD is one round trip whatever the file.
 async function fetchSize(url) {
   try {
-    const r = await fetch(withShare(url), { method: "HEAD", credentials: "same-origin" });
+    const r = await fetch(withShare(url), { method: "HEAD", credentials: "include" });
     const n = parseInt(r.headers.get("content-length") || "", 10);
     return r.ok && n > 0 ? n : null;
   } catch {
@@ -336,8 +336,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
     // make repeat downloads free — even on plain http where Cache Storage is
     // unavailable. Files too large for this path open by range requests
     // instead (pdfSource.chooseTransport), through pdf.js's own transport.
-    // Same-origin credentials (pdfSource.rangeOpenOptions says why).
-    const resp = await fetch(url, { credentials: "same-origin", signal: ctrl.signal });
+    const resp = await fetch(url, { credentials: "include", signal: ctrl.signal });
     if (isCancelled()) return null;
     if (!resp.ok) {
       let detail = `HTTP ${resp.status}`;

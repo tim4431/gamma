@@ -46,12 +46,6 @@ to the shared page's document (`_share_can_read_upload`). The check reads the
 shared pages only and remembers a yes for a few minutes, so a PDF opened by
 range requests asks once, not per chunk.
 
-With the stored files in a bucket ([debugging.md](debugging.md) "Stored
-files in a bucket"), the route answers an allowed GET with a 302 to a
-presigned URL instead of the bytes. The whole-file fetch and pdf.js's
-range requests follow it to the bucket, whose CORS rule must allow the
-workspace header. The server answers a HEAD itself.
-
 ## The client (`src/pdf/PdfViewer.jsx`, `src/pdf/pdfSource.js`)
 
 `pdf/pdfSource.js` holds the pure decisions, unit-tested in

@@ -22,7 +22,7 @@ const PANE_FILES = {
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx"],
   workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
-  backups: ["SettingsBackups.jsx", "BackupTasks.jsx"],
+  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "OffsiteCopies.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsGuests.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
@@ -69,4 +69,11 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   assert.equal(searchSettings("enter key", all)[0].label, "Enter makes");
   assert.equal(searchSettings("delete", all)[0].target, "Personal", "a Manage-page setting jumps to the list it sits under");
   assert.ok(searchSettings("microsoft", all).some((r) => r.label === "Translation services"), "the hint is searched");
+});
+
+test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {
+  const all = Object.keys(PANE_FILES);
+  assert.equal(searchSettings("bucket", all)[0]?.label, "Off-site copies");
+  const member = all.filter((pane) => pane !== "server" && pane !== "users");
+  assert.ok(!searchSettings("bucket", member).some((r) => r.label === "Off-site copies"));
 });

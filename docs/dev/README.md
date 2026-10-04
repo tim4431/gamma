@@ -98,7 +98,7 @@ These describe the implementation unless explicitly marked as plans.
 - [Frontend decomposition](frontend-refactor.md): remaining App.jsx ownership
   work; the current folder layout is in the source map.
 - [Scaling on SQLite](../research/scaling.md): the workspace-affinity shape
-  and the storage work list (connection cache, blob seam, lazy migration, …);
+  and the storage work list (connection cache, lazy migration, off-site copies, …);
   the dev docs describe each item once it lands.
 - [Block-centric design](block_centric.md): target model, dated inventory,
   and staged roadmap; check the code before treating a planned step as built.

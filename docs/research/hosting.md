@@ -12,7 +12,7 @@ nothing here is implemented.
 
 **Superseded (2026-09-21).** The shape below — sharded multi-tenant nodes
 behind an edge router — was replaced by the plan in
-[todos/gamma-cloud-plan.md](../../todos/gamma-cloud-plan.md): a paid
+[cloud-plans.md](cloud-plans.md): a paid
 customer gets a container of their own (the unchanged self-hosted image),
 the free tier lives in the desktop app, one small shared instance hosts
 published pages, and one account server ([dev/cloud_accounts.md](../dev/cloud_accounts.md),

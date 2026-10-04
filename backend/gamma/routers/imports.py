@@ -24,7 +24,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
 from ..auth import actor_of, require_user_id, require_ws
-from ..db import connect_pages_db, page_now, safe_doc_id
+from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
                             last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
                             touch_page, write_lock)
@@ -34,11 +34,11 @@ from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, n
 from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
+from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (UploadDir, display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file,
-                       store_pdf)
+from ..storage import display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -605,24 +605,7 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
             "box": _on_page(normalize_text_box(box), disp_w, disp_h)}
 
 
-def _page_text_chunks(page):
-    """(x, y, text) per text chunk in PDF user space — best-effort, used to
-    recover the quoted text under a markup annotation."""
-    chunks = []
-
-    def visitor(text, cm, tm, font_dict, font_size):
-        if text and text.strip():
-            # Translation-only composition; fine for typical body text.
-            chunks.append((tm[4] + cm[4], tm[5] + cm[5], text))
-
-    try:
-        page.extract_text(visitor_text=visitor)
-    except Exception:
-        return []
-    return chunks
-
-
-def _extract_pdf_annotations(reader, quotes=True):
+def _extract_pdf_annotations(reader, glyphs=None):
     """The annotations of ``reader``'s pages that become blocks, as records
     in page order: ``key`` (the ``imported_annot``), ``page``, ``content``
     and the kind's fields, ``annot`` (the annotation's dictionary) and
@@ -633,8 +616,9 @@ def _extract_pdf_annotations(reader, quotes=True):
     ``legacy`` the key it had when replies were imported as annotations of
     their own, ``key`` that with its /NM (or its place in /Annots), since a
     reply shares its parent's rectangle. A reply to something not imported
-    is left out. ``quotes=False`` skips reading the text under highlights,
-    for a caller that only needs which annotations make blocks."""
+    is left out. ``glyphs`` is a ``pdf_text.GlyphPages`` over the same
+    file, read for the text under each highlight; None (a caller that only
+    needs which annotations make blocks) leaves the quotes empty."""
     found, replies, records = [], [], {}
     for pnum, page in enumerate(reader.pages, start=1):
         try:
@@ -645,7 +629,6 @@ def _extract_pdf_annotations(reader, quotes=True):
             continue
         mb = page.mediabox
         pw, ph = float(mb.width), float(mb.height)
-        page_text = {} if quotes else {"chunks": []}  # read once, when a quote needs it
         for index, ref in enumerate(annots):
             try:
                 obj = ref.get_object()
@@ -670,7 +653,7 @@ def _extract_pdf_annotations(reader, quotes=True):
                 elif subtype in _NOTE_TYPES:
                     record = _text_box_from_annotation(obj, subtype, pnum, page, contents)
                 else:
-                    record = _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
+                    record = _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs)
                 if record:
                     record.update(annot=obj, replies=[])
                     found.append(record)
@@ -694,10 +677,11 @@ def _extract_pdf_annotations(reader, quotes=True):
     return found
 
 
-def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text):
+def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
     """A markup, square or circle annotation → a highlight record, or None
-    without a rectangle. ``page_text`` caches the page's text for the quote
-    (``_page_text_chunks``, read once per page under ``"chunks"``)."""
+    without a rectangle. The quote is the text under the quads
+    (``pdf_text.quote_under`` over ``glyphs``, a ``GlyphPages``; empty when
+    None, or for an area mark)."""
     # Quad rects in PDF space (origin bottom-left)
     quads = []
     qp = _resolve(obj.get("/QuadPoints"))
@@ -712,14 +696,7 @@ def _mark_from_annotation(obj, subtype, pnum, page, pw, ph, contents, page_text)
         quads.append((min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])))
     if not quads:
         return None
-    quote = ""
-    if subtype in _MARKUP_TYPES:
-        if "chunks" not in page_text:
-            page_text["chunks"] = _page_text_chunks(page)
-        picked = [t for (x, y, t) in page_text["chunks"]
-                  if any(qx1 - 2 <= x <= qx2 + 2 and qy1 - 3 <= y <= qy2 + 3
-                         for (qx1, qy1, qx2, qy2) in quads)]
-        quote = re.sub(r"\s+", " ", " ".join(picked)).strip()[:1000]
+    quote = quote_under(glyphs.page(pnum), quads) if glyphs is not None and subtype in _MARKUP_TYPES else ""
     color = "rgba(255, 226, 143, 0.65)"
     c = _resolve(obj.get("/C"))
     try:
@@ -752,7 +729,7 @@ def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
 
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
-    ``pdf_path`` is the stored file (a local path or a ``StoredFile``)."""
+    ``pdf_path`` is the stored file's path."""
     from PyPDF2 import PdfReader, PdfWriter
 
     reader = PdfReader(os.fspath(pdf_path))
@@ -764,7 +741,7 @@ def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
         for reply in record["replies"]:
             take(reply)
 
-    for record in _extract_pdf_annotations(reader, quotes=False):
+    for record in _extract_pdf_annotations(reader):
         take(record)
     # Off the reader's pages, before the copy: PdfWriter.append clones each
     # page's /Annots as the reader holds them.
@@ -809,10 +786,11 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     then optionally strip the originals from the file. ``found`` counts the
     annotations that make blocks, replies included. Shared by the per-paper
     endpoint below and the Zotero library import. ``pdf_path``: the stored
-    file, a local path (``storage.find_upload_file``) or a ``StoredFile``."""
+    file's path (``storage.find_upload_file``)."""
     from PyPDF2 import PdfReader
     reader = PdfReader(os.fspath(pdf_path))
-    found = _extract_pdf_annotations(reader)
+    with GlyphPages(os.fspath(pdf_path)) as glyphs:
+        found = _extract_pdf_annotations(reader, glyphs)
     if not found:
         return {"found": 0, "imported": 0, "stripped": 0}
 
@@ -1189,7 +1167,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
         plan = _zotero_plan(zf)
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        uploads = UploadDir(ws)
+        uploads = ws_uploads_dir(ws)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
                   "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}

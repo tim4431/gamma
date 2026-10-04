@@ -27,14 +27,12 @@ Usage:
   python manage.py backups --create [--uploads] [--label x]   # take one now (databases; + uploads)
   python manage.py backups --restore <name>        # copy one back over the data dir (server stopped!)
   python manage.py backups --delete <name> | --prune   # --prune: old pre-upgrade snapshots only
-  python manage.py db-copies --list [<workspace-id>|users]   # the databases' copies in the bucket
-  python manage.py db-copies --restore <workspace-id|users|all> [--at <stamp>]
+  python manage.py offsite --list [<workspace-id>|users]   # the off-site copies in the bucket
+  python manage.py offsite --restore <workspace-id|users|all> [--at <stamp>] [--uploads]
                                                    # put copies back in place (server stopped!); the files
-                                                   #   there are moved aside as <name>.pre-restore-<time>
-  python manage.py litestream-config [--out <path>]   # a litestream.yml for the GAMMA_S3_* bucket
-  python manage.py uploads-push [--check]          # put the workspaces' local uploads/ files the GAMMA_S3_*
-                                                   #   bucket lacks into it (--check: only count them);
-                                                   #   the local files stay
+                                                   #   there are moved aside as <name>.pre-restore-<time>;
+                                                   #   --uploads: also the files uploads/ lacks
+  python manage.py litestream-config [--out <path>]   # a litestream.yml for the off-site bucket
 
 Respects GAMMA_DATA_DIR (defaults to the repo's data/ folder). Commands
 name accounts by username; storage names them by id (``users.id``).
@@ -395,44 +393,53 @@ def backups(args: list):
         print("Pruned automatic snapshots: " + (", ".join(removed) if removed else "nothing"))
 
 
-def db_copies(args: list):
-    """List the databases' copies in the store, or restore some
-    (gamma/db_copies.py; docs/dev/debugging.md "Database copies in the
-    bucket")."""
-    from gamma import blobs, db_copies as copies
+def offsite(args: list):
+    """List the off-site copies in the bucket, or restore some
+    (gamma/offsite.py; docs/dev/debugging.md "Off-site copies in a
+    bucket"). The bucket is the saved one or, after a lost disk, the one
+    the GAMMA_S3_* variables name."""
+    from gamma import offsite as off, s3
 
     def arg(flag):
         i = args.index(flag) if flag in args else -1
         return args[i + 1] if 0 <= i < len(args) - 1 and not args[i + 1].startswith("--") else ""
+    files = None
     try:
         if "--restore" in args:
             target = arg("--restore")
             if not target:
-                print("Usage: python manage.py db-copies --restore <workspace-id|users|all> [--at <stamp>]")
+                print("Usage: python manage.py offsite --restore <workspace-id|users|all> [--at <stamp>] [--uploads]")
                 sys.exit(1)
-            done = copies.restore(target, arg("--at") or None)
+            done = off.restore(target, arg("--at") or None, uploads="--uploads" in args)
             for r in done:
-                print(f"Restored {r['label']} from {r['stamp']}" +
-                      (f" (the file there is now {r['aside']})" if r["aside"] else ""))
+                if "files" in r:
+                    print(f"Put {r['files']} file(s) ({r['bytes'] / (1 << 20):.1f} MB) from the bucket into "
+                          f"{r['label']}")
+                else:
+                    print(f"Restored {r['label']} from {r['stamp']}" +
+                          (f" (the file there is now {r['aside']})" if r["aside"] else ""))
             print("Start the server; it migrates a copy older than this Gamma as it opens it.")
             return
         if "--list" not in args:
-            print("Usage: python manage.py db-copies --list [<workspace-id>|users] | "
-                  "--restore <workspace-id|users|all> [--at <stamp>]")
+            print("Usage: python manage.py offsite --list [<workspace-id>|users] | "
+                  "--restore <workspace-id|users|all> [--at <stamp>] [--uploads]")
             sys.exit(1)
         group = arg("--list") or None
-        held = copies.listing(group)
-    except blobs.BlobConfigError as e:
-        print(f"The store cannot be used: {e}")
+        held = off.listing(group)
+        if group and group != "users":
+            files = off.uploads_held(group)
+    except s3.S3ConfigError as e:
+        print(f"The bucket cannot be used: {e}")
         sys.exit(2)
     except ValueError as e:  # a RestoreError (nothing was changed), a bad workspace id
         print(f"Refused: {e}")
         sys.exit(2)
-    except OSError as e:  # the store out of reach, a file that would not move
+    except OSError as e:  # the bucket out of reach, a file that would not move
         print(f"Failed: {e}")
         sys.exit(2)
     if not held:
-        print("No copies." if group else "No copies (GAMMA_DB_COPIES; docs/dev/debugging.md).")
+        print("No copies." if group else
+              "No copies (Settings → Backups → Off-site copies, or GAMMA_S3_BUCKET; docs/dev/debugging.md).")
     for label, gens in held.items():
         if group:  # every copy of the group's databases
             for stamp, size in reversed(gens):
@@ -441,15 +448,17 @@ def db_copies(args: list):
             stamp, size = gens[-1]
             print(f"  {label}  {len(gens)} cop{'y' if len(gens) == 1 else 'ies'}, the newest {stamp} "
                   f"({size / (1 << 20):.1f} MB)")
+    if files is not None:
+        print(f"  {group}/uploads  {files[0]} file(s) ({files[1] / (1 << 20):.1f} MB)")
 
 
 def litestream_config(args: list):
-    """Print, or write to ``--out``, a litestream.yml for the GAMMA_S3_*
+    """Print, or write to ``--out``, a litestream.yml for the off-site
     bucket naming every database there is now."""
-    from gamma import db_copies as copies
+    from gamma import offsite as off
 
     try:
-        text, count = copies.litestream_config()
+        text, count = off.litestream_config()
     except ValueError as e:
         print(f"Refused: {e}")
         sys.exit(2)
@@ -461,63 +470,6 @@ def litestream_config(args: list):
 
     Path(out).write_text(text, encoding="utf-8")
     print(f"Wrote {out}: {count} database(s). Restart Litestream to replicate them.")
-
-
-def uploads_push(args: list):
-    """Put every file of the workspaces' local ``uploads/`` directories that
-    the bucket lacks into it, under the same name: a data directory moving
-    to GAMMA_BLOBS=s3. Names are content hashes, so a second run puts only
-    what the first did not. ``--check`` only counts what is missing. The
-    local files stay; the operator deletes them (docs/dev/debugging.md
-    "Stored files in a bucket")."""
-    import tempfile
-
-    from gamma import blobs, config
-
-    env = config.blob_env()
-    if env["kind"] != "s3":
-        print("Set GAMMA_BLOBS=s3 and the GAMMA_S3_* variables of the bucket first: the files go there.")
-        sys.exit(2)
-    # a cache of its own, never used (put_file streams the local file): a driver
-    # made on the server's would sweep the files in progress there as it starts
-    with tempfile.TemporaryDirectory(prefix="gamma-uploads-push-") as cache:
-        try:
-            store = blobs.S3Blobs.from_env({**env, "cache_dir": cache})
-            store.check()
-        except blobs.BlobConfigError as e:
-            print(f"The store cannot be used: {e}")
-            sys.exit(2)
-        _push_uploads(store, check="--check" in args)
-
-
-def _push_uploads(store, check: bool):
-    from gamma import blobs
-    from gamma.db import workspace_ids, ws_uploads_dir
-
-    local, count, size = blobs.LocalBlobs(), 0, 0
-    try:
-        for ws in workspace_ids():
-            files = local.list(ws)
-            if not files:
-                continue
-            held = {name for name, _, _ in store.list(ws)}  # one listing, not a HEAD per file
-            missing = [(name, n) for name, n, _ in files if name not in held]
-            if check:
-                print(f"  {ws}: {len(missing)} of {len(files)} file(s) missing from the bucket")
-            else:
-                for name, _ in missing:
-                    store.put_file(ws, name, ws_uploads_dir(ws) / name)
-                print(f"  {ws}: put {len(missing)} file(s), {len(files) - len(missing)} there already")
-            count, size = count + len(missing), size + sum(n for _, n in missing)
-    except OSError as e:  # the bucket out of reach or refusing a write: a second run goes on from here
-        print(f"Failed: {e}")
-        sys.exit(2)
-    if check:
-        print(f"{count} file(s) ({size / (1 << 20):.1f} MB) missing from {store.where}."
-              + (" Run uploads-push without --check to put them there." if count else ""))
-    else:
-        print(f"Put {count} file(s) ({size / (1 << 20):.1f} MB) into {store.where}. The local copies stay "
-              "in workspaces/<id>/uploads/: delete them once the server works from the bucket.")
 
 
 def main():
@@ -533,14 +485,11 @@ def main():
     if cmd == "backups":
         backups(args)
         return
-    if cmd == "db-copies":  # also on an empty data directory: the restore after a lost disk
-        db_copies(args)
+    if cmd == "offsite":  # also on an empty data directory: the restore after a lost disk
+        offsite(args)
         return
     if cmd == "litestream-config":
         litestream_config(args)
-        return
-    if cmd == "uploads-push":  # files only: before the switch, whatever the databases' version
-        uploads_push(args)
         return
     _guard_schema()
     if cmd == "create-user":

@@ -87,9 +87,9 @@ from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, block_to_dict, delete_subtree, ensure_reserved,
     fetch_subtree, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
     move_subtree_to_page, subtree_refs, touch_page, trashed_page, valid_block_id, write_lock)
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
-from .storage import UploadDir, content_digest, pdf_url, store_file, upload_refs
+from .storage import content_digest, pdf_url, store_file, upload_refs
 
 MAX_OPS = 500
 MAX_CONTENT = 200_000
@@ -358,7 +358,7 @@ class _Batch:
         new, base, now = patch.get("ink_url"), base_props.get("ink_url"), props.get("ink_url") or ""
         if not (isinstance(new, str) and new and isinstance(base, str)) or now in (base, new) or not self.ws:
             return patch
-        uploads = UploadDir(self.ws)
+        uploads = ws_uploads_dir(self.ws)
         ours = inkmod.read_upload(uploads, new)
         theirs = inkmod.read_upload(uploads, now) if now else None
         if ours is None or (now and theirs is None):

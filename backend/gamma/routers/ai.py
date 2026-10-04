@@ -40,6 +40,7 @@ from ..ai_client import (
 from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
 from ..ai_tools import (
     AGENT_PROMPT,
+    PICTURE_TOOLS,
     READ_CHARS_MAX,
     agent_system,
     agent_tools,
@@ -58,7 +59,8 @@ from ..ai_context import (
     request_note_selections,
 )
 from ..ai_permissions import permission_state
-from ..ai_protocols.base import truncated_stop
+from ..ai_protocols import DEFAULT_MAX_TOKENS
+from ..ai_protocols.base import reasoning_text, truncated_stop
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
@@ -722,21 +724,24 @@ def ai_model_info(request: Request, model: str = ""):
     models.dev knows it; efforts are the reasoning-effort levels it takes,
     lowest first ([] = no effort control, null = unknown — the chat offers
     /ai/models' efforts); speeds are the service tiers it may run at,
-    cheapest first ([] = no speed control)."""
+    cheapest first ([] = no speed control); images says whether it reads
+    pictures (false: the chat leaves them out; null = unknown, sent)."""
     rt = ai_runtime(require_user_id(request))
     m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
     conf = rt["providers"].get(m["provider"]) if m else None
     if not conf:
         return {"model": "", "context_window": None, "source": "", "efforts": None, "efforts_source": "",
-                "speeds": [], "speeds_source": ""}
+                "speeds": [], "speeds_source": "", "images": None, "images_source": ""}
     window, source = ai_catalog.context_window(m["provider"], conf, m["model"])
     efforts, efforts_source = ai_catalog.reasoning_efforts(m["provider"], conf, m["model"])
     if efforts is not None:
         efforts = [e for e in EFFORT_ORDER if e in efforts]
     speeds, speeds_source = ai_catalog.speed_tiers(m["provider"], conf, m["model"])
+    images, images_source = ai_catalog.image_input(m["provider"], conf, m["model"])
     return {"model": m["model"], "context_window": window or None, "source": source,
             "efforts": efforts, "efforts_source": efforts_source,
-            "speeds": speeds, "speeds_source": speeds_source}
+            "speeds": speeds, "speeds_source": speeds_source,
+            "images": images, "images_source": images_source}
 
 
 class AIHealthRequest(BaseModel):
@@ -1464,9 +1469,9 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
 # upload on later requests. In-memory: a restart retries native once.
 _NATIVE_PDF_REJECTED: set = set()
 
-# Room left for the reply (and the estimate's error) when a conversation is
-# fitted to the model's window before it is sent.
-_WINDOW_RESERVE = 8192 + 2048
+# Room left beside the reply cap for the estimate's error when a
+# conversation is fitted to the model's window before it is sent.
+_ESTIMATE_SLACK = 2048
 
 
 def _cache_key(user_id: str, ws: str, payload) -> str:
@@ -1552,8 +1557,14 @@ def _chat_tools(payload, scope: dict) -> list | None:
     tool is armed; search_web only with a web engine."""
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
-    return (agent_tools(payload.agent_scope, scope["permissions"], payload.read_char_limit,
-                        can_write=scope["can_write"], has=available(scope)) or None) if valid_scope else None
+    if not valid_scope:
+        return None
+    specs = agent_tools(payload.agent_scope, scope["permissions"], payload.read_char_limit,
+                        can_write=scope["can_write"], has=available(scope))
+    if scope.get("pictures") is False:
+        # A model that reads text only can't look at what these answer with.
+        specs = [s for s in specs if s["name"] not in PICTURE_TOOLS]
+    return specs or None
 
 
 def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
@@ -1713,13 +1724,19 @@ def ai_chat(payload: AIChatRequest, request: Request):
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
     conf = rt["providers"].get(entry["provider"]) or {}
     window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
+    # What else the model takes: pictures (one that reads text only gets
+    # none, nor a tool that answers with one) and how long a reply, its
+    # thinking included.
+    pictures = (ai_catalog.image_input(entry["provider"], conf, entry["model"])[0] is not False) if conf else True
+    scope["pictures"] = pictures
+    cap = ai_catalog.reply_cap(conf, entry["model"]) if conf else DEFAULT_MAX_TOKENS
 
     def open_upstream(messages, system, pdf_b64s, stream, call_tools=None, images=None):
         """One provider turn. ``call_tools`` / ``images`` differ for a
         helper's turn, which carries its own narrow tool set and none of
         the user's pictures."""
         return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, speed=speed, timeout=180,
-                        images=state["images"] if images is None else images, stream=stream,
+                        max_tokens=cap, images=state["images"] if images is None else images, stream=stream,
                         tools=tools if call_tools is None else call_tools,
                         cache_key=cache_key + ("" if call_tools is None else ":helper"))
 
@@ -1748,6 +1765,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
         pdf_b64s, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native, drop)
         state["coverage"] = coverage
         state["images"] = images + crops
+        if state["images"] and not pictures:
+            messages[-1]["content"] += (f"\n\n[{len(state['images'])} picture(s) left out: "
+                                        "this model reads text only]")
+            state["images"] = []
         return pdf_b64s, messages, system
 
     def fitted(allow_native):
@@ -1757,7 +1778,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         drop = state["drop"]
         pdf_b64s, messages, system = prepared(allow_native, drop)
         while (window and drop < history_len
-               and prompt_tokens(messages, system, tools, state["images"]) > window - _WINDOW_RESERVE):
+               and prompt_tokens(messages, system, tools, state["images"]) > window - cap - _ESTIMATE_SLACK):
             drop = _next_drop(drop, history_len)
             pdf_b64s, messages, system = prepared(allow_native, drop)
         if drop != state["drop"]:
@@ -1815,6 +1836,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             max_rounds=payload.tool_rounds,
             gate=ApprovalGate(ws, scope, user_id, stopped),
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
+            pictures=pictures,
         )
         return loop.run(first_resp)
 
@@ -1858,6 +1880,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     for kind, data in _sse_events(resp, _protocol(rt, entry)):
                         if kind == "text":
                             yield json.dumps({"delta": data}) + "\n"
+                        elif kind == "reasoning":
+                            # Saved with the reply and sent back on the next turn.
+                            said = reasoning_text(data)
+                            if said:
+                                yield json.dumps({"reasoning": said}) + "\n"
                         elif kind == "usage":
                             usage.append(data)
                         elif kind == "stop" and truncated_stop(data):

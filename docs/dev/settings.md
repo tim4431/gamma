@@ -13,7 +13,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -311,7 +311,8 @@ AI:
 - **Connections**: the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
-  the named services, a custom endpoint and its API format), the key with the
+  the named services by vendor, a Plan menu for a vendor with several, or a
+  custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
   Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
@@ -395,11 +396,41 @@ Library:
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
-  a Run now / Edit / Duplicate / Delete `ActionMenu`), then the server-kept
-  snapshots per workspace (Back up all, and per workspace: back up now,
-  download, restore, delete). A row tags a task's snapshot "Automatic" and
+  a Run now / Edit / Duplicate / Delete `ActionMenu`), then for admins
+  **Off-site copies** ([OffsiteCopies.jsx](../../frontend/src/settings/OffsiteCopies.jsx)),
+  then the server-kept snapshots per workspace (Back up all, and per
+  workspace: back up now, download, restore, delete). A row tags a task's snapshot "Automatic" and
   the one a replace restore keeps "Before restore", and says when files were
   missing or a database copy failed its check.
+  Off-site copies sends the server's databases and uploaded files to an
+  S3-compatible bucket, a backup target only: Gamma keeps running on its
+  local files. The section has three rows. The Copy to a bucket switch
+  saves at once; with no bucket saved, turning it on opens the set-up
+  instead. The summary row is named after the bucket ("No bucket yet"
+  before one is saved) and reads "s3://gamma-backups/prefix · every 1 h ·
+  7 kept", with the endpoint's host in place of `s3://` for R2 or MinIO.
+  Its Set up… or Edit… button opens the editor `SubDialog` ("Set up
+  off-site copies" / "Edit off-site copies"), laid out like the shared AI
+  key editor: the bucket, the endpoint (empty for AWS S3), the region, the
+  access key ID, the write-only secret key (the box reads "secret set —
+  type to replace" while one is stored, and a secret is sent only when
+  typed), the prefix, how often (a `MenuSelect`: every 15 minutes, 1, 6 or
+  24 hours) and the copies kept per database, then Test connection, which
+  tries the dialog's values, saved or not, and answers beside its button.
+  Save (or Enter) closes the dialog once the server takes the values and
+  shows its refusal in the dialog otherwise. Saving the first bucket turns
+  the copies on, as connecting an AI service does; later edits leave the
+  switch as it is. Closing the dialog with unsaved edits asks first. While
+  the copies are on, Status reads "last round … · 12 databases · 340
+  uploads · 0 failed · next round …" (or "no round yet", with the round's
+  error under it) beside Copy now, which is disabled while a round runs.
+  With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
+  switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
+  server's environment" (the summary line is its hover title), and its one
+  button is Test, which tries the environment's bucket. `GET/PUT
+  /api/admin/offsite`, `POST /api/admin/offsite/test` and `…/run`; the
+  rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
+  bucket".
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, search-index rebuilding and the per-paper metadata / text / index
   health table.
@@ -409,9 +440,7 @@ Administration (admins only):
 - **Users**: accounts, each with its personal workspaces and
   labelled Storage / Edit buttons.
 - **Server**: the dashboard (build, uptime, warnings, the update
-  check, and two read-only rows the server's environment sets: Stored
-  files, local or a bucket, and Database copies, off or their interval and
-  last round), the public server URL, storage defaults (each box saves on Enter
+  check), the public server URL, storage defaults (each box saves on Enter
   or blur), **Guests**, the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file, the
   damaged ones listed under the row), server backups and the log with its
@@ -489,7 +518,9 @@ hint (the row's own words) and English synonyms. A setting one level down
 (in a workspace's Manage page, a row's menu) also names the `target` on the
 pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
-first; inaccessible management pages are filtered out. A result is a
+first; inaccessible management pages are filtered out, and so is an
+admin-only section of a pane everyone has (Backups › Off-site copies,
+marked `admin()` in the catalog) unless the Server pane is offered. A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching
@@ -572,7 +603,12 @@ accept a `draft` value for dismissal protection. See
 `npm test` covers permission presets, search visibility and legacy pane aliases.
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
-shared chat settings, mobile layout and administrator account separation.
+shared chat settings, mobile layout, administrator account separation, and
+Backups › Off-site copies: an admin's alone, set up in its dialog and read
+back there with its write-only secret, the unsaved-edit question on Cancel,
+Test against an unreachable endpoint, Copy now against a stand-in bucket
+that refuses, and the read-only summary of a second server started with
+`GAMMA_S3_BUCKET`.
 Use `--keep` to retain desktop/mobile screenshots. For concurrent development,
 build into a private directory and set `GAMMA_E2E_DIST` to that directory so
 another build cannot replace the assets while the suite runs.

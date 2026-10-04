@@ -29,6 +29,7 @@ def _provider(ai_provider):
 def _offline_model_facts(monkeypatch):
     # The chat loop also looks up model limits before calling _open_ai.
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
 
 
 def _names(specs):

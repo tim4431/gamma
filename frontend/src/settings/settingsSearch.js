@@ -10,8 +10,10 @@ import { t } from "../shared/i18n/i18n.js";
 // key), English synonyms, and — for a setting one level down, inside a
 // workspace's Manage page or a row's menu — the `target` that is on the pane
 // itself. tests/settingsSearch.test.mjs checks every target against its
-// pane's source.
+// pane's source. An admin-only section of a pane everyone has (Backups ›
+// Off-site copies) is wrapped in `admin()`.
 const e = (pane, label, section, hint, keywords, target) => ({ pane, label, section, hint, keywords, target: target || label });
+const admin = (entry) => ({ ...entry, admin: true });
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
@@ -87,6 +89,7 @@ const entries = [
   e("backups", t("Backups"), null, t("Server-kept snapshots and the tasks that take them."), "snapshot backup"),
   e("backups", t("Periodic backup tasks"), null, t("Hourly, daily, weekly or monthly snapshots"), "automatic scheduled tasks hourly daily weekly monthly cron retention schedule"),
   e("backups", t("Restore a backup"), t("Saved snapshots"), t("A snapshot's Restore menu: replace or merge"), "restore replace merge snapshot roll back download", t("Saved snapshots")),
+  admin(e("backups", t("Off-site copies"), null, t("Databases and uploaded files, every so often; Gamma keeps running on its own disk"), "administration offsite backup bucket S3 R2 Cloudflare AWS MinIO cloud remote storage replicate disaster recovery")),
   e("maintenance", t("Library maintenance"), null, t("Storage, search index and metadata health"), "metadata health text index rebuild papers"),
   e("maintenance", t("Uploaded files"), t("Storage"), t("PDFs and images on the server"), "storage quota uploads space used disk"),
   e("users", t("Users"), null, t("Accounts, passwords and storage limits"), "administration accounts limits personal workspaces"),
@@ -107,12 +110,14 @@ export const SETTINGS_SEARCH = entries;
 
 // Every word of the query must appear in the entry's label, synonyms, hint
 // or section; entries whose label holds every word come first, then the
-// rest, each group in table order.
+// rest, each group in table order. An `admin` entry is offered only while
+// the Server pane is, which the dialog shows to admins alone.
 export function searchSettings(query, allowedPanes) {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
   const has = (text) => words.every((word) => text.toLocaleLowerCase().includes(word));
-  const found = entries.filter((entry) => allowedPanes.includes(entry.pane)
+  const isAdmin = allowedPanes.includes("server");
+  const found = entries.filter((entry) => allowedPanes.includes(entry.pane) && (!entry.admin || isAdmin)
     && has(`${entry.label} ${entry.keywords} ${entry.hint || ""} ${entry.section || ""}`));
   return [...found.filter((entry) => has(entry.label)), ...found.filter((entry) => !has(entry.label))];
 }

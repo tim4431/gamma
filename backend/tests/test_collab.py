@@ -6,7 +6,7 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import account_of, guest_name, login, make_page, make_user, recv, workspace_of
+from conftest import account_of, guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -251,22 +251,14 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
 
 # --- the websocket -------------------------------------------------------------
 
-def _hello(ws):
-    """The hello a fresh socket receives; its seq is the page's log position,
-    the base every later sequence number is checked against."""
-    msg = ws.receive_json()
-    assert msg["t"] == "hello"
-    return msg
-
-
 def test_socket_hello_and_fanout(guest):
     page = make_page(guest, "Socket page")
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a:
-        hello = _hello(a)
+        hello = recv_hello(a)
         assert hello["client"] == "aa"
         assert [p["client"] for p in hello["peers"]] == ["aa"] and hello["peers"][0]["name"] == guest_name()
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
-            hb = _hello(b)
+            hb = recv_hello(b)
             assert hb["color"] != hello["color"] and {p["client"] for p in hb["peers"]} == {"aa", "bb"}
             assert recv(a, "join")["peer"]["client"] == "bb"
             # a write reaches both, tagged with the writer's client id and the next seq
@@ -286,9 +278,9 @@ def test_socket_link_visitor_joins_under_its_display_name(owner):
     from gamma.app import app
     anon = TestClient(app)
     with owner.websocket_connect(f"/api/ws/page/{page['id']}?client=ow") as o:
-        _hello(o)
+        recv_hello(o)
         with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=vis&share={token}&name=Otter%20the%20Bold") as v:
-            hv = _hello(v)
+            hv = recv_hello(v)
             me = next(p for p in hv["peers"] if p["client"] == "vis")
             assert (me["user"], me["name"], me["can_edit"]) == ("", "Otter the Bold", True)
             joined = recv(o, "join")["peer"]
@@ -301,7 +293,7 @@ def test_socket_link_visitor_joins_under_its_display_name(owner):
         # a view-only link still joins, presence-only, and without a name it is Anonymous
         _share(owner, page["id"], audience="anyone", role="view")
         with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=v2&share={token}") as v:
-            me = next(p for p in _hello(v)["peers"] if p["client"] == "v2")
+            me = next(p for p in recv_hello(v)["peers"] if p["client"] == "v2")
             assert (me["name"], me["can_edit"]) == ("Anonymous", False)
 
 
@@ -310,13 +302,13 @@ def test_socket_cursor_presence(guest):
     assert _ops(guest, page["id"], [{"op": "insert", "id": "wsC", "parent": page["id"], "content": "hi"}]).status_code == 200
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a, \
             guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
-        _hello(a), _hello(b)
+        recv_hello(a), recv_hello(b)
         # a cursor travels to the others only
         a.send_json({"t": "cursor", "block": "wsC", "anchor": 1, "head": 2})
         assert recv(b, "cursor") == {"t": "cursor", "client": "aa", "block": "wsC", "anchor": 1, "head": 2}
         # a later joiner sees it in the hello
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=cc") as c:
-            assert next(p for p in _hello(c)["peers"] if p["client"] == "aa")["block"] == "wsC"
+            assert next(p for p in recv_hello(c)["peers"] if p["client"] == "aa")["block"] == "wsC"
         assert recv(a, "leave")["client"] == "cc"
 
 
@@ -325,7 +317,7 @@ def test_socket_cursor_rides_on_a_batch(guest):
     assert _ops(guest, page["id"], [{"op": "insert", "id": "wsR", "parent": page["id"], "content": "hi"}]).status_code == 200
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a, \
             guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
-        _hello(a), _hello(b)
+        recv_hello(a), recv_hello(b)
         # a caret sent with a batch rides along on the fan-out (to the writer
         # too — it is the batch's ack for the others' bookkeeping), and is
         # the writer's presence from then on
@@ -337,7 +329,7 @@ def test_socket_cursor_rides_on_a_batch(guest):
             m = recv(ws, "ops")
             assert m["client"] == "aa" and m["cursor"] == {"block": "wsR", "anchor": 8, "head": 8}
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=cc") as c:
-            pa = next(p for p in _hello(c)["peers"] if p["client"] == "aa")
+            pa = next(p for p in recv_hello(c)["peers"] if p["client"] == "aa")
             assert (pa["block"], pa["anchor"], pa["head"]) == ("wsR", 8, 8)
         assert recv(a, "leave")["client"] == "cc"
         # a batch without one changes nothing about presence
@@ -351,7 +343,7 @@ def test_socket_server_side_writers_reach_the_room(guest):
     page = make_page(guest, "Socket writers page")
     assert _ops(guest, page["id"], [{"op": "insert", "id": "wsD", "parent": page["id"], "content": "hi"}]).status_code == 200
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=dd") as d:
-        seq = _hello(d)["seq"]
+        seq = recv_hello(d)["seq"]
         assert guest.put("/api/blocks/wsD", json={"content": "edited", "properties": {"x": 1}}).status_code == 200
         m = recv(d, "ops")
         assert m["seq"] == seq + 1

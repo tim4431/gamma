@@ -15,8 +15,10 @@ WORKSPACES_DIR = DATA_DIR / "workspaces"
 # The pre-workspace layout (users/<username>/...). Read ONLY by the schema
 # migration that moves it into WORKSPACES_DIR (gamma/migrations.py).
 LEGACY_USERS_DIR = DATA_DIR / "users"
-# Database snapshots the migration runner takes before changing the data
-# directory (gamma/migrations.py backup()).
+# Snapshots and backup state: the migration runner's pre-upgrade copies
+# (gamma/backups.py), workspace snapshots and their scheduled tasks
+# (gamma/ws_backup.py, gamma/backup_schedule.py), the off-site copies'
+# state (gamma/offsite.py).
 BACKUPS_DIR = DATA_DIR / "backups"
 
 # Built frontend (vite dist/). When set and the directory exists, the backend
@@ -123,53 +125,28 @@ def sync_interval_s() -> int:
         return 30
 
 
-def blob_env() -> dict:
-    """Where stored files live (gamma/blobs.py), read once at startup:
-    ``GAMMA_BLOBS`` ``local`` (the default, nothing else to set: each
-    workspace's ``uploads/``) or ``s3``, an S3-compatible bucket (AWS,
-    Cloudflare R2, MinIO) named by ``GAMMA_S3_BUCKET``, with
-    ``GAMMA_S3_ENDPOINT`` (unset for AWS itself), ``GAMMA_S3_REGION``,
-    ``GAMMA_S3_ACCESS_KEY`` / ``GAMMA_S3_SECRET_KEY`` (both unset: boto3's
-    own chain, the ``AWS_*`` variables or an instance role) and
-    ``GAMMA_S3_PREFIX`` (put before every key). ``GAMMA_BLOB_CACHE_DIR``
-    (default ``<data dir>/cache/uploads``) and ``GAMMA_BLOB_CACHE_BYTES``
-    bound the node's copies of bucket files; ``GAMMA_S3_PRESIGN`` (default
-    on) makes the uploads route redirect a browser to the bucket, off
-    streams the bytes through the node."""
+def offsite_env() -> dict:
+    """The off-site copies as the environment sets them, read at each use
+    by gamma/offsite.py, whose ``settings`` merges them with the saved
+    settings. With ``GAMMA_S3_BUCKET`` set every field comes
+    from here and the saved settings are not used: ``GAMMA_S3_ENDPOINT``
+    (unset for AWS itself), ``GAMMA_S3_REGION``, ``GAMMA_S3_ACCESS_KEY`` /
+    ``GAMMA_S3_SECRET_KEY`` (both unset: boto3's own chain, the ``AWS_*``
+    variables or an instance role), ``GAMMA_S3_PREFIX`` (put before every
+    key), ``GAMMA_OFFSITE`` (``enabled``: on unless 0/false/no/off),
+    ``GAMMA_OFFSITE_INTERVAL`` (``interval``, seconds) and
+    ``GAMMA_OFFSITE_KEEP`` (``keep``: copies per database). Strings as
+    set; offsite.py parses the numbers."""
     env = os.environ.get
-    return {"kind": env("GAMMA_BLOBS", "").strip().lower() or "local",
-            "bucket": env("GAMMA_S3_BUCKET", "").strip(),
+    return {"bucket": env("GAMMA_S3_BUCKET", "").strip(),
             "endpoint": env("GAMMA_S3_ENDPOINT", "").strip().rstrip("/"),
             "region": env("GAMMA_S3_REGION", "").strip(),
             "access_key": env("GAMMA_S3_ACCESS_KEY", "").strip(),
             "secret_key": env("GAMMA_S3_SECRET_KEY", "").strip(),
             "prefix": env("GAMMA_S3_PREFIX", "").strip(),
-            "cache_dir": env("GAMMA_BLOB_CACHE_DIR", "").strip(),
-            "cache_bytes": env("GAMMA_BLOB_CACHE_BYTES", "").strip(),
-            "presign": env("GAMMA_S3_PRESIGN", "").strip().lower() not in ("0", "false", "no", "off")}
-
-
-def db_copies_env() -> dict:
-    """The databases' copies in the store (gamma/db_copies.py), read at each
-    round: ``GAMMA_DB_COPIES`` on or off, by default on with the stored
-    files in a bucket (``GAMMA_BLOBS=s3``) and off with them local, where
-    the copies would land on the data directory's own disk
-    (``<data dir>/dbcopies/``); ``GAMMA_DB_COPIES_INTERVAL``, the seconds
-    between rounds (default 3600, at least 60, read at startup);
-    ``GAMMA_DB_COPIES_KEEP``, the copies kept per database (default 7, at
-    least 1). A number that does not parse takes the default."""
-    env = os.environ.get
-    raw = env("GAMMA_DB_COPIES", "").strip().lower()
-
-    def number(name: str, default: int, least: int) -> int:
-        try:
-            return max(least, int(env(name, "").strip() or default))
-        except ValueError:
-            return default
-
-    return {"on": raw in ("1", "true", "yes", "on") if raw else blob_env()["kind"] == "s3",
-            "interval": number("GAMMA_DB_COPIES_INTERVAL", 3600, 60),
-            "keep": number("GAMMA_DB_COPIES_KEEP", 7, 1)}
+            "enabled": env("GAMMA_OFFSITE", "").strip(),
+            "interval": env("GAMMA_OFFSITE_INTERVAL", "").strip(),
+            "keep": env("GAMMA_OFFSITE_KEEP", "").strip()}
 
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB

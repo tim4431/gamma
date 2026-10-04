@@ -4,7 +4,8 @@
 // delete. Every snapshot is a full copy that restores on its own; each
 // workspace keeps at most a fixed number of manual ones, and a replace
 // first keeps the current state as a "Before restore" snapshot. GUI for
-// /api/workspaces/{ws}/backups* (gamma/ws_backup.py).
+// /api/workspaces/{ws}/backups* (gamma/ws_backup.py). Between the task
+// table and the snapshots, admins get Off-site copies (OffsiteCopies.jsx).
 //
 // Also here: ServerBackups — the admin's whole-data-directory snapshots
 // (Settings → Server; /api/admin/backups*, gamma/backups.py). Restoring one
@@ -13,6 +14,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { BackupTasks } from "./BackupTasks";
+import { OffsiteCopies } from "./OffsiteCopies";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
@@ -33,7 +35,7 @@ export function fmtWhen(iso, fallback = "") {
 const jobWorkspaces = (job) => (job.kind === "snapshot" ? job.params?.workspaces || [] : [job.params?.ws]);
 
 export function WorkspaceBackups({ value }) {
-  const { workspace, tasks, setStatus, confirm } = value;
+  const { workspace, tasks, setStatus, confirm, isAdmin } = value;
   const [mine, setMine] = React.useState(null);   // GET /api/workspaces/mine → workspaces
   const [lists, setLists] = React.useState({});   // ws id → {backups, max} | {error}
   const [error, setError] = React.useState("");
@@ -212,6 +214,7 @@ export function WorkspaceBackups({ value }) {
       {mine ? (
         <>
           <BackupTasks workspaces={mine} confirm={confirm} onRefresh={loadList} />
+          {isAdmin ? <OffsiteCopies setStatus={setStatus} /> : null}
           <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu

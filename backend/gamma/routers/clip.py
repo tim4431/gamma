@@ -54,7 +54,7 @@ from ..logbuf import log
 from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
-from .. import blobs, pdf_meta
+from .. import pdf_meta, storage
 from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, put_upload, url_filename
 from .metadata import fetch_page_metadata, registry_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
@@ -316,7 +316,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             doc_id = safe_doc_id(payload.doc_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid doc_id")
-        if not blobs.exists(ws, f"{doc_id}.pdf"):
+        if not storage.exists(ws, f"{doc_id}.pdf"):
             raise HTTPException(status_code=404, detail="no uploaded PDF with this doc_id — upload it first")
         page_source = stored_pdf_url(doc_id)
     else:
@@ -333,7 +333,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                 page_source = resolved["source_url"]
                 note = resolved.get("note", "")
                 doc_id = url_doc_id(page_source)
-                if not blobs.exists(ws, f"{doc_id}.pdf"):
+                if not storage.exists(ws, f"{doc_id}.pdf"):
                     _, data = download_pdf(page_source, want_bytes=payload.save_copy,
                                            referer=resolved.get("referer", ""))
                     if payload.save_copy:

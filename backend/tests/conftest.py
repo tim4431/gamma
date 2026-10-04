@@ -19,6 +19,10 @@ for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_A
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
             "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD"):
     os.environ.pop(var, None)
+# Nor a developer's off-site bucket: a test server's startup round must never
+# copy into it (gamma/offsite.py reads these at every round).
+for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_OFFSITE"))]:
+    os.environ.pop(var)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -32,7 +36,7 @@ S3_TEST_BUCKET = "gamma-test"
 @pytest.fixture
 def s3_bucket():
     """moto's in-process S3 with one empty bucket, ``S3_TEST_BUCKET``, for the
-    S3 driver's tests (gamma/blobs.py, gamma/db_copies.py): the raw boto3
+    S3 tests (gamma/s3.py, gamma/offsite.py): the raw boto3
     client, live for the test. Skipped where moto is not installed."""
     moto = pytest.importorskip("moto")
     with moto.mock_aws():
@@ -476,3 +480,11 @@ def recv(sock, kind, skip=None):
             return msg
         assert skip is None or msg["t"] in skip, msg
     raise AssertionError(f"no {kind} message")
+
+
+def recv_hello(sock):
+    """A fresh page socket's hello. Another peer's presence (join, leave,
+    cursor) may come first: the socket is in the room before the server
+    reads the log position the hello carries, and the hello's peer list
+    replaces whatever presence came before it (collabSession.js)."""
+    return recv(sock, "hello", ("join", "leave", "cursor"))

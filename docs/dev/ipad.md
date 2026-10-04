@@ -214,6 +214,39 @@ Raw touches carry everything `gamma-ink` stores.
   bundled core through the Swift host (the replay's order, a page among a
   note's blocks).
 
+### Keeping the host in step
+
+Nearly everything the app knows about the server is the shared
+JavaScript, so a protocol change is made once, in `frontend/src/replica/`,
+and the checks above carry it to the app: `check.yml` bundles the core
+and runs `core.test.mjs` on every pull request, the shared fixtures pin
+the pure rules against the Python engine, and the `replica` group runs
+rounds against the real server. The Swift host decides nothing; a rule
+that would need a Swift change belongs in the core.
+
+What is Swift's alone is small: the web session's shape and the write
+token's minting (`Core/Remote.swift` `ServerSetup`), files moved by name
+through `/api/uploads` and `/api/upload-file` (`Remote.upload`, `head`,
+`download`), and the upload-reference pattern (`Core/Store.swift`).
+`backend/tests/test_ipad_contract.py` pins those four answers from the
+server's side, with a comment naming the Swift that reads each one. A
+backend change under `routers/sync.py`, `routers/collab.py`, `ops.py`,
+`sync_engine.py`, `sync_tree.py`, `textmerge.py`, `routers/uploads.py`,
+`routers/integrations.py` or the session's answer runs, in this order:
+
+```bash
+cd backend && venv/Scripts/python.exe -m pytest tests/test_ipad_contract.py tests/test_shared_fixtures.py tests/test_sync_feed.py -q
+node ipad/scripts/build-core.mjs && node --test ipad/scripts/core.test.mjs
+cd frontend && npm run e2e -- --group replica,ipad
+```
+
+A Swift change (`ipad/**`) also runs the XCTest suite on a Mac, which
+`ipad.yml` does in CI. When a server answer the Swift reads changes,
+change `test_ipad_contract.py` and the Swift together, and say so in
+the step's row of [migrations.md](migrations.md) when stored shapes are
+involved, as "Following the server's data model" below does for the
+core.
+
 ### Not built yet
 
 - A highlight from a text selection. PDFKit selects, and the web view

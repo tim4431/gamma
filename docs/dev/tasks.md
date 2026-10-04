@@ -143,6 +143,11 @@ Its row opens the report page once it exists, and `onJobFinished`
 (`tasks/useAppJobs.js`) offers it
 in the pill rather than opening it over whatever the user is reading.
 
+The off-site copies' Copy now (Settings → Backups, `POST
+/api/admin/offsite/run`) is not a job: it starts the server's own
+scheduled round early, one at a time, and the section's status line
+follows it (`gamma/offsite.py`).
+
 The export driver reads a folder's pages again when the job runs, so a
 queued export holds what the folder holds then. An import job holds the
 staged review's claim while it reads the upload and removes the upload when

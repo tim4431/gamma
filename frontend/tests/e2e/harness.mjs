@@ -46,6 +46,10 @@ export function wanted(prefix) {
 // under its temp dir and carry every server's log tail.
 const servers = [];
 
+// The developer's own off-site bucket must never receive a test server's
+// copies: those variables are dropped, and a scenario sets its own.
+const baseEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GAMMA_(S3_|OFFSITE)/.test(key)));
+
 // `env` adds to the backend's environment (a second Gamma started as another
 // kind of server, e.g. the publish scenario's share host).
 export class Server {
@@ -61,7 +65,7 @@ export class Server {
   get base() { return `http://127.0.0.1:${this.port}`; }
   manage(...args) {
     return execFileSync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
+      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
     });
   }
   async start() {
@@ -77,7 +81,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

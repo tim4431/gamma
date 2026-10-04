@@ -12,6 +12,7 @@ show or save::
     ("handoff", dict)     a card asking the user's browser for a blocked PDF
     ("action", dict)      a call that ran (reads and failures included)
     ("progress", dict)    a note edit the model is still writing
+    ("reasoning", dict)   one provider turn's thinking, as text ({wire field: text})
     ("usage", dict)       one provider turn's token counts
     ("truncated", True)   the turn hit the provider's output cap
 
@@ -44,7 +45,7 @@ from dataclasses import dataclass, field
 from . import ai_permissions
 from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
-from .ai_protocols.base import truncated_stop
+from .ai_protocols.base import reasoning_text, truncated_stop
 from .ai_tools import (MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS, approval_preview,
                        ensure_tally, find_selection, run_agent_tool, settled_action, skipped_fetch,
                        tool_action, tool_permission, unanswered_fetch)
@@ -135,15 +136,17 @@ class AgentLoop:
 
     ``open_round(conversation)`` opens one provider turn (the caller owns the
     connection, the model and the window fitting) and ``read_events(resp)``
-    parses its SSE into the ``("text" | "tool" | "tool_delta" | "usage" |
-    "stop", data)`` events every wire speaks. ``on_usage`` is called with
-    each turn's counts before they are yielded, so a caller that meters
-    tokens sees them even if it ignores the event.
+    parses its SSE into the ``("text" | "tool" | "tool_delta" | "reasoning" |
+    "usage" | "stop", data)`` events every wire speaks. ``on_usage`` is
+    called with each turn's counts before they are yielded, so a caller that
+    meters tokens sees them even if it ignores the event. ``pictures`` False
+    (a model that reads text only) leaves out the pictures tool results
+    carry.
     """
 
     def __init__(self, *, ws: str, scope: dict, tools: list, conversation: Conversation,
                  open_round, read_events, on_usage=None, max_rounds: int = 0,
-                 gate=None, settle=None):
+                 gate=None, settle=None, pictures: bool = True):
         self.ws = ws
         self.scope = scope
         self.tools = tools
@@ -154,6 +157,7 @@ class AgentLoop:
         self.max_rounds = max_rounds or MAX_TOOL_ROUNDS
         self.gate = gate
         self.settle = settle
+        self.pictures = pictures
         self.armed = {t["name"] for t in tools}
         self.mutations = 0
         # Made before anything can run in parallel, so a batch never races
@@ -185,6 +189,7 @@ class AgentLoop:
         calls, text_parts = [], []
         previewed = {}   # call id -> content previewed so far (dedup)
         stop = ""
+        thinking = None  # what the wire reported of the model's thinking
         try:
             for kind, data in self.read_events(resp):
                 if kind == "text":
@@ -198,6 +203,13 @@ class AgentLoop:
                     progress = self._preview(data, previewed)
                     if progress:
                         yield ("progress", progress)
+                elif kind == "reasoning":
+                    # Kept whole on the turn the next round replays; its
+                    # text goes up for the reply to save and send back.
+                    thinking = data
+                    said = reasoning_text(data)
+                    if said:
+                        yield ("reasoning", said)
                 elif kind == "usage":
                     if self.on_usage:
                         self.on_usage(data)
@@ -212,7 +224,8 @@ class AgentLoop:
         if not calls:
             return []
         self.conversation.messages.append(
-            {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls})
+            {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls,
+             **({"reasoning": thinking} if thinking else {})})
         for group in self._groups(calls):
             if (yield from self._run_group(group)) is None:
                 return None
@@ -282,8 +295,11 @@ class AgentLoop:
             group = settled
         for item in group:
             # A picture a tool answered with (view_pdf_page, view_ink) goes to
-            # the model with its result, never into the streamed/saved chip.
+            # the model with its result, never into the streamed/saved chip —
+            # and not at all to a model that reads text only.
             images = item.action.pop("images", None)
+            if not self.pictures:
+                images = None
             # A tool that ran a helper of its own (read_paper) spent tokens
             # the provider reported to it, not to this loop: pass them on so
             # the reply's footer counts the whole answer.

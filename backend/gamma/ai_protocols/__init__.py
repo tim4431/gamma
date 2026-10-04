@@ -2,11 +2,13 @@
 differs between providers lives on its adapter, never as a protocol branch
 in a route. Adding a provider that speaks a new wire is one module here and
 one line in ``WIRES``; a new service on an existing wire is a ``SERVICES``
-preset.
+preset (``services.py``).
 
-- ``anthropic`` — Anthropic Messages API (Anthropic, Kimi, GLM, …)
-- ``openai`` — OpenAI Chat Completions (OpenAI, DeepSeek, OpenRouter, local
-  servers …); switches to ``openai-responses`` for OpenAI's own tool calls
+- ``anthropic`` — Anthropic Messages API (Anthropic, and services that
+  speak it behind their own base URL)
+- ``openai`` — OpenAI Chat Completions (OpenAI, DeepSeek, Kimi, Qwen, GLM,
+  OpenRouter, local servers …); switches to ``openai-responses`` for
+  OpenAI's own tool calls
 - ``chatgpt`` — ChatGPT subscription sign-in (the Codex Responses backend)
 """
 
@@ -15,6 +17,7 @@ from .base import SPEED_ORDER, Protocol
 from .chatgpt import ChatGPT
 from .openai import OpenAIChat
 from .responses import OPENAI_RESPONSES
+from .services import DEFAULT_MAX_TOKENS, SERVICES, service_of
 
 # Every wire a call may go over, by id; the ones an entry may name come
 # first, in the order the settings form offers them.
@@ -22,15 +25,6 @@ WIRES = {p.id: p for p in (Anthropic(), OpenAIChat(), ChatGPT(), OPENAI_RESPONSE
 
 # The protocols a provider entry may name.
 PROTOCOLS = {pid: p for pid, p in WIRES.items() if p.entry}
-
-# Named services the settings form offers next to the raw protocols: a
-# protocol plus that service's endpoint. An entry made from one is just
-# protocol + base URL; the preset only names it (form, provider label) and
-# says what its keys look like and where to make one (the form's key field).
-SERVICES = [
-    {"id": "deepseek", "label": "DeepSeek", "protocol": "openai", "base_url": "https://api.deepseek.com",
-     "key_placeholder": "sk-…", "key_url": "https://platform.deepseek.com/api_keys"},
-]
 
 
 def get(protocol_id) -> Protocol | None:
@@ -43,4 +37,5 @@ def of(conf: dict) -> Protocol:
     return WIRES[conf["protocol"]]
 
 
-__all__ = ["PROTOCOLS", "SERVICES", "SPEED_ORDER", "WIRES", "Protocol", "get", "of"]
+__all__ = ["DEFAULT_MAX_TOKENS", "PROTOCOLS", "SERVICES", "SPEED_ORDER", "WIRES", "Protocol", "get", "of",
+           "service_of"]
