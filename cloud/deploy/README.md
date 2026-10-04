@@ -321,9 +321,11 @@ a fleet agent on each host does the Docker work
    `COMPOSE_PROFILES=fleet`, and, for off-site copies, the
    `GAMMA_FLEET_S3_*` bucket (each server copies under
    `hosted/<account id>/`).
-4. **The agent image.** No workflow publishes it yet: on the host, from a
-   checkout, `docker build -t ghcr.io/tim4431/gamma-fleet:latest
-   cloud/fleet`.
+4. **The agent image.** `fleet.yml` publishes
+   `ghcr.io/tim4431/gamma-fleet:latest` on every push to `main` touching
+   `cloud/fleet/` (or `gh workflow run fleet.yml --ref <branch>`); the
+   compose file pulls it. Update it with `docker compose pull fleet &&
+   docker compose up -d`.
 5. `docker compose up -d`, then `docker compose exec caddy caddy reload
    --config /etc/caddy/Caddyfile`. Within five minutes the host shows on
    the Servers tab with its memory and disk; until its first heartbeat it
