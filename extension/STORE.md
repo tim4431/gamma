@@ -49,27 +49,43 @@ The workflow signs in without a stored key: GitHub's OIDC token is
 exchanged for an access token of a Google Cloud service account (Workload
 Identity Federation), and that service account is linked to the publisher.
 In [Google Cloud Shell](https://console.cloud.google.com/?cloudshell=true)
-(or any shell with `gcloud`), with a project ID of your choice:
+(or any shell with `gcloud`), with a project ID of your choice (IDs are
+global, so pick an unused one). Two things learned on the first setup:
+being the project's owner is not enough to create a workload identity
+pool (step 2 grants *Workload Identity Pool Admin*), and a pool just
+created can still answer `describe` with NOT_FOUND, so its full name is
+built from the project number instead. Each `&&` stops the chain at the
+first failure, so nothing runs with an empty value.
 
 ```bash
-PROJECT_ID=gamma-connector-publish        # new or existing project
-REPO=tim4431/Gamma                        # exactly as GitHub spells it
-gcloud projects create "$PROJECT_ID"      # skip for an existing project
-gcloud config set project "$PROJECT_ID"
-gcloud services enable chromewebstore.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
-gcloud iam service-accounts create cws-publisher --display-name="Gamma Connector publisher"
-gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions"
+PROJECT_ID=gamma-cws-$RANDOM   # write it down
+REPO=tim4431/gamma             # GitHub's canonical name, lowercase: the OIDC token carries it and the condition is case-sensitive
+# 1. The project, its APIs and the service account.
+gcloud projects create "$PROJECT_ID" &&
+gcloud config set project "$PROJECT_ID" &&
+gcloud services enable chromewebstore.googleapis.com iamcredentials.googleapis.com sts.googleapis.com &&
+gcloud iam service-accounts create cws-publisher --display-name="Gamma Connector publisher" &&
+# 2. The right to create the pool; wait about a minute after this.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="user:$(gcloud config get-value account)" \
+  --role=roles/iam.workloadIdentityPoolAdmin --condition=None
+```
+
+```bash
+# 3. The pool, its GitHub provider, and the service account opened to this repository.
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)') &&
+POOL="projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github" &&
+gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions" &&
 gcloud iam workload-identity-pools providers create-oidc gamma \
   --location=global --workload-identity-pool=github \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository == '$REPO'"
-POOL=$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')
+  --attribute-condition="assertion.repository == '$REPO'" &&
 gcloud iam service-accounts add-iam-policy-binding "cws-publisher@$PROJECT_ID.iam.gserviceaccount.com" \
   --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/$POOL/attribute.repository/$REPO"
-gcloud iam workload-identity-pools providers describe gamma \
-  --location=global --workload-identity-pool=github --format='value(name)'   # → CWS_WORKLOAD_IDENTITY_PROVIDER
+  --member="principalSet://iam.googleapis.com/$POOL/attribute.repository/$REPO" &&
+echo "CWS_SERVICE_ACCOUNT = cws-publisher@$PROJECT_ID.iam.gserviceaccount.com" &&
+echo "CWS_WORKLOAD_IDENTITY_PROVIDER = $POOL/providers/gamma"
 ```
 
 Then:
@@ -80,16 +96,18 @@ Then:
    credential:
 
    ```bash
-   gh variable set CWS_PUBLISHER_ID --body "<publisher id>"
-   gh variable set CWS_ITEM_ID --body "<item id>"
-   gh variable set CWS_SERVICE_ACCOUNT --body "cws-publisher@<project>.iam.gserviceaccount.com"
-   gh variable set CWS_WORKLOAD_IDENTITY_PROVIDER --body "projects/<number>/locations/global/workloadIdentityPools/github/providers/gamma"
+   gh variable set CWS_PUBLISHER_ID --repo tim4431/gamma --body "<publisher id>"
+   gh variable set CWS_ITEM_ID --repo tim4431/gamma --body "<item id>"
+   gh variable set CWS_SERVICE_ACCOUNT --repo tim4431/gamma --body "cws-publisher@<project>.iam.gserviceaccount.com"
+   gh variable set CWS_WORKLOAD_IDENTITY_PROVIDER --repo tim4431/gamma --body "projects/<number>/locations/global/workloadIdentityPools/github/providers/gamma"
    ```
 
-3. Check the sign-in: `gh workflow run chrome-store.yml --ref main -f publish=false`.
-   While the first version is in review this reads the item's status and
-   stops with "still in review", which proves the chain works. After that it
-   uploads a draft without submitting it.
+3. Check the sign-in: `gh workflow run chrome-store.yml --repo tim4431/gamma --ref main -f tag=<a release with a gamma-connector zip> -f publish=false`
+   (a blank tag means the latest release, which needs that zip). While a
+   version is in review the run signs in, reads the item's status, and ends
+   green with "The store takes no new package now (You may not edit or
+   publish an item that is in review.)", which proves the chain works. After
+   the review it uploads a draft without submitting it.
 
 ## 3. Every release
 
@@ -99,7 +117,7 @@ process it, and submits it for review; the run's summary shows the
 resulting state (`PENDING_REVIEW`, usually). While an earlier version is
 still in review the store accepts no new package: the run skips with a
 notice and never cancels the review; the next release, or
-`gh workflow run chrome-store.yml --ref main` (latest release) once the
+`gh workflow run chrome-store.yml --repo tim4431/gamma --ref main` (latest release) once the
 review is over, carries the changes. Each release's zip has a new version,
 so the store never sees a re-used one.
 

@@ -165,8 +165,11 @@ in with Workload Identity Federation (`google-github-actions/auth`, no
 stored key) as the service account linked to the publisher, and calls the
 Chrome Web Store API V2: `fetchStatus`, `upload`, polling until the upload
 is processed, then `publish`. It skips with a notice when an earlier
-version is still `PENDING_REVIEW` (it never cancels a review) or when the
-store already has that version. `publish=false` leaves the upload as a
+version is still in review (it never cancels a review) or when the store
+already has that version. A review shows in `fetchStatus` as
+`PENDING_REVIEW`, except during an item's first one, when the status
+carries no revision at all; the upload is then refused with
+`NOT_UPDATEABLE`, which counts as the same skip. `publish=false` leaves the upload as a
 draft. Setup, including the store item that only the dashboard can create:
 [extension/STORE.md](../../extension/STORE.md).
 
