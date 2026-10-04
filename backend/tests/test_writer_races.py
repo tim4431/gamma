@@ -317,7 +317,7 @@ def _annotated_pdf(ws, name, monkeypatch):
     path = ws_uploads_dir(ws) / name
     path.write_bytes(buf.getvalue())
     position = highlight_position(1, 200, 200, [(1, 1, 9, 9)])
-    monkeypatch.setattr(imports_mod, "_extract_pdf_annotations", lambda reader: [
+    monkeypatch.setattr(imports_mod, "_extract_pdf_annotations", lambda reader, glyphs=None: [
         {"key": "1:/Highlight:1:1:9", "content": "", "quote": "q",
          "color": "rgba(255, 226, 143, 0.65)", "position": position}])
     return path
