@@ -49,7 +49,7 @@ username". Such an invitation grants edit or view access, never ownership:
    workspace and subject) records the invitation. Inviting the same
    username again changes its role.
 4. **The claim.** Each cloud sign-in calls
-   `workspaces.claim_pending_memberships(username, subject)` from
+   `workspaces.claim_pending_memberships(user_id, subject)` from
    `cloud_auth.resolve_account`, after the local account is known. The local
    account can be newly provisioned, claimed by username, linked from
    Settings → Account & sync, or already linked. Every pending row for that subject
@@ -131,8 +131,9 @@ GAMMA_DATA_DIR/
   users.db                 accounts, sessions, workspaces, memberships,
                            page shares and account preferences
   workspaces/<id>/
-    pages.db               blocks and the per-page operation log
-    data.db                chats, cover snapshots and search indexes
+    pages.db               blocks, the op and change logs, AI chats, notes index,
+                           each account's tabs, recents and reading positions
+    data.db                derived only: PDF text index, PDF manifests, covers
     uploads/               PDFs, images and other attachments
 ```
 
@@ -145,7 +146,9 @@ pages, only editors and owners change them (a viewer's chat and covers stay
 in its browser tab). AI keys, provider choice and the preference profile
 (appearance, reading, library and chat settings, [settings.md](settings.md))
 belong to the account. Open tabs, recents, reading positions and saved
-layouts belong to an **account and workspace**.
+layouts belong to an **account and workspace**; the server keeps the
+first three in the workspace's pages.db (`workspace_prefs`), and an
+account's go when it leaves the workspace or is deleted.
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
 not restored because their owner is unknown.
@@ -156,7 +159,8 @@ Keep identity and data location separate in endpoint code:
 
 | Helper in `backend/gamma/auth.py` | Purpose |
 |---|---|
-| `require_user(request)` | Session username; account-only data such as AI settings (an integration token gets 403) |
+| `require_user_id(request)` | The session account's id (`users.id`), what storage takes: account-only data such as AI settings (an integration token gets 403) |
+| `require_user(request)` | The same check, answering the session's username: what an endpoint shows or compares with a name it was given |
 | `require_ws(request, write=False)` | Workspace ID with effective viewer access |
 | `require_ws(request, write=True)` | Workspace ID with editor or owner access (and, through an integration token, a write-scope one) |
 | `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
@@ -176,7 +180,11 @@ since they open every page with their workspace role whatever the share
 says.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
-`commit_ops`. Use `request.state.user` as the actor in the operation log.
+`commit_ops`. The actor in the operation log is `auth.actor_of(request)`:
+the account's id (`request.state.user_id`), or a link visitor's label. The
+membership helpers in `gamma/workspaces.py` take account ids too; the
+endpoints take and answer usernames and translate (`db.account_id`), and
+lists of people (`workspaces.members`, `pending_invites`) carry usernames.
 Account-wide preference keys do not require access to the selected workspace;
 workspace-specific preferences do.
 
@@ -271,7 +279,10 @@ or merges the databases, and not after (`restore_zip`'s `progress`,
 [tasks.md](tasks.md)).
 
 Exports transfer library content. Passwords, sessions and private AI
-credentials stay with the account.
+credentials stay with the account, and so do each account's open tabs,
+recents and reading positions: a zip's pages.db has `workspace_prefs`
+empty, none of its bytes left (`ws_backup.PRIVATE_TABLES`), and a restore
+keeps the live rows.
 
 A snapshot copies the databases first (the SQLite backup API) and lists the
 uploads only after that, so every file the copied pages name is on disk when
@@ -289,12 +300,17 @@ manifest's `integrity`. The listing shows a damaged copy and missing files.
 
 **Restoring** (`restore_zip`) checks the backup before it touches anything:
 the zip's shape and `PRAGMA quick_check` of its databases. A damaged backup
-is refused whole.
+is refused whole. Then the unpacked copies are normalized to the current
+shapes (`_normalize_copies`, [user_db.md](user_db.md) "pages.db"): a
+backup from before schema version 28 has its chats moved from its data.db
+into its pages.db, and every backup has its notes index built again from
+its rows (it may have been built under other normalization rules).
 
-- **Replace** normalizes the unpacked copies, keeps what the workspace holds
+- **Replace** keeps what the workspace holds
   now as an automatic `pre-restore` snapshot with its uploads, and swaps the
   databases in: pages.db is copied into the live file in one write
-  transaction, data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
+  transaction — its chats with it, the notes index following the copied
+  rows through its triggers — and data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
   newest three stay (`PRE_RESTORE_KEEP`) and do not count against the cap.
   The restore is refused when that snapshot cannot be taken.
 - **Files.** The backup's files the workspace lacks are copied in. Files
@@ -303,7 +319,12 @@ is refused whole.
 - **Merge** adds the pages the workspace lacks, whole. A block of such a
   page whose id the workspace uses elsewhere (it moved to another page
   since) comes in under a fresh id with its children, so nothing is grafted
-  into a page nobody restored.
+  into a page nobody restored. In the same transaction it adds every
+  conversation the workspace lacks (a bucket's active one, an archived one
+  by its id; `chats_added` counts them). The backup's data.db is not read.
+  The backup's folders and labels join the workspace's trees first
+  (`_merge_trees`), and an added page is filed under the workspace's ids
+  for them ([import_export.md](import_export.md) "Gamma-to-Gamma export").
 - **Pages in Recently deleted** count as lacking. A merge (and the reviewed
   Gamma import, which plans such a page as "create") removes the trashed
   copy's rows and brings the backup's version back live under the same ids.
@@ -318,12 +339,15 @@ Either way a restore writes pages behind the op log, so it keeps the log and
 the change feed honest ([collab.md](collab.md)):
 
 - every page it wrote gets a `reload` entry above the highest seq either
-  side had (a tab's seq never goes back), and its root is stamped now; a
-  replace copies pages.db in and writes these in the same write transaction
-  that read the live seqs, so a batch committed meanwhile waits and lands
-  above them;
-- pages a replace removed get a `deleted_pages` tombstone, and pages a
-  merge brought back lose theirs;
+  side had (a tab's seq never goes back), which touches it `live` in the
+  change log; a replace copies pages.db in and writes these in the same
+  write transaction that read the live seqs, so a batch committed meanwhile
+  waits and lands above them;
+- the change log is never replaced, so the cursors that copies hold into
+  it stay good. A replace copies every table but `page_changes`, then
+  turns `deleted` every page that is no page of the library afterwards
+  (removed, in the restored Recently deleted, or deleted in the backup's
+  own log) unless it already is. Pages a merge brought back turn `live`;
 - every open room of the workspace (a replace) or of the added pages (a
   merge) is told to reload, and the commit listeners hear of it.
 
@@ -346,6 +370,7 @@ no copy is kept of a delete that did not happen. A guest's workspace keeps
 no copy. The directory is then renamed to `.deleting-<id>-…` (atomic, so a
 background pass about to open one of its databases finds none instead of
 creating a fresh file in a half-removed directory) and removed, each step
+closing the server's own cached connections to the workspace first and
 retried for a second while a file is held open (Windows). What still stays
 is removed at the next startup or hourly (`workspaces.remove_leftovers`); a
 dot-named directory is never taken for a workspace. Its open page sockets
@@ -385,7 +410,7 @@ server — a *clone* of its *origin* in the UI's git vocabulary: it holds a
 copy, edits made in it are pushed to the origin when it is reachable, and
 edits made there are pulled. The desktop app makes one from the switcher
 (the *clone* chip on a remote workspace's row); any Gamma makes one from
-Settings → Account & sync → Clones with the server's address and a write-scope
+Settings → Workspaces → Clones with the server's address and a write-scope
 integration token made there. `GET /workspaces/mine` marks such a workspace
 with `mirror_of`; a workspace that publishes pages to Gamma Cloud (a
 filtered mirror of the share host) is not a clone and is marked

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
-from conftest import invite, register, verify
+from conftest import invite, register, set_setting, steps_after, verify
 from cryptography.hazmat.primitives.asymmetric import rsa
 from test_oidc import CALLBACK, authorize_params, pkce, request_id_from
 
@@ -139,7 +139,7 @@ def test_unverified_account_is_claimed(client, provider_says):
 
 
 def test_closed_registration_refuses_new_identity(client, provider_says):
-    config.REGISTRATION = "closed"
+    set_setting("registration", "closed")
     provider_says(gh())
     r = round_trip(client)
     assert r.status_code == 403 and "registration is closed" in r.text
@@ -268,7 +268,7 @@ def test_upgrade_adds_external_logins():
         conn.execute("DROP TABLE external_logins")
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
-    assert db.ensure_current() == ["external_logins", "devices", "profile", "connect"]
+    assert db.ensure_current() == steps_after(1)
     with closing(sqlite3.connect(str(config.DB_PATH))) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'external_logins'").fetchone()

@@ -175,10 +175,13 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="sharing"] .guideCard');
       await page.getByRole("button", { name: "Show me" }).click();
       // the popover top to bottom; an anyone-with-the-link share gets the access step that says so
-      for (const id of ["share-link", "share-people", "share-access-anyone", "share-stop"]) {
+      for (const id of ["share-link", "share-people", "share-access-anyone"]) {
         await page.waitForSelector(`[data-guide-overlay="${id}"] .guideCard`);
         assertEq(await page.locator(".sharePopover").count(), 1, `the share popover stays open at ${id}`);
-        if (id === "share-access-anyone") assert((await page.textContent(".guideCard")).includes("no sign-in needed"), "the anyone wording");
+        if (id === "share-access-anyone") {
+          assert((await page.textContent(".guideCard")).includes("no sign-in needed"), "the anyone wording");
+          assert((await page.textContent(".guideCard")).includes("Stop sharing"), "the last card names Stop sharing");
+        }
         await primary(page).click();
       }
       await until(async () => await page.locator(".guideCard").count() === 0);
@@ -359,13 +362,14 @@ export async function triggeredGuideScenarios(env) {
       await a.page.getByRole("button", { name: "Show me" }).click();
       await a.page.waitForSelector('[data-guide-overlay="presence-who"] .guideCard');
       await primary(a.page).click();
-      await a.page.waitForSelector('[data-guide-overlay="presence-where"] .guideCard');
-      // The other person leaves: the optional "the block they are on" step
-      // has nothing left to point at and passes by without a warning.
+      await a.page.waitForSelector('[data-guide-overlay="presence-undo"] .guideCard');
+      // The other person leaves: the last card points at the notes, which
+      // stay, so it stays without a warning.
       const warnings = [];
       a.page.on("console", (m) => { if (m.type() === "warning" && m.text().startsWith("guide:")) warnings.push(m.text()); });
       await v.ctx.close();
-      await a.page.waitForSelector('[data-guide-overlay="presence-undo"] .guideCard');
+      await a.page.waitForTimeout(1000);
+      assertEq(await a.page.locator('[data-guide-overlay="presence-undo"] .guideCard').count(), 1);
       assertEq(warnings.length, 0, `no anchor warning: ${warnings.join("; ")}`);
       await primary(a.page).click();
       await until(async () => await a.page.locator(".guideCard").count() === 0);
@@ -400,10 +404,10 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
       await page.click(".pdfInkBar .inkToolBtn.modeActive");
       await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideCard');
+      assertEq(await page.locator(".guideSegments i").count(), 4, "four steps from the menu");
       await page.click('[data-guide="ink.eraser"]');
       await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
-      await page.waitForSelector('[data-guide-overlay="ink-lasso"] .guideCard');
-      assertEq(await page.locator(".guideSegments i").count(), 5, "five steps from the menu");
+      assertEq(await page.locator('[data-guide-overlay="ink-erase"] .guideCard').count(), 1, "erasing does not end the last card");
       // The erase card's promise: Ctrl+Z brings the drawing back.
       await page.keyboard.press("Control+z");
       await page.waitForSelector('[data-guide="notes.ink"] svg.blockInkCard');
@@ -427,7 +431,7 @@ export async function triggeredGuideScenarios(env) {
 
   // The guides that draw: a step's `media` is the registry's drawing inlined
   // into the card, so what this checks in a real browser is that the file is
-  // bundled, scoped to its own [data-media] and there before the card is
+  // bundled, drawn with media.css's classes and there before the card is
   // placed (docs/dev/onboarding.md, "Illustrations").
   // steps: [step id, the drawing it must carry, or null for a card of words].
   const walk = async (page, steps, { open = null } = {}) => {
@@ -461,8 +465,16 @@ export async function triggeredGuideScenarios(env) {
       assertEq(await page.locator(".guideDim").count(), 0, "an offer never dims the app");
       assertEq(await page.locator(".addPopover").count(), 1, "the offer does not close the popover it points into");
       await page.getByRole("button", { name: "Show me" }).click();
-      await walk(page, [["add-url", "add-paper"], ["add-upload", null], ["add-page", null],
-        ["add-notebook", "page-notebook"]], { open: ".addPopover" });
+      // The popover is the spotlight's surface: undimmed whole, its rows
+      // clickable around the address box the ring marks.
+      await page.waitForSelector('[data-guide-overlay="add-url"] .guideCard');
+      const row = await page.locator('[data-guide="add.upload"]').boundingBox();
+      assertEq(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-guide="add.upload"]'),
+        [row.x + row.width / 2, row.y + row.height / 2]), true, "the popover's other rows are not under the sheet");
+      // Its scene types into the field and leaves it as it was.
+      await page.waitForSelector('[data-guide-scene="add-url"] .guideSceneCaret', { state: "attached", timeout: 8000 });
+      assertEq(await page.inputValue('[data-guide="add.urlInput"]'), "", "the scene types nothing for real");
+      await walk(page, [["add-url", null], ["add-upload", null], ["add-notebook", "page-notebook"]], { open: ".addPopover" });
       assertEq(await progress(page, "add-paper"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -473,23 +485,22 @@ export async function triggeredGuideScenarios(env) {
     await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "A note" } });
     const { ctx, page } = await open(`&page=${pg.id}`, { seen: ["add-paper", "tables", "workspaces"] });
     try {
-      // "/page" in an empty block of its own: the block becomes a sheet.
+      // "/note" in an empty block of its own: the block becomes a sheet.
       await editRow(page, "A note");
       await page.keyboard.press("Enter");
-      await page.keyboard.type("/page");
-      await page.locator(".slashMenu .slashMenuItem", { hasText: "Page to write on" }).click();
+      await page.keyboard.type("/note");
+      await page.locator(".slashMenu .slashMenuItem", { hasText: "Handwritten note" }).click();
       await page.waitForSelector('[data-guide="notes.sheet"]');
       await page.waitForSelector('[data-guide-offer="notebook"] .guideCard');
       await page.getByRole("button", { name: "Show me" }).click();
       // nb-make is dropped from the run: the sheet it would ask for is there.
-      await walk(page, [["nb-grow", "notebook-pages"], ["nb-pen", null],
-        ["nb-paper", "notebook-paper"], ["nb-view", "page-notebook"]]);
+      await walk(page, [["nb-grow", null], ["nb-pen", null], ["nb-view", "page-notebook"]]);
       assertEq(await progress(page, "notebook"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
 
-  await step("triggered guide: the PDF viewer tour walks the left edge; the notebook view's then recaps what they share", async () => {
+  await step("triggered guide: the PDF viewer tour walks the left edge; the notebook view's then leaves out what they share", async () => {
     const upload = await user.upload("/api/uploads", makePdf([["Viewer tools", "A page to zoom."]]), "viewer.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Viewer paper", source_url: upload.source_url } });
     const nb = await user.api("/api/pages", { method: "POST", body: { title: "Viewer notebook" } });
@@ -508,18 +519,15 @@ export async function triggeredGuideScenarios(env) {
       // Listed though its first step, the table of contents, has nothing to
       // point at in this PDF: that step passes over.
       await page.click('[data-tour="pdf-viewer"]');
-      await walk(page, [["viewer-zoom", null], ["viewer-pen", null], ["pdf-translate", null], ["viewer-fullscreen", null]]);
+      await walk(page, [["viewer-zoom", null], ["viewer-pen", null], ["pdf-translate", null]]);
       assertEq(await progress(page, "pdf-viewer"), "done");
       await page.goto(`${server.base}/?ws=${user.ws}&page=${nb.id}`);
       await page.locator('[data-guide="sheet.notebookView"]').first().click();
       await page.waitForSelector('[data-guide-offer="notebook-view"] .guideCard', { timeout: 15000 });
-      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "zoom, pen and full screen fold into one recap");
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 2 steps", "zoom and the pen are not taught twice");
       const nbColumn = await page.locator('[data-guide="viewer.tools"] button').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
       assertEq(nbColumn.slice(0, 4).join("|"), column.slice(0, 4).join("|"), "the same buttons in the same places");
       await page.getByRole("button", { name: "Show me" }).click();
-      await page.waitForSelector('[data-guide-overlay="nbv-recap"] .guideCard');
-      assert((await page.textContent(".guideCard")).includes("work as on a PDF"), "the recap names where the user saw them");
-      await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="nbv-paper"] .guideCard');
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="nbv-notes"] .guideCard .guideMedia[data-media="page-notebook"] svg');
@@ -535,8 +543,9 @@ export async function triggeredGuideScenarios(env) {
   await step("triggered guide: a library past 20 pages offers the organizing tour, passing over the strips it has not got", async () => {
     server.manage("create-user", "filer", "filer-pw");
     const big = await new Account(server, "filer", "filer-pw").login();
+    const attention = await big.folder("ml/attention");
     for (let i = 0; i < 20; i++) {
-      await big.api("/api/pages", { method: "POST", body: { title: `Filed paper ${i}`, ...(i ? {} : { folder: "ml/attention" }) } });
+      await big.api("/api/pages", { method: "POST", body: { title: `Filed paper ${i}`, ...(i ? {} : { folders: [attention] }) } });
     }
     const ctx = await big.context(browser, { suggestTours: true });
     const page = await openPage(ctx, `${server.base}/?ws=${big.ws}`);
@@ -544,16 +553,15 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="library"] .guideCard', { timeout: 15000 });
       await page.getByRole("button", { name: "Show me" }).click();
       await page.waitForSelector('[data-guide-overlay="lib-menu"] .guideCard');
+      // Its scene right-clicks a card: the mouse badge shows the button.
+      await page.waitForSelector('[data-guide-scene="lib-menu"] .guideMouse', { state: "attached", timeout: 8000 });
       await primary(page).click();
       // The model step is a centred card with no anchor, so it is the one
       // step of this tour that can never be passed over.
       await page.waitForSelector('[data-guide-overlay="lib-model"] .guideCard.guideCardCentered .guideMedia[data-media="labels-folders"] svg');
-      assert((await page.textContent(".guideCard")).includes("never copies the paper"), "what a folder actually is");
+      assert((await page.textContent(".guideCard")).includes("never copies"), "what a folder actually is");
       await primary(page).click();
-      // One page is filed, so the chips step has something to point at; the
-      // pinned and recents steps have nothing and pass over on their own.
-      await page.waitForSelector('[data-guide-overlay="lib-chips"] .guideCard');
-      await primary(page).click();
+      // Nothing was viewed yet, so the recents step passes over on its own.
       await page.waitForSelector('[data-guide-overlay="lib-trash"] .guideCard', { timeout: 15000 });
       await primary(page).click();
       await until(async () => await progress(page, "library", "filer") === "done", { what: "the tour recorded as done" });
@@ -565,12 +573,12 @@ export async function triggeredGuideScenarios(env) {
     const upload = await user.upload("/api/uploads", makePdf([["Annotated", "A line to mark."]]), "annotated.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Annotated paper", source_url: upload.source_url } });
     // `annotatedPage` counts what blocksToHighlights returns, which needs a
-    // position on each block, not just a highlight id.
+    // place on the page on each block, not just its page.
     for (let i = 0; i < 5; i++) {
-      const rect = { x1: 60, y1: 60 + i * 20, x2: 480, y2: 78 + i * 20, width: 612, height: 792, pageNumber: 1 };
+      const rect = { x1: 60, y1: 60 + i * 20, x2: 480, y2: 78 + i * 20 };
       await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: `Marked ${i}`,
-        properties: { highlight_id: `mark-${i}`, quote: "A line to mark.", color: "rgba(255, 229, 100, 0.55)", pdf_page: 1,
-          pdf_position: { pageNumber: 1, boundingRect: rect, rects: [rect] } } } });
+        properties: { quote: "A line to mark.", color: "rgba(255, 229, 100, 0.55)",
+          pdf_position: { pageNumber: 1, width: 612, height: 792, boundingRect: rect, rects: [rect] } } } });
     }
     const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
     try {

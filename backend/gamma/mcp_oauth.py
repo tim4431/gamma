@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from . import ratelimit, workspaces
-from .auth import SESSION_COOKIE, read_body, require_personal_user
+from .auth import SESSION_COOKIE, read_body, require_personal_user_id
 from .db import connect_users_db
 from .integrations import token_digest
 from .server_settings import LOOPBACK_HOSTS, mcp_allowed_hosts, public_url_settings, validate_public_url
@@ -171,13 +171,13 @@ async def token(request: Request):
 
 
 def consent_user(request, base):
-    user = require_personal_user(request, "Sign in with a personal account to connect an assistant.")
+    user_id = require_personal_user_id(request, "Sign in with a personal account to connect an assistant.")
     origin = request.headers.get("origin")
     # public_base validates the configured public origin and request Host.
     # A TLS-terminating proxy may reach this backend over plain HTTP.
     if origin and origin.rstrip("/") != base:
         raise HTTPException(403, "Cross-origin consent is not allowed.")
-    return user
+    return user_id
 
 
 @router.get("/api/integrations/oauth/request")
@@ -185,17 +185,17 @@ def consent_details(request: Request, request_id: str):
     from .mcp_oauth_provider import client_info
 
     base = public_base(request)
-    user = consent_user(request, base)
+    user_id = consent_user(request, base)
     pending = load("request", base, request_id)
     client = client_info(base, pending["client_id"]) if pending else None
     if not pending or not client:
         raise HTTPException(400, "This sign-in request expired. Start connecting again from your assistant.")
     csrf = secrets.token_urlsafe(32)
-    store("consent", base, csrf, {"request_id": request_id, "user": user,
+    store("consent", base, csrf, {"request_id": request_id, "user": user_id,
                                   "session": token_digest(request.cookies.get(SESSION_COOKIE, ""))}, 600)
-    return _no_store({"client_name": client.client_name or "MCP assistant", "username": user,
+    return _no_store({"client_name": client.client_name or "MCP assistant", "username": request.state.user,
                       "redirect_uri": pending["params"]["redirect_uri"], "csrf": csrf,
-                      "workspaces": workspaces.list_for_user(user), "default_workspace": request.state.default_ws})
+                      "workspaces": workspaces.list_for_user(user_id), "default_workspace": request.state.default_ws})
 
 
 class Consent(BaseModel):
@@ -211,12 +211,12 @@ def consent(payload: Consent, request: Request):
     from .mcp_oauth_provider import GammaCode
 
     base = public_base(request)
-    user = consent_user(request, base)
+    user_id = consent_user(request, base)
     binding = load("consent", base, payload.csrf)
-    if (not binding or binding["request_id"] != payload.request_id or binding["user"] != user or
+    if (not binding or binding["request_id"] != payload.request_id or binding["user"] != user_id or
             binding["session"] != token_digest(request.cookies.get(SESSION_COOKIE, ""))):
         raise HTTPException(403, "Consent expired or the signed-in account changed. Start again.")
-    if payload.approve and not workspaces.role_of(payload.workspace_id, user):
+    if payload.approve and not workspaces.role_of(payload.workspace_id, user_id):
         raise HTTPException(403, "You cannot connect this workspace.")
     pending = load("request", base, payload.request_id, consume=True)
     load("consent", base, payload.csrf, consume=True)
@@ -226,10 +226,10 @@ def consent(payload: Consent, request: Request):
     if not payload.approve:
         return _no_store({"redirect_url": construct_redirect_uri(str(params.redirect_uri), error="access_denied", state=params.state)})
     code = secrets.token_urlsafe(32)
-    value = GammaCode(code=code, client_id=pending["client_id"], username=user, workspace_id=payload.workspace_id,
+    value = GammaCode(code=code, client_id=pending["client_id"], user_id=user_id, workspace_id=payload.workspace_id,
                       session_hash=binding["session"],
                       scopes=[SCOPE], expires_at=time.time() + 120, code_challenge=params.code_challenge,
                       redirect_uri=params.redirect_uri, redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
-                      resource=params.resource, subject=user)
+                      resource=params.resource, subject=user_id)
     store("code", base, code, value.model_dump(mode="json", exclude={"code"}), 120)
     return _no_store({"redirect_url": construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state)})

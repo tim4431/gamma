@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from conftest import login, make_user
+from conftest import login, make_user, workspace_of
 
 PASSWORD = "el-pass-1234"
 GAMMA = Path(__file__).resolve().parent.parent / "gamma"
@@ -98,7 +98,6 @@ def test_a_held_write_lock_does_not_stall_other_requests(writer):
     and another account's GET /api/session is answered at once."""
     from gamma.app import app
     from gamma.db import ws_db_path
-    from gamma.workspaces import default_workspace
     make_user("el_other", PASSWORD)
     other = login("el_other", PASSWORD).cookies.get("session")
     page = writer.post("/api/pages", json={"title": "Held lock"}).json()["id"]
@@ -110,7 +109,7 @@ def test_a_held_write_lock_does_not_stall_other_requests(writer):
                                      cookies={"session": writer.cookies.get("session")}) as w, \
                 httpx.AsyncClient(transport=transport, base_url="http://testserver",
                                   cookies={"session": other}) as o:
-            holder = sqlite3.connect(ws_db_path(default_workspace("el_writer"), "pages.db"),
+            holder = sqlite3.connect(ws_db_path(workspace_of("el_writer"), "pages.db"),
                                      check_same_thread=False)
             holder.execute("BEGIN IMMEDIATE")
             release = threading.Timer(hold_s, holder.rollback)

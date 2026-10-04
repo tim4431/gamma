@@ -5,7 +5,10 @@ on."""
 import io
 import zipfile
 
+import pytest
+
 from gamma.markdown_import import md_to_blocks
+from conftest import folder_names, label_names, login, make_folder, make_user
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 NOTION_HOME = "Home 0123456789abcdef0123456789abcdef"
@@ -33,6 +36,12 @@ def _import(client, buf, folder="", name="notes.zip"):
 
 def _subtree(client, page_id):
     return client.get(f"/api/blocks/{page_id}/subtree").json()["block"]
+
+
+def _filed(client, page_id):
+    """The paths of the folders the page is filed in."""
+    paths = folder_names(client)
+    return [paths[f] for f in _subtree(client, page_id)["properties"].get("folders", [])]
 
 
 def _shape(node):
@@ -80,21 +89,28 @@ Cover the zip importer.
 
 
 def test_notion_export_becomes_pages_folders_mentions_and_uploads(guest):
-    report = _import(guest, _notion_zip(), folder="Imports")
+    imports = make_folder(guest, "Imports")
+    report = _import(guest, _notion_zip(), folder=imports)
+    assert report["folder"] == imports
     assert report["notion"] is True
     assert report["pages_created"] == 4
     assert report["assets_stored"] == 1
     assert report["warnings"] == []
     by_title = {p["title"]: p for p in report["pages"]}
     assert set(by_title) == {"Home", "Sub page", "Tasks", "Write tests"}
-    assert by_title["Home"]["folder"] == "Imports"
-    assert by_title["Sub page"]["folder"] == "Imports/Home"
-    assert by_title["Tasks"]["folder"] == "Imports/Home"
-    assert by_title["Write tests"]["folder"] == "Imports/Home/Tasks"
+    assert by_title["Home"]["folders"] == [["Imports"]]
+    assert by_title["Sub page"]["folders"] == [["Imports", "Home"]]
+    assert by_title["Tasks"]["folders"] == [["Imports", "Home"]]
+    assert by_title["Write tests"]["folders"] == [["Imports", "Home", "Tasks"]]
+    # the folders are blocks below the destination, the pages filed by id
+    assert _filed(guest, by_title["Write tests"]["id"]) == [["Imports", "Home", "Tasks"]]
+    made = folder_names(guest)
+    assert all([p for p in made.values()].count(path) == 1
+               for path in (["Imports"], ["Imports", "Home"], ["Imports", "Home", "Tasks"]))
 
     home = _subtree(guest, by_title["Home"]["id"])
     assert home["properties"]["notion_id"] == "0123456789abcdef0123456789abcdef"
-    assert home["properties"]["folder"] == "Imports"
+    assert home["properties"]["folders"] == [imports]
     texts = [c["content"] for c in home["children"]]
     assert texts[0] == "Welcome to the workspace."
     # <aside> → callout, the H1 title line is not repeated as a block
@@ -122,9 +138,11 @@ def test_notion_export_becomes_pages_folders_mentions_and_uploads(guest):
     assert [c["content"] for c in row["children"]] == ["Status: Done", "Cover the zip importer."]
 
     # importing the same export again adds nothing, but links still resolve
-    again = _import(guest, _notion_zip(), folder="Imports")
+    again = _import(guest, _notion_zip(), folder=imports)
     assert again["pages_created"] == 0
     assert again["pages_skipped"] == 4
+    assert {p["title"]: p["folders"] for p in again["pages"]}["Write tests"] == [["Imports", "Home", "Tasks"]]
+    assert folder_names(guest) == made  # nothing made twice
 
 
 def test_notion_wrapper_folder_and_part_zips_are_unpacked(guest):
@@ -132,22 +150,91 @@ def test_notion_wrapper_folder_and_part_zips_are_unpacked(guest):
     outer = _zip({"Part-1.zip": inner.getvalue()})
     report = _import(guest, outer)
     assert report["pages_created"] == 1
-    assert report["pages"][0]["folder"] == ""
+    assert report["pages"][0]["folders"] == []
     assert report["pages"][0]["title"] == "Home"
+    assert "folders" not in _subtree(guest, report["pages"][0]["id"])["properties"]
 
 
-def test_plain_zipped_folder_of_notes(guest):
+@pytest.fixture
+def own_library():
+    """An account of the test's own, whose library has no folders yet: the
+    shared guest may hold a "Projects" another module made, which an
+    import's "projects" would be filed in (folder names match without case)."""
+    make_user("mzi_plain", "pw-mzi-plain")
+    return login("mzi_plain", "pw-mzi-plain")
+
+
+def test_plain_zipped_folder_of_notes(own_library):
     buf = _zip({
         "vault/daily/2026-09-01.md": "- woke up\n- [[wiki style]] stays as typed\n",
         "vault/projects/gamma.md": "---\ntitle: Gamma plans\n---\n# Gamma plans\n\nSee [daily](../daily/2026-09-01.md).\n",
     })
-    report = _import(guest, buf)
+    report = _import(own_library, buf)
     by_title = {p["title"]: p for p in report["pages"]}
     # the single common root ("vault") is dropped, the rest become folders
-    assert by_title["2026-09-01"]["folder"] == "daily"
-    assert by_title["Gamma plans"]["folder"] == "projects"
-    plans = _subtree(guest, by_title["Gamma plans"]["id"])
+    assert by_title["2026-09-01"]["folders"] == [["daily"]]
+    assert by_title["Gamma plans"]["folders"] == [["projects"]]
+    assert _filed(own_library, by_title["Gamma plans"]["id"]) == [["projects"]]
+    plans = _subtree(own_library, by_title["Gamma plans"]["id"])
     assert plans["children"][0]["content"] == f"See [[{by_title['2026-09-01']['id']}]]."
+
+
+def test_names_are_kept_and_tags_become_labels(guest):
+    """A directory's name is a folder's name as written ("," and "/"
+    included in a front-matter name's own way: "/" separates), tags are
+    labels by name, made once and reused."""
+    existing = make_folder(guest, "Reading")
+    buf = _zip({
+        "Q&A, misc/one.md": "---\ntags: [physics, to read]\n---\nbody\n",
+        "Q&A, misc/two.md": "---\ntags: physics\nfolder: Reading/Deep dive\n---\nbody\n",
+        "top.md": "body\n",
+    })
+    report = _import(guest, buf)
+    by_title = {p["title"]: p for p in report["pages"]}
+    assert by_title["one"]["folders"] == [["Q&A, misc"]]
+    assert by_title["two"]["folders"] == [["Reading", "Deep dive"]]
+    paths = folder_names(guest)
+    assert _filed(guest, by_title["two"]["id"]) == [["Reading", "Deep dive"]]
+    assert [f for f, p in paths.items() if p == ["Reading"]] == [existing]  # reused, not duplicated
+    labels = label_names(guest)
+    assert sorted(labels.values()).count("physics") == 1 and "to read" in labels.values()
+    one = _subtree(guest, by_title["one"]["id"])["properties"]
+    two = _subtree(guest, by_title["two"]["id"])["properties"]
+    assert [labels[i] for i in one["labels"]] == ["physics", "to read"]
+    assert two["labels"] == one["labels"][:1]
+    assert "category" not in one and "folder" not in one
+
+
+def test_the_destination_is_a_folder_id(guest):
+    before = folder_names(guest)
+    buf = _zip({"note.md": "body\n"})
+    r = guest.post("/api/import/markdown-zip", files={"file": ("n.zip", buf.getvalue(), "application/zip")},
+                   data={"folder": "no-such-folder"})
+    assert r.status_code == 400
+    r = guest.post("/api/import/markdown-zip/preview", files={"file": ("n.zip", buf.getvalue(), "application/zip")},
+                   data={"folder": "no-such-folder"})
+    assert r.status_code == 400
+    page = guest.post("/api/blocks", json={"parent_id": "root", "content": "A page"}).json()
+    r = guest.post("/api/import/markdown", files={"file": ("n.md", b"body\n", "text/markdown")},
+                   data={"folder": page["id"]})
+    assert r.status_code == 400  # a page is no folder
+    assert folder_names(guest) == before
+
+
+def test_a_preview_makes_no_folder_or_label(guest):
+    dest = make_folder(guest, "Inbox")
+    before = (guest.get("/api/blocks/folders/subtree").json()["block"],
+              guest.get("/api/blocks/labels/subtree").json()["block"])
+    buf = _zip({"deep/er/note.md": "---\ntags: new-tag\n---\nbody\n", "top.md": "a top note\n"})
+    r = guest.post("/api/import/markdown-zip/preview", files={"file": ("n.zip", buf.getvalue(), "application/zip")},
+                   data={"folder": dest})
+    assert r.status_code == 200, r.text
+    assert r.json()["folder"] == dest
+    assert {p["title"]: p["folders"] for p in r.json()["pages"]} == {
+        "note": [["Inbox", "deep", "er"]], "top": [["Inbox"]]}
+    after = (guest.get("/api/blocks/folders/subtree").json()["block"],
+             guest.get("/api/blocks/labels/subtree").json()["block"])
+    assert after == before
 
 
 def test_rejects_zip_without_markdown(guest):
@@ -171,8 +258,9 @@ def test_gamma_markdown_export_round_trips(guest):
     a = r.json()
     r = guest.post("/api/blocks", json={"parent_id": "root", "content": "Round trip B"})
     b = r.json()
-    guest.put(f"/api/blocks/{a['id']}", json={"properties": {"folder": "rt2026"}})
-    guest.put(f"/api/blocks/{b['id']}", json={"properties": {"folder": "rt2026/deep"}})
+    rt = make_folder(guest, "rt2026")
+    guest.put(f"/api/blocks/{a['id']}", json={"properties": {"folders": [rt]}})
+    guest.put(f"/api/blocks/{b['id']}", json={"properties": {"folders": [make_folder(guest, "rt2026/deep")]}})
     img = guest.post("/api/upload-image", files={"file": ("d.png", PNG, "image/png")}).json()["url"]
     _put_children(guest, a["id"], [
         {"id": "rt-h", "content": "# Heading", "properties": {}, "children": [
@@ -188,7 +276,7 @@ def test_gamma_markdown_export_round_trips(guest):
         {"id": "rt-b1", "content": "b note", "properties": {}, "children": []},
     ])
 
-    r = guest.get("/api/folders/export?name=rt2026&mode=readable&highlights=1&notes=1&pdf=1")
+    r = guest.get(f"/api/folders/{rt}/export?mode=readable&highlights=1&notes=1&pdf=1")
     assert r.status_code == 200, r.text
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     names = zf.namelist()
@@ -198,12 +286,14 @@ def test_gamma_markdown_export_round_trips(guest):
     md_b = next(n for n in names if n.startswith("Round trip B"))
     assert "folder: deep" in zf.read(md_b).decode()     # relative to the export
 
-    report = _import(guest, io.BytesIO(r.content), folder="restored")
+    restored = make_folder(guest, "restored")
+    report = _import(guest, io.BytesIO(r.content), folder=restored)
     assert report["pages_created"] == 2
     assert report["warnings"] == []
     by_title = {p["title"]: p for p in report["pages"]}
-    assert by_title["Round trip A"]["folder"] == "restored"
-    assert by_title["Round trip B"]["folder"] == "restored/deep"
+    assert by_title["Round trip A"]["folders"] == [["restored"]]
+    assert by_title["Round trip B"]["folders"] == [["restored", "deep"]]
+    assert _filed(guest, by_title["Round trip B"]["id"]) == [["restored", "deep"]]
 
     new_a = _subtree(guest, by_title["Round trip A"]["id"])
     assert _shape(new_a)["children"] == [
@@ -216,20 +306,40 @@ def test_gamma_markdown_export_round_trips(guest):
             {"content": "$$\na = b\n$$", "children": []},
         ]},
     ]
-    assert new_a["properties"]["folder"] == "restored"
+    assert new_a["properties"]["folders"] == [restored]
     assert "doc_id" not in new_a["properties"]
 
     # a second import of the same zip is a no-op
-    again = _import(guest, io.BytesIO(r.content), folder="restored")
+    again = _import(guest, io.BytesIO(r.content), folder=restored)
     assert again["pages_created"] == 0 and again["pages_skipped"] == 2
 
 
 def test_gamma_single_md_upload_honours_front_matter_folder(guest):
     src = b"---\ntitle: Filed note\nfolder: papers/misc\n---\n# Filed note\n\n- one\n"
     r = guest.post("/api/import/markdown", files={"file": ("filed.md", src, "text/markdown")},
-                   data={"folder": "inbox"})
+                   data={"folder": make_folder(guest, "inbox")})
     assert r.status_code == 200, r.text
-    assert r.json()["folder"] == "inbox/papers/misc"
+    paths = folder_names(guest)
+    assert [paths[f] for f in r.json()["folders"]] == [["inbox", "papers", "misc"]]
+    assert _filed(guest, r.json()["block_id"]) == [["inbox", "papers", "misc"]]
+
+
+def test_a_slash_in_a_folder_name_exports_as_one_level(guest):
+    """The front matter joins names with "/": a "/" inside a name is
+    written "-", so the path re-imports with one folder per name."""
+    top = make_folder(guest, "Net")
+    sub = guest.post("/api/pages/folders/ops", json={"ops": [
+        {"op": "insert", "id": "tcp-ip-dir", "parent": top, "content": "TCP/IP"}]})
+    assert sub.status_code == 200, sub.text
+    page = guest.post("/api/blocks", json={"parent_id": "root", "content": "Stack notes"}).json()
+    guest.put(f"/api/blocks/{page['id']}", json={"properties": {"folders": ["tcp-ip-dir"]}})
+    r = guest.get(f"/api/folders/{top}/export?mode=readable")
+    assert r.status_code == 200, r.text
+    zf = zipfile.ZipFile(io.BytesIO(r.content)) if r.content[:2] == b"PK" else None
+    text = zf.read(zf.namelist()[0]).decode() if zf else r.text
+    assert "folder: TCP-IP\n" in text
+    report = _import(guest, _zip({"stack.md": text}), folder=make_folder(guest, "Copy"))
+    assert report["pages"][0]["folders"] == [["Copy", "TCP-IP"]]
 
 
 def test_md_to_blocks_list_continuation_rules():

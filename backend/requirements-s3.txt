@@ -1,0 +1,5 @@
+# The S3-compatible bucket (AWS S3, Cloudflare R2, MinIO) of the off-site
+# copies (gamma/s3.py, gamma/offsite.py). boto3 is imported only when a
+# bucket is used, so the desktop app and a plain checkout need none of
+# this. The Docker image installs it beside requirements.txt.
+boto3==1.43.108

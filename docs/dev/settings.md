@@ -7,13 +7,13 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`) and the style of new text boxes (`gamma-text-box-style`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, how search opens), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, how search opens), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
-| Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
+| Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -152,7 +152,7 @@ word (Not run yet, Queued, Running, Finished, Failed).
 Guests and integration tokens cannot manage tasks. While a task runs, it also
 shows as a read-only row in Background tasks ([tasks.md](tasks.md)).
 
-Runtime and storage: [docs/dev/workspaces.md](workspaces.md#backups).
+Runtime and storage: [docs/dev/workspaces.md](workspaces.md#export-and-backups).
 
 ### Snapshots and restores as background jobs
 
@@ -186,7 +186,7 @@ that fingerprint, kept in the `notices-seen` pref; a new release or a fresh
 error changes the fingerprint and the notice is back by itself. Nothing is
 dismissed for good, and nothing is per browser.
 
-Sources are functions `fn(username)` registered with `@source` in
+Sources are functions `fn(user_id)` (the account's id) registered with `@source` in
 `gamma/notices.py`; each returns a Notice or None and must be a cached,
 in-memory or small database read, because `GET /api/notices` runs them on
 every poll. Admin-only sources are skipped for members; guests, share views
@@ -198,7 +198,7 @@ and integration tokens get an empty list. The sources:
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
-| `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
+| `mirror-conflicts` | everyone | Workspaces | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
@@ -248,28 +248,14 @@ The account card:
 
 - **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
   account's row, storage meter and Gamma Cloud link row.
-  Under it, the sync sections
+  Under it, the sync section
   ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
   **Publishing** lists the workspaces that publish pages to Gamma Cloud
   (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
   state, Conflicts when any wait, a "more" menu with Sync now and Stop
   publishing all; an empty state for the signed-in with nothing published).
-  **Clones** (`MirrorsSection` in
-  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx))
-  lists the account's mirrors of remote workspaces in git's words (each row:
-  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
-  resolved there or opened on its block — and a "more" `ActionMenu` with
-  Force pull / Force push, Detach, Remove origin) and offers "Clone a remote
-  workspace" (a `SubDialog`: origin server, write token, into a new or an
-  existing workspace, name, direction) — [mirror.md](mirror.md). Both
-  sections are hidden for the guest. The same state sits in the header as
-  the sync pill (`collaboration/MirrorPopover.jsx`) while a clone is open;
-  the clone's own settings (cadence, direction, force pull / push, detach /
-  reattach, remove origin) live in that pill's gear view, stored on the
-  server per mirror (`mirrors.poll_s`, `on_change`, `mode`). Last comes
-  **Sync status**, the sync pill's scope (a `Segmented`: synced pages only,
-  or every page of a workspace that syncs some — `syncPillScope`,
-  [mirror.md](mirror.md) "Publishing").
+  It is hidden for the guest. Clones are listed under Workspaces, and the
+  sync pill's scope is under Appearance.
 
 Preferences:
 
@@ -281,10 +267,12 @@ Preferences:
   dark-page switch with its live PDF sample, **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
-  interface size and the status bar, and last **Suggest tours**
-  (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)). The old `library` pane id is an alias of
-  this pane.
+  interface size and the status bar, **Sync status** (the header's sync
+  pill: a `Segmented` of synced pages only, or every page of a workspace
+  that syncs some — `syncPillScope`, [mirror.md](mirror.md) "Publishing"),
+  and last **Suggest tours** (`suggestTours`: off, no tour or hint is
+  offered by itself, [onboarding.md](onboarding.md)). The old `library`
+  pane id is an alias of this pane.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
@@ -323,7 +311,8 @@ AI:
 - **Connections**: the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
-  the named services, a custom endpoint and its API format), the key with the
+  the named services by vendor, a Plan menu for a vendor with several, or a
+  custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
   Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
@@ -341,12 +330,19 @@ AI:
   and the add dialog comes up set to the tile's service once the key list
   has loaded (a chat error card's fix opens an entry's form the same way,
   `openAiKeysEditor({entry})`); the card's tiles and the dialog's service tiles are one list
-  (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
+  (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
-- **Chat**: **Chat** (the default reasoning effort — every level, since
-  each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
-  and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
+- **Chat**: three sections. **Chat** holds the default reasoning effort,
+  the default speed and the snapshot-clearing switch. The effort menu
+  lists every level, since each model gets the nearest one it takes
+  ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
+  provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
+  **Prompts** is the accordion, with one Cancel / Save pair as its action.
+  **Context size** holds the three budgets, with the Standard / Larger /
+  Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
+  aliases of this pane, each jumping to its section.
+- **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
@@ -359,10 +355,8 @@ AI:
   **Online search** (`OnlineSearch.jsx`): which service general web search
   goes through (Automatic, your AI connection, Brave Search, SearXNG or Off)
   and the Brave, SearXNG and optional OpenAlex settings, stored on the server
-  like the translation keys ([ai_tools.md](ai_tools.md) "search_web").
-- **Advanced**: tool limits and the context budgets (the section's action
-  is the Standard / Larger / Custom preset).
-- **Prompts**: the accordion with one Cancel / Save pair.
+  like the translation keys ([ai_tools.md](ai_tools.md) "search_web"). Last,
+  **Tool limits**: tool rounds per message and the read window.
 - **Integrations** ([SettingsIntegrations.jsx](../../frontend/src/settings/SettingsIntegrations.jsx)):
   the workspace's assistant connections, the MCP URL, Claude Code connection,
   plugin setup and address-change commands, the Codex setup
@@ -384,16 +378,59 @@ Library:
   Rename and invite are small editor dialogs. A row's on-disk folder
   (`workspaces/<id>`) shows to admins only. The empty Shared section offers
   admins "New shared workspace" (a jump to Server). The account popover's
-  "Workspaces…" opens this pane. Clones are listed under Account & sync,
-  not here.
+  "Workspaces…" opens this pane. Last, for everyone but the guest, come
+  **Clones** (`MirrorsSection` in
+  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx)),
+  the account's mirrors of remote workspaces in git's words, kept out of
+  the Personal list. Each row has a status line, Open, Sync or Reattach,
+  Conflicts (the conflict cards, each resolved there or opened on its block)
+  and a "more" `ActionMenu` with Force pull / Force push, Detach and Remove
+  origin. The section's action is "Clone a remote workspace" (a
+  `SubDialog`: origin server, write token, into a new or an existing
+  workspace, name, direction) — [mirror.md](mirror.md). The same state sits
+  in the header as the sync pill (`collaboration/MirrorPopover.jsx`) while a
+  clone is open, and the pill's "All clones in Settings" opens this pane.
+  The clone's own settings (cadence, direction, force pull / push, detach /
+  reattach, remove origin) live in that pill's gear view, stored on the
+  server per mirror (`mirrors.poll_s`, `on_change`, `mode`).
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
-  a Run now / Edit / Duplicate / Delete `ActionMenu`), then the server-kept
-  snapshots per workspace (Back up all, and per workspace: back up now,
-  download, restore, delete). A row tags a task's snapshot "Automatic" and
+  a Run now / Edit / Duplicate / Delete `ActionMenu`), then for admins
+  **Off-site copies** ([OffsiteCopies.jsx](../../frontend/src/settings/OffsiteCopies.jsx)),
+  then the server-kept snapshots per workspace (Back up all, and per
+  workspace: back up now, download, restore, delete). A row tags a task's snapshot "Automatic" and
   the one a replace restore keeps "Before restore", and says when files were
   missing or a database copy failed its check.
+  Off-site copies sends the server's databases and uploaded files to an
+  S3-compatible bucket, a backup target only: Gamma keeps running on its
+  local files. The section has three rows. The Copy to a bucket switch
+  saves at once; with no bucket saved, turning it on opens the set-up
+  instead. The summary row is named after the bucket ("No bucket yet"
+  before one is saved) and reads "s3://gamma-backups/prefix · every 1 h ·
+  7 kept", with the endpoint's host in place of `s3://` for R2 or MinIO.
+  Its Set up… or Edit… button opens the editor `SubDialog` ("Set up
+  off-site copies" / "Edit off-site copies"), laid out like the shared AI
+  key editor: the bucket, the endpoint (empty for AWS S3), the region, the
+  access key ID, the write-only secret key (the box reads "secret set —
+  type to replace" while one is stored, and a secret is sent only when
+  typed), the prefix, how often (a `MenuSelect`: every 15 minutes, 1, 6 or
+  24 hours) and the copies kept per database, then Test connection, which
+  tries the dialog's values, saved or not, and answers beside its button.
+  Save (or Enter) closes the dialog once the server takes the values and
+  shows its refusal in the dialog otherwise. Saving the first bucket turns
+  the copies on, as connecting an AI service does; later edits leave the
+  switch as it is. Closing the dialog with unsaved edits asks first. While
+  the copies are on, Status reads "last round … · 12 databases · 340
+  uploads · 0 failed · next round …" (or "no round yet", with the round's
+  error under it) beside Copy now, which is disabled while a round runs.
+  With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
+  switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
+  server's environment" (the summary line is its hover title), and its one
+  button is Test, which tries the environment's bucket. `GET/PUT
+  /api/admin/offsite`, `POST /api/admin/offsite/test` and `…/run`; the
+  rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
+  bucket".
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, search-index rebuilding and the per-paper metadata / text / index
   health table.
@@ -475,13 +512,15 @@ Cloud" row (`CloudIdentityRow`): the linked username and plan with an Unlink
 button, or a "Link Gamma Cloud account" button that round-trips through the
 account server ([cloud_accounts.md](cloud_accounts.md)).
 
-Search is backed by [settingsNavigation.js](../../frontend/src/settings/settingsNavigation.js).
+Search is backed by [settingsSearch.js](../../frontend/src/settings/settingsSearch.js).
 Each entry names its pane, the setting's label, its section, its one-line
 hint (the row's own words) and English synonyms. A setting one level down
 (in a workspace's Manage page, a row's menu) also names the `target` on the
 pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
-first; inaccessible management pages are filtered out. A result is a
+first; inaccessible management pages are filtered out, and so is an
+admin-only section of a pane everyone has (Backups › Off-site copies,
+marked `admin()` in the catalog) unless the Server pane is offered. A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching
@@ -490,7 +529,8 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
 Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
-viewer and context entry points also jump to their section.
+viewer, context, ai-advanced and prompts entry points also jump to their
+section.
 
 The desktop surface has a persistent search header and labeled sidebar. On
 phones the Back button opens a labeled category list. All controls remain
@@ -506,8 +546,9 @@ guard.
 ## Chat settings are global
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
-composer's model chip (model and reasoning effort, a `MenuSelect` with a
-second section listing only the picked model's levels) and the header's ⚙ popover (single-paper context budget,
+composer's model chip (model, reasoning effort and speed, a `MenuSelect`
+whose further sections list only the picked model's own levels and tiers)
+and the header's ⚙ popover (single-paper context budget,
 tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
@@ -522,8 +563,8 @@ allow** writes the same preference. **Allow in this chat** is not a setting:
 it lasts for one conversation and stays in the browser
 ([ai.md](ai.md#asking-before-a-call-approvals)).
 
-Reasoning effort, the context budgets, the tools switch and the permissions
-are account preferences: they live in the profile and follow the account to
+Reasoning effort, speed, the context budgets, the tools switch and the
+permissions are account preferences: they live in the profile and follow the account to
 every browser. The chat model stays with the browser, remembered per
 provider entry; provider selection and credentials keep their own account
 keys. Context presets change the three budgets together: Standard
@@ -562,7 +603,12 @@ accept a `draft` value for dismissal protection. See
 `npm test` covers permission presets, search visibility and legacy pane aliases.
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
-shared chat settings, mobile layout and administrator account separation.
+shared chat settings, mobile layout, administrator account separation, and
+Backups › Off-site copies: an admin's alone, set up in its dialog and read
+back there with its write-only secret, the unsaved-edit question on Cancel,
+Test against an unreachable endpoint, Copy now against a stand-in bucket
+that refuses, and the read-only summary of a second server started with
+`GAMMA_S3_BUCKET`.
 Use `--keep` to retain desktop/mobile screenshots. For concurrent development,
 build into a private directory and set `GAMMA_E2E_DIST` to that directory so
 another build cannot replace the assets while the suite runs.

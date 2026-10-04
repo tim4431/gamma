@@ -10,17 +10,30 @@ struct LibraryView: View {
     @State private var confirmDisconnect = false
     @State private var showConflicts = false
 
+    /// A library row (views.js libraryRows): the page's folders as display
+    /// paths ("Physics / QEC") and its labels as names, in its filing order.
+    /// A name may hold any character, so a path is grouped by as it is,
+    /// never split.
     struct Row: Identifiable, Hashable {
         let id: String
         let title: String
-        let folder: String
+        let folders: [String]
+        let labels: [String]
         let kind: String
+
+        /// The section the row is listed under: its first folder, "" for the
+        /// library root.
+        var section: String { folders.first ?? "" }
+
+        func matches(_ q: String) -> Bool {
+            title.lowercased().contains(q) || (folders + labels).contains { $0.lowercased().contains(q) }
+        }
     }
 
     private var sections: [(String, [Row])] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let shown = q.isEmpty ? rows : rows.filter { $0.title.lowercased().contains(q) || $0.folder.lowercased().contains(q) }
-        let groups = Dictionary(grouping: shown) { $0.folder.split(separator: ",").first.map(String.init) ?? "" }
+        let shown = q.isEmpty ? rows : rows.filter { $0.matches(q) }
+        let groups = Dictionary(grouping: shown, by: \.section)
         return groups.keys.sorted { a, b in a.isEmpty != b.isEmpty ? a.isEmpty : a.localizedStandardCompare(b) == .orderedAscending }
             .map { ($0, groups[$0] ?? []) }
     }
@@ -31,7 +44,17 @@ struct LibraryView: View {
                 ForEach(sections, id: \.0) { folder, pages in
                     Section(folder.isEmpty ? "Pages" : folder) {
                         ForEach(pages) { row in
-                            Label(row.title, systemImage: icon(row.kind)).tag(row.id)
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.title)
+                                    if !row.labels.isEmpty {
+                                        Text(row.labels.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            } icon: {
+                                Image(systemName: icon(row.kind))
+                            }
+                            .tag(row.id)
                         }
                     }
                 }
@@ -98,7 +121,9 @@ struct LibraryView: View {
 
     private func reload() {
         rows = (model.replica?.libraryRows() ?? []).map {
-            Row(id: $0.string("id"), title: $0.string("title"), folder: $0.string("folder"), kind: $0.string("kind"))
+            Row(id: $0.string("id"), title: $0.string("title"),
+                folders: $0.array("folders").compactMap { $0 as? String }, labels: $0.array("labels").compactMap { $0 as? String },
+                kind: $0.string("kind"))
         }
         if let s = selection, !rows.contains(where: { $0.id == s }) { selection = nil }
     }

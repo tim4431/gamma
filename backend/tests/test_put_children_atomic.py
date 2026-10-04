@@ -11,7 +11,7 @@ import pytest
 
 from conftest import login, make_user, workspace_of
 from gamma import blocks_store, ops
-from gamma.db import PAGES_SCHEMA, connect_pages_db
+from gamma.db import PAGES_SCHEMA, connect_pages_db, register_functions
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_duplicating_a_page_still_works(dee):
     c, ws = dee
     copy = c.post("/api/blocks", json={"parent_id": "root", "content": "Paper (copy)"}).json()
     r = c.put(f"/api/blocks/{copy['id']}/children", json={"blocks": [
-        {"id": "pcD1", "content": "one", "properties": {"highlight_id": "pcH"}, "parent_id": "x",
+        {"id": "pcD1", "content": "one", "properties": {"pdf_position": {"pageNumber": 1}}, "parent_id": "x",
          "position": "a0", "children": [{"id": "pcD2", "content": "nested", "children": []}]},
         {"id": "pcD3", "content": "two"}]})
     assert r.status_code == 200 and r.json()["count"] == 3
@@ -80,12 +80,13 @@ def test_duplicating_a_page_still_works(dee):
     assert [b["id"] for b in tree] == ["pcD1", "pcD3"] and tree[0]["children"][0]["content"] == "nested"
 
 
-def test_subtree_deletes_run_inside_the_transaction(tmp_path):
+def test_subtree_writes_run_inside_the_transaction(tmp_path):
     with closing(sqlite3.connect(str(tmp_path / "pages.db"))) as conn:
+        register_functions(conn)
         for stmt in PAGES_SCHEMA:
             conn.execute(stmt)
-        conn.executemany("INSERT INTO unified_blocks VALUES (?, ?, 'a0', '', '{}', 'now', 'now')",
-                         [("root", None), ("p", "root"), ("c1", "p"), ("c2", "c1")])
+        conn.executemany("INSERT INTO unified_blocks VALUES (?, ?, 'a0', '', '{}', 'now', 'now', ?)",
+                         [("root", None, ""), ("p", "root", "p"), ("c1", "p", "p"), ("c2", "c1", "p")])
         conn.commit()
         blocks_store.delete_children(conn, "p")
         assert conn.in_transaction  # the implicit BEGIN opened before the delete
@@ -93,25 +94,28 @@ def test_subtree_deletes_run_inside_the_transaction(tmp_path):
         blocks_store.delete_subtree(conn, "p")
         assert conn.in_transaction
         conn.rollback()
-        assert {r[0] for r in conn.execute("SELECT id FROM unified_blocks")} == {"root", "p", "c1", "c2"}
+        blocks_store.move_subtree_to_page(conn, "c1", "q")
+        assert conn.in_transaction
+        conn.rollback()
+        assert dict(conn.execute("SELECT id, page_id FROM unified_blocks")) == {"root": "", "p": "p", "c1": "p",
+                                                                                 "c2": "p"}
 
 
 def test_a_page_deletion_that_fails_keeps_the_page(dee):
     c, ws = dee
     page = _page(c, "tombstone", [("pcT1", "a"), ("pcT2", "b")])
     with closing(connect_pages_db(ws)) as conn:
-        # the tombstone write fails (a full disk, a lock timeout) after the subtree went
-        conn.execute("CREATE TEMP TRIGGER no_tombstone BEFORE INSERT ON deleted_pages "
+        # the change log's write fails (a full disk, a lock timeout) after the subtree went
+        conn.execute("CREATE TEMP TRIGGER no_tombstone BEFORE UPDATE ON page_changes "
                      "BEGIN SELECT RAISE(ABORT, 'disk full'); END")
         with pytest.raises(sqlite3.DatabaseError):
             ops.delete_page(ws, conn, page, actor="pc_dee")
     assert _children(ws, page) == ["pcT1", "pcT2"]
     with closing(connect_pages_db(ws)) as conn:
-        assert not conn.execute("SELECT 1 FROM deleted_pages WHERE page_id = ?", (page,)).fetchone()
+        assert conn.execute("SELECT kind FROM page_changes WHERE page_id = ?", (page,)).fetchone() == ("live",)
 
 
 def test_a_cross_page_move_that_fails_moves_nothing(dee, monkeypatch):
-    from gamma.routers import blocks as blocks_router
     c, ws = dee
     src = _page(c, "from", [("pcMv", "travelling")])
     dst = _page(c, "to")
@@ -119,7 +123,7 @@ def test_a_cross_page_move_that_fails_moves_nothing(dee, monkeypatch):
     def log_fails(*a, **kw):
         raise RuntimeError("the op log could not be written")
 
-    monkeypatch.setattr(blocks_router, "record_ops", log_fails)
+    monkeypatch.setattr(ops, "record_ops", log_fails)
     with pytest.raises(RuntimeError):
         c.post("/api/blocks/pcMv/reorder", json={"parent_id": dst})
     assert _children(ws, src) == ["pcMv"] and _children(ws, dst) == []

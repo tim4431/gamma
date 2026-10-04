@@ -76,7 +76,7 @@ export function useAppJobs({
       setExportOpen(false);
       const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0, notes: body.notes ? 1 : 0 });
       await downloadExport(exportFolder
-        ? `/folders/export?name=${encodeURIComponent(exportFolder)}&${query}` : `/pages/${pageId}/export?${query}`, "export");
+        ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
       return;
     }
     if (exportStartingRef.current) return;
@@ -90,12 +90,17 @@ export function useAppJobs({
       exportStartingRef.current = false;
     }
   }
-  // Closing the export dialog: a job still running goes on in Background
-  // tasks, and its file is offered once ready instead of downloaded.
+  // Closing the export dialog leaves its job first (leaveExportJob).
   function closeExport() {
+    leaveExportJob();
+    setExportOpen(false);
+  }
+  // The last step's breadcrumb walking back into the setup: the dialog stays
+  // open on the format cards, and a job still running carries on in
+  // Background tasks with its file offered there instead of downloaded here.
+  function leaveExportJob() {
     const job = exportJobId ? tasks.byId(exportJobId) : null;
     if (job && isActive(job)) tasks.setDownload(job.id, "offer");
-    setExportOpen(false);
     setExportJobId(null);
   }
 
@@ -230,5 +235,5 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, runExport, closeExport, openTask, retryTask, startResearch, onJobFinished };
+  return { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, startResearch, onJobFinished };
 }

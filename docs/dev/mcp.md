@@ -159,8 +159,8 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 
 | Tool | Content |
 | --- | --- |
-| `list_folders` | The folder tree, each folder with its direct and total page counts; pages in no folder |
-| `list_pages` | Page IDs/titles, folders, labels, attachment metadata; filters by folder, label, title |
+| `list_folders` | The folder tree, each folder with its id, its path ("a / b") and its direct and total page counts (empty folders too); pages in no folder |
+| `list_pages` | Page IDs/titles, folders (paths), labels, attachment metadata; filters by folder (a path or an id), label, title |
 | `search_library` | Full-text note and PDF matches, with source locations |
 | `read_page` | Notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
@@ -218,14 +218,20 @@ block or share link. The assistant keeps that reference as context until another
 is supplied; it does not track the user's active tab or PDF scroll position.
 
 A folder-share link (a `?share=` token naming a folder, [api.md](api.md)
-"Shares") resolves to the folder and answers with `list_pages` over it — the
-pages the share view lists, with the page URL template for citing them. With
-`&page=` beside the token it reads that page instead, refused unless the page
-is filed in the folder.
+"Shares") resolves to the folder — by its id, the reference carrying the
+folder's path as its `title` and a `?ws=…&folder=<id>` URL — and answers
+with `list_pages` over it (scope `{"type": "folder", "folder": <id>}`): the
+pages the share view lists, with the page URL template for citing them. A
+share whose folder is gone fails as unavailable. With `&page=` beside the
+token it reads that page instead, refused unless the page is filed in the
+folder or below it.
 
 Links never grant extra MCP access. Share tokens resolve only inside the already
 authorized workspace, including restricted shares whose workspace the user can
-already read. Revoked, unknown, mismatched, or cross-workspace references fail
+already read. A token names its workspace (`<workspace id>.<secret>`,
+[api.md](api.md) "Auth model"), so one whose prefix is another workspace is
+refused before any lookup, and a link minted before schema version 32 (a bare
+secret) resolves nothing. Revoked, unknown, mismatched, or cross-workspace references fail
 without disclosing the target. URLs are never fetched; foreign origins are
 rejected. Localhost, 127.0.0.1 and ::1 are equivalent only at the same scheme and
 port. A new server address requires the corresponding connection and link.

@@ -38,7 +38,8 @@ try {
   server.manage('create-user', 'demo', 'isolated-media-only');
   const account = await new Account(server, 'demo', 'isolated-media-only').login();
   await account.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');
-  await account.api(`/api/blocks/${CURATED.atoms}`, { method: 'PUT', body: { properties: { folder: 'Quantum/Neutral atoms', category: 'quantum computing, neutral atoms' } } });
+  // the folder and labels made where missing (harness.mjs Account.file)
+  await account.file(CURATED.atoms, { folders: ['Quantum/Neutral atoms'], labels: ['quantum computing', 'neutral atoms'] });
   await account.api(`/api/chats/${CURATED.atoms}`, { method: 'PUT', body: { messages: CHAT } });
 
   browser = await launchRetina();

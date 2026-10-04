@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import account_of, login, make_folder, make_page, make_user
 from gamma.ai_tools import agent_tools, run_agent_tool
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
@@ -83,11 +83,12 @@ def _pdf_page(c, title):
     up = c.post("/api/uploads", files={"file": ("p.pdf", buf.getvalue(), "application/pdf")})
     assert up.status_code == 200, up.text
     page = make_page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
-    rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92, "width": 612, "height": 792, "pageNumber": 1}
+    rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92}
     r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": f"{page['id']}-hl", "content": "McpHighlightNote", "properties": {
-            "highlight_id": f"{page['id']}-hl", "quote": "McpQuotedPassage", "pdf_page": 1,
-            "pdf_position": {"pageNumber": 1, "boundingRect": dict(rect), "rects": [rect]}}, "children": []},
+            "quote": "McpQuotedPassage",
+            "pdf_position": {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": dict(rect), "rects": [rect]}},
+         "children": []},
         {"id": f"{page['id']}-img", "content": "![figure](/api/uploads/abc123.png)", "properties": {}, "children": []},
     ]})
     assert r.status_code == 200, r.text
@@ -97,9 +98,13 @@ def _pdf_page(c, title):
 def test_folders_chats_and_pdf_pictures(client, connection):
     c, ws, item = connection
     paper = _pdf_page(c, "Folder tree paper")
-    assert c.put(f"/api/blocks/{paper['id']}", json={"properties": {"folder": "mcp/tree"}}).status_code == 200
+    tree = make_folder(c, "mcp/tree")
+    empty = make_folder(c, "mcp/empty")
+    assert c.put(f"/api/blocks/{paper['id']}", json={"properties": {"folders": [tree]}}).status_code == 200
     result = call(client, item["token"], "list_folders", {})
-    assert not result["isError"] and '"mcp/tree" (1 page)' in result["content"][0]["text"]
+    text = result["content"][0]["text"]
+    assert not result["isError"] and f'[{tree}] "mcp / tree" (1 page)' in text
+    assert f'[{empty}] "mcp / empty" (no pages)' in text  # the tree, ids and empty folders included
     assert c.put(f"/api/chats/{paper['id']}", json={"messages": [
         {"role": "user", "text": "UniqueMcpChatQuestion"}, {"role": "ai", "text": "An answer"}]}).status_code == 200
     result = call(client, item["token"], "read_chats", {"page_id": paper["id"]})
@@ -197,7 +202,7 @@ def test_read_links_use_canonical_origin(client, connection, monkeypatch):
 
 def test_tokens_are_hashed_private_and_revocable(client, connection):
     c, ws, item = connection
-    assert resolve_token(item["token"]) == ("mcp-reader", ws)
+    assert resolve_token(item["token"]) == (account_of("mcp-reader"), ws)
     listed = c.get("/api/integrations/tokens")
     assert listed.headers["cache-control"] == "no-store"
     assert item["token"] not in listed.text and "token_hash" not in listed.text
@@ -213,10 +218,10 @@ def test_connection_listing_stays_scoped_to_current_workspace(client, connection
     from gamma.integrations import create_token
 
     c, ws, item = connection
-    second = workspaces.create("Second library", "mcp-reader")
-    other = create_token("mcp-reader", second["id"], "Codex second", 90)
+    second = workspaces.create("Second library", account_of("mcp-reader"))
+    other = create_token(account_of("mcp-reader"), second["id"], "Codex second", 90)
     foreign_ws = make_user("another-reader", "pw")
-    foreign = create_token("another-reader", foreign_ws, "Private connection", 90)
+    foreign = create_token(account_of("another-reader"), foreign_ws, "Private connection", 90)
     result = c.get("/api/integrations/tokens")
     data = result.json()
     assert data["workspace_id"] == ws
@@ -233,12 +238,14 @@ def test_expiration_and_membership_loss(client, connection):
     assert rpc(client, item["token"], "tools/list").status_code == 401
     with connect_users_db() as db:
         db.execute("UPDATE integration_tokens SET expires_at = ? WHERE id = ?", (int(time.time()) + 100, item["id"]))
-        db.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND username = ?", (ws, "mcp-reader"))
+        db.execute("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                   (ws, account_of("mcp-reader")))
     try:
         assert rpc(client, item["token"], "tools/list").status_code == 401
     finally:
         with connect_users_db() as db:
-            db.execute("INSERT INTO workspace_members VALUES (?, ?, 'owner', '', '')", (ws, "mcp-reader"))
+            db.execute("INSERT INTO workspace_members VALUES (?, ?, 'owner', '', '')",
+                       (ws, account_of("mcp-reader")))
 
 
 def test_no_cookie_fallback_and_transport_guards(client, connection):

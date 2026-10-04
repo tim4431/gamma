@@ -19,6 +19,7 @@
   python manage.py clients
   python manage.py delete-client <client_id>
   python manage.py rotate-key
+  python manage.py settings [<key> <value>]       show the sign-up settings, or set one (an empty value clears it)
 """
 
 import argparse
@@ -26,7 +27,7 @@ import getpass
 import sys
 from contextlib import closing
 
-from gammacloud import accounts, config, db, oidc
+from gammacloud import accounts, config, db, oidc, settings
 from gammacloud.accounts import Problem, make_invite
 
 
@@ -203,6 +204,31 @@ def cmd_rotate_key(args):
     print(f"new signing key {kid}; the previous one stays published for {config.RETIRED_KEY_GRACE // 86400} days")
 
 
+def _settings_shown() -> dict:
+    """Each setting as the Admin page shows it: a secret only as set / not set."""
+    view = settings.admin_view()
+    shown = {key: view[key] for key in settings.DEFAULTS if key in view}
+    for key in settings.SECRETS:
+        shown[key] = "(set)" if view[f"{key}_set"] else "(not set)"
+    return shown
+
+
+def cmd_settings(args):
+    if args.key:
+        with closing(db.connect()) as conn:
+            try:  # an empty value clears the key; for a secret that is None (settings.update keeps "")
+                settings.update(conn, {args.key: args.value or None}, actor="cli")
+            except ValueError as e:
+                sys.exit(str(e))
+            conn.commit()
+        settings.invalidate()
+    for key, value in _settings_shown().items():
+        if not args.key or key == args.key:
+            print(f"{key:<22} {value.replace(chr(10), ', ')}")
+    if settings.unguarded_registration():
+        print("warning: registration is open without Turnstile; only the rate limits stop a script")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -229,6 +255,8 @@ def main(argv=None):
     sub.add_parser("clients").set_defaults(fn=cmd_clients)
     dc = sub.add_parser("delete-client"); dc.add_argument("client_id"); dc.set_defaults(fn=cmd_delete_client)
     sub.add_parser("rotate-key").set_defaults(fn=cmd_rotate_key)
+    st = sub.add_parser("settings"); st.add_argument("key", nargs="?", choices=tuple(settings.DEFAULTS))
+    st.add_argument("value", nargs="?", default=""); st.set_defaults(fn=cmd_settings)
     args = p.parse_args(argv)
     if args.cmd not in ("migrate", "setup"):
         version = db.data_version()

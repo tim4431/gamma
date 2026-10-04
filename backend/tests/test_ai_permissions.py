@@ -16,7 +16,7 @@ from gamma.ai_tools import (MUTATING_TOOLS, TOOLS, agent_system, agent_tools, ap
                             text_diff, tool_states)
 from gamma.routers.ai import WatchedStream, keepalive_lines
 
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, folder, notes, org, props  # noqa: F401  (fixtures)
 
 
@@ -29,6 +29,7 @@ def _provider(ai_provider):
 def _offline_model_facts(monkeypatch):
     # The chat loop also looks up model limits before calling _open_ai.
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
 
 
 def _names(specs):
@@ -96,7 +97,7 @@ def test_the_card_shows_a_change_word_by_word():
 
 def test_a_preview_names_the_change_and_changes_nothing(notes):
     c, ids = notes
-    ws, scope = ids["ws"], {**folder("sandbox"), "can_write": True, "read_texts": {}}
+    ws, scope = ids["ws"], {**folder(ids["sandbox"]), "can_write": True, "read_texts": {}}
     preview, answer = approval_preview(ws, scope, "edit_block",
                                        {"block_id": ids["top"], "mode": "append", "content": "more"})
     assert answer is None
@@ -108,7 +109,10 @@ def test_a_preview_names_the_change_and_changes_nothing(notes):
                                   {"page_id": ids["page"], "title": "notes playground v2"})
     assert renamed["diff"] == [["ctx", "notes playground"], ["ins", " v2"]]
     moved, _ = approval_preview(ws, scope, "move_page", {"page_id": ids["page"], "folder": "archive"})
-    assert (moved["from"], moved["to"]) == ("sandbox", "sandbox/archive")
+    assert (moved["from"], moved["to"]) == ("sandbox", "sandbox / archive")
+    sandbox = next(n for n in c.get("/api/blocks/folders/subtree").json()["block"]["children"]
+                   if n["id"] == ids["sandbox"])
+    assert not any(n["content"] == "archive" for n in sandbox["children"]), "nor makes the folder"
     created, _ = approval_preview(ws, scope, "create_block", {"parent_id": ids["top"], "content": "a child"})
     assert (created["parent"], created["diff"]) == ("top-level idea", [["ins", "a child"]])
     placed, _ = approval_preview(ws, scope, "move_block", {"block_id": ids["other"], "parent_id": ids["top"]})
@@ -119,7 +123,7 @@ def test_a_preview_names_the_change_and_changes_nothing(notes):
 
 def test_a_call_that_cannot_change_anything_is_answered_without_a_card(notes):
     _, ids = notes
-    ws, scope = ids["ws"], {**folder("sandbox"), "can_write": True, "read_texts": {}}
+    ws, scope = ids["ws"], {**folder(ids["sandbox"]), "can_write": True, "read_texts": {}}
     for name, args, answer in [
         ("rename_page", {"page_id": "nope", "title": "x"}, "error: no such page"),
         ("rename_page", {"page_id": ids["page"], "title": "notes playground"}, "ok — title already"),
@@ -227,7 +231,7 @@ def test_a_watched_stream_hears_the_client_leave_at_once():
 
 def test_the_answer_endpoint_takes_only_the_asking_accounts_decision(org):
     c, ids = org
-    aid = ai_permissions.open_approval(ids["user"])
+    aid = ai_permissions.open_approval(account_of(ids["user"]))
     try:
         assert c.post(f"/api/ai/approvals/{aid}", json={"decision": "sometimes"}).status_code == 422
         make_user("permissions-other", "pw")
@@ -268,9 +272,10 @@ def _agent(monkeypatch, *calls):
 
 
 def _answers(monkeypatch, user, *decisions):
-    """Answer the chat's approval cards in turn, as ``user`` would. Returns
-    the ids the chat waited on."""
+    """Answer the chat's approval cards in turn, as the account named
+    ``user`` would. Returns the ids the chat waited on."""
     real, left, asked = ai_permissions.wait_for, list(decisions), []
+    user = account_of(user)
 
     def wait_for(approval_id, stopped=None, timeout=None):
         asked.append(approval_id)
@@ -407,7 +412,7 @@ def test_a_closed_stream_leaves_the_waiting_change_unmade(org, monkeypatch):
     assert _kinds(lines) == ["step", "approval"] and not actions
     assert len(opened) == 1, "no further round"
     assert props(c, ids["a"])["content"] == before
-    assert not [a for a in ai_permissions._pending.values() if a["user"] == ids["user"]]
+    assert not [a for a in ai_permissions._pending.values() if a["user"] == account_of(ids["user"])]
 
 
 def test_an_asking_note_edit_is_not_typed_into_the_notes(notes, monkeypatch):
@@ -433,12 +438,12 @@ def test_a_reply_that_cannot_ask_offers_no_asking_tool(org, monkeypatch):
 def test_the_card_is_answered_over_http_while_the_reply_waits(org, monkeypatch):
     c, ids = org
     _agent(monkeypatch, ("t1", "rename_page", {"page_id": ids["b"], "title": "Answered over HTTP"}))
-    clicker, answered = login(ids["user"], "pw"), {}
+    clicker, answered, user_id = login(ids["user"], "pw"), {}, account_of(ids["user"])
 
     def user_clicks():
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            waiting = [aid for aid, a in list(ai_permissions._pending.items()) if a["user"] == ids["user"]]
+            waiting = [aid for aid, a in list(ai_permissions._pending.items()) if a["user"] == user_id]
             if waiting:
                 answered["status"] = clicker.post(f"/api/ai/approvals/{waiting[0]}",
                                                   json={"decision": "once"}).status_code

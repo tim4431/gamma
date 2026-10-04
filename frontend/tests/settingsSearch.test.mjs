@@ -1,11 +1,11 @@
-// Settings search (settings/settingsNavigation.js): every entry must jump to
+// Settings search (settings/settingsSearch.js): every entry must jump to
 // something its pane really renders, or the jump finds nothing.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsNavigation.js";
+import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsSearch.js";
 
 const SETTINGS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
 const source = (file) => fs.readFileSync(path.join(SETTINGS, file), "utf8");
@@ -17,13 +17,12 @@ const PANE_FILES = {
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
   ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
-  assistant: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
-  "ai-advanced": ["SettingsDialog.jsx"],
-  prompts: ["SettingsDialog.jsx"],
+  assistant: ["SettingsDialog.jsx"],
+  tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx"],
-  workspaces: ["SettingsWorkspace.jsx"],
-  backups: ["SettingsBackups.jsx", "BackupTasks.jsx"],
+  workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
+  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "OffsiteCopies.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsGuests.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
@@ -70,4 +69,11 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   assert.equal(searchSettings("enter key", all)[0].label, "Enter makes");
   assert.equal(searchSettings("delete", all)[0].target, "Personal", "a Manage-page setting jumps to the list it sits under");
   assert.ok(searchSettings("microsoft", all).some((r) => r.label === "Translation services"), "the hint is searched");
+});
+
+test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {
+  const all = Object.keys(PANE_FILES);
+  assert.equal(searchSettings("bucket", all)[0]?.label, "Off-site copies");
+  const member = all.filter((pane) => pane !== "server" && pane !== "users");
+  assert.ok(!searchSettings("bucket", member).some((r) => r.label === "Off-site copies"));
 });

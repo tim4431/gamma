@@ -20,7 +20,7 @@ import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
-import { pageAttachment, parseFolderTags } from "../library/libraryUtils";
+import { filedIn, pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { chipNote, isChange, runningLabel, splitActions, stepsSummary } from "./agentSteps";
@@ -28,11 +28,11 @@ import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
-import { aiServiceTiles } from "../settings/SettingsAi";
+import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
-import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { effortFor, speedFor } from "./modelPrefs";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -186,12 +186,37 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
   );
 }
 
+// The speed tier a call asked for rides on the model chip as a glyph rather
+// than a word — a bolt for the provider's fast route, a clock for its slow,
+// cheap one — so the chip stays short. Nothing for its usual routing, and
+// the tooltip (`knobsLabel`) names the tier the glyph stands for.
+const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
+function SpeedGlyph({ speed, size = 13 }) {
+  const Icon = SPEED_ICONS[speed];
+  return Icon ? <Icon size={size} className="chatSpeedGlyph" aria-hidden="true" /> : null;
+}
+const knobsLabel = (speed) => (speed
+  ? t("Model, reasoning effort and speed ({speed})", { speed })
+  : t("Model, reasoning effort and speed"));
+
 // What the server knows about a chat model, asked once per model per page
-// load (GET /api/ai/model-info): its context window in tokens and the
-// reasoning-effort levels it takes, read from the provider's own model
-// listing, else the public models.dev catalog. Null while unknown, and so
-// is either field when no source knows it — nothing is guessed from the name.
-const modelInfos = new Map(); // model id -> Promise<{context_window, efforts} | null>
+// load (GET /api/ai/model-info): its context window in tokens, the
+// reasoning-effort levels it takes and the service tiers it can run at,
+// read from the provider's own model listing, else the public models.dev
+// catalog. Null while unknown, and so is any field no source knows —
+// nothing is guessed from the name.
+const modelInfos = new Map(); // model id -> Promise<{context_window, efforts, speeds, images} | null>
+// A reply's thinking, round by round ({"reasoning"} lines: {wire field:
+// text}). It is kept with the reply and sent back with it on later turns,
+// where a thinking model wants it (DeepSeek refuses tools without it).
+function addReasoning(kept, round) {
+  const out = { ...(kept || {}) };
+  for (const [field, text] of Object.entries(round || {})) {
+    if (typeof text === "string" && text) out[field] = out[field] ? `${out[field]}\n\n${text}` : text;
+  }
+  return out;
+}
+
 function useModelInfo(modelId) {
   const [known, setKnown] = useState({ id: "", info: null });
   useEffect(() => {
@@ -269,7 +294,7 @@ function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove,
 }
 
 // No AI connected: what the chat is for, then one tile per way to connect
-// (settings/SettingsAi.jsx aiServiceTiles over GET /api/ai/settings). A tile
+// (settings/providerEditor.js aiServiceTiles over GET /api/ai/settings). A tile
 // opens Settings → Connections with the connect dialog set to that service.
 // An account that can't store keys (a guest) can only ask for a shared one;
 // an admin may also share one with the whole server.
@@ -317,7 +342,7 @@ export default function ChatDock({
   // only editors change them: the conversation stays in this tab (no
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
-  docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
+  docId, pageAttach, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
   // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
   // text}], App state like pdfSelections) and the block row the user's
@@ -326,7 +351,7 @@ export default function ChatDock({
   // selection" mean something. onSelectionSent drops the sent selection.
   chatNotes, setChatNotes, focusedNote, onSelectionSent,
   chatImages, setChatImages,
-  chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
+  chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
   // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
@@ -338,7 +363,7 @@ export default function ChatDock({
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
-  // Home/folder view: the folder path being viewed ("" = library root) —
+  // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
   // read, block_read, search, rename, move, block_edit}; setAgentPerms edits
@@ -361,12 +386,12 @@ export default function ChatDock({
   const [loadedMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [loadError, setLoadError] = useState("");
-  // Chat history is per page; the home view buckets per folder ("home" at the
-  // library root, "home:<path>" inside a folder) — switching folders switches
+  // Chat history is per page; the home view buckets per folder (the folder's
+  // id, "home" at the library root) — switching folders switches
   // conversations, so the organizer never drags one folder's context into
-  // another. App migrates the buckets on folder rename/move/delete
-  // (POST /api/folders/rename).
-  const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
+  // another. A rename or a move keeps the bucket; deleting the folder files
+  // its conversations into "home"'s history (DELETE /api/folders/{id}).
+  const chatKey = focusedBlockId || organizeFolder || "home";
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedMessages;
   // A reply is streaming into THIS conversation. Other buckets stream on
@@ -378,7 +403,7 @@ export default function ChatDock({
   // Where a reply's "Save to library" files papers: the folder the chat is
   // about — the one viewed, else the open paper's first.
   const paperFolder = organizeFolder != null ? organizeFolder
-    : parseFolderTags(homeBlocks.find((b) => b.id === focusedBlockId)?.properties?.folder)[0] || "";
+    : filedIn(libraryTree.folders, homeBlocks.find((b) => b.id === focusedBlockId)?.properties?.folders)[0] || "";
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
@@ -403,7 +428,7 @@ export default function ChatDock({
   }, [focusSignal, aiOff, aiInfo]);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
-  // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
+  // map in Settings → AI → Tool usage (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
   const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
   const chatKindLabel = chatKindName(chatKind);
@@ -528,16 +553,20 @@ export default function ChatDock({
   const ctxWindow = ctxUsed ? modelInfo?.context_window || null : null;
   // The reasoning efforts the picked model takes ([] = none); a model no
   // source knows gets the generic ones. The preference stays as chosen and
-  // is sent as the nearest level this model takes (chat/effort.js), so a
+  // is sent as the nearest level this model takes (chat/modelPrefs.js), so a
   // switch to a model without "xhigh" and back keeps it.
   const effortLevels = Array.isArray(modelInfo?.efforts) ? modelInfo.efforts : (aiInfo?.efforts || ["low", "medium", "high"]);
   const effort = effortFor(chatEffort, effortLevels);
+  // The service tiers this model can run at ([] = none, and none at all
+  // until model-info answers — a speed is never guessed, it costs money).
+  const speedTiers = Array.isArray(modelInfo?.speeds) ? modelInfo.speeds : [];
+  const speed = speedFor(chatSpeed, speedTiers);
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   // The mic shows only when a connection can transcribe (an OpenAI-protocol
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
   const canDictate = !aiOff && !!aiInfo?.transcribe;
   const nativePdfNote = nativePdf ? "" :
-    t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
+    t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Chat / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
   const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
   useEffect(() => {
     // A provider without native PDF input: drop the automatic "send the file
@@ -977,8 +1006,9 @@ export default function ChatDock({
       // each turn — never the pictures, reports and counts saved with
       // them, nor the texts kept for reverting a change (failed replies
       // aren't answers).
-      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
-        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}) })),
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning }) => ({
+        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
+        ...(reasoning ? { reasoning } : {}) })),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
       selections: pdfSelections,
@@ -992,6 +1022,7 @@ export default function ChatDock({
         .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text })),
       attach_pdf: attach,
       effort,
+      speed,
       system: chatSystem || "",
       pages: selectedDocs.length ? contextIds : [],
       include_notes: includeNotes,
@@ -1107,7 +1138,7 @@ export default function ChatDock({
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
-    let answered = null; // {"model": {id, name, effort}} — which model answers, at what effort
+    let answered = null; // {"model": {id, name, effort, speed}} — which model answers, how
     let usage = null; // the provider's token report, summed over the reply's rounds
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
@@ -1116,6 +1147,7 @@ export default function ChatDock({
     const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
+    let reasoning = null; // {"reasoning"} lines — the model's thinking, sent back on later turns
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const replyId = makeId(); // every version of this reply, partial or final, is one message
     const aiMsg = (extra = {}) => ({
@@ -1123,11 +1155,13 @@ export default function ChatDock({
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
+        ...(answered.speed ? { speed: answered.speed } : {}),
         ...(answered.tools ? { tools: true } : {}) } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...(trimmed ? { trimmed } : {}),
       ...(truncated ? { truncated: true } : {}),
+      ...(reasoning ? { reasoning } : {}),
       ...extra,
     });
     try {
@@ -1183,6 +1217,8 @@ export default function ChatDock({
             trimmed = ev.trimmed;
           } else if (ev.truncated) {
             truncated = true;
+          } else if (ev.reasoning) {
+            reasoning = addReasoning(reasoning, ev.reasoning);
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
@@ -1513,7 +1549,7 @@ export default function ChatDock({
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
-                    {t("Extracted PDF text sent with each message. The multi-page total and the agent's read window are in Settings / AI / Advanced AI settings.")}
+                    {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
                   </div>
                   <div className="popoverSection">{t("Tools")}</div>
                   <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
@@ -1848,7 +1884,8 @@ export default function ChatDock({
                         autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
                     ) : null}
                     {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
-                      <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder} options={paperSave}
+                      <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder}
+                        folderName={libraryTree.folders.get(paperFolder)?.name || ""} options={paperSave}
                         onOpenPage={onOpenPage} onLibraryChange={onLibraryChange} />
                     ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
@@ -1864,8 +1901,9 @@ export default function ChatDock({
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser && m.model ? (
-                      <span className="chatMsgModel" title={t("Model and reasoning effort")}>
-                        {m.effort ? `${m.model} · ${m.effort}` : m.model}
+                      <span className="chatMsgModel" title={knobsLabel(m.speed)}>
+                        {[m.model, m.effort].filter(Boolean).join(" · ")}
+                        <SpeedGlyph speed={m.speed} size={12} />
                       </span>
                     ) : null}
                     {!isUser ? <UsageLine usage={m.usage} /> : null}
@@ -1992,7 +2030,7 @@ export default function ChatDock({
         <>
         <PaperMentionInput
           key={chatKey}
-          pages={homeBlocks} openTabs={openTabs} selected={chatDocs}
+          pages={homeBlocks} tree={libraryTree} openTabs={openTabs} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
           className="chatInput chatInputArea"
@@ -2063,7 +2101,7 @@ export default function ChatDock({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,application/pdf"
+            accept={modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf"}
             style={{ display: "none" }}
             onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
           />
@@ -2101,18 +2139,31 @@ export default function ChatDock({
             <span className="chatModelChip">
               <MenuSelect
                 up
-                label={t("Model and reasoning effort")}
+                label={knobsLabel(speed)}
                 heading={t("Model")}
                 value={headerModel.id}
                 onChange={setChatModel}
-                display={effort ? `${headerModel.model} · ${effort}` : headerModel.model}
+                display={<>
+                  <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
+                  <SpeedGlyph speed={speed} />
+                </>}
                 options={headerModels.map((m) => [m.id, modelLabel(m)])}
-                sections={effortLevels.length ? [{
-                  label: t("Reasoning effort"),
-                  value: effort,
-                  onChange: setChatEffort,
-                  options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
-                }] : []}
+                sections={[
+                  ...(effortLevels.length ? [{
+                    label: t("Reasoning effort"),
+                    value: effort,
+                    onChange: setChatEffort,
+                    options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
+                  }] : []),
+                  // Only what this model's provider actually offers: a tier
+                  // it doesn't have would be refused upstream.
+                  ...(speedTiers.length ? [{
+                    label: t("Speed"),
+                    value: speed,
+                    onChange: setChatSpeed,
+                    options: [["", t("Default")], ...speedTiers.map((tier) => [tier, tier])],
+                  }] : []),
+                ]}
               />
             </span>
           ) : null}

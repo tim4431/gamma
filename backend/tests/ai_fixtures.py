@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from conftest import login, make_user, workspace_of
+from conftest import account_of, login, make_folder, make_user, workspace_of
 from gamma.ai_tools import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
@@ -24,8 +24,9 @@ TURNS = [
 ]
 
 
-def folder(path):
-    return {"type": "folder", "folder": path}
+def folder(folder_id=""):
+    """A folder chat's scope: the folder ``folder_id`` ("" = the library root)."""
+    return {"type": "folder", "folder": folder_id}
 
 
 @pytest.fixture(scope="module")
@@ -33,8 +34,10 @@ def org(client, request):
     """A non-guest account with a small library — two papers in folders, one
     loose note — private to the test module (its name is in the account's),
     so the AI test files never see each other's pages or provider entries.
-    Returns (client, ids): the page ids, plus the account under "user" and
-    its workspace id under "ws"."""
+    Returns (client, ids): the page ids, the folder ids ("readout", its
+    subfolder "nondestructive", "cooling"), plus the account's name under
+    "user", its id under "user_id" (what storage takes) and its workspace id
+    under "ws"."""
     user = "organizer-" + request.module.__name__.removeprefix("test_ai_").replace("_", "-")
     make_user(user, "pw")
     c = login(user, "pw")
@@ -44,13 +47,16 @@ def org(client, request):
         assert r.status_code == 200, r.text
         return r.json()["id"]
 
+    folders = {"readout": make_folder(c, "readout"),
+               "nondestructive": make_folder(c, "readout/nondestructive"),
+               "cooling": make_folder(c, "cooling")}
     ids = {
-        "a": page("cavity paper", {"folder": "readout", "doc_id": "d" * 24,
+        "a": page("cavity paper", {"folders": [folders["readout"]], "doc_id": "d" * 24,
                                    "meta": {"authors": ["Ada One", "Bo Two"], "year": "2019", "venue": "Nature"}}),
-        "b": page("qec paper", {"folder": "readout/nondestructive, cooling"}),
+        "b": page("qec paper", {"folders": [folders["nondestructive"], folders["cooling"]]}),
         "note": page("loose note", {}),
     }
-    return c, {**ids, "user": user, "ws": workspace_of(user)}
+    return c, {**ids, **folders, "user": user, "user_id": account_of(user), "ws": workspace_of(user)}
 
 
 @pytest.fixture(scope="module")
@@ -70,8 +76,10 @@ def indexed_pdf(org):
 
 @pytest.fixture(scope="module")
 def notes(org):
-    """A page with a small note tree (plus a highlight) for the block tools."""
+    """A page with a small note tree (plus a highlight) for the block tools,
+    filed in the folder "sandbox" (its id under "sandbox")."""
     c, ids = org
+    sandbox = make_folder(c, "sandbox")
     last_pos: dict = {}  # per-parent, so siblings get real fractional order
 
     def block(parent, content, props=None):
@@ -82,15 +90,15 @@ def notes(org):
         last_pos[parent] = r.json()["position"]
         return r.json()["id"]
     page = block("root", "notes playground")
-    r = c.put(f"/api/blocks/{page}", json={"properties": {"folder": "sandbox"}})
+    r = c.put(f"/api/blocks/{page}", json={"properties": {"folders": [sandbox]}})
     assert r.status_code == 200
     top = block(page, "top-level idea")
     child = block(top, "supporting detail")
     other = block(page, "second thread")
     hl = block(page, "why this matters",
-               {"highlight_id": "h1", "quote": "measured T1 of 300 µs"})
+               {"pdf_position": {"pageNumber": 1}, "quote": "measured T1 of 300 µs"})
     return c, {**ids, "page": page, "top": top, "child": child,
-               "other": other, "hl": hl}
+               "other": other, "hl": hl, "sandbox": sandbox}
 
 
 @pytest.fixture(scope="module")

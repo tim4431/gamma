@@ -3,9 +3,14 @@
 ## Manual reference links
 
 A highlight block can make a PDF region clickable through
-`properties.link_url` or `link_page_id`; `link_highlight_id` additionally
-targets a particular highlight on the destination page. App derives the
-viewer's `linkTarget` from those properties. `handleDocLink` resolves a DOI
+`properties.link_url` or `link_page_id`; `link_block_id` additionally
+targets a particular highlight on the destination page, by its block id (a
+highlight's id is its block's, [api.md](api.md) "The highlight shape"):
+"Copy as reference point" on a highlight keeps that id for another paper's
+link dialog. App derives the viewer's `linkTarget` (`{url, pageId,
+blockId}`) from those properties (`linkProps` writes them), and opening
+the link jumps to the block once the page is up. The block table's `kind`
+calls such a block a `link`; the viewer draws it as a highlight. `handleDocLink` resolves a DOI
 or arXiv URL against the current library first, opening the existing page
 when found; otherwise it offers fetching the paper or opening the browser.
 

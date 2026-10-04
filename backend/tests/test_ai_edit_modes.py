@@ -2,7 +2,7 @@
 joined on its own line, existing text untouched, and the action says which."""
 
 import pytest
-from conftest import login, make_user, workspace_of
+from conftest import login, make_folder, make_user, workspace_of
 
 from gamma.ai_tools import join_block_text, run_agent_tool
 
@@ -28,7 +28,7 @@ def page(client):
     make_user(USER, "pw")
     c = login(USER, "pw")
     r = c.post("/api/blocks", json={"parent_id": "root", "content": "modes page",
-                                    "properties": {"folder": "modes"}})
+                                    "properties": {"folders": [make_folder(c, "modes")]}})
     assert r.status_code == 200, r.text
     return c, r.json()["id"]
 

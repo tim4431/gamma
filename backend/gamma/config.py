@@ -15,8 +15,10 @@ WORKSPACES_DIR = DATA_DIR / "workspaces"
 # The pre-workspace layout (users/<username>/...). Read ONLY by the schema
 # migration that moves it into WORKSPACES_DIR (gamma/migrations.py).
 LEGACY_USERS_DIR = DATA_DIR / "users"
-# Database snapshots the migration runner takes before changing the data
-# directory (gamma/migrations.py backup()).
+# Snapshots and backup state: the migration runner's pre-upgrade copies
+# (gamma/backups.py), workspace snapshots and their scheduled tasks
+# (gamma/ws_backup.py, gamma/backup_schedule.py), the off-site copies'
+# state (gamma/offsite.py).
 BACKUPS_DIR = DATA_DIR / "backups"
 
 # Built frontend (vite dist/). When set and the directory exists, the backend
@@ -121,6 +123,30 @@ def sync_interval_s() -> int:
         return max(0, int(os.environ.get("GAMMA_SYNC_INTERVAL", "30") or 0))
     except ValueError:
         return 30
+
+
+def offsite_env() -> dict:
+    """The off-site copies as the environment sets them, read at each use
+    by gamma/offsite.py, whose ``settings`` merges them with the saved
+    settings. With ``GAMMA_S3_BUCKET`` set every field comes
+    from here and the saved settings are not used: ``GAMMA_S3_ENDPOINT``
+    (unset for AWS itself), ``GAMMA_S3_REGION``, ``GAMMA_S3_ACCESS_KEY`` /
+    ``GAMMA_S3_SECRET_KEY`` (both unset: boto3's own chain, the ``AWS_*``
+    variables or an instance role), ``GAMMA_S3_PREFIX`` (put before every
+    key), ``GAMMA_OFFSITE`` (``enabled``: on unless 0/false/no/off),
+    ``GAMMA_OFFSITE_INTERVAL`` (``interval``, seconds) and
+    ``GAMMA_OFFSITE_KEEP`` (``keep``: copies per database). Strings as
+    set; offsite.py parses the numbers."""
+    env = os.environ.get
+    return {"bucket": env("GAMMA_S3_BUCKET", "").strip(),
+            "endpoint": env("GAMMA_S3_ENDPOINT", "").strip().rstrip("/"),
+            "region": env("GAMMA_S3_REGION", "").strip(),
+            "access_key": env("GAMMA_S3_ACCESS_KEY", "").strip(),
+            "secret_key": env("GAMMA_S3_SECRET_KEY", "").strip(),
+            "prefix": env("GAMMA_S3_PREFIX", "").strip(),
+            "enabled": env("GAMMA_OFFSITE", "").strip(),
+            "interval": env("GAMMA_OFFSITE_INTERVAL", "").strip(),
+            "keep": env("GAMMA_OFFSITE_KEEP", "").strip()}
 
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB

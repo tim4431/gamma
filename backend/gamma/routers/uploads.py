@@ -1,14 +1,17 @@
-"""PDF / image / generic file uploads (content-hash deduped) and upload serving."""
+"""PDF / image / generic file uploads (content-hash deduped), a PDF's upload
+in parts, and upload serving."""
 
+import json
 import threading
 import time
 from collections import OrderedDict
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
-from .. import pdf_meta
+from .. import pdf_meta, upload_parts
 from ..db import connect_pages_db
 from ..ink import InkError, parse_ink
 from ..server_settings import workspace_quota
@@ -20,6 +23,7 @@ from ..storage import (
     display_filename,
     find_upload_file,
     is_pdf,
+    pdf_url,
     store_file,
     store_pdf,
     upload_extension,
@@ -52,13 +56,68 @@ def upload_pdf(request: Request, file: UploadFile = File(...)):
     contents = file.file.read()
     if not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-    doc_id, source_url, already_existed = store_pdf(ws, contents)
+    doc_id, already_existed = store_pdf(ws, contents)
     return {
         "doc_id": doc_id,
-        "source_url": source_url,
+        "source_url": pdf_url(doc_id),
         "size": len(contents),
         "already_existed": already_existed,
     }
+
+
+# --- a PDF's upload in parts (gamma/upload_parts.py) -----------------------------------
+# A proxy in front of the server caps a request's body (Cloudflare at
+# 100 MB); past `PART_BYTES` the clients cut a PDF into parts and send them
+# one request each: open → the parts, in order → finish, which answers like
+# POST /uploads. Members with write access, like POST /uploads.
+
+class PartsStart(BaseModel):
+    size: int
+    name: str = ""
+
+
+@router.post("/uploads/parts")
+def start_upload_parts(request: Request, body: PartsStart):
+    """Open an upload in parts → ``{token, part_bytes, received: 0}``: the
+    size and quota checks of ``POST /uploads`` (413 / 507) run here, before
+    a byte travels; 429 past ``upload_parts.MAX_PER_WS`` open at once."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.start(ws, body.size, body.name)
+    return {"token": session.token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+
+
+@router.post("/uploads/parts/{token}")
+def put_upload_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
+    """One part, at byte ``offset`` (the bytes held so far) → ``{received}``.
+    A part at any other offset is a 409 whose body carries ``received``,
+    where the client goes on from (a part whose reply the network lost)."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.get(ws, token)
+    try:
+        received = upload_parts.append(session, offset, part.file)
+    except upload_parts.OffsetMismatch as e:
+        return JSONResponse({"detail": str(e), "received": e.received}, status_code=409)
+    return {"received": received}
+
+
+@router.post("/uploads/parts/{token}/finish")
+def finish_upload_parts(token: str, request: Request):
+    """Store the assembled PDF → ``{doc_id, source_url, size, already_existed}``
+    like ``POST /uploads``; 400 while bytes are missing or when it is no
+    PDF. The token is gone afterwards."""
+    ws = require_ws(request, write=True)
+    session = upload_parts.get(ws, token)
+    doc_id, already_existed = upload_parts.finish(session)
+    return {"doc_id": doc_id, "source_url": pdf_url(doc_id), "size": session.size,
+            "already_existed": already_existed}
+
+
+@router.delete("/uploads/parts/{token}")
+def discard_upload_parts(token: str, request: Request):
+    """Drop an unfinished upload and its bytes (the stop button)."""
+    ws = require_ws(request, write=True)
+    upload_parts.discard(upload_parts.get(ws, token))
+    return {"ok": True}
 
 
 @router.post("/upload-image")
@@ -146,25 +205,17 @@ def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
 
 def _pages_reference(conn, pages: list[str], filename: str) -> bool:
     """Whether one of ``pages`` carries ``filename`` as its PDF or a block of
-    its subtree names it (500 pages per query)."""
+    it names it."""
     needle = f"/api/uploads/{filename}"
-    for i in range(0, len(pages), 500):
-        chunk = pages[i:i + 500]
-        marks = ",".join("?" * len(chunk))
-        if filename.endswith(".pdf") and conn.execute(
-                f"SELECT 1 FROM unified_blocks WHERE id IN ({marks}) "
-                "AND json_extract(properties, '$.doc_id') = ?", (*chunk, filename[:-4])).fetchone():
-            return True
-        if conn.execute(
-                f"""WITH RECURSIVE tree(id, content, properties) AS (
-                        SELECT id, content, properties FROM unified_blocks WHERE id IN ({marks})
-                        UNION ALL
-                        SELECT ub.id, ub.content, ub.properties
-                        FROM unified_blocks ub JOIN tree t ON ub.parent_id = t.id)
-                    SELECT 1 FROM tree WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0 LIMIT 1""",
-                (*chunk, needle, needle)).fetchone():
-            return True
-    return False
+    reach = json.dumps(pages)
+    if filename.endswith(".pdf") and conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE doc_id = ? AND id IN (SELECT value FROM json_each(?))",
+            (filename[:-4], reach)).fetchone():
+        return True
+    return conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
+        "AND (instr(content, ?) > 0 OR instr(properties, ?) > 0) LIMIT 1",
+        (reach, needle, needle)).fetchone() is not None
 
 
 @router.get("/pdf-info/{doc_id}")
@@ -214,9 +265,6 @@ def serve_upload(filename: str, request: Request):
     if scope is not None and not _share_can_read_upload(ws, scope, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
-    path = find_upload_file(filename, ws)
-    if not path:
-        raise HTTPException(status_code=404, detail="not found")
     # Filenames are content hashes (or URL hashes the server only writes once),
     # so a given name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
@@ -229,6 +277,10 @@ def serve_upload(filename: str, request: Request):
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     if ext in SANDBOXED_EXTENSIONS:
         headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+
+    path = find_upload_file(filename, ws)
+    if not path:
+        raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path, media_type=media_type, headers=headers)
 
 

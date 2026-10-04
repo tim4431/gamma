@@ -5,13 +5,16 @@
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { TEXT_COLORS, colorSpan } from "./mdMarks";
+import { makeBlockId } from "../shared/model/blockModel.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
 // Every command edits through ctx:
 //   { value, start, cursor, setText(newVal, selStart, selEnd),
-//     openRefPopup(), pickImage(), insertPage() }
+//     openRefPopup(), pickImage(), insertSheet(), newPage(id) }
 // start = index of the "/", cursor = caret (end of the typed query); commands
-// replace that range with their insertion.
+// replace that range with their insertion. A command that `needs` one of
+// the editor's abilities is offered only where the editor has it
+// (filterSlashCommands' `can`).
 
 function replaceRange(ctx, text, caretRel, selLen = 0) {
   const { value, start, cursor } = ctx;
@@ -109,10 +112,20 @@ export const SLASH_COMMANDS = [
     keywords: ["picture", "photo", "upload", "figure"],
     run: (ctx) => { replaceRange(ctx, ""); ctx.pickImage(); },
   },
+  // Notion's /page: a new page in the library, its [[link]] put where the
+  // command was typed (under an id minted here, which the page is then made
+  // under), and the page opened.
   {
-    name: "page", label: T("Page to write on"), glyph: "▯", hint: T("a sheet of paper for handwriting"),
-    keywords: ["paper", "sheet", "handwriting", "draw", "notebook", "ink", "pen"],
-    run: (ctx) => { replaceRange(ctx, ""); ctx.insertPage?.(); },
+    name: "page", label: T("New page"), glyph: "↗", hint: T("a new library page, linked here"),
+    keywords: ["subpage", "document", "create", "link"],
+    needs: "newPage",
+    run: (ctx) => { const id = makeBlockId(); replaceRange(ctx, `[[${id}]]`); ctx.newPage(id); },
+  },
+  {
+    name: "note", label: T("Handwritten note"), glyph: "▯", hint: T("a sheet of paper for handwriting"),
+    keywords: ["page", "paper", "sheet", "handwriting", "draw", "notebook", "ink", "pen"],
+    needs: "sheet",
+    run: (ctx) => { replaceRange(ctx, ""); ctx.insertSheet(); },
   },
   {
     name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"],
@@ -141,20 +154,24 @@ export const SLASH_COMMANDS = [
 const SLASH_GROUPS = [
   { label: T("Text"), names: ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider"] },
   { label: T("Math"), names: ["math", "equation"] },
-  { label: T("Insert"), names: ["table", "code", "mermaid", "image", "page", "date"] },
+  { label: T("Insert"), names: ["page", "note", "table", "code", "mermaid", "image", "date"] },
   { label: T("Link"), names: ["link", "embed"] },
   { label: T("Style"), names: ["highlight"] },
 ];
 const GROUP_OF = new Map(SLASH_GROUPS.flatMap((g) => g.names.map((n) => [n, g])));
 
-export function filterSlashCommands(query) {
+// `can`: the abilities this editor has ({newPage, sheet}); a command that
+// needs one it lacks is left out (a share's editor makes no library page).
+export function filterSlashCommands(query, can = {}) {
   const q = (query || "").toLowerCase();
-  if (!q) return SLASH_GROUPS.flatMap((g) => g.names.map((n) => SLASH_COMMANDS.find((c) => c.name === n)));
+  const offered = (c) => !c.needs || can[c.needs];
+  if (!q) return SLASH_GROUPS.flatMap((g) => g.names.map((n) => SLASH_COMMANDS.find((c) => c.name === n))).filter(offered);
   const scored = [];
-  for (const c of SLASH_COMMANDS) {
+  for (const c of SLASH_COMMANDS.filter(offered)) {
     const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/), ...t(c.label).toLowerCase().split(/\s+/)];
-    // a command's own name first ("/page" is the page, not the link that
-    // lists "page" among its words), then any word starting with the query
+    // a command's own name first ("/note" is the sheet, not the link or the
+    // callout with "note" among their words), then any word starting with
+    // the query
     const tier = c.name === q ? 0 : names.some((n) => n.startsWith(q)) ? 1
       : names.some((n) => n.includes(q)) ? 2 : -1;
     if (tier >= 0) scored.push([tier, scored.length, c]);

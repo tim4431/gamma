@@ -50,6 +50,10 @@ const EXPORT_FORMATS = [
   { id: "pdf", mode: "annotated-pdf", label: T("Annotated PDF"), category: "This paper",
     hint: T("Your original paper, with annotations"), editable: ["highlights", "notes"], fixed: { bundle: false },
     folder: { category: "Papers", hint: T("Each paper's PDF with its annotations, in one .zip") } },
+  { id: "bibtex", mode: "bibtex", label: "BibTeX", category: "This paper",
+    hint: T("A citation entry for LaTeX"), editable: [], fixed: { highlights: false, notes: false, bundle: false },
+    review: true,  // its step shows the real entries, so it has one without any switch
+    folder: { category: "Papers", hint: T("One .bib with every paper's entry") } },
   { id: "notespdf", mode: "notes-pdf", label: "PDF", category: "Notes",
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
@@ -64,6 +68,26 @@ const EXPORT_FORMATS = [
     hint: T("A complete copy for another Gamma library"), editable: [], fixed: { highlights: true, notes: true, bundle: true } },
 ];
 
+// The bibliography endpoint for a page or a folder (its id; routers/export.py
+// ?mode=bibtex). `base` is `<origin>/api`: the link someone pastes into
+// Overleaf. With `share` it carries a share token, which names the workspace
+// and so needs neither a session nor a ?ws=.
+export function bibliographyUrl(base, { pageId = "", folder = "", share = "" } = {}) {
+  const token = share ? `&share=${encodeURIComponent(share)}` : "";
+  return folder
+    ? `${base}/folders/${encodeURIComponent(folder)}/export?mode=bibtex${token}`
+    : `${base}/pages/${encodeURIComponent(pageId)}/export?mode=bibtex${token}`;
+}
+
+// The review the dialog reads before it downloads anything
+// (routers/export.py GET /api/bibliography): the same entries, keys and
+// left-out pages the file will have.
+export function bibliographyPreviewUrl(base, { pageId = "", folder = "" } = {}) {
+  return folder
+    ? `${base}/bibliography?folder=${encodeURIComponent(folder)}`
+    : `${base}/bibliography?page_id=${encodeURIComponent(pageId)}`;
+}
+
 // The format a server export mode is (an export job's params name the mode).
 export function exportFormatOf(mode) {
   return EXPORT_FORMATS.find((format) => format.mode === mode || format.id === mode) || null;
@@ -77,10 +101,19 @@ export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
     pdf: Boolean(payload.bundle), highlights: Boolean(payload.highlights), notes: Boolean(payload.notes) };
 }
 
+// Whether a format's export goes through a review step: one with a switch to
+// flip, or one whose own step is worth seeing (BibTeX shows the real entries).
+// Both the setup and the job step read this, so their breadcrumbs agree.
+export function hasReviewStep(format, controls) {
+  return Boolean(format?.review) || (controls || format?.editable || []).length > 0;
+}
+
 // Resolve again using the activated card's ID on double-click. Do not depend
 // on React having committed a preceding selection change.
-export function resolveExport(opts, { hasPdf, pdfStored, folder } = {}) {
-  const formats = EXPORT_FORMATS.filter(({ id }) => id !== "pdf" || hasPdf || folder)
+// `hasMeta`: the open page has a paper record, so there is something to cite.
+export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta } = {}) {
+  const formats = EXPORT_FORMATS
+    .filter(({ id }) => (id !== "pdf" || hasPdf || folder) && (id !== "bibtex" || hasMeta || folder))
     .map((format) => (folder && format.folder ? { ...format, ...format.folder } : format));
   const definition = formats.find(({ id }) => id === opts.format) || formats.find(({ id }) => id === "notespdf");
   const noPdfCopy = definition.id === "pdf" && !folder && !pdfStored;
@@ -93,13 +126,18 @@ export function resolveExport(opts, { hasPdf, pdfStored, folder } = {}) {
     key, hint: EXPORT_SWITCH_TEXT[key][definition.id][0], title: EXPORT_SWITCH_TEXT[key][definition.id][1],
     disabled: key === "highlights" && withoutPdfFiles,
   }));
-  return { definition, formats, noPdfCopy, controls, needsReview: controls.some(({ disabled }) => !disabled),
+  return { definition, formats, noPdfCopy, controls,
+    needsReview: hasReviewStep(definition, controls.filter(({ disabled }) => !disabled)),
     payload: { format: definition.id, ...values } };
 }
 
 export function exportSummary({ payload, noPdfCopy }, folder) {
   const { format, highlights, notes } = payload;
   switch (format) {
+    case "bibtex":
+      return folder
+        ? t("One .bib file with the citation entry of every paper in the folder. Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling. Pages without paper metadata are left out.")
+        : t("This paper's citation entry as a .bib file, under its citation key.");
     case "gamma":
       return t("A complete copy{folder}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.", { folder: folder ? t(" of the folder") : "" });
     case "logseq":
@@ -136,7 +174,7 @@ const IMPORT_SOURCES = [
     instructions: T("Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
   { id: "zotero", label: T("Zotero library (.zip)"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, actionLabel: T("Choose .zip…") },
   { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), actionLabel: T("Choose file…"),
-    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folder labels, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
+    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
   { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), actionLabel: T("Choose .zip…"),

@@ -86,13 +86,13 @@ class GammaMCP:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict):
             request = self.server.request_context.request
-            user, ws = request.state.gamma_integration
+            user_id, ws = request.state.gamma_integration
             base = request.state.gamma_base
             if name == "read_gamma_link":
-                return await self._read_link(user, ws, base, arguments["url"])
+                return await self._read_link(user_id, ws, base, arguments["url"])
             if name == "export_page":
                 try:
-                    text, file = await run_in_threadpool(export_page, ws, base, user, arguments)
+                    text, file = await run_in_threadpool(export_page, ws, base, user_id, arguments)
                 except ValueError as exc:
                     return _error(str(exc))
                 content = [TextContent(type="text", text=text)]
@@ -105,7 +105,7 @@ class GammaMCP:
             # dispatch so they cannot bypass the SDK's input validation.
             if name not in READ_TOOLS:
                 return _error("Tool is not available through Gamma MCP.")
-            scope = {"type": "folder", "folder": "", "actor": user, "can_write": False}
+            scope = {"type": "folder", "folder": "", "actor": user_id, "can_write": False}
             result, action = await run_in_threadpool(
                 run_agent_tool, ws, scope, name, arguments, allowed_tools=READ_TOOLS)
             if action.get("error"):
@@ -118,19 +118,19 @@ class GammaMCP:
                       for media_type, data in action.get("images") or []]
             return CallToolResult(content=[TextContent(type="text", text=result), *images])
 
-    async def _read_link(self, user: str, ws: str, base: str, url: str) -> CallToolResult:
+    async def _read_link(self, user_id: str, ws: str, base: str, url: str) -> CallToolResult:
         try:
             ref = await run_in_threadpool(resolve_link, ws, base, url)
         except ValueError as exc:
             return _error(str(exc))
         content = []
         if "page_id" in ref:
-            scope = {"type": "page", "page_id": ref["page_id"], "actor": user, "can_write": False}
+            scope = {"type": "page", "page_id": ref["page_id"], "actor": user_id, "can_write": False}
             reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
             if ref.get("block_id"):
                 reads.append(("read_block", {"block_id": ref["block_id"]}))
         else:  # a folder share: the folder's listing, read like the folder chat's
-            scope = {"type": "folder", "folder": ref["folder"], "actor": user, "can_write": False}
+            scope = {"type": "folder", "folder": ref["folder"], "actor": user_id, "can_write": False}
             reads = [("list_pages", {})]
             content.append("Gamma page URL template: " + _page_template(base, ws))
         for tool, args in reads:

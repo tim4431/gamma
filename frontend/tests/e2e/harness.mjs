@@ -46,6 +46,10 @@ export function wanted(prefix) {
 // under its temp dir and carry every server's log tail.
 const servers = [];
 
+// The developer's own off-site bucket must never receive a test server's
+// copies: those variables are dropped, and a scenario sets its own.
+const baseEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GAMMA_(S3_|OFFSITE)/.test(key)));
+
 // `env` adds to the backend's environment (a second Gamma started as another
 // kind of server, e.g. the publish scenario's share host).
 export class Server {
@@ -61,7 +65,7 @@ export class Server {
   get base() { return `http://127.0.0.1:${this.port}`; }
   manage(...args) {
     return execFileSync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
+      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
     });
   }
   async start() {
@@ -77,7 +81,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -145,6 +149,36 @@ export class Account {
     let data; try { data = JSON.parse(text); } catch { data = text; }
     if (!r.ok) { const e = new Error(`${method} ${pathname} -> ${r.status}: ${text.slice(0, 300)}`); e.status = r.status; e.data = data; throw e; }
     return data;
+  }
+  // The folder at `path` ("a/b": names from the top) or the label `name`,
+  // made through its tree's ops where missing (POST /api/pages/folders/ops,
+  // docs/dev/home_library.md "Folders and labels"); its id.
+  async folder(path) {
+    return this.treeBlock("folders", path.split("/").map((name) => name.trim()).filter(Boolean));
+  }
+  async label(name) {
+    return this.treeBlock("labels", [name]);
+  }
+  async treeBlock(tree, names) {
+    let node = (await this.api(`/api/blocks/${tree}/subtree`)).block;
+    for (const name of names) {
+      let next = node.children.find((child) => child.content === name);
+      if (!next) {
+        next = { id: `e2e${Math.random().toString(36).slice(2, 12)}`, children: [] };
+        await this.api(`/api/pages/${tree}/ops`, { method: "POST",
+          body: { ops: [{ op: "insert", id: next.id, parent: node.id, content: name }] } });
+      }
+      node = next;
+    }
+    return node.id;
+  }
+  // File a page in folders (paths) and labels (names), made where missing:
+  // the page's `folders` / `labels` set to their ids.
+  async file(pageId, { folders, labels } = {}) {
+    const properties = {};
+    if (folders) { properties.folders = []; for (const path of folders) properties.folders.push(await this.folder(path)); }
+    if (labels) { properties.labels = []; for (const name of labels) properties.labels.push(await this.label(name)); }
+    return this.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties } });
   }
   async upload(pathname, bytes, filename, type) {
     const fd = new FormData();

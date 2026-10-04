@@ -2,6 +2,7 @@
 startup upgrade, the hourly purge of expired rows."""
 
 import asyncio
+import os
 import sqlite3
 from contextlib import asynccontextmanager, closing
 from urllib.parse import urlsplit
@@ -9,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import config, db, identities, oidc, sessions
+from . import config, db, identities, oidc, sessions, settings
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -48,8 +49,17 @@ async def lifespan(app: FastAPI):
         conn.commit()
     purge()
     task = asyncio.create_task(_purge_loop())
-    log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, config.REGISTRATION,
+    settings.invalidate()  # the upgrade above may have seeded the table
+    log.info("account server at %s (registration %s, mail %s)", config.PUBLIC_URL, settings.registration(),
              config.MAIL_BACKEND)
+    if settings.unguarded_registration():
+        # A warning, not a refusal, so a local run and the tests need no widget.
+        log.warning("registration is open and Turnstile is off (Admin > Settings): only the rate limits "
+                    "stop scripted sign-ups")
+    stale = [name for name in config.RETIRED_ENV if os.environ.get(name)]
+    if stale:
+        log.warning("%s set but not read: the sign-up settings live in cloud.db (Admin > Settings); "
+                    "remove them from the environment", ", ".join(stale))
     try:
         yield
     finally:

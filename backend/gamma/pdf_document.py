@@ -61,6 +61,7 @@ from .pdf_typeset import (
     styled,
     wrap,
 )
+from .highlights import is_highlight, page_of
 from .notebook import is_sheet
 from .text_box import box_page
 
@@ -776,12 +777,12 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     props = node.get("properties") or {}
     under_sheet = on_sheet or is_sheet(props)
     content = (node.get("content") or "").strip()
-    is_highlight = bool(props.get("highlight_id"))
+    is_region = is_highlight(props)
     is_link = bool(props.get("link_url"))
     is_ink = bool(props.get("ink_url"))
-    if is_highlight or is_link or is_ink:
+    if is_region or is_link or is_ink:
         if not highlights:
-            props, is_highlight, is_link, is_ink = {}, False, False, False
+            props, is_region, is_link, is_ink = {}, False, False, False
         if not notes:
             content = ""
     elif not notes:
@@ -802,7 +803,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     elif is_ink:
         cv.gap(BLOCK_GAP)
         drawn = cv.ink(props["ink_url"], x + QUOTE_PAD, width - QUOTE_PAD)
-        page_no = props.get("pdf_page")
+        page_no = page_of(props)
         if drawn and page_no is not None:
             cv.paragraph([(TEXT, f"handwriting, p. {page_no}", 0, PLAIN)],
                          x + QUOTE_PAD, width - QUOTE_PAD, SMALL_SIZE, color=MUTED)
@@ -812,7 +813,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
             inset = QUOTE_PAD if emitted else 0
             _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(depth or inset))
             emitted = True
-    elif is_highlight:
+    elif is_region:
         quote = (props.get("quote") or "").strip()
         bar = tuple(max(0.0, c * 0.7) for c in parse_css_color(props.get("color"))[:3])
         if quote:
@@ -820,7 +821,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
             _emit_chunks(cv, quote, x + QUOTE_PAD, width - QUOTE_PAD,
                          color=QUOTE_COLOR, quote_bar=bar,
                          base_style=Style(ITALIC, None))
-            page_no = props.get("pdf_page")
+            page_no = page_of(props)
             if page_no is not None:
                 cv.paragraph([(TEXT, f"p. {page_no}", 0, PLAIN)],
                              x + QUOTE_PAD, width - QUOTE_PAD, SMALL_SIZE,

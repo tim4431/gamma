@@ -1,23 +1,24 @@
 """Imports write in short transactions: the Zotero and Markdown-zip imports
 store a page's files first, outside any transaction, then write the rows of
-up to 50 new pages in one short transaction, their roots stamped at its
-commit (a transaction per page made big imports twice as slow). Other
-writers are never shut
-out for the length of an import (they used to wait out the 10 s busy
-timeout and fail with "database is locked"), and a page is never stamped
-with the import's start time (the change feed's 60 s grace missed pages of
-an import that ran longer). A Zotero merge into an existing page is an op
-batch, so the page's open tabs and the workspace's mirrors see it."""
+up to 50 new pages in one short transaction, each page touched in the
+change log inside it (a transaction per page made big imports twice as
+slow). Other writers are never shut out for the length of an import (they
+used to wait out the 10 s busy timeout and fail with "database is
+locked"), and the change feed lists each batch's pages once it committed,
+to a reader that came between two batches as well. A Zotero merge into an
+existing page is an op batch, so the page's open tabs and the workspace's
+mirrors see it."""
 
 import io
 import sqlite3
 import zipfile
 
-from conftest import login, make_user
+from conftest import account_of, label_names, login, make_user
 
 from gamma import markdown_zip_import
-from gamma.db import connect_pages_db, page_now, ws_db_path
+from gamma.db import connect_pages_db, ws_db_path
 from gamma.routers import imports
+from gamma.routers.sync import changes
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
@@ -89,9 +90,26 @@ def _other_writer_gets_in(ws) -> bool:
         conn.close()
 
 
-def _stamp(ws, page_id):
+def _newest(ws):
+    """The change log's newest seq: a cursor of the feed as of now."""
     with connect_pages_db(ws) as conn:
-        return conn.execute("SELECT updated_at FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0]
+        return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+
+
+def _seq(ws, page_id):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT seq FROM page_changes WHERE page_id = ?", (page_id,)).fetchone()[0]
+
+
+def _batches_listed(ws, seen, pages):
+    """Each page was touched after its file was stored; the first batch (two
+    pages) committed before the third file was stored, and a reader of the
+    feed then is told of exactly the third page from there."""
+    for (_, before), page in zip(seen, pages):
+        assert _seq(ws, page["id"]) > before
+    assert max(_seq(ws, pages[0]["id"]), _seq(ws, pages[1]["id"])) <= seen[2][1]
+    with connect_pages_db(ws) as conn:
+        assert [p["id"] for p in changes(conn, str(seen[2][1]), 500)["pages"]] == [pages[2]["id"]]
 
 
 def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
@@ -103,7 +121,7 @@ def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
 
     def watching_store(ws_, data):
         # every item's PDF is stored while no transaction of the import is open
-        seen.append((_other_writer_gets_in(ws_), page_now()))
+        seen.append((_other_writer_gets_in(ws_), _newest(ws_)))
         return real(ws_, data)
     monkeypatch.setattr(imports, "store_pdf", watching_store)
     data = _zotero_zip([(f"https://example.org/it-{i}", f"Paper {i}", _pdf(b"paper %d" % i), [], [])
@@ -112,13 +130,7 @@ def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json()["pages_created"] == 3 and len(seen) == 3
     assert all(ok for ok, _ in seen)
-    # each page is stamped at its batch's commit, after its file was stored —
-    # not with the time the import started; the first batch (two pages)
-    # committed before the third file was stored
-    pages = sorted(r.json()["pages"], key=lambda p: p["title"])
-    for (_, stored_at), page in zip(seen, pages):
-        assert _stamp(ws, page["id"]) > stored_at
-    assert _stamp(ws, pages[0]["id"]) == _stamp(ws, pages[1]["id"]) < seen[2][1]
+    _batches_listed(ws, seen, sorted(r.json()["pages"], key=lambda p: p["title"]))
 
 
 def test_zotero_merge_is_an_op_batch():
@@ -144,11 +156,12 @@ def test_zotero_merge_is_an_op_batch():
         assert r.json()["pages_merged"] == 1 and r.json()["notes_imported"] == 1
         # logged first (so a broken merge fails here instead of waiting on the socket)
         log = c.get(f"/api/pages/{page_id}/ops", params={"since": 0}).json()
-        assert [b["actor"] for b in log["batches"]] == ["it_merge"] and log["seq"] == 1
+        assert [b["actor"] for b in log["batches"]] == [account_of("it_merge")] and log["seq"] == 1
         msg = sock.receive_json()
-    assert msg["t"] == "ops" and msg["actor"] == "it_merge"
+    assert msg["t"] == "ops" and msg["actor"] == account_of("it_merge")
     kinds = [(o["op"], o.get("props")) for o in msg["ops"]]
-    assert ("set", {"category": "alpha, beta"}) in kinds
+    labels = next(props["labels"] for op, props in kinds if op == "set")
+    assert [label_names(c)[i] for i in labels] == ["alpha", "beta"]  # the page's own label first
     assert ("insert", {"zotero_note": "#n2"}) in kinds  # a note's key is its rdf:about
     feed = c.get("/api/sync/changes", params={"since": ""}).json()
     assert {"id": page_id, "seq": 1}.items() <= next(p for p in feed["pages"] if p["id"] == page_id).items()
@@ -166,7 +179,7 @@ def test_markdown_zip_import_commits_in_batches(monkeypatch):
     real = markdown_zip_import.store_file
 
     def watching_store(ws_, data, ext):
-        seen.append((_other_writer_gets_in(ws_), page_now()))
+        seen.append((_other_writer_gets_in(ws_), _newest(ws_)))
         return real(ws_, data, ext)
     monkeypatch.setattr(markdown_zip_import, "store_file", watching_store)
     buf = io.BytesIO()
@@ -180,8 +193,6 @@ def test_markdown_zip_import_commits_in_batches(monkeypatch):
     assert d["pages_created"] == 3 and d["assets_stored"] == 3 and len(seen) == 3
     assert all(ok for ok, _ in seen)  # the earlier pages' rows are committed, no lock held
     pages = sorted(d["pages"], key=lambda p: p["title"])
-    for (_, stored_at), page in zip(seen, pages):
-        assert _stamp(ws, page["id"]) > stored_at
-    assert _stamp(ws, pages[0]["id"]) == _stamp(ws, pages[1]["id"]) < seen[2][1]
+    _batches_listed(ws, seen, pages)
     body = c.get(f"/api/blocks/{pages[2]['id']}/subtree").json()["block"]["children"][0]["content"]
     assert "/api/uploads/" in body

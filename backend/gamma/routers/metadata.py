@@ -28,7 +28,8 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage
+from .. import ai_usage, storage
+from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
@@ -37,7 +38,7 @@ from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_ws
 from ..blocks_store import page_attachment, write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
-from ..db import connect_data_db, connect_pages_db, page_now, ws_uploads_dir
+from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
 from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
@@ -662,34 +663,6 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
     }
 
 
-def _build_bibtex(meta: dict) -> str:
-    authors = meta.get("authors") or []
-    key_author = re.sub(r"[^a-z]", "", (authors[0].split()[-1] if authors else "paper").lower()) or "paper"
-    key = f"{key_author}{meta.get('year', '')}"
-    fields: dict[str, str] = {
-        "title": meta.get("title", ""),
-        "author": " and ".join(authors),
-    }
-    venue = meta.get("venue", "")
-    entry = "article"
-    if meta.get("arxiv_id") and (not venue or venue.lower().startswith("arxiv")):
-        fields["journal"] = f"arXiv preprint arXiv:{meta['arxiv_id']}"
-        fields["eprint"] = meta["arxiv_id"]
-        fields["archivePrefix"] = "arXiv"
-    elif meta.get("kind") == "book" or (meta.get("publisher") and not venue):
-        entry = "book"
-        fields["publisher"] = meta.get("publisher", "")
-        fields["isbn"] = meta.get("isbn", "")
-    elif venue:
-        fields["journal"] = venue
-        fields["volume"] = meta.get("volume", "")
-        fields["pages"] = meta.get("pages", "")
-    fields["year"] = meta.get("year", "")
-    fields["doi"] = meta.get("doi", "")
-    body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields.items() if v)
-    return f"@{entry}{{{key},\n{body}\n}}"
-
-
 def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
     """The minimal slide-deck citation, one AI call over the BibTeX (else the
     meta JSON). Shared by the metadata fetch (generated alongside the record)
@@ -781,7 +754,7 @@ def metadata_status(request: Request):
                 index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     except sqlite3.OperationalError:
         pass  # index tables don't exist yet — search has never run
-    uploads = ws_uploads_dir(ws)
+    stored = {name for name, _, _ in storage.list(ws)}  # one listing, not a lookup per paper
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
@@ -796,14 +769,14 @@ def metadata_status(request: Request):
             "title": (meta or {}).get("title") or content or "Untitled",
             "updated_at": updated_at,
             "doc_id": doc_id,
-            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id)
-                             and (uploads / f"{doc_id}.pdf").exists()),
+            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id) and f"{doc_id}.pdf" in stored),
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),
             # None for records stored before the flag existed — the client
             # falls back to the source/kind rule (isUnverifiedPaperMeta).
             "meta_unverified": (meta or {}).get("unverified"),
+            "meta_user_verified": bool((meta or {}).get("user_verified")),
             "meta_error": (props.get("meta_error") or {}).get("detail", ""),
             "indexed": bool(entry and entry["ver"] == INDEX_VERSION),
             "index_stale": bool(entry and entry["ver"] != INDEX_VERSION),
@@ -826,7 +799,7 @@ class MetaFetchRequest(BaseModel):
 @router.post("/metadata/fetch")
 def metadata_fetch(payload: MetaFetchRequest, request: Request):
     ws = require_ws(request, write=True)
-    return fetch_page_metadata(ws, payload.block_id, request.state.user, prompt=payload.prompt, model=payload.model,
+    return fetch_page_metadata(ws, payload.block_id, request.state.user_id, prompt=payload.prompt, model=payload.model,
                                force=payload.force, context_char_limit=payload.context_char_limit,
                                cite_prompt=payload.cite_prompt, cite_model=payload.cite_model)
 
@@ -837,8 +810,8 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
                         cite_prompt: str = "", cite_model: str = "") -> dict:
     """The lookup behind POST /api/metadata/fetch, callable off-request (the
     extension's /api/clip runs it in a background thread). ``actor`` is the
-    account on whose behalf it runs — its AI providers do the AI part, its
-    name goes on the op. doi/arxiv_id are
+    id of the account on whose behalf it runs — its AI providers do the AI
+    part, the op is logged under it. doi/arxiv_id are
     caller-supplied hints — the extension's detector reads them off the
     publisher page's own meta tags, so they are trusted like URL-derived ids.
     A successful lookup also generates the slide citation (when AI is
@@ -848,7 +821,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     content, props = _load_page(ws, block_id)
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": props.get("bibtex", ""),
-                "ppt_cite": props.get("ppt_cite", ""),
+                "ppt_cite": props.get("ppt_cite", ""), "cite_key": props.get("cite_key", ""),
                 "source": props["meta"].get("source", ""), "cached": True,
                 "title_updated": False, "page_title": content}
 
@@ -966,8 +939,14 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
             actor=actor)
         raise HTTPException(status_code=404, detail="no metadata found (no arXiv id, DOI, Crossref, or AI match)")
 
+    # A citation key pinned on the page outranks both the generated key and
+    # the registrar's own (doi.org renders BibTeX keyed its own way), and it
+    # survives this refetch: the user's .tex files cite it.
+    cite_key = bibtex_mod.clean_key(props.get("cite_key") or "")
     if not bibtex:
-        bibtex = _build_bibtex(meta)
+        bibtex = bibtex_mod.build_entry(meta, cite_key)
+    elif cite_key:
+        bibtex = bibtex_mod.with_key(bibtex, cite_key)
     # Stored with the record so every surface can warn before it is cited:
     # nothing tied the record to THIS document (an unconfirmed DOI/ISBN may
     # belong to a cited work; AI output may be a plausible hallucination).
@@ -996,19 +975,23 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # renamed it: a concurrent lookup may have done the rename first, and the
     # client shows whatever comes back here.
     return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
-            "cached": False, "title_updated": title_updated, "page_title": page_title}
+            "cite_key": cite_key, "cached": False, "title_updated": title_updated, "page_title": page_title}
 
 
 class MetaUpdateRequest(StorableBody):
     block_id: str
     meta: dict = {}
+    # The pinned citation key. None = not sent, leave the page's pin alone;
+    # "" = unpin, so the key goes back to being generated from the record.
+    cite_key: str | None = None
 
 
 @router.post("/metadata/update")
 def metadata_update(payload: MetaUpdateRequest, request: Request):
-    """Save hand-edited metadata. BibTeX is rebuilt from the edited fields and
-    the cached slide citation is invalidated. All-blank fields clear the
-    cached metadata entirely."""
+    """Save hand-edited metadata. BibTeX is rebuilt from the edited fields
+    (under the pinned citation key, if any) and the cached slide citation is
+    invalidated. All-blank fields clear the cached metadata entirely, the
+    pinned key with it."""
     ws = require_ws(request, write=True)
     _, props = _load_page(ws, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
@@ -1037,11 +1020,38 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
     if not any(v for k, v in meta.items() if k != "source"):
-        _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex"), actor=request.state.user)
-        return {"meta": None, "bibtex": "", "source": "", "cached": False}
-    bibtex = _build_bibtex(meta)
-    _save_props(ws, payload.block_id, {"meta": meta, "bibtex": bibtex}, remove=stale, actor=request.state.user)
-    return {"meta": meta, "bibtex": bibtex, "source": "manual", "cached": False}
+        _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
+                    actor=request.state.user_id)
+        return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
+    # An unsent cite_key leaves the page's pin as it is; "" unpins.
+    cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
+                else bibtex_mod.clean_key(props.get("cite_key") or ""))
+    bibtex = bibtex_mod.build_entry(meta, cite_key)
+    updates = {"meta": meta, "bibtex": bibtex}
+    if cite_key:
+        updates["cite_key"] = cite_key
+    _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
+                actor=request.state.user_id)
+    return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": "manual", "cached": False}
+
+
+class MetaVerifyRequest(BaseModel):
+    block_id: str
+
+
+@router.post("/metadata/verify")
+def metadata_verify(payload: MetaVerifyRequest, request: Request):
+    """The user checked the stored record against the paper and vouches for
+    it: the unverified flag clears, the source stays (an AI reading is still
+    one). A refetch replaces the record, and the mark goes with it."""
+    ws = require_ws(request, write=True)
+    _, props = _load_page(ws, payload.block_id)
+    meta = props.get("meta")
+    if not meta:
+        raise HTTPException(status_code=409, detail="no metadata to verify")
+    meta = {**meta, "unverified": False, "user_verified": True}
+    _save_props(ws, payload.block_id, {"meta": meta}, actor=request.state.user_id)
+    return {"meta": meta}
 
 
 class CiteRequest(BaseModel):
@@ -1057,7 +1067,7 @@ def metadata_cite(payload: CiteRequest, request: Request):
     _, props = _load_page(ws, payload.block_id)
     if props.get("ppt_cite") and not payload.force:
         return {"citation": props["ppt_cite"], "cached": True}
-    rt = require_ai_runtime(request.state.user)
+    rt = require_ai_runtime(request.state.user_id)
     meta = props.get("meta")
     bibtex = props.get("bibtex", "")
     if not meta and not bibtex:
@@ -1069,5 +1079,5 @@ def metadata_cite(payload: CiteRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
     # cache alongside the rest of the metadata
-    _save_props(ws, payload.block_id, {"ppt_cite": citation}, actor=request.state.user)
+    _save_props(ws, payload.block_id, {"ppt_cite": citation}, actor=request.state.user_id)
     return {"citation": citation, "cached": False}

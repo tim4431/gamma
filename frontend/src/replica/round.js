@@ -8,6 +8,14 @@
 // content hash, tombstones for deleted pages. The remote needs nothing it
 // does not already give a mirror.
 //
+// The folder and label trees (tree.js TREES) are synced as pages are, first
+// in a round (a page filed in a new folder never arrives before it). They
+// are never created or deleted, either way (the remote refuses a page with
+// a reserved id, and every server has them): a tree the remote lacks is left
+// as it is, one missing here is pulled whole (its snapshot stored, the
+// root's parent null), and both sides' blocks are kept, since each side's
+// pages are filed in its own folders.
+//
 // The device's storage, network and files are the HOST's, an object the
 // app passes in (the iPad's is Swift, ipad/GammaIPad/ReplicaHost.swift;
 // the tests' is in memory). Everything is async:
@@ -15,7 +23,8 @@
 //   config                      {remoteWs, user, mode: "two-way" | "pull"}
 //   request(method, path, body) → {status, body}: JSON over the remote's
 //                               API with the replica's write token
-//   getMeta() / setMeta(meta)   {remote_cursor, retry: {page: flags}}
+//   getMeta() / setMeta(meta)   {remote_cursor, retry: {page: flags}}, stored
+//                               as given (the cursor is the feed's string)
 //   localChanges()              {pages: [ids edited here since acknowledged],
 //                               deleted: [ids deleted here]}
 //   acknowledge(page, version)  the round took the page as of `version`
@@ -38,7 +47,7 @@
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { known, ownEdits, reconcileRemoteOps, split, strays, unlanded } from "./reconcile.js";
 import { merge as textMerge } from "./textmerge.js";
-import { apply, applyLocal, diff, same, snapshotFromTree, subtreeIds, uploadName, uploadRefs } from "./tree.js";
+import { TREES, apply, applyLocal, diff, same, snapshotFromTree, subtreeIds, uploadName, uploadRefs } from "./tree.js";
 
 export const CLIENT = "sync";
 export const MAX_OPS = 500;
@@ -100,8 +109,11 @@ function stats(ops) {
   return out;
 }
 
+const TREE_TITLES = { folders: "Folders", labels: "Labels" };
+
 async function note(ctx, pageId, action, title, ops) {
-  await ctx.host.note({ page_id: pageId, action, title: title || "", stats: ops ? stats(ops) : null, at: new Date().toISOString() });
+  await ctx.host.note({ page_id: pageId, action, title: title || TREE_TITLES[pageId] || "", stats: ops ? stats(ops) : null,
+    at: new Date().toISOString() });
 }
 
 async function record(ctx, pageId, conflicts) {
@@ -324,6 +336,12 @@ async function syncPage(ctx, pageId, flags) {
   const base = state ? state.base : {};
   const unsettled = !state || state.remote_seq < 0;
   const creating = !!state?.pending?.create;
+  const isTree = TREES.includes(pageId);
+  if (isTree) {
+    // never deleted, either way: a tree deleted here comes back from the remote
+    if (flags.localGone && !local) await ack(0);
+    flags = { ...flags, remoteGone: false, localGone: false };
+  }
 
   // --- one side deleted it
   if (flags.remoteGone && !flags.localGone) {
@@ -359,7 +377,8 @@ async function syncPage(ctx, pageId, flags) {
   const remoteChanged = unsettled || (flags.seq != null && flags.seq !== state.remote_seq);
   const [tree, seq] = remoteChanged ? await remoteTree(remote, pageId) : [base, state.remote_seq];
   if (!tree) {
-    if ((!state || creating) && local && pushAllowed) {
+    // a tree is never created there: one the remote lacks is left as it is
+    if (!isTree && (!state || creating) && local && pushAllowed) {
       await pushWhole(ctx, pageId, local, "created there");
       await ack(startVersion);
     }
@@ -456,12 +475,16 @@ async function syncPage(ctx, pageId, flags) {
 
 // --- the round ----------------------------------------------------------------------------
 
+// _feed_all: the remote feed walked to the end. It lists in the order of the
+// remote's change log, so a page listed again (written again while the walk
+// went on) is what its last entry says. The cursor is the feed's, kept as it
+// is ("" = from the start).
 async function feedAll(remote, cursor) {
   const pages = new Map(), deleted = new Map();
   for (let i = 0; i < 200; i++) {
     const out = await remote.get(`/api/sync/changes?since=${encodeURIComponent(cursor)}&limit=1000`);
-    for (const p of out.pages) pages.set(p.id, p.seq);
-    for (const d of out.deleted) deleted.set(d.id, d.deleted_at);
+    for (const p of out.pages) { deleted.delete(p.id); pages.set(p.id, p.seq); }
+    for (const d of out.deleted) { pages.delete(d.id); deleted.set(d.id, d.deleted_at); }
     cursor = out.cursor;
     if (!out.more) break;
   }
@@ -490,14 +513,21 @@ export async function syncRound(host) {
   const feed = await feedAll(remote, meta.remote_cursor || "");
   const here = mode === "two-way" ? await host.localChanges() : { pages: [], deleted: [] };
   const localPages = new Set(here.pages), localDeleted = new Set(here.deleted);
+  // pages a round could not finish come back with the flags they had then: each
+  // side's say is the feed's (here: the host's) when it lists the page again
+  const retry = meta.retry || {};
   const todo = new Map();
-  for (const id of new Set([...feed.pages.keys(), ...feed.deleted.keys(), ...localPages, ...localDeleted])) {
-    todo.set(id, { seq: feed.pages.has(id) ? feed.pages.get(id) : null,
-      remoteGone: feed.deleted.has(id) && !feed.pages.has(id), localGone: localDeleted.has(id) && !localPages.has(id) });
+  for (const id of new Set([...feed.pages.keys(), ...feed.deleted.keys(), ...localPages, ...localDeleted,
+    ...Object.keys(retry)])) {
+    const then = retry[id] || { seq: null, remoteGone: false, localGone: false };
+    const there = feed.pages.has(id) || feed.deleted.has(id), here = localPages.has(id) || localDeleted.has(id);
+    todo.set(id, { seq: there ? feed.pages.get(id) ?? null : then.seq,
+      remoteGone: there ? feed.deleted.has(id) : then.remoteGone,
+      localGone: here ? localDeleted.has(id) && !localPages.has(id) : then.localGone });
   }
-  for (const [id, flags] of Object.entries(meta.retry || {})) if (!todo.has(id)) todo.set(id, flags);
   const failed = {};
-  const order = [...todo.keys()].sort();
+  // the trees first: the pages are filed in them
+  const order = [...TREES.filter((id) => todo.has(id)), ...[...todo.keys()].filter((id) => !TREES.includes(id)).sort()];
   for (let n = 0; n < order.length; n++) {
     const id = order[n];
     await host.progress?.({ done: n, total: order.length, page: id });

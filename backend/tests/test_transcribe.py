@@ -4,29 +4,16 @@ import io
 import json
 import urllib.error
 
-import bcrypt
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture(scope="module")
 def bob(client):
     """A separate TestClient logged in as a real (non-guest) user."""
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma import workspaces
+    from conftest import login, make_user
 
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'bob'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                ("bob", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    workspaces.ensure_personal("bob")
-    c = TestClient(app)
-    r = c.post("/api/login", json={"username": "bob", "password": "pw"})
-    assert r.status_code == 200, r.text
+    make_user("bob", "pw")
+    c = login("bob", "pw")
     return c
 
 

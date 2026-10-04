@@ -12,7 +12,7 @@ from contextlib import closing
 import pytest
 from fastapi import HTTPException
 
-from conftest import login, make_user, workspace_of
+from conftest import account_of, login, make_user, workspace_of
 
 
 @pytest.fixture(scope="module")
@@ -69,7 +69,12 @@ class Gate:
 
 
 def _start(owner, run, **kwargs):
+    """``owner``: the username whose account (by id) owns the job, or
+    ``jobs.WORKSPACE``."""
     from gamma import jobs
+    if owner != jobs.WORKSPACE:
+        owner = account_of(owner)
+        assert owner, "make the account first"
     return jobs.start(kwargs.pop("kind", "test"), owner=owner, run=run, **kwargs)
 
 
@@ -260,7 +265,7 @@ def test_the_same_work_twice_is_busy():
     gate.release()
     _finished(first["id"])
     _finished(other["id"])
-    assert jobs.latest("jb_alice", "test", "same")["id"] == first["id"]
+    assert jobs.latest(account_of("jb_alice"), "test", "same")["id"] == first["id"]
     assert _start("jb_alice", lambda job: None, key="same")["id"] != first["id"]  # once finished, it may run again
 
 
@@ -338,7 +343,7 @@ def test_running_scheduled_backups_are_listed_read_only(alice, monkeypatch):
 
     tasks = [{"id": "t" * 32, "name": "Nightly", "state": "running", "last_run": "2026-09-29T03:00:00+00:00"},
              {"id": "u" * 32, "name": "Weekly", "state": "finished", "last_run": "2026-09-28T03:00:00+00:00"}]
-    monkeypatch.setattr(backup_schedule, "list_tasks", lambda owner: tasks if owner == "jb_alice" else [])
+    monkeypatch.setattr(backup_schedule, "list_tasks", lambda owner: tasks if owner == account_of("jb_alice") else [])
     rows = [j for j in alice.get("/api/jobs").json()["jobs"] if j["kind"] == "scheduled-backup"]
     assert [(r["title"], r["state"], r["readonly"], r["stoppable"]) for r in rows] == [("Nightly", "running", True, False)]
 
@@ -377,7 +382,7 @@ def test_the_sweep_ends_old_jobs_their_files_and_leftovers(data_dir):
         job.artifact_path.write_bytes(b"old")
         job.set_artifact("old.bin")
 
-    old = _finished(_start("jb_alice", run, artifact=True)["id"])
+    old = _finished(jobs.start("test", owner="jb-sweep-owner-id", run=run, artifact=True)["id"])
     orphan = jobs.root() / ("e" * 24)
     orphan.mkdir(parents=True)
     upload = jobs.incoming_path()
@@ -406,17 +411,19 @@ def test_an_account_takes_its_jobs_along(client):
         job.set_artifact("mine.bin")
 
     job = _finished(_start("jb_renamed", run, artifact=True)["id"])
+    user_id = account_of("jb_renamed")
     with connect_users_db() as conn:
-        rename_account(conn, "jb_renamed", "jb_renamed2")
-    assert [j["id"] for j in jobs.for_account("jb_renamed2")] == [job["id"]]
-    assert jobs.for_account("jb_renamed") == []
-    workspaces.delete_account("jb_renamed2")
+        rename_account(conn, user_id, "jb_renamed2")
+    assert account_of("jb_renamed2") == user_id
+    assert [j["id"] for j in jobs.for_account(user_id)] == [job["id"]]
+    assert [j["id"] for j in login("jb_renamed2", "jb-renamed-pw").get("/api/jobs").json()["jobs"]] == [job["id"]]
+    workspaces.delete_account(user_id)
     assert jobs.get(job["id"]) is None and not (jobs.root() / job["id"]).exists()
 
 
 def test_a_listing_is_the_newest_jobs_first(alice):
     ids = [_finished(_start("jb_cara", lambda job, n=n: n)["id"])["id"] for n in range(3)]
     from gamma import jobs
-    listed = [j["id"] for j in jobs.for_account("jb_cara") if j["id"] in ids]
+    listed = [j["id"] for j in jobs.for_account(account_of("jb_cara")) if j["id"] in ids]
     assert listed == ids[::-1]
-    assert json.loads(json.dumps(jobs.for_account("jb_cara")))  # plain JSON
+    assert json.loads(json.dumps(jobs.for_account(account_of("jb_cara"))))  # plain JSON

@@ -3,9 +3,12 @@ permissions, scope), what context a paper or a text-only page contributes,
 the coverage report, indexing kicked for an unindexed paper, and the
 history replay reaching the wire."""
 
+import base64
 import json
 
 import pytest
+
+from conftest import make_folder, make_label
 
 from ai_fixtures import ALL_PERMS, ALLOW_ALL, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
 
@@ -20,6 +23,33 @@ def _offline_model_facts(monkeypatch):
     # The chat loop also looks up model limits before calling _open_ai.
     # Stub that separate network path along with each test's fake model.
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
+
+
+def test_chat_forwards_the_speed_tier_and_names_it_on_the_reply(org, monkeypatch):
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.update(kw)
+        return FakeResp([{"type": "content_block_delta",
+                          "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+
+    def ask(speed):
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "speed": speed, "stream": True})
+        assert r.status_code == 200, r.text
+        lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+        return next((l["model"] for l in lines if "model" in l), None)
+
+    assert ask("fast")["speed"] == "fast"
+    assert seen["speed"] == "fast"
+    # Anything the wires don't know degrades to "" (field omitted), not an error.
+    assert ask("turbo")["speed"] == ""
+    assert seen["speed"] == ""
 
 
 def test_chat_agent_loop_streams_actions(org, monkeypatch):
@@ -54,7 +84,7 @@ def test_chat_agent_loop_streams_actions(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={
         "prompt": "rename the cavity paper to Ada2019 cavity",
-        "agent_scope": "folder", "folder": "readout", "stream": True, "permissions": ALLOW_ALL,
+        "agent_scope": "folder", "folder": ids["readout"], "stream": True, "permissions": ALLOW_ALL,
     })
     assert r.status_code == 200, r.text
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -97,12 +127,16 @@ def test_chat_agent_round_budget_and_folder_switch(org, monkeypatch):
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder",
-                                     "folder": "cooling", "stream": True, "tool_rounds": 1})
+                                     "folder": ids["cooling"], "stream": True, "tool_rounds": 1})
     assert r.status_code == 200
     text = "".join(json.loads(l).get("delta", "") for l in r.text.splitlines() if l.strip())
     assert len(systems) == 1  # budget of 1: no second round opened
     assert "tool-round limit" in text
-    assert '"cooling"' in systems[0]  # same conversation, new folder → new scope
+    assert f'the folder "cooling" (id {ids["cooling"]})' in systems[0]  # same conversation, new folder → new scope
+    # A folder id that is no folder (deleted meanwhile) is refused before any round.
+    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "gone-folder",
+                                     "stream": True})
+    assert r.status_code == 404 and len(systems) == 1
 
 
 def test_chat_page_scope_arms_read_tools(org, monkeypatch):
@@ -279,7 +313,7 @@ def test_chat_fits_the_conversation_to_the_window_and_says_so(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "hi", "history": turn, "stream": True, "chat_key": "home"})
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert not [l for l in lines if "trimmed" in l] and seen[-1][1] == key
-    c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "chat_key": "home:papers"})
+    c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "chat_key": ids["readout"]})
     assert seen[-1][1] != key
     # No known window: the provider's refusal is what trims, then a retry.
     monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *a: (0, ""))
@@ -320,7 +354,7 @@ def test_agent_round_too_long_retries_with_earlier_results_elided(org, monkeypat
         return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}}])
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
-    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "readout", "stream": True})
+    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": ids["readout"], "stream": True})
     assert r.status_code == 200, r.text
     assert "".join(json.loads(l).get("delta", "") for l in r.text.splitlines() if l.strip()) == "done"
     assert len(opened) == 4
@@ -351,7 +385,7 @@ def test_chat_reports_a_reply_cut_off_at_the_output_cap(org, monkeypatch):
             {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 9}}])
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
-    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "readout", "stream": True})
+    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": ids["readout"], "stream": True})
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert {"truncated": True} in lines and len(opened) == 1
     assert not [l for l in lines if "action" in l]
@@ -368,7 +402,8 @@ def test_chat_context_from_text_only_page(org, monkeypatch):
     assert c.post("/api/ai/providers",
                   json={"protocol": "anthropic", "api_key": "sk-test-key-123",
                         "models": "claude-solo"}).status_code == 200
-    page = c.post("/api/pages", json={"title": "Reading plan", "folder": "plans"}).json()
+    page = c.post("/api/pages", json={"title": "Reading plan", "folders": [make_folder(c, "plans/next")],
+                                      "properties": {"labels": [make_label(c, "to read")]}}).json()
     r = c.post("/api/blocks", json={"parent_id": page["id"], "content": "read the cat-qubit review"})
     top = r.json()
     c.post("/api/blocks", json={"parent_id": top["id"], "content": "focus on bias-preserving gates"})
@@ -385,7 +420,7 @@ def test_chat_context_from_text_only_page(org, monkeypatch):
     assert r.status_code == 200, r.text
     user_turn = seen["messages"][-1]["content"]
     assert user_turn.startswith("Context — pages from the user's knowledge base")
-    assert "### Reading plan" in user_turn and "folders: plans" in user_turn
+    assert "### Reading plan" in user_turn and 'folders: "plans / next"; labels: "to read"' in user_turn
     assert "- read the cat-qubit review" in user_turn
     assert "  - focus on bias-preserving gates" in user_turn  # nesting kept
     assert "Here is the PDF text" not in user_turn and "EXCERPT" not in user_turn
@@ -413,20 +448,20 @@ def test_models_flag_native_pdf_capability(org):
     providers take the file, the ChatGPT sign-in (Codex backend) does not."""
     c, ids = org
     from gamma.ai_settings import ai_runtime
-    rt = ai_runtime(ids["user"])
+    rt = ai_runtime(ids["user_id"])
     assert rt["models"] and all(m["native_pdf"] is True for m in rt["models"])
     import gamma.ai_settings as st
-    entries = st.load_provider_entries(ids["user"])
+    entries = st.load_provider_entries(ids["user_id"])
     entries.append({"id": "oauth1", "protocol": "chatgpt", "models": "gpt-x",
                     "oauth": {"access_token": "tok", "expires_at": 9_999_999_999}})
-    st.save_provider_entries(ids["user"], entries)
+    st.save_provider_entries(ids["user_id"], entries)
     try:
-        flags = {m["id"]: m["native_pdf"] for m in ai_runtime(ids["user"])["models"]}
+        flags = {m["id"]: m["native_pdf"] for m in ai_runtime(ids["user_id"])["models"]}
         assert flags["oauth1:gpt-x"] is False
         r = c.get("/api/ai/models")
         assert {m["id"]: m["native_pdf"] for m in r.json()["models"]} == flags
     finally:
-        st.save_provider_entries(ids["user"], [e for e in entries if e["id"] != "oauth1"])
+        st.save_provider_entries(ids["user_id"], [e for e in entries if e["id"] != "oauth1"])
 
 
 def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
@@ -454,7 +489,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     before = props(c, ids["a"])["content"]
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
-                                     "folder": "readout", "stream": True,
+                                     "folder": ids["readout"], "stream": True,
                                      "permissions": {"rename": False, "move": False, "save": False,
                                                      "restore": False, "block_edit": False}})
     assert r.status_code == 200
@@ -467,7 +502,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
 
     # Every permission off → plain chat, no tools at all.
     seen.clear()
-    r = c.post("/api/ai/chat", json={"prompt": "hi", "agent_scope": "folder", "folder": "readout",
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "agent_scope": "folder", "folder": ids["readout"],
                                      "stream": True,
                                      "permissions": {k: False for k in ALL_PERMS}})
     assert r.status_code == 200
@@ -497,7 +532,7 @@ def test_chat_without_agent_scope_gets_no_tools(org, monkeypatch):
 
 
 def test_chat_agent_history_replay_reaches_provider(org, monkeypatch):
-    c, _ = org
+    c, ids = org
     import gamma.routers.ai as ai_mod
 
     seen = {}
@@ -514,7 +549,7 @@ def test_chat_agent_history_replay_reaches_provider(org, monkeypatch):
             {"kind": "list", "tool": "list_pages", "args": {}, "result": "Pages (2): …"}]},
     ]
     r = c.post("/api/ai/chat", json={"prompt": "now rename", "history": history,
-                                     "agent_scope": "folder", "folder": "readout",
+                                     "agent_scope": "folder", "folder": ids["readout"],
                                      "stream": True})
     assert r.status_code == 200
     replayed = [m for m in seen["messages"] if m.get("tool_calls") or m["role"] == "tool"]
@@ -654,3 +689,93 @@ def test_an_asking_tool_is_never_batched(org):
                            {"id": "3", "name": "read_page", "arguments": {}}])
     assert [[item.name for item in group] for group in groups] == [
         ["read_page"], ["fetch_paper"], ["read_page"]]
+
+
+# --- other OpenAI-compatible services --------------------------------------------
+
+def _deepseek(c) -> str:
+    """The module account's DeepSeek connection, made once: a named service
+    on the OpenAI wire whose models think. Returns its model's registry id."""
+    base = "https://api.deepseek.com"
+    found = next((p for p in c.get("/api/ai/settings").json()["providers"] if p["base_url"] == base), None)
+    if not found:
+        r = c.post("/api/ai/providers", json={"protocol": "openai", "api_key": "sk-deepseek-test-1234",
+                                              "base_url": base, "models": "deepseek-v4-pro"})
+        assert r.status_code == 200, r.text
+        found = next(p for p in r.json()["providers"] if p["base_url"] == base)
+    return f"{found['id']}:deepseek-v4-pro"
+
+
+def test_thinking_goes_back_with_the_next_round_and_onto_the_reply(org, monkeypatch):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr("gamma.ai_catalog.output_limit", lambda *args: 393_216)
+    opened, caps = [], []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append([dict(m) for m in messages])
+        caps.append(kw.get("max_tokens"))
+        if len(opened) == 1:
+            return FakeResp([
+                {"choices": [{"delta": {"reasoning_content": "List the folder "}}]},
+                {"choices": [{"delta": {"reasoning_content": "first."}}]},
+                {"choices": [{"delta": {"tool_calls": [
+                    {"index": 0, "id": "t1", "function": {"name": "list_pages", "arguments": "{}"}}]},
+                    "finish_reason": "tool_calls"}]},
+            ])
+        return FakeResp([{"choices": [{"delta": {"reasoning_content": "Done."}}]},
+                         {"choices": [{"delta": {"content": "Two papers."}, "finish_reason": "stop"}]}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "what is here?", "model": _deepseek(c), "agent_scope": "folder",
+                                     "folder": ids["readout"], "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    # The round that called the tool comes back with its thinking on it...
+    called = next(m for m in opened[1] if m.get("tool_calls"))
+    assert called["reasoning"] == {"reasoning_content": "List the folder first."}
+    # ...and each round's thinking streams, for the reply to keep and send back.
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert [l["reasoning"] for l in lines if "reasoning" in l] == [
+        {"reasoning_content": "List the folder first."}, {"reasoning_content": "Done."}]
+    assert "".join(l.get("delta", "") for l in lines) == "Two papers."
+    # A named service whose models think gets a longer reply cap.
+    assert caps == [32_768, 32_768]
+
+
+def test_the_reply_cap_stays_where_no_named_service_raises_it(org, monkeypatch):
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.update(kw)
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    assert c.post("/api/ai/chat", json={"prompt": "hi", "stream": True}).status_code == 200
+    assert seen["max_tokens"] == 8192
+
+
+def test_a_model_that_reads_text_only_gets_no_pictures(org, monkeypatch):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (False, "models.dev"))
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.update(kw, messages=[dict(m) for m in messages])
+        return FakeResp([{"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    png = "data:image/png;base64," + base64.b64encode(b"\x89PNG not really").decode()
+    r = c.post("/api/ai/chat", json={"prompt": "what is in this figure?", "model": _deepseek(c), "images": [png],
+                                     "agent_scope": "page", "page_id": ids["a"], "stream": True,
+                                     "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    assert seen["images"] == []
+    assert "1 picture(s) left out: this model reads text only" in seen["messages"][-1]["content"]
+    names = {t["name"] for t in seen["tools"]}
+    assert "read_page" in names and not names & {"view_pdf_page", "view_ink"}

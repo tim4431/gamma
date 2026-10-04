@@ -59,16 +59,16 @@ def _entries_of(value) -> list:
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
 
 
-def load_provider_entries(user: str) -> list:
-    return _entries_of(get_pref(user, AI_SETTINGS_PREF_KEY)[0])
+def load_provider_entries(user_id: str) -> list:
+    return _entries_of(get_pref(user_id, AI_SETTINGS_PREF_KEY)[0])
 
 
-def save_provider_entries(user: str, entries: list):
+def save_provider_entries(user_id: str, entries: list):
     """Replace the whole list. Edits go through update_provider_entries."""
-    set_pref(user, AI_SETTINGS_PREF_KEY, {"providers": entries})
+    set_pref(user_id, AI_SETTINGS_PREF_KEY, {"providers": entries})
 
 
-def update_provider_entries(user: str, change) -> list:
+def update_provider_entries(user_id: str, change) -> list:
     """Read-modify-write the account's entries in one transaction
     (db.update_pref): ``change(entries)`` edits the list in place and may
     raise to abort. A list read before a slow call (a sign-in's token
@@ -78,7 +78,7 @@ def update_provider_entries(user: str, change) -> list:
         entries = _entries_of(value)
         change(entries)
         return {"providers": entries}
-    return update_pref(user, AI_SETTINGS_PREF_KEY, apply)["providers"]
+    return update_pref(user_id, AI_SETTINGS_PREF_KEY, apply)["providers"]
 
 
 def new_provider_id() -> str:
@@ -204,9 +204,9 @@ def is_server_id(provider_id) -> bool:
     return str(provider_id or "").startswith(SERVER_ID_PREFIX)
 
 
-def own_entries(user: str) -> list:
+def own_entries(user_id: str) -> list:
     """The account's own entries (a ``server:`` id is never one of them)."""
-    return [e for e in load_provider_entries(user) if not is_server_id(e.get("id"))] if user else []
+    return [e for e in load_provider_entries(user_id) if not is_server_id(e.get("id"))] if user_id else []
 
 
 def new_server_provider_id() -> str:
@@ -302,19 +302,20 @@ def edit_server_ai(change) -> dict:
         return config
 
 
-def shared_access(user: str) -> tuple[list, int]:
-    """The shared entries ``user`` may use — every account may, a guest
-    account only while the admin switch is on, a name that is not an account
-    never — and the allowance limit that applies to it (the guests' or the
-    accounts', by the users row's ``is_guest``; 0 = unlimited)."""
-    if not user:
+def shared_access(user_id: str) -> tuple[list, int]:
+    """The shared entries the account ``user_id`` (an id) may use — every
+    account may, a guest account only while the admin switch is on, an id
+    that is no account never — and the allowance limit that applies to it
+    (the guests' or the accounts', by the users row's ``is_guest``; 0 =
+    unlimited)."""
+    if not user_id:
         return [], 0
     config = load_server_ai()
     if not config["providers"]:
         return [], 0
     try:
         with connect_users_db() as conn:
-            row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (user,)).fetchone()
+            row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
     except sqlite3.Error:
         row = None
     if not row or (row[0] and not config["guests"]):
@@ -329,27 +330,27 @@ def _has_credential(entry: dict) -> bool:
     return bool((entry.get("api_key") or "").strip())
 
 
-def server_entries_for(user: str) -> list:
-    """The shared entries ``user`` may use (``shared_access``)."""
-    return shared_access(user)[0]
+def server_entries_for(user_id: str) -> list:
+    """The shared entries ``user_id`` may use (``shared_access``)."""
+    return shared_access(user_id)[0]
 
 
-def allowance_status(user: str, limit: int) -> dict:
+def allowance_status(user_id: str, limit: int) -> dict:
     """What the account card, the pickers and the Usage pane show of the
     shared allowance: {"limit" (0 = unlimited), "used" (tokens through
     shared entries in the last 24 h), "exhausted"}."""
-    used = ai_usage.shared_used(user)
+    used = ai_usage.shared_used(user_id)
     return {"limit": limit, "used": used, "exhausted": bool(limit) and used >= limit}
 
 
-def shared_allowance(user: str) -> dict | None:
-    """``allowance_status`` when a shared entry applies to ``user`` (one it
+def shared_allowance(user_id: str) -> dict | None:
+    """``allowance_status`` when a shared entry applies to ``user_id`` (one it
     can use: a key, or a connected sign-in; limit 0 when the admin set
     none), else None — the object ai_runtime() reports, without building
     the runtime."""
-    entries, limit = shared_access(user)
+    entries, limit = shared_access(user_id)
     usable = any(ai_protocols.PROTOCOLS.get(e.get("protocol")) and _has_credential(e) for e in entries)
-    return allowance_status(user, limit) if usable else None
+    return allowance_status(user_id, limit) if usable else None
 
 
 def provider_label(entry: dict) -> str:
@@ -358,12 +359,10 @@ def provider_label(entry: dict) -> str:
     name = (entry.get("name") or "").strip()
     if name:
         return name
-    protocol = entry.get("protocol")
-    base = (entry.get("base_url") or "").strip().rstrip("/")
-    service = next((s for s in ai_protocols.SERVICES
-                    if s["protocol"] == protocol and s["base_url"] == base), None)
+    service = ai_protocols.service_of(entry)
     if service:
         return service["label"]
+    protocol = entry.get("protocol")
     proto = ai_protocols.PROTOCOLS.get(protocol)
     return proto.label if proto else protocol or ""
 
@@ -390,8 +389,8 @@ _refresh_locks_guard = threading.Lock()
 
 
 def _refresh_lock(key) -> threading.Lock:
-    """``key``: an account name, or ``("server", <provider id>)`` for a
-    shared sign-in (a tuple never equals a username)."""
+    """``key``: an account id, or ``("server", <provider id>)`` for a
+    shared sign-in (a tuple never equals an id)."""
     with _refresh_locks_guard:
         return _refresh_locks.setdefault(key, threading.Lock())
 
@@ -424,7 +423,7 @@ def _entry_oauth(entries: list, provider_id: str) -> dict | None:
     return e.get("oauth") if e and isinstance(e.get("oauth"), dict) else None
 
 
-def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
+def _refreshed_oauth(user_id: str, provider_id: str, flow) -> dict | None:
     """An account's own sign-in entry, refreshed under the account's lock
     and written back as only its tokens (an edit of the list meanwhile —
     another tab adding a key — stays)."""
@@ -433,8 +432,8 @@ def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
             for e in entries:
                 if e.get("id") == provider_id:
                     e["oauth"] = oauth
-        update_provider_entries(user, change)
-    return _refresh_tokens(user, lambda: _entry_oauth(load_provider_entries(user), provider_id), write, flow)
+        update_provider_entries(user_id, change)
+    return _refresh_tokens(user_id, lambda: _entry_oauth(load_provider_entries(user_id), provider_id), write, flow)
 
 
 def _refreshed_server_oauth(provider_id: str, flow) -> dict | None:
@@ -451,9 +450,10 @@ def _refreshed_server_oauth(provider_id: str, flow) -> dict | None:
                            lambda: _entry_oauth(load_server_ai()["providers"], provider_id), write, flow)
 
 
-def ai_runtime(user: str) -> dict:
-    """The effective AI config for a request, built from the user's provider
-    entries followed by the server's shared ones (``shared_access``):
+def ai_runtime(user_id: str) -> dict:
+    """The effective AI config for a request, built from the provider entries
+    of the account ``user_id`` (an id) followed by the server's shared ones
+    (``shared_access``):
     {"providers": {id: {api_key, base_url, protocol, name}},
     "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
     "model", "native_pdf", "shared"}], "default": the first model — the
@@ -465,9 +465,9 @@ def ai_runtime(user: str) -> dict:
     ``"allowance": {"user", "limit"}``, which ai_client.open_ai checks
     before each call. The shared models stay listed once it is used up; a
     refused call says why."""
-    shared, limit = shared_access(user)
+    shared, limit = shared_access(user_id)
     providers, models = {}, []
-    for e in own_entries(user) + shared:
+    for e in own_entries(user_id) + shared:
         protocol = e.get("protocol")
         proto = ai_protocols.PROTOCOLS.get(protocol)
         pid = str(e.get("id") or "")
@@ -488,7 +488,7 @@ def ai_runtime(user: str) -> dict:
             failed_at = oauth.get("refresh_failed_at") or 0
             if proto.oauth.needs_refresh(oauth) and time.time() - failed_at > REFRESH_BACKOFF_S:
                 refreshed = (_refreshed_server_oauth(pid, proto.oauth) if is_server_id(pid)
-                             else _refreshed_oauth(user, pid, proto.oauth))
+                             else _refreshed_oauth(user_id, pid, proto.oauth))
                 oauth = refreshed or oauth
             conf["api_key"] = oauth["access_token"]
             conf["account_id"] = oauth.get("account_id") or ""
@@ -512,12 +512,12 @@ def ai_runtime(user: str) -> dict:
     if shared_ids:
         # Reported whenever a shared entry applies (limit 0 = unlimited);
         # the transport only meters under a limit.
-        allowance = allowance_status(user, limit)
+        allowance = allowance_status(user_id, limit)
         if limit:
             for pid in shared_ids:
-                providers[pid]["allowance"] = {"user": user, "limit": limit}
+                providers[pid]["allowance"] = {"user": user_id, "limit": limit}
     return {
-        "user": user,  # whose config this is — the usage recorder's key
+        "user": user_id,  # whose config this is — the usage recorder's key
         "providers": providers,
         "models": models,
         "default": models[0] if models else None,
@@ -526,7 +526,7 @@ def ai_runtime(user: str) -> dict:
     }
 
 
-def clear_refresh_backoff(user: str, provider_id: str) -> None:
+def clear_refresh_backoff(user_id: str, provider_id: str) -> None:
     """Forget a sign-in entry's failed-refresh timestamp so the next
     ai_runtime() re-attempts the token refresh immediately (an explicit
     retry, e.g. the settings Test button). A ``server:<id>`` names a shared
@@ -541,19 +541,19 @@ def clear_refresh_backoff(user: str, provider_id: str) -> None:
                             e["oauth"].pop("refresh_failed_at", None)
                 edit_server_ai(change)
         return
-    with _refresh_lock(user):
-        oauth = _entry_oauth(load_provider_entries(user), provider_id)
+    with _refresh_lock(user_id):
+        oauth = _entry_oauth(load_provider_entries(user_id), provider_id)
         if oauth and "refresh_failed_at" in oauth:
             def change(entries):
                 for e in entries:
                     if e.get("id") == provider_id and isinstance(e.get("oauth"), dict):
                         e["oauth"].pop("refresh_failed_at", None)
-            update_provider_entries(user, change)
+            update_provider_entries(user_id, change)
 
 
-def require_ai_runtime(user: str) -> dict:
+def require_ai_runtime(user_id: str) -> dict:
     """ai_runtime(), raising the standard 503 when no provider is usable."""
-    rt = ai_runtime(user)
+    rt = ai_runtime(user_id)
     if not rt["enabled"]:
         raise HTTPException(status_code=503,
                             detail="AI not configured (add a connection and pick its models in Settings → AI)")

@@ -15,7 +15,7 @@ an area, and update its documentation with the code.
   browser, `cloud/` provides the separate Gamma Cloud account service, and
   `sites/` holds the public website. See the [repository map](repository.md).
 - **Identity and storage:** accounts and workspaces are separate. `users.db`
-  holds accounts, sessions, memberships, and preferences; each workspace has
+  holds accounts, sessions, memberships, and account-wide preferences; each workspace has
   its own `pages.db`, `data.db`, and uploads under `GAMMA_DATA_DIR`. Password
   and Gamma Cloud sign-in create the same app session. Reuse the existing
   workspace/share authorization helpers and pass workspace IDs to data
@@ -30,7 +30,8 @@ an area, and update its documentation with the code.
   state (open editor and folding) separate from the document, and preserve
   other people's changes when rebasing undo. See [collaboration](collab.md).
 - **Database changes:** open databases through `db.connect_*`; their context
-  manager commits or rolls back and closes the connection. Use numbered
+  manager commits or rolls back and hands the connection back to the
+  per-thread cache ([user_db.md](user_db.md) "Connections"). Use numbered
   [migrations](migrations.md) for stored-shape changes, not repairs on read.
   Blocking database/file work belongs in sync FastAPI handlers or a worker
   thread. Check-then-write operations need a write lock or a database
@@ -73,7 +74,7 @@ These describe the implementation unless explicitly marked as plans.
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
-| Folder labels, page cards, recents, and trash | [Home library](home_library.md) |
+| Folders and labels, page cards, recents, and trash | [Home library](home_library.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
 | Long-paper context and grounding | [AI context](ai_context.md) |
@@ -96,6 +97,9 @@ These describe the implementation unless explicitly marked as plans.
 
 - [Frontend decomposition](frontend-refactor.md): remaining App.jsx ownership
   work; the current folder layout is in the source map.
+- [Scaling on SQLite](../research/scaling.md): the workspace-affinity shape
+  and the storage work list (connection cache, lazy migration, off-site copies, …);
+  the dev docs describe each item once it lands.
 - [Block-centric design](block_centric.md): target model, dated inventory,
   and staged roadmap; check the code before treating a planned step as built.
 - [Research notes](../research/README.md): surveys, findings, and design

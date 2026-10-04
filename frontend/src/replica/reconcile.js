@@ -171,7 +171,7 @@ export function strays(back, local, edits, elsewhere) {
 }
 
 // An ink group's drawing and what is derived from it: they travel together.
-export const INK_KEYS = ["ink_url", "ink_strokes", "pdf_position", "pdf_page"];
+export const INK_KEYS = ["ink_url", "ink_strokes", "pdf_position"];
 
 // _unlanded: [the part the remote shows, the part to send again]; null for
 // either that is empty.

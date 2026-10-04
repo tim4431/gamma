@@ -132,8 +132,10 @@ test("bounds, pdf_position and stroke editing", () => {
   const b = inkBounds(ink);
   assert.ok(b[0] < 100 && b[1] < 200 && b[2] > 320 && b[3] > 306);
   const pos = pdfPositionOf(ink);
-  assert.equal(pos.pageNumber, 3);
-  assert.deepEqual([pos.boundingRect.width, pos.boundingRect.height], [612, 792]);
+  // the page size once, beside the box: no size or page in the rects
+  assert.deepEqual([pos.pageNumber, pos.width, pos.height], [3, 612, 792]);
+  assert.deepEqual(Object.keys(pos.boundingRect), ["x1", "y1", "x2", "y2"]);
+  assert.deepEqual(pos.rects, [pos.boundingRect]);
   assert.deepEqual(removeStrokes(ink, ["a"]).strokes.map((s) => s.id), ["b"]);
 });
 
@@ -265,10 +267,10 @@ test("serializeInk sorts keys at every level and drops empty ones, so equal stro
 test("inkProps derives what a group's block carries from its file", () => {
   const ink = { ...newInk(3, 612, 792), strokes: [encodeStroke({ id: "a", samples: samples() })] };
   assert.deepEqual(inkProps(ink, "/api/uploads/x.ink"), {
-    ink_url: "/api/uploads/x.ink", ink_strokes: 1, pdf_page: 3, pdf_position: pdfPositionOf(ink) });
+    ink_url: "/api/uploads/x.ink", ink_strokes: 1, pdf_position: pdfPositionOf(ink) });
   const sheet = { ...newCanvasInk(595.28, 841.89), strokes: [encodeStroke({ id: "a", samples: samples() })] };
   assert.deepEqual(sheet.space, { kind: "canvas", width: 595.28, height: 841.89 });
-  assert.deepEqual(inkProps(sheet, "/api/uploads/y.ink"), { ink_url: "/api/uploads/y.ink", ink_strokes: 1, pdf_page: null, pdf_position: null });
+  assert.deepEqual(inkProps(sheet, "/api/uploads/y.ink"), { ink_url: "/api/uploads/y.ink", ink_strokes: 1, pdf_position: null });
 });
 
 // --- replay ------------------------------------------------------------------

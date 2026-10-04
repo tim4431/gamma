@@ -56,9 +56,16 @@ device with no server of its own.
   `GET /api/blocks/{id}/subtree`, and pushes `POST /api/pages/{id}/ops`
   batches under batch ids with `client: "sync"`. It creates pages with
   `POST /api/pages {id, title, properties}` and deletes them with
-  `DELETE /api/blocks/{id}`. Files travel by name with `HEAD`/`GET`
+  `DELETE /api/blocks/{id}` (never the folder and label trees, below).
+  Files travel by name with `HEAD`/`GET`
   `/api/uploads/<name>` and `POST /api/upload-file`, or `/api/uploads`
   for a PDF. The server needs nothing new.
+- **The cursor is the feed's.** Each round walks the change feed to the
+  end from the cursor the last one kept (`remote_cursor` in the host's
+  meta) and keeps the new one. It is a string the replica stores as it is
+  and never reads (the remote's change-log seq; `""` at first). A cursor
+  the remote never gave out lists from the start once, which costs a
+  re-walk and no writes.
 - **The rules are the mirror's**, one page at a time as in
   `sync_engine._sync_page`. A page deleted on one side goes on the other
   unless the other side edited it. The remote's changes since the saved
@@ -67,6 +74,33 @@ device with no server of its own.
   confirmed and sent again only where the remote does not show it. A
   block the remote moved to another page moves here too, carrying what
   was typed in it here.
+- **Folders and labels are two more snapshots**, `folders` and `labels`
+  ([collab.md](collab.md) "The folder and label trees"; `tree.js`
+  `TREES`). The feed lists them like pages, and a round reconciles them
+  first, so a page filed in a new folder never arrives before its
+  folder. The root of each is a reserved row whose `parent` is `null`. A
+  folder is a block under `folders` or under another folder, with its name
+  as `content` and its pin as `props.pinned`. A label is a child of
+  `labels`. A tree is never created or deleted on either side: the remote
+  refuses a page with a reserved id, so a tree the remote lacks is left as
+  it is, and a tombstone for one deletes nothing. A tree missing here,
+  before the first round that lists it, is pulled whole (its snapshot
+  stored). Both sides' folders are kept, since each side's pages are filed
+  in its own. A page names its filing as block ids,
+  `props.folders` and `props.labels`.
+- **The library's rows** come from `views.js libraryRows(roots, {folders,
+  labels})`, where `roots` is every stored page root and the second
+  argument holds the two trees' snapshots (either may be missing until a
+  round brings it). The tree roots get no row. A row is `{id, title,
+  kind, position, folders, labels}`, ordered by position. `folders` lists
+  the page's folders as display paths, the names from the top joined
+  with `" / "` (`"Physics / QEC"`), and `labels` lists the label names.
+  Both follow the page's filing order, with no repeats. A name may contain
+  any character, `/` and `,` included, so the host groups by these
+  strings and never splits them. An id the trees lack (a dangling id: the
+  folder deleted, or not here yet) gives nothing. `pageView` carries the
+  page's raw filing ids as `folders` and `labels`. The web app reads the
+  same names with `libraryUtils.js` `filingChips` over the listing's trees.
 - **The code is JavaScript,** a port of the pure half of the Python
   engine that runs in the app's JavaScriptCore. `frontend/src/replica/tree.js`
   is `sync_tree.py`, and `reconcile.js` holds `_known`,
@@ -164,16 +198,54 @@ Raw touches carry everything `gamma-ink` stores.
   a page placed among a note's blocks. It runs in `check.yml` and
   `ipad.yml`.
 - `frontend/tests/replica.test.mjs` covers the tree rules against the
-  shared fixtures, the local merges, edit-beats-delete and the page views.
+  shared fixtures, the local merges, edit-beats-delete, the page views and
+  the library rows. Rounds against a remote in memory cover the folder and
+  label trees: reconciled first and pulled whole, both sides' folders
+  kept, never deleted either way, and never created on a remote that
+  lacks one.
 - The browser suite's `replica` group (`frontend/tests/e2e/scenarios/replica.mjs`,
-  no browser) runs rounds against a real server: the first fill, pushes,
-  text and drawings merged on both sides, an edit beating a delete both
-  ways, a lost answer, a block moved between pages, deletions both ways,
-  and receive-only.
+  no browser) runs rounds against a real server: the first fill, the
+  folder and label trees both ways with the library rows named from them,
+  pushes, text and drawings merged on both sides, an edit beating a delete
+  both ways, a lost answer, a block moved between pages, deletions both
+  ways, and receive-only.
 - `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`) covers the
   store's version, edit-mark and tombstone semantics, file names, and the
   bundled core through the Swift host (the replay's order, a page among a
   note's blocks).
+
+### Keeping the host in step
+
+Nearly everything the app knows about the server is the shared
+JavaScript, so a protocol change is made once, in `frontend/src/replica/`,
+and the checks above carry it to the app: `check.yml` bundles the core
+and runs `core.test.mjs` on every pull request, the shared fixtures pin
+the pure rules against the Python engine, and the `replica` group runs
+rounds against the real server. The Swift host decides nothing; a rule
+that would need a Swift change belongs in the core.
+
+What is Swift's alone is small: the web session's shape and the write
+token's minting (`Core/Remote.swift` `ServerSetup`), files moved by name
+through `/api/uploads` and `/api/upload-file` (`Remote.upload`, `head`,
+`download`), and the upload-reference pattern (`Core/Store.swift`).
+`backend/tests/test_ipad_contract.py` pins those four answers from the
+server's side, with a comment naming the Swift that reads each one. A
+backend change under `routers/sync.py`, `routers/collab.py`, `ops.py`,
+`sync_engine.py`, `sync_tree.py`, `textmerge.py`, `routers/uploads.py`,
+`routers/integrations.py` or the session's answer runs, in this order:
+
+```bash
+cd backend && venv/Scripts/python.exe -m pytest tests/test_ipad_contract.py tests/test_shared_fixtures.py tests/test_sync_feed.py -q
+node ipad/scripts/build-core.mjs && node --test ipad/scripts/core.test.mjs
+cd frontend && npm run e2e -- --group replica,ipad
+```
+
+A Swift change (`ipad/**`) also runs the XCTest suite on a Mac, which
+`ipad.yml` does in CI. When a server answer the Swift reads changes,
+change `test_ipad_contract.py` and the Swift together, and say so in
+the step's row of [migrations.md](migrations.md) when stored shapes are
+involved, as "Following the server's data model" below does for the
+core.
 
 ### Not built yet
 
@@ -192,6 +264,35 @@ Raw touches carry everything `gamma-ink` stores.
   a desktop clone.
 - Sync in the background, and resolving a conflict from the app (the
   list is for looking; the web app's clone view resolves).
+
+### Following the server's data model
+
+Schema versions 25–30 changed what the server stores and answers
+([migrations.md](migrations.md)). The JavaScript core follows them and its
+tests pin it (`frontend/tests/replica*.mjs`, `ipad/scripts/core.test.mjs`);
+the app ships the core built from the current `replica/`
+(`ipad/core/entry.js`). The Swift code reads two things from it:
+
+- **The library** (`Replica.libraryRows`, `LibraryView.swift`) passes the
+  stored page roots and the two tree snapshots (`store.snapshot("folders")`
+  / `("labels")`) to `libraryRows` above. The view groups by a row's first
+  folder path as it is, and its
+  search box matches titles, paths and labels. A page the app makes
+  (`createPage`, `createNotebook`) is filed nowhere; filing is the web
+  app's.
+- **An ink row's page** (`NotesView.swift`) is `pdf_position.pageNumber`;
+  `pdf_page` is a text box's only (the app shows no text boxes). The core's
+  `pageView` keys `pdfInk` by the position's page and derives `pdf.url` from
+  `doc_id` when a page stores no `source_url`.
+
+The replica never reads `actor` (an account id), the block dict's `page_id`
+and `kind` (it ignores them and sends neither back), or the library listing
+endpoint (the app's library is the replica's).
+
+A replica synced before the server's step 30 keeps its pages' old highlight
+shape until the server lists each page again (the step touched no page).
+The core reads the new shape only, so an ink group's page shows once its
+page has come over again: `Sync now` after the server's upgrade does it.
 
 ## The installed web app
 

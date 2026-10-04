@@ -24,12 +24,10 @@ export function factsMatch(requires, facts) {
 
 // Does `step` belong in a run started with these facts? Its `requires` must
 // hold. A tour with a `sibling` teaches some of the same controls (the PDF
-// and the notebook viewer share their zoom, pen and full screen): its
-// `shared` steps are for a user who has not finished the sibling, and its
-// one `recap` step, which stands in for them, for a user who has.
+// and the notebook viewer share their zoom and pen): its `shared` steps are
+// for a user who has not finished the sibling.
 export function stepApplies(step, facts, siblingDone = false) {
-  if (!factsMatch(step.requires, facts)) return false;
-  return step.shared ? !siblingDone : !step.recap || siblingDone;
+  return factsMatch(step.requires, facts) && !(step.shared && siblingDone);
 }
 
 // Whether `event` is the tour's trigger event (its `count` is checked by

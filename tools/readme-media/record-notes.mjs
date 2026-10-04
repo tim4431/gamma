@@ -1,7 +1,7 @@
 // README "Take notes" demo: a bare note page typed into, Obsidian-style live
 // preview — markdown marks, a [[ref]] chip, then a display equation typed
 // char by char ($ auto-pairing, \command autocomplete, Tab through {} args,
-// live math preview), then /page turns the next block into a sheet of paper
+// live math preview), then /note turns the next block into a sheet of paper
 // and a stylus sketches the result on it, right among the notes.
 //
 // Prepared by `run-case.mjs notes` (an empty page whose id arrives as PAGE_ID).
@@ -129,7 +129,7 @@ await T(' - \\hbar\\Delta\\,|e\\rangle\\langle e|', MATH);
 console.log('SCRIPT: equation =', await value());
 await beat(1200);
 
-// 4. leave the equation: /page makes the next block a sheet of paper -------
+// 4. leave the equation: /note makes the next block a sheet of paper -------
 await K('End');                                    // past the closing $$
 await beat(300);
 await K('Enter');
@@ -138,10 +138,10 @@ await K('Shift+Tab');
 await beat(350);
 await reopenFocused();
 await beat(500);
-await T('/page', 70);
+await T('/note', 70);
 await page.waitForSelector('.slashMenu .slashMenuItem.selected');
 const pick = await page.locator('.slashMenu .slashMenuItem.selected .slashMenuLabel').innerText();
-if (pick !== 'Page to write on') throw new Error(`/page picked ${pick}`);
+if (pick !== 'Handwritten note') throw new Error(`/note picked ${pick}`);
 await beat(700);
 const sheetAt = clock();
 await K('Enter');

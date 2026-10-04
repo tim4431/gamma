@@ -8,7 +8,7 @@ import zipfile
 
 import pytest
 
-from conftest import login as _login, make_page, make_user as _make_user
+from conftest import account_of, login as _login, make_page, make_user as _make_user
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +52,7 @@ def test_admin_export_job_of_another_account(root, alice):
     r = root.post("/api/jobs/workspace-export", json={"user": "bkalice", "uploads": False})
     assert r.status_code == 200, r.text
     job = jobs.wait(r.json()["id"])
-    assert job["state"] == "done" and job["owner"] == "bkadmin"
+    assert job["state"] == "done" and job["owner"] == account_of("bkadmin")
     z = zipfile.ZipFile(io.BytesIO(root.get(f"/api/jobs/{job['id']}/download").content))
     assert json.loads(z.read("manifest.json"))["user"] == "bkalice"
     assert "bkalice" in job["artifact"]["name"]

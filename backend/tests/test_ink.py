@@ -8,7 +8,7 @@ import json
 import zipfile
 
 import pytest
-from conftest import make_page, guest_name
+from conftest import make_page, guest_name, workspace_of
 
 from gamma import ink as inkmod
 
@@ -62,9 +62,9 @@ def test_bounding_box_and_pdf_position():
     x0, y0, x1, y1 = inkmod.bounding_box(ink)
     assert x0 < 100 and x1 > 140 and y0 < 200 and y1 > 212   # half the width around the samples
     pos = inkmod.pdf_position(ink)
-    assert pos["pageNumber"] == 1
-    r = pos["boundingRect"]
-    assert (r["width"], r["height"], r["pageNumber"]) == (PAGE_W, PAGE_H, 1)
+    # the highlight shape: the page and its size once, the rects bare
+    assert (pos["pageNumber"], pos["width"], pos["height"]) == (1, PAGE_W, PAGE_H)
+    assert list(pos["boundingRect"]) == ["x1", "y1", "x2", "y2"] and pos["rects"] == [pos["boundingRect"]]
     assert inkmod.bounding_box(inkmod.parse_ink(_ink(strokes=[]))) is None
 
 
@@ -180,15 +180,14 @@ def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
     from contextlib import closing
     from gamma import upload_gc
     from gamma.db import connect_pages_db, ws_uploads_dir
-    from gamma.workspaces import default_workspace
     monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
-    ws = default_workspace(guest_name())
+    ws = workspace_of(guest_name())
     url = guest.post("/api/upload-ink", json=_ink(strokes=[{"id": "keep", "ch": "xy", "pts": [100, 100]}])).json()["url"]
     name = url.rsplit("/", 1)[1]
     page = make_page(guest, "Ink page")
     r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
         {"op": "insert", "id": "inkblk1", "parent": page["id"], "content": "caption",
-         "props": {"ink_url": url, "pdf_page": 1}},
+         "props": {"ink_url": url}},
     ]})
     assert r.status_code == 200, r.text
     # a full reconciliation sees the ink_url reference: the file is in use
@@ -204,7 +203,7 @@ def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
     # the undo brings the block back, and the file is in use again
     r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
         {"op": "insert", "id": "inkblk1", "parent": page["id"], "content": "caption",
-         "props": {"ink_url": url, "pdf_page": 1}},
+         "props": {"ink_url": url}},
     ]})
     assert r.status_code == 200, r.text
     with closing(connect_pages_db(ws)) as conn:
@@ -231,7 +230,7 @@ def _group(client, strokes, bid):
     url = _upload(client, strokes)
     r = client.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
         {"op": "insert", "id": bid, "parent": page["id"], "content": "",
-         "props": {"ink_url": url, "pdf_page": 1, "ink_strokes": len(strokes)}}]})
+         "props": {"ink_url": url, "ink_strokes": len(strokes)}}]})
     assert r.status_code == 200, r.text
     return page["id"], url
 
@@ -252,12 +251,12 @@ def test_two_writers_drawing_in_one_group_both_keep_their_strokes(guest):
         {"op": "set", "id": "mg1", "props": {"ink_url": theirs, "ink_strokes": 2}, "base_props": {"ink_url": u0}}]})
     assert r.json()["ops"][0]["props"]["ink_url"] == theirs  # its base was current: as sent
     r = guest.post(f"/api/pages/{page}/ops", json={"client": "two", "ops": [
-        {"op": "set", "id": "mg1", "props": {"ink_url": ours, "ink_strokes": 2, "pdf_position": None, "pdf_page": 1},
+        {"op": "set", "id": "mg1", "props": {"ink_url": ours, "ink_strokes": 2, "pdf_position": None},
          "base_props": {"ink_url": u0}}]})
     assert r.status_code == 200, r.text
     applied = r.json()["ops"][0]["props"]
     assert applied["ink_url"] not in (u0, ours, theirs) and applied["ink_strokes"] == 3
-    assert applied["pdf_position"]["pageNumber"] == 1 and applied["pdf_page"] == 1
+    assert applied["pdf_position"]["pageNumber"] == 1 and "pdf_page" not in applied
     props, ink = _stored(guest, "mg1")
     assert props["ink_url"] == applied["ink_url"]
     assert [(s.id, s.color) for s in ink.strokes] == [("a", "#dc2626"), ("x", "#1f1f1f"), ("b", "#1f1f1f")]
@@ -364,7 +363,8 @@ def test_import_endpoint_creates_ink_blocks(guest):
     assert r.json()["imported"] == 1 and r.json()["stripped"] == 1
     children = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
     props = children[0]["properties"]
-    assert props["ink_url"].endswith(".ink") and props["pdf_page"] == 1 and props["ink_strokes"] == 1
+    assert props["ink_url"].endswith(".ink") and props["ink_strokes"] == 1 and "pdf_page" not in props
+    assert props["pdf_position"] == inkmod.pdf_position(inkmod.parse_ink(guest.get(props["ink_url"]).content))
     assert props["annot_stripped"] is True and children[0]["content"] == "note"
     assert guest.get(props["ink_url"]).status_code == 200
     # idempotent
@@ -374,11 +374,12 @@ def test_import_endpoint_creates_ink_blocks(guest):
 # --- other exports --------------------------------------------------------------------
 
 def _page_with_ink(guest, title="Ink export"):
-    url = guest.post("/api/upload-ink", json=_ink(page=2)).json()["url"]
+    up = guest.post("/api/upload-ink", json=_ink(page=2)).json()
+    url = up["url"]
     page = make_page(guest, title)
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": f"ink-{page['id']}", "content": "a derivation", "children": [], "properties": {
-            "ink_url": url, "pdf_page": 2, "ink_strokes": 1}},
+            "ink_url": url, "pdf_position": up["pdf_position"], "ink_strokes": 1}},
     ]})
     assert r.status_code == 200, r.text
     return page, url

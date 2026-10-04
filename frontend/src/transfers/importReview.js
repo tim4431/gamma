@@ -15,11 +15,15 @@ export function selectItems(selected, ids, checked) {
   for (const id of ids) { if (checked) next.add(id); else next.delete(id); }
   return next;
 }
+// The tree a review column shows: the archive's entries by their paths in
+// the zip, or (`library`) the destination pages by their folders — each a
+// list of names from the top, as the server reports them (a name may hold
+// a "/", so they are never split).
 export function buildImportTree(items, library = false) {
   const root = { folders: new Map(), files: [] };
-  const at = path => {
+  const at = names => {
     let node = root;
-    for (const part of path.split("/").filter(Boolean)) {
+    for (const part of names.filter(Boolean)) {
       if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), files: [] });
       node = node.folders.get(part);
     }
@@ -27,12 +31,12 @@ export function buildImportTree(items, library = false) {
   };
   for (const item of items) {
     if (library) {
-      for (const folder of item.folders?.length ? item.folders : [""]) at(folder).files.push({ ...item, name: item.title });
-    } else if (item.directory) at(item.path);
+      for (const folder of item.folders?.length ? item.folders : [[]]) at(folder).files.push({ ...item, name: item.title });
+    } else if (item.directory) at(item.path.split("/"));
     else {
       const parts = item.path.split("/");
       const name = parts.pop();
-      at(parts.join("/")).files.push({ ...item, name });
+      at(parts).files.push({ ...item, name });
     }
   }
   return root;
@@ -45,7 +49,7 @@ export function resultPages(data) {
   for (const page of data.pages || []) {
     const key = `${page.kind || "page"}:${page.id}`;
     const prior = unique.get(key);
-    unique.set(key, { ...page, folders: page.folders || (page.folder ? [page.folder] : []),
+    unique.set(key, { ...page, folders: page.folders || [],
       action: page.created || prior?.action === "create" ? "create" : page.action || "merge" });
   }
   return [...unique.values()];

@@ -2,15 +2,11 @@
 // annotations, text search, and the selection popup. Extracted from
 // App.jsx to keep the God component shrinking.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-// The legacy build, not the default one: it ships the core-js polyfills the
-// modern build assumes (Promise.withResolvers is Safari 17.4+, and pdf.js
-// calls it the moment a loading task is created). Without it every iPad below
-// iOS 17.4 threw here at module scope and the whole app rendered blank.
-// The worker is the matching legacy build, bundled by Vite as a content-hashed
-// asset (?url): always the installed pdfjs-dist version, and served immutable
-// for a year like every other asset — a copy under public/ was revalidated on
-// every page load, 1.3 MB each time, and that was most of a warm reopen.
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// The worker is the legacy build matching the engine below, bundled by Vite
+// as a content-hashed asset (?url): always the installed pdfjs-dist version,
+// and served immutable for a year like every other asset — a copy under
+// public/ was revalidated on every page load, 1.3 MB each time, and that was
+// most of a warm reopen.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
@@ -32,22 +28,43 @@ import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { installViewerZoom } from "../shared/lib/viewerZoom.js";
-// Bypass immutable responses cached with text/plain before the server MIME
-// fix. Keep this stable: Vite's content hash handles later worker upgrades.
-pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
+// The engine: pdf.js (the legacy build, not the default one: it ships the
+// core-js polyfills the modern build assumes — Promise.withResolvers is
+// Safari 17.4+, and pdf.js calls it the moment a loading task is created) and
+// its worker. A chunk of its own (docs/dev/frontend-refactor.md, "Lazy
+// boundaries"), so the library's first screen neither downloads nor parses
+// it: App preloads it at startup when the address opens a page, else once
+// the library is idle, and a document opening fetches it if neither has.
+// Until it loads, `pdfjsLib` is null; everything below that reads it runs on
+// an open document, so after the load.
+let pdfjsLib = null;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
 // a document's destroy() only tears down a worker pdf.js created itself, so
-// a shared one outlives every DOC_CACHE eviction. Created at module scope,
-// which is also what starts its script downloading alongside the app.
-// Guarded: a throw at module scope takes down every route, PDF or not.
+// a shared one outlives every DOC_CACHE eviction. Created with the engine,
+// which is what starts its script downloading.
 let PDF_WORKER = null;
-try {
-  PDF_WORKER = new pdfjsLib.PDFWorker({ name: "gamma-pdf" });
-  // Startup can fail before a document opens. getDocument still receives
-  // the rejection and reports it through the load-status UI when needed.
-  PDF_WORKER.promise.catch(() => {});
-} catch {}
+let enginePending = null;
+export function loadPdfEngine() {
+  enginePending ||= import("pdfjs-dist/legacy/build/pdf.mjs").then((lib) => {
+    // Bypass immutable responses cached with text/plain before the server
+    // MIME fix. Keep this stable: Vite's content hash handles later upgrades.
+    lib.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?mime=js`;
+    try {
+      PDF_WORKER = new lib.PDFWorker({ name: "gamma-pdf" });
+      // Startup can fail before a document opens. getDocument still receives
+      // the rejection and reports it through the load-status UI when needed.
+      PDF_WORKER.promise.catch(() => {});
+    } catch {}
+    pdfjsLib = lib;
+    return lib;
+  }, (error) => {
+    enginePending = null; // a failed fetch is retried by the next open
+    throw error;
+  });
+  return enginePending;
+}
+export const preloadPdfEngine = () => { loadPdfEngine().catch(() => {}); };
 // getDocument parameters every open shares.
 const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } : params);
 
@@ -494,7 +511,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     const map = new Map();
     if (displayedUrl !== url) return map;
     for (const h of highlights || []) {
-      const p = h.position?.boundingRect?.pageNumber ?? h.position?.rects?.[0]?.pageNumber;
+      const p = h.position?.pageNumber;
       if (!p) continue;
       if (!map.has(p)) map.set(p, []);
       map.get(p).push(h);
@@ -577,17 +594,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   useEffect(() => {
     if (!captureRef) return;
     captureRef.current = pdfDoc ? async (h) => {
-      const r = h?.position?.boundingRect;
-      const pn = r?.pageNumber || h?.position?.pageNumber;
+      const pos = h?.position;
+      const r = pos?.boundingRect;
+      const pn = pos?.pageNumber;
       if (!r || !pn) return null;
       if (docUrlRef.current !== urlRef.current) return null;
       try {
         const page = await pdfDoc.getPage(pn);
         const vpBase = page.getViewport({ scale: 1 });
-        // Stored rect is page-relative at its capture-time render size — map
-        // to scale-1 page coordinates first.
-        const kx = vpBase.width / (r.width || vpBase.width);
-        const ky = vpBase.height / (r.height || vpBase.height);
+        // Stored rect is page-relative at its capture-time render size (the
+        // position's width × height) — map to scale-1 page coordinates first.
+        const kx = vpBase.width / (pos.width || vpBase.width);
+        const ky = vpBase.height / (pos.height || vpBase.height);
         const x1 = r.x1 * kx, y1 = r.y1 * ky;
         const w = Math.max(1, (r.x2 - r.x1) * kx), hh = Math.max(1, (r.y2 - r.y1) * ky);
         // Render sharp: at least 2×, more for small crops, capped so a
@@ -708,6 +726,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           commitDoc(url, live.doc, live.heights, live.widths, true);
           return;
         }
+        // The engine, when the app has not loaded it ahead, travels with the
+        // manifest and the bytes; awaited just before pdf.js is called.
+        const engine = loadPdfEngine();
+        engine.catch(() => {});
         // The manifest and the bytes travel in parallel. On a cold open the
         // manifest alone lays the document out, while pdf.js is still
         // fetching; for an uncached upload it also decides the transport.
@@ -734,6 +756,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             if (!data || cancelled) return;
           }
         }
+        await engine;
+        if (cancelled) return;
         report({ phase: "parsing" });
         let doc;
         if (openedByRange) {
@@ -934,7 +958,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const scrollToPositionRef = useRef(null);
   useEffect(() => {
     scrollToPositionRef.current = async ({ position, box, behavior, offset }) => {
-      const pn = position?.pageNumber || position?.boundingRect?.pageNumber;
+      const pn = position?.pageNumber;
       if (!pn || !viewerRef.current || !pdfDoc) return;
       const r = position?.boundingRect;
       const heights = pageHeightsRef.current;
@@ -952,7 +976,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // Compute page-top from cached heights (accurate even for unrendered pages)
       const pageTop = pageTopAt(heights, pn - 1, scale);
       const curH = (heights[pn - 1] || FALLBACK_H) * scale;
-      const storedH = r?.height || 1;
+      const storedH = position?.height || 1;
       // (the cached heights are the pages at scale 1, the frame a box's points are in)
       const highlightY = box ? box.y * scale : r ? r.y1 * curH / storedH : 0;
       const targetTop = pageTop + highlightY - (offset ?? 80);
@@ -1275,11 +1299,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       const rawY = kind === "XYZ" ? d[3] : (kind === "FitH" || kind === "FitBH") ? d[2] : null;
       if (typeof rawY === "number") destY = Math.max(0, vp.height - rawY);
       scrollToPositionRef.current?.({
-        position: {
-          pageNumber: pn,
-          boundingRect: { x1: 0, y1: destY, x2: 0, y2: destY, width: vp.width, height: vp.height, pageNumber: pn },
-          rects: [],
-        },
+        position: { pageNumber: pn, width: vp.width, height: vp.height, boundingRect: { x1: 0, y1: destY, x2: 0, y2: destY } },
       });
     } catch {}
   }
@@ -1455,8 +1475,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // rides inside the position, so it flows through block storage,
       // rendering, and PDF export (/Square) without extra plumbing.
       const { pageNumber, rect, width, height } = selPopup;
-      const r = { ...rect, width, height, pageNumber };
-      const position = { pageNumber, boundingRect: r, rects: [r], area: true };
+      const position = { pageNumber, width, height, boundingRect: { ...rect }, rects: [{ ...rect }], area: true };
       onSelectionFinished(position, { text: "" }, () => setSelPopup(null), { color, commentText, ...(extra || {}) });
       return;
     }
@@ -1468,17 +1487,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     const x1 = r.left - px, y1 = r.top - py;
     const x2 = r.left + r.width - px, y2 = r.bottom - py;
     const lineRects = (selPopup.lineRects && selPopup.lineRects.length)
-      ? selPopup.lineRects.map(lr => ({
-          x1: lr.left - px, y1: lr.top - py,
-          x2: lr.right - px, y2: lr.bottom - py,
-          width: curW, height: curH, pageNumber: selPopup.pageNumber,
-        }))
-      : [{ x1, y1, x2, y2, width: curW, height: curH, pageNumber: selPopup.pageNumber }];
-    const position = {
-      pageNumber: selPopup.pageNumber,
-      boundingRect: { x1, y1, x2, y2, width: curW, height: curH, pageNumber: selPopup.pageNumber },
-      rects: lineRects,
-    };
+      ? selPopup.lineRects.map(lr => ({ x1: lr.left - px, y1: lr.top - py, x2: lr.right - px, y2: lr.bottom - py }))
+      : [{ x1, y1, x2, y2 }];
+    // The page size once: every rect is in its frame (shared/model/blockModel.js).
+    const position = { pageNumber: selPopup.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
     const content = { text: selPopup.text };
     onSelectionFinished(position, content, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
   }
@@ -2108,9 +2120,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         />
       ))}
       {highlights.map(h => {
-        const rects = h.position?.rects || (h.position?.boundingRect ? [h.position.boundingRect] : []);
-        const storedW = h.position?.boundingRect?.width || rects[0]?.width || 1;
-        const storedH = h.position?.boundingRect?.height || rects[0]?.height || 1;
+        const rects = h.position.rects;
+        const storedW = h.position.width || 1;
+        const storedH = h.position.height || 1;
         const isLink = !!h.linkTarget;
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.

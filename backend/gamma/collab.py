@@ -1,9 +1,12 @@
 """Live rooms: who is on a page right now, and the fan-out of applied
 operations to them.
 
-One room per ``(workspace, page_id)``, in memory — Gamma runs as one uvicorn
-process everywhere (Docker, the desktop sidecar), so nothing needs to be
-shared across workers. A room holds the websocket peers
+One room per ``(workspace, page_id)``, in memory: a page, or one of the
+pseudo-pages ``folders`` / ``labels`` (the folder and label trees, for a
+client that follows them live; the web app's home view re-reads them
+instead). Gamma runs as one uvicorn process everywhere (Docker,
+the desktop sidecar), so nothing needs to be shared across workers. A room
+holds the websocket peers
 (``routers/collab.py`` accepts them) with their identity, colour and last
 cursor; ``publish`` sends a message to every peer and is safe to call from
 the event loop AND from threadpool code (the sync AI chat endpoint runs the
@@ -41,7 +44,7 @@ _loop: asyncio.AbstractEventLoop | None = None  # the loop the sockets live on
 class Peer:
     ws: object
     client: str
-    user: str          # session username, "" for an anonymous share viewer
+    user: str          # session username (what the others see), "" for an anonymous share viewer
     name: str
     color: int
     can_edit: bool
@@ -49,7 +52,7 @@ class Peer:
     anchor: int = -1   # selection inside the open editor, -1 = no editor open
     head: int = -1
     # What admitted it, re-checked by revalidate (never sent to the others):
-    account: str = ""  # the session's account, guests included ("" without a session)
+    account: str = ""  # the session account's id, guests included ("" without a session)
     is_guest: bool = False
     token: str = ""    # the share token it came through, "" for a member
 
@@ -195,10 +198,12 @@ def peer_access(ws: str, page_id: str, account: str, is_guest: bool, token: str)
     False (presence only) or None (no access) — the same rules as HTTP: a
     share token admits its audience (``auth.share_access``) to the pages in
     its scope; without one, a member joins with their workspace role (a
-    viewer only watches). ``account`` is the session's account ("" without
-    one; a guest counts as not signed in for shares)."""
+    viewer only watches). ``account`` is the session account's id ("" without
+    one; a guest counts as not signed in for shares). The rooms of the
+    folder and label trees are the members': no share link reaches them."""
     from . import workspaces  # local: they import db / seed, which must not import rooms
     from .auth import ShareScope, share_access, share_lookup
+    from .blocks_store import TREES, is_op_page
     from .db import connect_pages_db
 
     scope = None
@@ -219,9 +224,10 @@ def peer_access(ws: str, page_id: str, account: str, is_guest: bool, token: str)
         can_edit = role != "viewer"
     else:
         return None
+    if scope is not None and page_id in TREES:
+        return None
     with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not row or row[0] != "root":
+        if not is_op_page(conn, page_id):
             return None
         if scope is not None and not scope.allows_page(conn, page_id):
             return None
@@ -241,22 +247,23 @@ def revalidate(ws: str) -> None:
 
 
 def revalidate_shares(ws: str) -> None:
-    """A page's folder labels changed, and a folder share reaches the pages
-    filed in its folder: ``revalidate`` the workspace when a peer of its
-    rooms came through a share link — the only peers a label decides for
-    (checked in memory, so a refiling batch pays nothing otherwise)."""
+    """What a folder holds changed (a page refiled, a folder moved or
+    deleted), and a folder share reaches the pages filed in its folder:
+    ``revalidate`` the workspace when a peer of its rooms came through a
+    share link — the only peers filing decides for (checked in memory, so a
+    refiling batch pays nothing otherwise)."""
     if any(peer.token for key, room in list(_rooms.items()) if key[0] == ws
            for peer in list(room.peers.values())):
         _schedule(_revalidate(ws))
 
 
-def revalidate_account(username: str, workspaces=()) -> None:
-    """An account was deleted: ``revalidate`` every workspace with a room
-    the account is in (as a member or through a share link) and
+def revalidate_account(user_id: str, workspaces=()) -> None:
+    """An account (its id) was deleted: ``revalidate`` every workspace with
+    a room the account is in (as a member or through a share link) and
     ``workspaces``, the ones that went with it."""
     wanted = set(workspaces)
     for key, room in list(_rooms.items()):
-        if any(peer.account == username for peer in list(room.peers.values())):
+        if any(peer.account == user_id for peer in list(room.peers.values())):
             wanted.add(key[0])
     for ws in wanted:
         revalidate(ws)

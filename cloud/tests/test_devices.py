@@ -7,7 +7,7 @@ import threading
 import time
 from contextlib import closing
 
-from conftest import register, verify
+from conftest import register, steps_after, verify
 from test_oidc import CALLBACK, pkce, signed_in_code
 
 from gammacloud import config, db
@@ -324,7 +324,7 @@ def test_upgrade_to_devices(client):
         conn.execute("DROP TABLE refresh_history")
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
-    assert db.ensure_current() == ["devices", "profile", "connect"]
+    assert db.ensure_current() == steps_after(2)
     assert db.ensure_current() == []
     with closing(db.connect()) as conn:
         assert conn.execute("SELECT app_signed_in_at FROM accounts").fetchone()[0]  # from the audit

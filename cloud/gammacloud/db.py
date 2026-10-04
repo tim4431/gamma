@@ -12,6 +12,7 @@ pending step.
 """
 
 import hashlib
+import os
 import secrets
 import sqlite3
 import time
@@ -20,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -99,7 +100,9 @@ PREFS = """CREATE TABLE IF NOT EXISTS prefs (
 # The Gamma servers a person linked their identity on (``servers.py``):
 # each registers its confirmed public URL (normalized, one row per URL).
 # ``grant_id`` is the grant of the token it last registered with, which is
-# how the portal shows a server and its sign-in as one row.
+# how the portal shows a server and its sign-in as one row. ``version`` (its
+# build label) and ``schema`` (its data directory's schema version) are what
+# it last reported: '' and NULL until it does.
 SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         account_id TEXT NOT NULL REFERENCES accounts(id),
         url TEXT NOT NULL,
@@ -107,7 +110,18 @@ SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         linked_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
         grant_id TEXT NOT NULL DEFAULT '',
+        version TEXT NOT NULL DEFAULT '',
+        schema INTEGER,
         PRIMARY KEY (account_id, url)
+    )"""
+
+# Server settings an admin edits at runtime (``settings.py``). Only the keys
+# in ``settings.DEFAULTS`` mean anything; a row for any other key is ignored,
+# so a rolled-back build leaves nothing behind.
+SETTINGS = """CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
     )"""
 
 # A server connection a person approved (``connect.py``), waiting for the
@@ -121,10 +135,16 @@ SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
     )"""
 
 SCHEMA = [
+    # ``email`` is the address as it was typed; ``email_canon`` is the inbox
+    # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
+    # Its index is deliberately not UNIQUE: two accounts predating the rule
+    # may share a canonical form, and the constraint on ``email`` is enough
+    # of a backstop.
     """CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
         email TEXT NOT NULL UNIQUE,
+        email_canon TEXT NOT NULL DEFAULT '',
         email_verified_at TEXT,
         password_hash TEXT,
         display_name TEXT NOT NULL DEFAULT '',
@@ -134,6 +154,7 @@ SCHEMA = [
         deleted_at TEXT,
         app_signed_in_at TEXT
     )""",
+    """CREATE INDEX IF NOT EXISTS accounts_email_canon ON accounts(email_canon)""",
     # An account's sign-in through an outside provider (google, github):
     # ``identities.py``. ``email`` is the provider's address at the last
     # sign-in, shown on the Settings page.
@@ -265,6 +286,7 @@ SCHEMA = [
     PREFS,
     SERVERS_LINKED,
     SERVER_CONNECTS,
+    SETTINGS,
 ]
 
 
@@ -344,12 +366,54 @@ def _step_connect(conn) -> None:
     conn.execute(SERVER_CONNECTS)
 
 
+def _step_email_canon(conn) -> None:
+    """The inbox an address reaches, so aliases of one mailbox cannot become
+    separate accounts. Backfilled here; a row whose canonical form already
+    belongs to an older account keeps it, which only means that address
+    cannot be re-registered."""
+    from .accounts import email_canon  # local: accounts.py imports this module
+    _add_column(conn, "accounts", "email_canon", "TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS accounts_email_canon ON accounts(email_canon)")
+    for row in conn.execute("SELECT id, email FROM accounts WHERE email_canon = ''").fetchall():
+        conn.execute("UPDATE accounts SET email_canon = ? WHERE id = ?", (email_canon(row["email"]), row["id"]))
+
+
+def _step_settings(conn) -> None:
+    """The settings table, seeded once from the environment variables it
+    replaces (``settings.py``). After this those variables are not read; a
+    deployment that still sets one is warned about at startup. A fresh
+    cloud.db never runs this and takes the defaults, so a first install is
+    configured on the Admin page and nowhere else."""
+    conn.execute(SETTINGS)
+    imported = {
+        "registration": os.environ.get("GAMMA_CLOUD_REGISTRATION", "").strip().lower(),
+        "turnstile_sitekey": os.environ.get("GAMMA_CLOUD_TURNSTILE_SITEKEY", "").strip(),
+        "turnstile_secret": os.environ.get("GAMMA_CLOUD_TURNSTILE_SECRET", "").strip(),
+        "blocked_email_domains": "\n".join(
+            d.strip().lower().lstrip("@") for d in os.environ.get("GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS", "").split(",")
+            if d.strip()),
+    }
+    for key, value in imported.items():
+        if value:
+            conn.execute("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                         "ON CONFLICT (key) DO NOTHING", (key, value, now()))
+
+
+def _step_server_build(conn) -> None:
+    """The build and data schema version a linked server reports."""
+    _add_column(conn, "servers_linked", "version", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "servers_linked", "schema", "INTEGER")
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
     (3, "devices", _step_devices),
     (4, "profile", _step_profile),
     (5, "connect", _step_connect),
+    (6, "email_canon", _step_email_canon),
+    (7, "settings", _step_settings),
+    (8, "server_build", _step_server_build),
 ]
 
 

@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from ai_fixtures import FakeResp
-from conftest import login, make_page, make_user
+from conftest import account_of, login, make_page, make_user
 
 from gamma import ai_client, ratelimit
 from gamma.ai_settings import ai_runtime
@@ -60,13 +60,13 @@ def upstream(monkeypatch):
 
 
 def _open(n):
-    rt = ai_runtime("sl_ai")
+    rt = ai_runtime(account_of("sl_ai"))
     return [ai_client.open_ai([{"role": "user", "content": "hi"}], "", rt["default"], rt, stream=True)
             for _ in range(n)]
 
 
 def _in_use():
-    return ai_client._open_calls.get("sl_ai", 0)
+    return ai_client._open_calls.get(account_of("sl_ai"), 0)
 
 
 def test_open_calls_are_capped_and_released(ai_user, upstream, monkeypatch):

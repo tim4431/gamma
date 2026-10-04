@@ -13,6 +13,7 @@ import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
 import { MEDIA, mediaRatio } from "../src/guide/media.js";
+import { DOCK_WINDOWS, DOCK_ZONES, SCENE_KINDS } from "../src/guide/scene.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -57,7 +58,7 @@ test("tours reference registered anchors and catalogued events", () => {
 const aiTour = TOURS["ai-chat"];
 test("window tours require desktop controls and only offer after opening a PDF", () => {
   const tour = TOURS.windows;
-  const facts = { phone: false, view: "pdf", dockedNotes: true };
+  const facts = { phone: false, view: "pdf" };
   const event = { name: "page.opened", payload: {} };
   assert.equal(canOffer(tour, { facts, event, seen: 1 }), true);
   assert.equal(canOffer(tour, { facts: { ...facts, phone: true }, event, seen: 1 }), false);
@@ -65,8 +66,12 @@ test("window tours require desktop controls and only offer after opening a PDF",
   assert.equal(canOffer(tour, { facts, seen: 1 }), false, "mere presence offers nothing");
   assert.equal(factsMatch(tour.requires, { phone: false, view: "home" }), true, "manual start works in the library without AI");
   assert.equal(factsMatch(tour.requires, { phone: true }), false);
-  const notes = tour.steps.find((s) => s.id === "window-notes");
-  assert.equal(factsMatch(notes.requires, { dockedNotes: false }), false, "center notes have no title grip");
+  // Two gestures on Chat's title, each shown by a scene and ticked by doing it.
+  assert.deepEqual(tour.steps.map((s) => s.id), ["window-collapse", "window-move"]);
+  for (const s of tour.steps) {
+    assert.equal(s.anchor, "chat.grip");
+    assert.ok(s.scene?.length && s.advanceOn && !s.required, `${s.id}: shown, light, ticked by the gesture`);
+  }
 });
 
 test("the first tours are manual; AI chat has steps per place, each ending on the user's Send", () => {
@@ -81,9 +86,11 @@ test("the first tours are manual; AI chat has steps per place, each ending on th
   assert.deepEqual(stepsIn({ aiConfigured: false, aiEditable: false, view: "home" }), [], "a guest can't connect: no tour");
   assert.deepEqual(stepsIn({ view: "home" }), [], "nothing before the AI state is known");
   assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: true }),
-    ["chat-question", "chat-figure", "chat-snapshot", "chat-send-paper"]);
+    ["chat-question", "chat-figure", "chat-send-paper"]);
+  assert.deepEqual(aiTour.steps.find((s) => s.id === "chat-figure").do.at(-1), { point: "chat.imageContext", wait: 1400 },
+    "the figure demo ends on the snapshot it made");
   assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: false }), ["chat-question", "chat-send-paper"]);
-  assert.deepEqual(stepsIn({ aiConfigured: true, view: "page" }), ["chat-question-notes", "chat-note-selection", "chat-send-notes"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "page" }), ["chat-question-notes", "chat-send-notes"]);
   assert.deepEqual(stepsIn({ aiConfigured: true, view: "home" }), ["chat-question-library", "chat-tools", "chat-send-library"]);
   for (const s of aiTour.steps.filter((x) => x.id.startsWith("chat-send-"))) {
     assert.deepEqual(s.advanceOn, { event: "chat.sent" }, `${s.id} waits for the user's own send`);
@@ -137,8 +144,6 @@ test("a step's drawing is a registered id with a file, and every drawing is used
       assert.ok(MEDIA[step.media], `${tour.id}/${step.id}: unregistered media ${step.media}`);
       assert.ok(files.has(step.media), `${tour.id}/${step.id}: no guide/media/${step.media}.svg`);
       used.add(step.media);
-      // An offer and a hint are a card of words: only a run's step draws.
-      assert.ok(!tour.hint, `${tour.id}: a hint takes no drawing`);
     }
   }
   for (const id of Object.keys(MEDIA)) {
@@ -156,48 +161,65 @@ test("a step's drawing is a registered id with a file, and every drawing is used
   assert.equal(mediaRatio("nope"), 1.6, "an unknown id still gives the box a height");
 });
 
-// A drawing is inlined into the card, so its <style> is the document's and
-// its colours are the theme's: the rules must be scoped to its own wrapper,
-// and no colour may be its own.
+// A drawing is inlined into the card, so it is built from guide/media.css's
+// grammar alone: shapes carrying its classes, which are scoped under
+// .guideMedia and paint from the theme's tokens (eight themes, so a drawing
+// with colours of its own would be wrong in most of them). A drawing brings
+// no <style>, no colour, no words and no motion of its own.
 test("a drawing keeps its colours and its rules to itself", () => {
   const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-  // The selectors of a stylesheet: what stands before each top-level "{",
-  // with @keyframes and their frames left out.
-  const selectorsOf = (css) => {
-    const out = [];
-    let depth = 0;
-    let at = 0;
-    for (let i = 0; i < css.length; i++) {
-      if (css[i] === "{") {
-        if (depth === 0) out.push(css.slice(at, i).trim());
-        depth++;
-      } else if (css[i] === "}") {
-        depth--;
-        if (depth === 0) at = i + 1;
-      }
-    }
-    return out.filter(Boolean);
-  };
+  const RAW_COLOUR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(/i;
+  const css = readFileSync(new URL("../src/guide/media.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(/^import "\.\/media\.css";/m.test(readFileSync(new URL("../src/guide/GuideOverlay.jsx", import.meta.url), "utf8")),
+    'GuideOverlay, which inlines the drawings, loads their grammar: import "./media.css"');
+  // The style rules' selectors, through @media; what @keyframes and
+  // @property hold are not style rules.
+  const selectors = [];
+  const open = [];
+  let at = 0;
+  for (let i = 0; i < css.length; i++) {
+    if (css[i] === "{") {
+      const prelude = css.slice(at, i).trim();
+      if (!prelude.startsWith("@") && open.every((p) => p.startsWith("@media"))) selectors.push(...prelude.split(",").map((s) => s.trim()));
+      open.push(prelude);
+    } else if (css[i] === "}") open.pop();
+    if ("{};".includes(css[i])) at = i + 1;
+  }
+  for (const s of selectors) assert.match(s, /^\.guideMedia\b/, `media.css: "${s}" reaches outside a drawing's box`);
+  assert.doesNotMatch(css, RAW_COLOUR, "media.css: raw colour, use a var(--…) token");
+  const grammar = new Set(selectors.map((s) => s.match(/^\.guideMedia \.([\w-]+)$/)?.[1]).filter(Boolean));
+  assert.ok(grammar.has("m-card") && grammar.has("m-draw"), "media.css: the grammar's .guideMedia .m-… rules");
+
+  const SHAPES = new Set(["svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon"]);
+  const ATTRS = new Set(["xmlns", "viewBox", "focusable", "class", "style", "d", "pathLength", "transform",
+    "x", "y", "width", "height", "rx", "ry", "cx", "cy", "r", "x1", "y1", "x2", "y2", "points"]);
   for (const id of Object.keys(MEDIA)) {
     const svg = readFileSync(join(dir, `${id}.svg`), "utf8");
-    const style = svg.slice(svg.indexOf("<style>") + 7, svg.indexOf("</style>")).replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.ok(style.trim(), `${id}: no <style> block`);
-    for (const selector of selectorsOf(style)) {
-      if (selector.startsWith("@")) {
-        assert.match(selector, /^@keyframes\s/, `${id}: only @keyframes belongs in a drawing ("${selector}")`);
-        continue;
+    assert.match(svg, /^<svg\b[^>]*>\s*<!--/, `${id}: opens with a comment saying what it shows`);
+    const markup = svg.replace(/<!--[\s\S]*?-->/g, "");
+    assert.doesNotMatch(markup, /<style\b/, `${id}: no <style>: its look and motion are media.css's classes`);
+    assert.doesNotMatch(markup, /<text\b/, `${id}: no <text>: words belong on the card, where they are translated`);
+    assert.doesNotMatch(markup, RAW_COLOUR, `${id}: raw colour, use media.css's classes`);
+    const root = markup.match(/<svg\b([^>]*)>/)[1];
+    assert.match(root, /\sviewBox="/, `${id}: needs a viewBox`);
+    assert.doesNotMatch(root, /\s(?:width|height)=/, `${id}: the root sizes itself from CSS, not from width/height`);
+    for (const [, name, attrText] of markup.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*?)\/?>/g)) {
+      const attrs = Object.fromEntries([...attrText.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map((m) => [m[1], m[2]]));
+      const where = `${id}: <${name}${attrs.class ? ` class="${attrs.class}"` : ""}>`;
+      assert.ok(SHAPES.has(name), `${where} is not a shape`);
+      for (const a of Object.keys(attrs)) assert.ok(ATTRS.has(a), `${where}: ${a}= — paint, ids and handlers stay out; the classes carry the look`);
+      const classes = (attrs.class || "").split(/\s+/).filter(Boolean);
+      for (const c of classes) assert.ok(grammar.has(c), `${where}: no .guideMedia .${c} rule in media.css`);
+      if (attrs.style !== undefined) {
+        const order = attrs.style.match(/^\s*--m-at:\s*(\d*\.?\d+)\s*;?\s*$/);
+        assert.ok(order, `${where}: the only inline style is the motion order, --m-at`);
+        // the clock reaches 1 at the end of a loop: a later start would not
+        // finish, and the picture would not rest complete
+        assert.ok(+order[1] <= 0.7, `${where}: --m-at ${order[1]} is over 0.7`);
       }
-      for (const one of selector.split(",")) {
-        assert.ok(one.trim().startsWith(`[data-media="${id}"]`), `${id}: unscoped selector "${one.trim()}"`);
-      }
+      if (classes.includes("m-draw")) assert.equal(attrs.pathLength, "1", `${where}: m-draw needs pathLength="1"`);
+      if (classes.includes("m-appear")) assert.ok(!attrs.transform, `${where}: m-appear owns the transform; move it to a parent <g>`);
     }
-    // Colours come from tokens: eight themes, so a drawing carrying its own
-    // would be wrong in most of them (docs/dev/ui-design.md).
-    const raw = [...svg.matchAll(/(?:fill|stroke|color)\s*[:=]\s*"?(#[0-9a-fA-F]{3,8}|rgba?\()/g)].map((m) => m[1]);
-    assert.deepEqual(raw, [], `${id}: raw colour, use a var(--…) token`);
-    const root = svg.slice(0, svg.indexOf(">"));
-    assert.ok(/viewBox=/.test(root), `${id}: needs a viewBox`);
-    assert.ok(!/\s(?:width|height)=/.test(root), `${id}: the root sizes itself from CSS, not from width/height`);
   }
 });
 
@@ -286,33 +308,39 @@ test("the sharing tour follows the popover and words access for an anyone-with-t
   assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "list" }), true, "an array requires one of its values");
   assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "anyone" }), false);
   const steps = (shareAudience) => TOURS.sharing.steps.filter((s) => factsMatch(s.requires, { shareAudience })).map((s) => s.id);
-  assert.deepEqual(steps("anyone"), ["share-create", "share-link", "share-people", "share-access-anyone", "share-stop"]);
+  assert.deepEqual(steps("anyone"), ["share-create", "share-link", "share-people", "share-access-anyone"]);
   for (const audience of ["", "users", "list"]) {
-    assert.deepEqual(steps(audience), ["share-create", "share-link", "share-people", "share-access", "share-stop"], `audience "${audience}"`);
+    assert.deepEqual(steps(audience), ["share-create", "share-link", "share-people", "share-access"], `audience "${audience}"`);
+  }
+  for (const id of ["share-access-anyone", "share-access"]) {
+    const s = TOURS.sharing.steps.find((x) => x.id === id);
+    assert.match(s.body, /Stop sharing/, `${id}: the last card says how to turn the link off`);
+    assert.ok(s.next, `${id}: the last card`);
   }
   const create = TOURS.sharing.steps[0];
   assert.equal(create.creates, "share.link", "the link exists only once the page is shared");
   assert.equal(create.advanceOn.event, "share.created");
 });
 
-test("the viewer tours share their zoom, pen and full screen, and a finished sibling turns them into one recap", () => {
+test("the viewer tours share their zoom and pen, and drop them once the sibling is done", () => {
   const [pdf, nb] = [TOURS["pdf-viewer"], TOURS["notebook-view"]];
   assert.equal(pdf.sibling, nb.id);
   assert.equal(nb.sibling, pdf.id);
   const shared = (tour) => tour.steps.filter((s) => s.shared);
-  assert.deepEqual(shared(pdf), shared(nb), "the shared steps are the same objects in both tours");
-  assert.ok(pdf.steps.every((s) => !s.shared || !s.recap), "a step is shared or a recap, never both");
+  assert.deepEqual(shared(pdf).map((s) => s.id), ["viewer-zoom", "viewer-pen"]);
+  shared(pdf).forEach((s, i) => assert.equal(s, shared(nb)[i], `${s.id}: the same object in both tours`));
+  assert.equal(shared(nb).length, 2);
   const ids = (tour, facts, siblingDone) => tour.steps.filter((s) => stepApplies(s, facts, siblingDone)).map((s) => s.id);
   const desk = { editable: true, phone: false };
-  assert.deepEqual(ids(pdf, desk, false), ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "viewer-fullscreen"]);
-  assert.deepEqual(ids(pdf, desk, true), ["pdf-outline", "pdf-recap", "pdf-translate"], "after the notebook view: what a PDF adds");
-  assert.deepEqual(ids(nb, desk, false), ["viewer-zoom", "viewer-pen", "nbv-paper", "nbv-notes", "viewer-fullscreen"]);
-  assert.deepEqual(ids(nb, desk, true), ["nbv-recap", "nbv-paper", "nbv-notes"], "after a PDF: what the notebook view adds");
-  assert.deepEqual(ids(nb, { editable: false }, true), ["nbv-recap-zoom", "nbv-notes"], "read only: no pen to recall, no paper");
+  assert.deepEqual(ids(pdf, desk, false), ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate"]);
+  assert.deepEqual(ids(pdf, desk, true), ["pdf-outline", "pdf-translate"], "after the notebook view: what a PDF adds");
+  assert.deepEqual(ids(nb, desk, false), ["viewer-zoom", "viewer-pen", "nbv-paper", "nbv-notes"]);
+  assert.deepEqual(ids(nb, desk, true), ["nbv-paper", "nbv-notes"], "after a PDF: what the notebook view adds");
+  assert.deepEqual(ids(nb, { editable: false }, false), ["viewer-zoom", "nbv-notes"], "read only: no pen, no paper");
+  assert.deepEqual(ids(nb, { editable: false }, true), ["nbv-notes"]);
   assert.deepEqual(ids(pdf, { editable: true, phone: true }, false),
-    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select", "viewer-fullscreen"], "a phone picks what a drag does");
-  // Without a sibling, a recap never shows and a shared step always does.
-  assert.equal(stepApplies({ id: "r", recap: true }, {}), false);
+    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select"], "a phone picks what a drag does");
+  // Without a sibling done, a shared step always shows.
   assert.equal(stepApplies({ id: "s", shared: true }, {}), true);
   assert.equal(stepApplies({ id: "s", shared: true, requires: { phone: true } }, { phone: false }), false, "requires still holds");
   // Arrange windows takes the first paper's offer; the viewer comes later.
@@ -347,6 +375,56 @@ test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
   assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
     "approvals", "export-page", "clone-sync", "connector", "cloud-account"]);
+});
+
+// A hint interrupts, so it stays one card of words: nothing drawn, nothing acted out.
+test("no hint has a scene or a drawing", () => {
+  for (const tour of Object.values(TOURS).filter((t) => t.hint)) {
+    for (const step of tour.steps) {
+      assert.ok(!step.scene, `${tour.id}: a hint has no scene`);
+      assert.ok(!step.media, `${tour.id}: a hint has no drawing`);
+    }
+  }
+});
+
+// A scene is a looping drawing over the real UI: each primitive is one of
+// the kinds guide/scene.js draws, and names registered anchors, like a step.
+test("every scene primitive is a known kind on a registered anchor", () => {
+  let scenes = 0;
+  for (const tour of Object.values(TOURS)) {
+    for (const step of tour.steps) {
+      if (!step.scene) continue;
+      scenes++;
+      const where = `${tour.id}/${step.id}`;
+      assert.ok(Array.isArray(step.scene) && step.scene.length > 0, `${where}: a scene is a non-empty list`);
+      for (const p of step.scene) {
+        const kinds = SCENE_KINDS.filter((k) => k in p);
+        assert.equal(kinds.length, 1, `${where}: ${JSON.stringify(p)} needs exactly one of ${SCENE_KINDS.join(", ")}`);
+        const [kind] = kinds;
+        if (kind === "wait") { assert.ok(Number.isFinite(p.wait) && p.wait > 0, `${where}: wait is a duration`); continue; }
+        assert.ok(ANCHORS[p[kind]], `${where}: ${kind} names unregistered anchor ${p[kind]}`);
+        if (p.at) {
+          assert.equal(p.at.length, kind === "stroke" ? 4 : 2, `${where}: ${kind}'s at`);
+          assert.ok(p.at.every((f) => f >= 0 && f <= 1), `${where}: at is fractions of the anchor's box`);
+        }
+        if (kind === "click") {
+          assert.ok(p.count === undefined || [1, 2].includes(p.count), `${where}: click count`);
+          assert.ok(p.button === undefined || ["left", "right"].includes(p.button), `${where}: click button`);
+        }
+        if (kind === "drag") {
+          assert.ok(DOCK_ZONES.includes(p.to?.zone), `${where}: drag zone ${p.to?.zone}`);
+          assert.ok(DOCK_WINDOWS.includes(p.to.window), `${where}: drag window ${p.to.window}`);
+        }
+      }
+    }
+    // A demo's `point` is a pause on an anchor too.
+    for (const step of tour.steps) {
+      for (const a of step.do || []) {
+        if (a.point) assert.ok(ANCHORS[a.point], `${tour.id}/${step.id}: demo points at unregistered anchor ${a.point}`);
+      }
+    }
+  }
+  assert.ok(scenes > 0, "some step shows a scene");
 });
 
 // Keys in guide copy: `{key:<command id>}` shows the account's chord for a
@@ -399,6 +477,17 @@ test("a welcome tour opens on an uncounted intro card, one per situation", () =>
     assert.ok(s.next && s.later && s.footnote);
   }
   assert.ok(firstRun.steps.slice(2).every((s) => !s.intro), "intro steps come first");
+  // Five counted steps. The add demo cannot be skipped; each highlight step
+  // shows its gesture, then the user's own highlight of that kind ticks it.
+  const steps = firstRun.steps.filter((s) => !s.intro);
+  assert.deepEqual(steps.map((s) => s.id), ["add-demo", "highlight", "area", "note-label", "home"]);
+  assert.equal(steps[0].skippable, false);
+  assert.ok(steps.every((s) => !s.required), "nothing in it waits: the add demo opens the paper by itself");
+  for (const [id, preview, kind] of [["highlight", "previewHighlight", "text"], ["area", "previewArea", "area"]]) {
+    const s = steps.find((x) => x.id === id);
+    assert.equal(s.do[0][preview], true, `${id}: the demo runs first`);
+    assert.deepEqual(s.advanceOn, { event: "highlight.created", match: { kind } }, `${id}: then the user's own ticks it`);
+  }
 });
 
 // A finish card lists what the run made, read from what happened during it.
@@ -410,12 +499,13 @@ test("the finish card lists only what the run made", () => {
   recordEvent(log, "page.opened", { id: "p2", title: "Elsewhere" });
   recordEvent(log, "highlight.created", { kind: "text" });
   recordEvent(log, "highlight.created", { kind: "area" });
-  log.completed.add("label");
+  assert.deepEqual(madeItems(finish, log).map((m) => m.icon), ["page", "highlight"], "the skipped note-and-label demo made neither");
+  log.completed.add("note-label");
   const made = madeItems(finish, log);
-  assert.deepEqual(made.map((m) => m.icon), ["page", "highlight", "label"], "the skipped note demo made no note");
+  assert.deepEqual(made.map((m) => m.icon), ["page", "highlight", "note", "label"]);
   assert.equal(made[0].args.title, "Attention", "the paper the tour opened first");
   assert.equal(made[1].args.n, 2);
-  assert.equal(made[2].args.label, "llm");
+  assert.equal(made[3].args.label, "llm");
   for (const item of finish.made) assert.ok(!item.event || EVENTS.includes(item.event), `finish event ${item.event}`);
   for (const item of finish.made) assert.ok(!item.step || TOURS["first-run"].steps.some((s) => s.id === item.step), `finish step ${item.step}`);
 });
@@ -466,4 +556,18 @@ test("a card that must keep clear of a box goes above it, else beside it", () =>
   assert.ok(!covers(above, short), "above the whole table, not just above the strip");
   const roomy = placeCard({ ...strip, top: 380, bottom: 396 }, cardH, 1400, vh, "bottom", { ...table, bottom: 380 });
   assert.equal(roomy.side, "bottom", "the preferred side when it fits");
+});
+
+// A popover's anchors name the popover as their surface: the spotlight
+// leaves the whole popover undimmed and the card keeps clear of it. The
+// surface comes up by the same clicks as the anchor inside it.
+test("a surface is a registered anchor revealed by the same path as the anchors in it", () => {
+  const surfaces = Object.entries(ANCHORS).filter(([, a]) => a.surface);
+  assert.ok(surfaces.length > 0);
+  for (const [id, a] of surfaces) {
+    const surface = ANCHORS[a.surface];
+    assert.ok(surface, `${id}: unregistered surface ${a.surface}`);
+    assert.ok(!surface.surface, `${id}: a surface sits in no other surface`);
+    assert.deepEqual(surface.open || [], a.open || [], `${id}: its surface ${a.surface} opens the same way`);
+  }
 });

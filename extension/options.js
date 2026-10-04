@@ -1,8 +1,13 @@
-import { getSettings, login, logout, normalizeServer, originPattern, removeServer, setSettings, whoAmI } from "./api.js";
+import {
+  api, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer, originPattern, rememberFolder,
+  removeServer, setSettings, whoAmI,
+} from "./api.js";
 import { renderServerList } from "./serverList.js";
+import { folderPicker } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let busy = false;
+let folderSelect = null;  // the default folder's picker (ui.js), filled from the signed-in library
 
 function setBusy(value) {
   busy = value;
@@ -42,6 +47,8 @@ async function refreshAccount() {
   $("signed-in").classList.add("hidden");
   $("who").textContent = "";
   status("account-status", "");
+  folderSelect.set([], "");
+  $("folder-btn").disabled = true;
   if (!settings.server) {
     status("server-status", "Not connected.");
     return;
@@ -53,11 +60,25 @@ async function refreshAccount() {
     status("server-status", `Connected to ${me.origin}.`, "ok");
     $("signed-out").classList.toggle("hidden", !!me.user);
     $("signed-in").classList.toggle("hidden", !me.user);
-    if (me.user) $("who").textContent = me.user;
+    if (me.user) {
+      $("who").textContent = me.user;
+      await fillFolders();
+    }
   } catch (err) {
     status("server-status", `Can't reach ${settings.server}: ${err.message}`, "err");
   }
   chrome.runtime.sendMessage({ type: "auth-changed" }).catch(() => {});
+}
+
+// The connected server's folders, the default among them; a path stored
+// before folders had ids shows as the folder of that path.
+async function fillFolders() {
+  const settings = await getSettings();
+  let folders = [];
+  try { ({ folders } = await api("/library/folders")); } catch {}
+  const { folder, folder_path } = defaultFolder(settings);
+  folderSelect.set(folders, folder_path ? folderByPath(folders, folder_path) : folder);
+  $("folder-btn").disabled = false;
 }
 
 async function connect(raw = $("server").value) {
@@ -107,22 +128,30 @@ async function doLogout() {
   finally { setBusy(false); }
 }
 
+function saved() {
+  status("save-status", "Saved.", "ok");
+  setTimeout(() => status("save-status", ""), 1500);
+}
+
 async function saveDefaults() {
   await setSettings({
-    folder: $("folder").value.trim(),
     labels: $("labels").value.split(",").map((s) => s.trim()).filter(Boolean),
     allowOa: $("allow-oa").checked,
     saveCopy: $("save-copy").checked,
     autoRefreshSessions: $("auto-sessions").checked,
   });
-  status("save-status", "Saved.", "ok");
-  setTimeout(() => status("save-status", ""), 1500);
+  saved();
+}
+
+async function saveFolder(folder) {
+  await rememberFolder(await getSettings(), { folder, folder_path: "" });
+  saved();
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   const s = await getSettings();
   $("server").value = s.server;
-  $("folder").value = s.folder;
+  folderSelect = folderPicker($("folder-btn"), $("folder-menu"), saveFolder);
   $("labels").value = (s.labels || []).join(", ");
   $("allow-oa").checked = !!s.allowOa;
   $("save-copy").checked = !!s.saveCopy;
@@ -132,7 +161,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-form").addEventListener("submit", doLogin);
   $("login").onclick = doLogin;
   $("logout").onclick = doLogout;
-  for (const id of ["folder", "labels", "allow-oa", "save-copy", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
+  for (const id of ["labels", "allow-oa", "save-copy", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync" || !(changes.server || changes.servers) || busy) return;
     setBusy(true);

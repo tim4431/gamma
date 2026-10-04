@@ -10,7 +10,7 @@ export const mathKeys = {
   version: 1,
   hint: true,
   trigger: { event: "math.previewed" },
-  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("Press {key:Tab} to jump to the next { }. Type {key:\\} to look up a symbol.") }],
+  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("{key:Tab} jumps to the next { }; {key:\\} looks up a symbol.") }],
 };
 
 export const blockRefs = {
@@ -18,7 +18,7 @@ export const blockRefs = {
   version: 1,
   hint: true,
   trigger: { event: "ref.search" },
-  steps: [{ id: "block-refs", anchor: "editor.refSearch", placement: "right", title: T("Pick a page or note to link it here. Start with `![[` instead to embed a live, editable copy.") }],
+  steps: [{ id: "block-refs", anchor: "editor.refSearch", placement: "right", title: T("Pick one to link it here; start with `![[` to embed it instead.") }],
 };
 
 // Offered on the fourth trip back to the library in one sitting, unless the
@@ -30,7 +30,7 @@ export const quickOpen = {
   hint: true,
   requires: { phone: false },
   trigger: { event: "home.opened", count: 4, doneOn: { event: "palette.opened" } },
-  steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("Next time, press {key:app.quickOpen} to jump to any page without going home.") }],
+  steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("{key:app.quickOpen} jumps to any page without going home.") }],
 };
 
 // Offered after the first link jump (a citation, a page link, a chat
@@ -41,7 +41,7 @@ export const back = {
   version: 1,
   hint: true,
   trigger: { event: "nav.pushed", doneOn: { event: "nav.back" } },
-  steps: [{ id: "back", anchor: "header.back", placement: "bottom", title: T("Back takes you to where you were, at the same spot. Or press {key:app.back}.") }],
+  steps: [{ id: "back", anchor: "header.back", placement: "bottom", title: T("Back, or {key:app.back}, returns you to the same spot.") }],
 };
 
 // A clone conflict's versions came up (the block chip's popover, the sync
@@ -52,7 +52,7 @@ export const conflicts = {
   version: 1,
   hint: true,
   trigger: { event: "conflict.shown" },
-  steps: [{ id: "conflicts", anchor: "merge.versions", placement: "left", title: T("Nothing was lost: both versions are kept here. Pick the one to keep, then Apply.") }],
+  steps: [{ id: "conflicts", anchor: "merge.versions", placement: "left", title: T("Nothing was lost: pick the version to keep, then Apply.") }],
 };
 
 export const folders = {
@@ -61,7 +61,7 @@ export const folders = {
   hint: true,
   requires: { view: "home", unfiledLibrary: true },
   trigger: {},
-  steps: [{ id: "folders", anchor: "home.listing", placement: "bottom", title: T("Tidy up with folders: right-click a page and choose Move to folder.") }],
+  steps: [{ id: "folders", anchor: "home.listing", placement: "bottom", title: T("File pages into folders: right-click one, then Move to folder.") }],
 };
 
 // iPad and iPhone Safari: the installed app gets the whole screen.
@@ -71,7 +71,7 @@ export const install = {
   hint: true,
   requires: { installable: true },
   trigger: {},
-  steps: [{ id: "install", anchor: null, title: T("Install Gamma for full screen and a Home Screen icon: tap Share, then Add to Home Screen.") }],
+  steps: [{ id: "install", anchor: null, title: T("For full screen, tap Share, then Add to Home Screen.") }],
 };
 
 // The first time the assistant asks before a change: four answers whose
@@ -84,7 +84,7 @@ export const approvals = {
   hint: true,
   trigger: { event: "approval.shown" },
   steps: [{ id: "approvals", anchor: "chat.approval", placement: "top",
-    title: T("Allow it once, or for the rest of this chat. Don't allow can say what to do instead.") }],
+    title: T("Allow once or for this chat; Don't allow can suggest another way.") }],
 };
 
 // A page with the user's own work on it, the moment they open the menu that
@@ -97,7 +97,7 @@ export const exportPage = {
   requires: { onPage: true, annotatedPage: true },
   trigger: { event: "popover.opened", match: { name: "menu" } },
   steps: [{ id: "export-page", anchor: "page.export", placement: "left",
-    title: T("Your highlights and notes come out whole: the PDF with them drawn on it, or Markdown.") }],
+    title: T("Export the PDF with your highlights drawn on it, or Markdown.") }],
 };
 
 // This workspace has an offline copy or a publication, so it carries a sync
@@ -109,7 +109,7 @@ export const cloneSync = {
   requires: { clonedWorkspace: true },
   trigger: {},
   steps: [{ id: "clone-sync", anchor: "sync.pill", placement: "bottom",
-    title: T("This workspace syncs with a copy elsewhere: the pill says what is still to go, and opens the log of what changed.") }],
+    title: T("This workspace syncs with a copy: the pill shows what's pending and opens its log.") }],
 };
 
 // The first paper fetched from an address, where this browser has no Gamma
@@ -125,7 +125,7 @@ export const connector = {
   requires: { connectorHere: false, editable: true },
   trigger: { event: "paper.fetched" },
   steps: [{ id: "connector", anchor: "header.add", placement: "bottom",
-    title: T("Papers a publisher won't hand over can come from your own browser: **Gamma Connector** (`gammapdf.com/#download`) saves from the tab you're on and keeps your journal sign-ins.") }],
+    title: T("**Gamma Connector** (`gammapdf.com/#download`) gets paywalled papers with your own journal sign-ins.") }],
 };
 
 // A setting that travels with the account was just changed, on a server
@@ -138,7 +138,7 @@ export const cloudAccount = {
   requires: { cloudLinkable: true, prefsChanged: true },
   trigger: {},
   steps: [{ id: "cloud-account", anchor: "header.account", placement: "bottom",
-    title: T("Settings like that one can follow you: link a **Gamma Cloud** account in Settings → Account & sync, and your other Gamma servers get them too.") }],
+    title: T("Link **Gamma Cloud** (Settings → Account & sync) to take settings to your other servers.") }],
 };
 
 export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,

@@ -19,8 +19,29 @@ services:
       # proxy's address, so Gamma believes its X-Forwarded-For and rate
       # limits count each visitor instead of the proxy. For a proxy container
       # in this file, the subnet of the network below (pinned, so it is
-      # known). Leave it unset when nothing sits in front of the port.
+      # known). Leave it unset when nothing sits in front of the port. The
+      # proxy needs no compression of its own for the app's files: Gamma
+      # sends the Brotli or gzip copies its build made.
       # FORWARDED_ALLOW_IPS: 10.203.0.0/24
+      # Off-site copies of the databases and uploaded files to an S3-compatible
+      # bucket are set up by an admin in Settings -> Backups; a container can
+      # set them with GAMMA_S3_BUCKET and the other GAMMA_S3_* / GAMMA_OFFSITE*
+      # variables instead (docs/dev/debugging.md "Off-site copies in a bucket").
+    restart: unless-stopped
+
+  # Keeps the gamma container on the newest image: Watchtower polls the
+  # registry every six hours, pulls a new image and restarts gamma, which
+  # runs an upgrade's global steps as it starts and each workspace's own as
+  # the workspace is first opened (a snapshot of the databases is taken
+  # first; see docs/dev/migrations.md). Scoped to this container, so it
+  # never touches others on the host. Remove the service to update by hand
+  # with `docker compose pull && docker compose up -d`.
+  watchtower:
+    container_name: gamma-watchtower
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --interval 21600 gamma
     restart: unless-stopped
 
 volumes:

@@ -34,7 +34,9 @@ SQLite is the source of truth; there is no OT or CRDT. Concurrent edits of
 one block's text are reconciled by a stateless three-way merge at apply
 time (`gamma/textmerge.py`, below).
 Presence is temporary: standalone cursor messages and optional cursors on
-operation batches are broadcast but never written to the operation log.
+operation batches are broadcast, not logged. The one exception is a named
+batch's caret, kept on its row of the operation log only so that a retry
+gets the same answer ("Ops" below).
 
 ## Ops (`gamma/ops.py`)
 
@@ -46,10 +48,55 @@ operation batches are broadcast but never written to the operation log.
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
 
 Rules: every touched block and every insert parent must be inside the page
-(403 otherwise, 404 unknown). The page root may only be `set` (a share
+(403 otherwise, 404 unknown), judged by its stored `page_id`. An insert
+writes the batch's page there; ops carry no `page_id` or `kind`, since the
+server keeps both ([user_db.md](user_db.md) "pages.db"). The page root may only be `set` (a share
 editor: its content, never its properties) and is never moved, deleted or
 inserted. `parent: "root"` is refused: ops never create pages. A bad op
-fails the whole batch and nothing is written.
+fails the whole batch and nothing is written. A page root's filing
+(`properties.folders` / `labels`) must be a list of block ids (400
+otherwise); it is stored as written, an id of a folder this copy does not
+have included (next section).
+
+### The folder and label trees
+
+Folders and labels are blocks ([home_library.md](home_library.md) "Folders
+and labels"), under two reserved parentless rows beside `root` and `trash`:
+`folders` and `labels` (`blocks_store.TREES`). To the op path each is a
+**pseudo-page**: a batch may name `folders` or `labels` as its page
+(`POST /pages/folders/ops`), and its ops touch the blocks under it, whose
+stored `page_id` is the tree's id. A new folder is one `insert` (parent
+`folders` or a folder), a rename one `set` of its content, a move or a
+reorder one `move`, a pin a `set` of `properties.pinned`; a label is an
+`insert` under `labels` and stays flat (another parent: 400 "labels do not
+nest"). The reserved row itself is never set, moved or deleted (403), and a
+block of a tree never moves into a page or a page's block into a tree (403
+"outside this page"). None of it touches a page: a rename is one row of the
+tree, not a rewrite of every page filed below the folder. Deleting a folder
+or a label is the one change that reaches pages, so it has its own
+endpoint: `DELETE /folders/{id}` / `DELETE /labels/{id}`
+(`routers/folders.py`, [api.md](api.md) "Folders and labels"). One
+transaction runs the subtree's `delete` on the tree and one `set` per page
+that carried an id of it (`ops.apply_batches`). The tree's `delete` op
+itself files the folder chats into the library chat's history and
+`ops.after_commit` stops the folder's shares, so a folder deleted by a
+plain tree batch (a mirror round or the iPad relaying one) is cleaned up
+the same way; only the pages' refiling is the endpoint's own. A tree has everything a page has: its op log
+(`GET /pages/folders/ops?since=`), its row of the change log (touched
+`live` by every batch), its room (`/ws/page/folders`) and a subtree read
+with `seq` (`GET /blocks/folders/subtree`). Only members reach a tree: no
+share link does, and the share view reads its folder in the listing
+instead.
+
+A page's `folders` / `labels` may name an id with no block (a dangling id:
+its folder deleted by a raw op or on another copy, or not brought by a
+mirror yet). Every reader passes it by, nothing repairs it on a read, and
+the op path stores a filing as written — a mirror's page must not lose an
+id its tree has not reached, nor a published page the ids of folders the
+share host never sees. The writers that refile a page by intent (the
+clip, the agent, an import's merge, a backup merge, a folder delete) keep
+only the ids that exist (`blocks_store.existing_in`), so a dangling id goes
+with the page's next refiling.
 
 When the op was fine but the page changed under it, the answer adds
 `conflict` and `index` (the op's place in the batch): `missing` (its block
@@ -62,34 +109,55 @@ engine can match on them against a server of any version.
 Lone UTF-16 surrogates (half an emoji) in any string of a batch are stored
 as U+FFFD (`ops.storable`, also on the block create and update bodies).
 SQLite cannot encode them, and one would fail its batch on every retry.
+A number that is not finite (`NaN`, `Infinity`, `-Infinity`, or `1e999`,
+too big for a float) fails its batch with 400 `not a finite number: NaN`,
+and nothing is written. Python's JSON reader takes them bare, SQLite would
+store them, and no JSON answer can carry one back. The block create and
+update bodies refuse one with the same 400 and wording, as do the other
+bodies built on `ops.StorableBody` (the metadata edit, the chat writes).
+A value stored before the rule stays; the tree reads send it as null.
 
-Only touched rows get `updated_at`; the page root is stamped once per batch
-(home-feed order and the notes-index fingerprint). A batch tracks the upload
+Only touched rows get `updated_at`; the page is touched once per batch
+(`blocks_store.touch_page`: the root's stamp — home-feed order — and the
+page's row of the workspace change log, "The change feed" below). The notes
+index follows the touched rows inside the batch's transaction (its triggers,
+[user_db.md](user_db.md) "The notes index"). A batch tracks the upload
 names its ops stop and start referencing. The names it takes up clear their
 `upload_orphans` rows in the same transaction. The names it dropped
 (`dropped_uploads` on the result; a cut and paste within the batch drops
 nothing) go to `upload_gc.schedule`, a check on its own thread, never in
 the request ([user_db.md](user_db.md) "Stored files"). The data.db purge
-runs only when blocks were deleted, and its library-wide part only when one
-of them carried a PDF.
+(`pdf_index.purge_unused`, the PDF rows of papers nothing carries) runs only
+when a deleted block carried a PDF.
 
 A batch may carry `batch`, the client's id for it, the same on every retry.
-The answer to a batch this process already applied for that client is kept
-in memory (`_replays`: at most `REPLAY_KEEP` answers for `REPLAY_TTL`
-seconds each, holding seq, time and caret; the ops are read back from the
-log). A retry gets that answer instead of being applied twice, which the
-three-way merge would otherwise do to the same keystrokes. The lookup and
-the store happen under the batch's write lock. A restart forgets the
-answers; a retry after one is applied again, which the create-if-absent
-insert and the merge's "already the text" rule make mostly harmless. An
-offline copy names its pushes the same way and keeps the ids in its state
-until the answer is read, sending again only what the remote does not
-show yet ([mirror.md](mirror.md) "Rounds cut short").
+The batch's row of the op log keeps the id (`batch_id`) and the writer's
+caret as stored, remapped by a merge (`cursor`), one row per page, client
+and id ("The op log" below). A retry looks that row up first thing under
+the batch's write lock and gets the first attempt's answer from it (seq,
+time, actor, the ops as applied, the caret) instead of being applied
+twice, which the three-way merge would otherwise do to the same
+keystrokes. Nothing is fanned out or derived again. The
+answer is in the database, so it survives a restart. The limit is pruning:
+once the log has dropped the row, a retry is applied again, which the
+create-if-absent insert and the merge's "already the text" rule make
+mostly harmless. A refused batch writes no row, so the same id, fixed and
+sent again, applies. An offline copy names its pushes the same way and
+keeps the ids in its state until the answer is read, sending again only
+what the remote does not show yet ([mirror.md](mirror.md) "Rounds cut
+short").
 
 `apply_ops(conn, page_id, ops, actor=, client=, share_scoped=, cursor=, batch_id=)` applies and
 commits; `after_commit(ws, conn, result)` does the derived-data work and
 publishes; `commit_ops(ws, page_id, ops, actor=)` is both on a fresh
-connection — `ws` the workspace id, `actor` the account making the change. Every server-side writer
+connection; `apply_batches(conn, [(page_id, ops), …], actor=)` applies
+several pages' batches in the caller's transaction, each logged on its page
+(the caller commits, then `after_commit`s each); `ensure_filing(ws, conn,
+paths=, labels=, under=, actor=)` makes the folders and labels a writer
+files by name where they are missing (one committed batch per tree). In all
+of them `ws` is the workspace id and `actor` who makes the change
+(`auth.actor_of`: the account's id, or a label for a writer that is no
+account). Every server-side writer
 goes through them — the single-block endpoints in `routers/blocks.py` are thin
 wrappers, page attach/detach, the metadata write, the clip endpoints, the
 attachment-marker backfill of `get_or_create_doc_page`, the `annot_stripped`
@@ -105,33 +173,47 @@ which moves the page under the reserved `trash` block for 30 days
 deletes for good at once). A batch on a page
 there is refused like one on a deleted page (404), and a block it holds is
 outside every live page. `ops.restore_page` brings it back. Deleting for good
-is `ops.delete_page`: the subtree, the page's log rows and a `deleted_pages`
-tombstone (`page_id`, `deleted_at`, `actor`; cleared if the id is created
-again) in one transaction, so another copy of the workspace can tell
-"deleted" from "never seen". Trashing writes the same tombstone, and a later
-`delete_page` keeps it. Writers that rewrite a tree wholesale (`PUT
+is `ops.delete_page`: the subtree and the page's log rows go in one
+transaction, and the page's row of the change log turns `deleted`, so
+another copy of the workspace can tell "deleted" from "never seen".
+Trashing turns it `deleted` already, and a later `delete_page` keeps that
+row; creating the id again turns it `live`. Writers that rewrite a tree wholesale (`PUT
 /blocks/{id}/children`, imports into an existing page, the target half of a
 cross-page move) log and publish a `reload` instead; a cross-page move's
-source page gets a `delete` (`record_ops`). The subtree replace and the
-cross-page move each run in one transaction under the write lock
+source page gets a `delete` (`record_ops`), and the moved subtree's rows
+take the target's `page_id` (`ops.move_across_pages`, the one cross-page
+move: `/blocks/{id}/reorder`, the agent's `move_block`, a revert). The
+subtree replace and the cross-page move each run in one transaction under the write lock
 (`blocks_store.write_lock`), so the checks and the writes see one state and
 a failure half way leaves the old tree. `blocks_store.delete_subtree` /
-`delete_children` start with `DELETE` for that reason: Python's sqlite3
+`delete_children` start with `DELETE` (and `move_subtree_to_page` with
+`UPDATE`) for that reason: Python's sqlite3
 opens its implicit transaction only before a statement that begins with
 INSERT, UPDATE, DELETE or REPLACE, so a `WITH … DELETE` would commit on the
 spot.
 
 ## The op log
 
-`page_ops(page_id, seq, actor, client, at, ops)` in each workspace's `pages.db`
+`page_ops(page_id, seq, actor, client, at, ops, batch_id, cursor)` in each workspace's `pages.db`
 (`db.PAGES_SCHEMA`), one row per applied batch, `seq` counting up per page
 (the write lock is taken up front with `BEGIN IMMEDIATE`, so it never
-collides). `actor` is the account that made the change (a share editor's own
-name), `client` the tab's id, `"ai"` (the agent's tools), `"revert"` (the
+collides). `actor` is the id of the account that made the change (a share
+editor's own; [user_db.md](user_db.md) "Accounts are named by id"), or a
+label for a writer that is no account: `link:<name>` for a link visitor,
+`mirror` for a mirror's round; `''` for the server's own writes. An actor is
+shown by name only where a list shows people (`auth.actor_names`, Recently
+deleted's `deleted_by`); the log, the batches on the socket and the change
+feed carry it as stored. `client` the tab's id, `"ai"` (the agent's tools), `"revert"` (the
 user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
 "Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a
-page can cause, [paper_metadata.md](paper_metadata.md)).
+page can cause, [paper_metadata.md](paper_metadata.md)). `batch_id` is the
+client's name for the batch and `cursor` its caret as stored (JSON); both
+are `''` on a batch without a name, which covers every server-side writer
+(`record_ops`, `log_reload`, `apply_batches` and the rest). A partial
+unique index (`idx_page_ops_batch`, where `batch_id != ''`) allows one row
+per page, client and id. The catch-up below returns neither column: an old
+batch's caret would place a peer who may have left.
 
 A `set` logs the block's whole text, so typing in one long block writes that
 text once per flush. The log is therefore bounded three ways per page:
@@ -139,7 +221,9 @@ text once per flush. The log is therefore bounded three ways per page:
 payload (2 MB). The bounds are checked every `PRUNE_EVERY` batches (16), and
 at once after a batch bigger than its share of the bytes (`ops._prune`).
 Only the oldest rows go and the newest always stays, so `seq` keeps counting
-from it and a gap is still told by the lowest seq left.
+from it and a gap is still told by the lowest seq left. A batch's id goes
+with its row, so a retry that arrives after its row was pruned is applied
+again ("Ops" above).
 
 `GET /api/pages/{id}/ops?since=` returns the batches after a seq. It answers
 410, and the client reloads the tree, in three cases: the log no longer
@@ -150,7 +234,8 @@ right after it. A backup restore leaves the last case
 ([workspaces.md](workspaces.md) "Export and backups"). It puts a page's log
 from the backup in place, then logs a `reload` one above the highest seq the
 live log or the backup had (`log_reload(after=)`). A replace reads the live
-log, copies the backup's pages.db in and writes those `reload`s in one write
+log, copies the backup's pages.db in (all but the change log, which carries
+on: "The change feed" below) and writes those `reload`s in one write
 transaction (`ws_backup._replace`), so a batch posted meanwhile waits and
 lands above the `reload` instead of taking a seq the restored log hands out
 again. That way a page's seq never goes back, and a tab that was anywhere before the restore reloads
@@ -167,51 +252,73 @@ would be counted but missing from the tree).
 `ops.notify_commit` calls after every committed write: a batch
 (`after_commit`), a page deletion, trashing or restore, a cross-page move's
 `record_ops`, a `note_reload`, and a backup restore (`page_id` "",
-`ws_backup._announce`). Two register
+`ws_backup._announce`). One registers
 at import: an offline copy's engine (`sync_engine._on_commit`, its
-sync-on-change) and the notes index (`block_index.page_changed`, from
-routers/search.py: the page is re-indexed in the background once it has
-been quiet for `QUIET_S`). A listener that raises is logged and never breaks
+sync-on-change). A listener that raises is logged and never breaks
 the write.
 
 ## The change feed (`gamma/routers/sync.py`)
 
-`GET /api/sync/changes?since=&limit=` is the workspace-wide view the
-per-page log lacks: the pages whose root block was stamped after a cursor,
-each with its latest `seq`, and the `deleted_pages` tombstones written after
-it, as one time-ordered stream. It exists for anything that keeps a copy of
-a workspace in step (a mirror, [mirror.md](mirror.md); a backup merge) so it
-can find out *which* pages to look at without walking the library; what
+`page_changes(page_id, seq, kind, at, actor)` in each workspace's `pages.db`
+is the workspace-wide log the per-page op log lacks: one row per page that
+exists or ever existed, `kind` `live` or `deleted`. Every write to a page
+calls `blocks_store.touch_page(conn, page_id, actor, kind)` inside its own
+transaction: the row takes the next seq of the workspace (`MAX(seq) + 1`),
+and a `live` touch also stamps the root's `updated_at`. The writers that
+touch `live` are `apply_ops` (once per batch, a tree's batch touching the
+tree), `record_ops` (a cross-page
+move's source), `log_reload` (a subtree replace, an import into an existing
+page, a cross-page move's target, every page a backup restore wrote),
+`create_page` (a page made, or made again under an id the log has as
+deleted), `restore_page` and the raw import paths (the Markdown and Zotero
+imports' new pages, the Logseq import's new page once its notes are in).
+`trash_page` and `delete_page` (of a page not in Recently deleted already)
+touch `deleted`. Each holds the workspace's write lock (`write_lock`, or the
+transaction's first write takes it), so seqs are handed out in commit order
+and never twice. `tests/test_page_changes.py` names the writers, and every
+pages.db the suite writes is checked after each test (`page_changes_drift`:
+a page of the library has a `live` row no older than its stamp, a page in
+Recently deleted a `deleted` one, a tree with blocks a `live` one no older
+than its newest block). The trees are listed like pages (their ids are
+`folders` and `labels`); they are never deleted.
+
+`GET /api/sync/changes?since=&limit=` lists the rows with `seq > since` in
+seq order, at most `limit`: a live page with its latest op `seq` (`pages`),
+a deleted one as a tombstone (`deleted`, its `at` and `actor`), `cursor`
+the highest seq listed (or `since`), `more` while rows remain. It exists
+for anything that keeps a copy of a workspace in step (a mirror,
+[mirror.md](mirror.md); the iPad's replica, [ipad.md](ipad.md)) so it can
+find out *which* pages to look at without walking the library; what
 actually changed on a page is still its op log (`seq`,
 `GET /pages/{id}/ops?since=`), and a page whose log no longer reaches back
 is refetched whole.
 
-It is a hint, not a ledger, and the consumer must be idempotent: while a
-walk is paginating the cursor is `<time>|<id>` and strict (nothing repeats),
-but a caught-up answer's cursor is the server time minus a 60 s grace, so
-the last minute is re-listed on every poll. That covers writers whose
-timestamp predates their commit by a moment (`create_page` stamps before
-its insert) without a workspace-wide sequence that every writer would have
-to append to. A writer must never stamp much earlier than it commits, or
-its page falls behind the grace and is never listed: the Zotero and
-Markdown-zip imports commit page by page, each stamped inside its own short
-transaction. Every writer stamps the page root once per batch — `apply_ops`,
-`record_ops` (a cross-page move's source), `log_reload` (a subtree replace,
-an import into an existing page, every page a backup restore wrote), the
-raw import paths — so a page never changes without the feed noticing. A
-replace restore also tombstones the pages it removed, and a merge clears
-the tombstones of the pages it brings back.
-Deleting a page (`ops.delete_page`) drops its log rows and leaves the
-tombstone the feed reports; the tombstone goes when the id is created
-again. A page moved to Recently deleted (`ops.trash_page`) keeps its log but
-leaves the feed's pages and gets the tombstone, so to a copy it is deleted.
-Restoring it clears the tombstone and stamps the root, so the page is listed
-again as if created. The page's room hears both: `trashed` when it goes (an
-open tab keeps what its typist has not sent yet and says the page was
-deleted, instead of reloading into a 404) and `reload` when it comes back —
-from the trash (`ops.restore_page`) or with a merge restore that takes it
-out of the trash (`ws_backup._merge`) — so the tab refetches and sends what
-it kept.
+The feed is exact. A change is listed once to any cursor below it: a page
+has one row, so a page written again moves to its new seq and is listed
+there again. Nothing slips behind a cursor: a reader never
+sees a seq before every seq below it has committed. A consumer walks the
+feed to the end and keeps the cursor; a page listed twice in one walk
+(written again meanwhile) is what its last entry says. The cursor is a
+decimal string the consumer stores as it is (`""` = from the start). One
+the log cannot have given out (not a count, or above its newest seq: a
+workspace put back whole from an older snapshot) reads as from the start,
+which costs a consumer a re-walk and nothing else, since it compares each
+page's op `seq` with its own.
+
+Deleting a page (`ops.delete_page`) drops its log rows and leaves its
+`deleted` row; creating the id again turns it `live`. A page moved to
+Recently deleted (`ops.trash_page`) keeps its op log, but its row turns
+`deleted`, so to a copy it is deleted. Restoring it turns the row `live`,
+so the page is listed again as if created. A backup restore never replaces
+the live change log, so a copy's cursor in it stays good: a replace touches
+every page it wrote and turns `deleted` every page that is no page of the
+library afterwards, a merge touches the pages it brings back
+([workspaces.md](workspaces.md) "Export and backups"). The page's room
+hears both: `trashed` when it goes (an open tab keeps what its typist has
+not sent yet and says the page was deleted, instead of reloading into a
+404) and `reload` when it comes back — from the trash (`ops.restore_page`)
+or with a merge restore that takes it out of the trash (`ws_backup._merge`)
+— so the tab refetches and sends what it kept.
 
 ## Rooms and the socket (`gamma/collab.py`, `routers/collab.py`)
 
@@ -237,7 +344,8 @@ they admit the viewer, and with edit rights, is
 (viewers presence-only), a share token admits its audience (view or edit —
 an anyone-with-the-link edit share admits a visitor without an account, who
 joins under the display name in `?name=`, [api.md](api.md) "Link
-visitors"). Anything else is closed with 4403 before accept. The handshake
+visitors"). The rooms of the `folders` and `labels` trees admit members
+only. Anything else is closed with 4403 before accept. The handshake
 runs these reads (`_socket_access`) and the read of the log position in
 worker threads; the room itself only ever changes on the loop. Once the peer
 is in the room and has its hello (still the first message a socket gets),
@@ -249,16 +357,17 @@ opened) is an ordinary close, never an ASGI error.
 
 `collab.revalidate(ws)` runs `peer_access` again for every peer of the
 workspace's rooms whenever access there changes: a share updated or stopped
-(`routers/shares.py`, a folder share moved or dropped with its folder), a
+(`routers/shares.py`, a folder share dropped with its folder), a
 member re-roled or removed, the workspace's access changed or the workspace
 deleted (`routers/workspaces.py`), an account deleted
 (`collab.revalidate_account` from `workspaces.delete_account`: every
 workspace with a room it is in, and the workspaces that went with it — a
 share peer whose account is gone counts as a stranger), and a batch that
-changes a page root's `folder` labels (`collab.revalidate_shares` from
+changes what a folder holds — a page root's `folders` set, a folder moved or
+deleted on the `folders` tree (`collab.revalidate_shares` from
 `ops.after_commit`, only when a peer of the workspace came through a share
-link: a folder share reaches the pages filed in its folder, and the batch
-itself still reaches the visitor it refiles away). A peer that lost access leaves the room
+link: a folder share reaches the pages filed in its folder or below it, and
+the batch itself still reaches the visitor it refiles away). A peer that lost access leaves the room
 at once and its socket is closed with 4403; the client does not reconnect.
 A peer whose edit right changed is announced again with a fresh `join`. Any
 handler may call it: it runs on the sockets' loop, does the database checks
@@ -295,8 +404,10 @@ Messages:
   one place. A dropped socket does not stop HTTP saves; a closing tab attempts
   to flush queued edits with a keepalive fetch.
 
-A peer is `{client, user, name, color, can_edit, block, anchor, head}`; colour
-is an index into an 8-slot palette handed out per room (CSS `--peer-N`).
+A peer is `{client, user, name, color, can_edit, block, anchor, head}` —
+`user` the account's username, which the handshake reads with the session;
+the room keeps the account's id beside it (never sent) for `revalidate`.
+Colour is an index into an 8-slot palette handed out per room (CSS `--peer-N`).
 A share-link visitor without an account has `user: ""` and `name` = their
 display name (`?name=`, else `Anonymous`); their op batches carry
 `actor: "link:<name>"`. A rename in the share view reconnects the socket
@@ -464,6 +575,26 @@ focus, and `peers` / `me` as React state. The session owns:
   `edit_block` replace sends the text it read in that turn (`read_block`,
   `read_page`, the chat's context — [ai_tools.md](ai_tools.md)), so a person
   typing in that block while the model writes keeps their keystrokes.
+  - The server merges before the batch takes the workspace's write lock
+    (`ops._premerge`, against the text stored then). Under the lock the
+    batch reuses each merge whose block still holds that text and merges
+    any other again, so it stores the same either way. A batch with
+    nothing to merge pays one read of its sets' rows by id. Measured in
+    2026-10 (`apply_ops` in process, one page): a typing flush's merge is
+    0.05–0.1 ms of a 1–8 ms hold, but a block edited in 40 places (the
+    agent's edit, an offline copy's round) takes 33–39 ms to merge at 4
+    or 16 KB, over 90 % of the hold. With the merge before the lock,
+    those holds are 1.5–3.3 ms. The diff still holds the GIL, so the
+    process's other requests slow while it runs. What it saves is the wait
+    on the lock: SQLite's busy handler polls with growing sleeps, and a
+    typist writing beside a stream of such merges got 10 batches through
+    in 10 s with the merge under the lock, against 200 outside it.
+  - The ink merge stays under the lock, since it stores the merged file
+    there ([handwriting.md](handwriting.md) "Two writers, one group"). On
+    the Windows test machine almost all of its 20–30 ms is file work:
+    reading the three files, the quota check's walk of the uploads
+    directory, and the fsync'd write. The stroke merge itself is 0.3 ms.
+    A text box's merge is 0.02 ms.
 - **reconciliation**: `inflight` counts queued-or-sent content sets per
   block (text folded into a queued property-only set counts too — `pushOp`
   returns the op it folded into). The content of a remote `set` for a block with one in flight is *deferred* and, on
@@ -621,8 +752,10 @@ state in App instead of the tree.
   the hello's (or the previous ack's) — never as absolute counts — so a
   step added to one test never renumbers the others.
 - `backend/tests/test_collab_robustness.py`: conflict codes and the op
-  index, a retried batch answered once, create-if-absent inserts, lone
-  surrogates, a tab reconnecting on its client id, a stale room, the hello
+  index, a retried batch answered once from its log row (from a fresh
+  process too, and applied again once the row is pruned), create-if-absent
+  inserts, lone surrogates, a tab reconnecting on its client id, a stale
+  room, the hello
   counting a batch committed while joining, revoked shares and removed or
   re-roled members closing or re-announcing open sockets.
 - `backend/tests/test_text_box_merge.py`: the same-box merge through the
@@ -714,7 +847,7 @@ state in App instead of the tree.
   activity view ("who changed what") would be derivable from it, a page
   version history only for the last day it keeps.
 - A mirror of a workspace (a desktop copy that syncs) is built on the
-  change feed and the tombstones: [mirror.md](mirror.md). It works from
+  change feed: [mirror.md](mirror.md). It works from
   trees, not from replaying this log, so a copy that was away longer than
   the log reaches back needs no fallback.
 

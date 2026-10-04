@@ -3,15 +3,15 @@
 // in-memory host (tests/replica/memoryHost.mjs) instead of the app's Swift
 // one. No browser: the same rounds the desktop's mirror runs
 // (backend/tests/test_mirror*.py pins the Python engine), here from the
-// device's side — the first fill, pushes, merges of text and drawings, an
-// edit beating a delete, deletions, a lost answer, a block moved between
-// pages, receive-only.
+// device's side — the first fill, the folder and label trees, pushes,
+// merges of text and drawings, an edit beating a delete, deletions, a lost
+// answer, a block moved between pages, receive-only.
 import { Account } from "../harness.mjs";
 import { MemoryHost } from "../../replica/memoryHost.mjs";
 import { syncRound } from "../../../src/replica/round.js";
-import { addNote, addSheet, createNotebook, deleteBlock, deletePage, saveInk, setText } from "../../../src/replica/edits.js";
-import { pageView } from "../../../src/replica/views.js";
-import { encodeStroke, newInk, serializeInk } from "../../../src/ink/ink.js";
+import { addNote, addSheet, createNotebook, deleteBlock, deletePage, editPage, saveInk, setText } from "../../../src/replica/edits.js";
+import { libraryRows, pageView } from "../../../src/replica/views.js";
+import { encodeStroke, inkProps, newInk, serializeInk } from "../../../src/ink/ink.js";
 
 const stroke = (id, x) => encodeStroke({ id, ch: "xypt", t0: 1757760000000, samples: [
   { x, y: 100, p: 0.4, t: 0 }, { x: x + 20, y: 110, p: 0.6, t: 12 }, { x: x + 40, y: 105, p: 0.5, t: 24 }] });
@@ -46,9 +46,10 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     paperId = (await me.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Train paper", source_url: up.source_url } })).id;
     noteId = "rpNote1";
     inkId = "rpInk1";
-    inkUrl = await uploadInk({ ...newInk(1, 612, 792), strokes: [stroke("a", 100)] });
+    const drawn = { ...newInk(1, 612, 792), strokes: [stroke("a", 100)] };
+    inkUrl = await uploadInk(drawn);
     await ops(paperId, [{ op: "insert", id: noteId, parent: paperId, position: "a0", content: "the main claim", props: {} },
-      { op: "insert", id: inkId, parent: paperId, position: "a1", content: "", props: { ink_url: inkUrl, pdf_page: 1, ink_strokes: 1 } }]);
+      { op: "insert", id: inkId, parent: paperId, position: "a1", content: "", props: inkProps(drawn, inkUrl) }]);
     const status = await round();
     assert(status.pages_pulled >= 1, "pages came over");
     const view = pageView(await local(paperId), paperId);
@@ -57,6 +58,27 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     assert(host.files.has(`${up.doc_id}.pdf`) && host.files.has(inkUrl.split("/").pop()), "its PDF and drawing are here");
     const again = await round();
     assertEq(again.pages_pulled + again.pages_pushed, 0, "a second round moves nothing");
+  });
+
+  await step("replica: the folder and label trees come over and go back; the library names a page's filing from them", async () => {
+    await ops("folders", [{ op: "insert", id: "rpFolder1", parent: "folders", content: "Train / reading" },
+      { op: "insert", id: "rpFolder2", parent: "rpFolder1", content: "papers, 2026" }]);
+    await ops("labels", [{ op: "insert", id: "rpLabel1", parent: "labels", content: "to read" }]);
+    await ops(paperId, [{ op: "set", id: paperId, props: { folders: ["rpFolder2", "rpGone"], labels: ["rpLabel1"] } }]);
+    await round();
+    const folders = await local("folders"), labels = await local("labels");
+    assertEq(folders.folders?.parent, null, "the tree is a snapshot whose root has no parent");
+    const roots = [...host.pages].map(([id, s]) => ({ id, content: s[id].content, props: s[id].props, position: s[id].position }));
+    const rows = libraryRows(roots, { folders, labels });
+    assert(!rows.some((r) => r.id === "folders" || r.id === "labels"), "the trees are no library pages");
+    const row = rows.find((r) => r.id === paperId);
+    assertEq(JSON.stringify([row.folders, row.labels]), JSON.stringify([["Train / reading / papers, 2026"], ["to read"]]),
+      "the page's folder path and label, a dangling id naming nothing");
+    await editPage(host, "folders", [{ op: "insert", id: "rpFolder3", parent: "rpFolder1", position: "a5", content: "made here", props: {} }]);
+    await round();
+    const tree = (await me.api("/api/blocks/folders/subtree")).block;
+    assertEq(kid(tree, "rpFolder3")?.content, "made here", "a folder made here went there");
+    assertEq(kid(tree, "rpFolder1").children.map((c) => c.id).sort().join(","), "rpFolder2,rpFolder3", "beside the one made there");
   });
 
   await step("replica: a notebook, a note and a drawing made here go there", async () => {
@@ -77,7 +99,7 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     assert(kid(book, sheet)?.properties.sheet?.width > 0, "its first sheet, with its paper");
     assertEq(book.children.map((c) => c.id).join(","), `${sheet},${second}`, "its two sheets, in order");
     const group = kid(book, "rpBookInk");
-    assert(group && group.properties.ink_strokes === 1 && !("pdf_page" in group.properties), "the drawing, under its sheet");
+    assert(group && group.properties.ink_strokes === 1 && !group.properties.pdf_position, "the drawing, under its sheet");
     assertEq((await me.api(group.properties.ink_url)).space.kind, "canvas", "on the sheet's canvas");
     const again = await round();
     assertEq(again.pages_pulled + again.pages_pushed, 0, "settled: nothing moves");

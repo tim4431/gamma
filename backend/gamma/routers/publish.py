@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import cloud_auth, publish, ratelimit
-from ..auth import note_share_miss, require_personal_user, require_ws
+from ..auth import note_share_miss, require_personal_user_id, require_ws
 
 router = APIRouter(tags=["publish"])
 
@@ -60,8 +60,8 @@ def cloud_exchange(request: Request, payload: ExchangeBody | None = None):
 
 
 def _caller(request: Request, write: bool) -> tuple[str, str]:
-    user = require_personal_user(request, "Sign in with your own account to publish.")
-    return user, require_ws(request, write=write)
+    user_id = require_personal_user_id(request, "Sign in with your own account to publish.")
+    return user_id, require_ws(request, write=write)
 
 
 def _server_name(request: Request) -> str:
@@ -78,10 +78,10 @@ def publish_page(page_id: str, request: Request, payload: PublishBody | None = N
     409 with ``limit: {used, max, plan}`` too when the person's plan allows
     no more published pages there. The answer also carries ``public_url``,
     the pretty address when the share host has page hosts (else ``url``)."""
-    user, ws = _caller(request, write=True)
+    user_id, ws = _caller(request, write=True)
     payload = payload or PublishBody()
     try:
-        return publish.publish(user, ws, page_id, audience=payload.audience, role=payload.role,
+        return publish.publish(user_id, ws, page_id, audience=payload.audience, role=payload.role,
                                server_name=_server_name(request))
     except publish.PublishError as e:
         return _refused(e)
@@ -91,9 +91,9 @@ def publish_page(page_id: str, request: Request, payload: PublishBody | None = N
 def unpublish_page(page_id: str, request: Request):
     """Stop publishing: the share there stops, the copy there is deleted,
     the page here stays → ``{published: false, mirror}``."""
-    user, ws = _caller(request, write=True)
+    user_id, ws = _caller(request, write=True)
     try:
-        return publish.unpublish(user, ws, page_id)
+        return publish.unpublish(user_id, ws, page_id)
     except publish.PublishError as e:
         return _refused(e)
 
@@ -102,9 +102,9 @@ def unpublish_page(page_id: str, request: Request):
 def publication(page_id: str, request: Request):
     """``{published, can_publish, reason?, url?, public_url?, share?,
     status?, mirror?, limit?, error?}`` — any member of the workspace."""
-    user, ws = _caller(request, write=False)
+    user_id, ws = _caller(request, write=False)
     try:
-        return publish.state(user, ws, page_id)
+        return publish.state(user_id, ws, page_id)
     except publish.PublishError as e:
         return _refused(e)
 

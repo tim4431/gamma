@@ -4,7 +4,7 @@ paper" ingest), /api/library/lookup + /preview + /folders (popup helpers), and
 and the metadata thread is stubbed out."""
 
 import hashlib
-from conftest import workspace_of, guest_name
+from conftest import account_of, workspace_of, guest_name
 import io
 import json
 import sqlite3
@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 import gamma.routers.clip as clip_mod
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
-from gamma.db import ws_db_path, ws_uploads_dir
+from gamma.blocks_store import folder_paths, label_names
+from gamma.db import connect_pages_db, ws_db_path, ws_uploads_dir
 
 PDF_BYTES = b"%PDF-1.4 clip test\n" + b"y" * 10_000
 
@@ -72,11 +73,20 @@ def _props(block_id):
     return row[0], json.loads(row[1])
 
 
+def _filed(props):
+    """A page's filing as a person reads it: ``(folder paths "a/b", label
+    names)``, in the page's order."""
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        paths, names = folder_paths(conn), label_names(conn)
+    return (["/".join(paths[f]) for f in props.get("folders", [])],
+            [names[label] for label in props.get("labels", [])])
+
+
 def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls):
     url = "https://example.org/papers/clip-one.pdf"
     r = guest.post("/api/clip", json={
         "source_url": "https://example.org/papers/clip-one",
-        "pdf_url": url, "title": "  Clip   One  ", "folder": "reading/2026",
+        "pdf_url": url, "title": "  Clip   One  ", "folder_path": "reading/2026",
         "labels": ["to-read"],
     })
     assert r.status_code == 200, r.text
@@ -90,8 +100,9 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     assert title == "Clip One" and props["auto_title"] == "Clip One"
     assert props["source_url"] == url
     assert props["web_url"] == "https://example.org/papers/clip-one"
-    assert props["folder"] == "reading/2026" and props["category"] == "to-read"
-    assert meta_calls == [(guest_name(), body["block_id"], "", "")]
+    assert _filed(props) == (["reading/2026"], ["to-read"])
+    assert body["folders"] == props["folders"] and body["labels"] == props["labels"]
+    assert meta_calls == [(account_of(guest_name()), body["block_id"], "", "")]
 
 
 def test_clip_forwards_detected_identifiers_to_metadata(guest, upstream, meta_calls):
@@ -106,7 +117,7 @@ def test_clip_forwards_detected_identifiers_to_metadata(guest, upstream, meta_ca
 
 def test_clip_dedups_by_doi_and_adds_folder(guest, upstream, meta_calls):
     url = "https://example.org/papers/dedup.pdf"
-    r = guest.post("/api/clip", json={"pdf_url": url, "title": "Dedup", "folder": "a"})
+    r = guest.post("/api/clip", json={"pdf_url": url, "title": "Dedup", "folder_path": "a"})
     block_id = r.json()["block_id"]
     # Pretend metadata landed with a DOI, as the lookup thread would.
     with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
@@ -117,17 +128,23 @@ def test_clip_dedups_by_doi_and_adds_folder(guest, upstream, meta_calls):
     fetched_before = len(upstream)
     r2 = guest.post("/api/clip", json={
         "source_url": "https://publisher.example/article/whatever",
-        "doi": "10.1000/dedup.1", "folder": "b", "labels": ["dup"],
+        "doi": "10.1000/dedup.1", "folder_path": "b", "labels": ["dup"],
     })
     assert r2.status_code == 200, r2.text
     assert r2.json()["existed"] is True and r2.json()["block_id"] == block_id
     assert len(upstream) == fetched_before  # nothing re-fetched
     _, props = _props(block_id)
-    assert props["folder"] == "a, b" and props["category"] == "dup"
-    # Same page, refined into a subfolder: the ancestor tag is replaced.
-    guest.post("/api/clip", json={"doi": "10.1000/dedup.1", "folder": "a/deeper"})
+    assert _filed(props) == (["a", "b"], ["dup"])
+    # Same page, refined into a subfolder: the folder above it gives way.
+    guest.post("/api/clip", json={"doi": "10.1000/dedup.1", "folder_path": "a/deeper"})
     _, props = _props(block_id)
-    assert props["folder"] == "b, a/deeper"
+    assert _filed(props) == (["b", "a/deeper"], ["dup"])
+    # By id: the folder the popup picked from the tree.
+    deeper = props["folders"][1]
+    b = props["folders"][0]
+    guest.post("/api/clip", json={"doi": "10.1000/dedup.1", "folder": b})
+    assert _props(block_id)[1]["folders"] == [b, deeper]  # already there: nothing changed
+    assert guest.post("/api/clip", json={"doi": "10.1000/dedup.1", "folder": "no-such-folder"}).status_code == 400
 
 
 def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
@@ -136,7 +153,7 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     attachment. Re-clipping the same URL finds that page and appends."""
     url = "https://example.org/not-a-paper"
     r = guest.post("/api/clip", json={"source_url": url, "title": "Ghost",
-                                      "selection": "a striking claim", "folder": "web", "labels": ["blog"]})
+                                      "selection": "a striking claim", "folder_path": "web", "labels": ["blog"]})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["doc_id"] == "" and body["existed"] is False
@@ -145,7 +162,7 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     title, props = _props(body["block_id"])
     assert title == "Ghost" and props["web_url"] == url
     assert "doc_id" not in props and "source_url" not in props and "auto_title" not in props
-    assert props["folder"] == "web" and props["category"] == "blog"
+    assert _filed(props) == (["web"], ["blog"])
     kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
     assert [k["content"] for k in kids] == ["> a striking claim\n— [Ghost](https://example.org/not-a-paper)"]
     assert meta_calls == []  # nothing identifies a paper → no metadata lookup
@@ -153,16 +170,16 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     lk = guest.get("/api/library/lookup", params={"url": url})
     assert lk.status_code == 200 and lk.json()["block_id"] == body["block_id"]
     r2 = guest.post("/api/clip", json={"source_url": url, "title": "Ghost", "selection": "another",
-                                       "folder": "web/later"})
+                                       "folder_path": "web/later"})
     assert r2.json()["existed"] is True and r2.json()["block_id"] == body["block_id"]
     kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
     assert len(kids) == 2 and kids[-1]["content"].startswith("> another")
-    assert _props(body["block_id"])[1]["folder"] == "web/later"
+    assert _filed(_props(body["block_id"])[1]) == (["web/later"], ["blog"])
     # No tab title: the URL names the page. A DOI on the page still starts the lookup.
     r3 = guest.post("/api/clip", json={"source_url": "https://pub.example/articles/deep-dive",
                                        "doi": "10.5555/paywalled.1"})
     assert r3.status_code == 200 and r3.json()["title"] == "deep-dive"
-    assert meta_calls == [(guest_name(), r3.json()["block_id"], "10.5555/paywalled.1", "")]
+    assert meta_calls == [(account_of(guest_name()), r3.json()["block_id"], "10.5555/paywalled.1", "")]
     # Nothing at all to save is still a 400.
     assert guest.post("/api/clip", json={}).status_code == 400
 
@@ -197,13 +214,13 @@ def test_clip_from_uploaded_bytes(guest, upstream, meta_calls):
     doc_id = up.json()["doc_id"]
     r = guest.post("/api/clip", json={
         "doc_id": doc_id, "source_url": "https://journal.example/doi/10.1000/paywalled",
-        "title": "Paywalled paper", "folder": "inbox",
+        "title": "Paywalled paper", "folder_path": "inbox",
     })
     assert r.status_code == 200, r.text
     assert r.json()["doc_id"] == doc_id
     assert upstream == []  # no server-side fetch at all
     _, props = _props(r.json()["block_id"])
-    assert props["source_url"] == f"/api/uploads/{doc_id}.pdf"
+    assert "source_url" not in props  # the stored copy: derived from doc_id
     assert props["web_url"] == "https://journal.example/doi/10.1000/paywalled"
     # Second save from the same publisher page is found via web_url / its DOI.
     lk = guest.get("/api/library/lookup", params={"url": "https://journal.example/doi/10.1000/paywalled"})
@@ -243,7 +260,7 @@ def test_clip_arxiv_html_page_with_old_style_id(guest, upstream, meta_calls):
     _, props = _props(body["block_id"])
     assert props["source_url"] == "https://arxiv.org/pdf/cond-mat/0402216"
     assert props["web_url"] == page
-    assert meta_calls == [(guest_name(), body["block_id"], "", "cond-mat/0402216")]
+    assert meta_calls == [(account_of(guest_name()), body["block_id"], "", "cond-mat/0402216")]
     for params in ({"arxiv_id": "cond-mat/0402216"}, {"url": "https://arxiv.org/abs/cond-mat/0402216v1"},
                    {"url": page}):
         lk = guest.get("/api/library/lookup", params=params)
@@ -318,15 +335,23 @@ def test_norm_doi_strips_publisher_path_suffixes():
         assert clip_mod.norm_doi(url) == doi, url
 
 
-def test_folders_lists_ancestors_and_labels(guest, upstream, meta_calls):
-    guest.post("/api/clip", json={"pdf_url": "https://example.org/papers/f1.pdf", "folder": "qc/readout/fast",
-                                  "labels": ["Zeta label"]})
+def test_folders_lists_the_tree_and_labels(guest, upstream, meta_calls):
+    out = guest.post("/api/clip", json={"pdf_url": "https://example.org/papers/f1.pdf",
+                                        "folder_path": "qc/readout/fast", "labels": ["Zeta label"]}).json()
     r = guest.get("/api/library/folders")
     assert r.status_code == 200
     body = r.json()
+    listed = {"/".join(f["path"]): f["id"] for f in body["folders"]}
     for f in ("qc", "qc/readout", "qc/readout/fast"):
-        assert f in body["folders"]
-    assert "Zeta label" in body["labels"]
+        assert f in listed
+    assert out["folders"] == [listed["qc/readout/fast"]]
+    assert {"id": out["labels"][0], "name": "Zeta label"} in body["labels"]
+    # an empty folder is a folder: it is listed too
+    empty = guest.post("/api/clip", json={"pdf_url": "https://example.org/papers/f2.pdf",
+                                          "folder_path": "qc/empty-later"}).json()
+    guest.post(f"/api/pages/{empty['block_id']}/ops", json={"ops": [
+        {"op": "set", "id": empty["block_id"], "props": {"folders": None}}]})
+    assert "qc/empty-later" in {"/".join(f["path"]) for f in guest.get("/api/library/folders").json()["folders"]}
 
 
 def test_folders_sort_by_recent_views_then_modified(guest, meta_calls):
@@ -337,7 +362,7 @@ def test_folders_sort_by_recent_views_then_modified(guest, meta_calls):
     paths = ["FZ/recent", "FY/older", "FA/unread", "FB/modified", "FC/tie", "FZ/recent"]
     for i, path in enumerate(paths):
         r = guest.post("/api/clip", json={
-            "source_url": f"https://example.org/folder-recency/{i}", "folder": path,
+            "source_url": f"https://example.org/folder-recency/{i}", "folder_path": path,
             "labels": ["Zebra", "Alpha"],
         })
         assert r.status_code == 200, r.text
@@ -352,9 +377,10 @@ def test_folders_sort_by_recent_views_then_modified(guest, meta_calls):
     def folder_order():
         r = guest.get("/api/library/folders")
         assert r.status_code == 200, r.text
-        labels = r.json()["labels"]
+        labels = [label["name"] for label in r.json()["labels"]]
         assert labels.index("Alpha") < labels.index("Zebra")
-        return [path for path in r.json()["folders"] if path in expected]
+        listed = ["/".join(f["path"]) for f in r.json()["folders"]]
+        return [path for path in listed if path in expected]
 
     # Without usable history, newest modifications win; names break ties.
     for value in (None, {"invalid": True}, [None, {"id": [], "at": 1}]):

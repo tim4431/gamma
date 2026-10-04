@@ -100,7 +100,8 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
 
   await step("ipad: a tap opens a library folder and page; a mouse click only selects", async () => {
     const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Tap to open paper" } });
-    await alice.api(`/api/blocks/${paper.id}`, { method: "PUT", body: { properties: { folder: "tapfolder" } } });
+    await alice.file(paper.id, { folders: ["tapfolder"] });
+    const tapFolder = await alice.folder("tapfolder");
     const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 834, height: 1194 } });
     try {
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
@@ -109,7 +110,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await until(() => folder.evaluate((el) => el.classList.contains("selected")), { what: "a mouse click selects the folder" });
       assert(!page.url().includes("folder="), `a mouse click stays on the library: ${page.url()}`);
       await folder.tap();
-      await until(() => page.url().includes("folder=tapfolder"), { what: "a tap opens the folder" });
+      await until(() => page.url().includes(`folder=${tapFolder}`), { what: "a tap opens the folder" });
       await page.locator(".pageCard, .fileRow", { hasText: "Tap to open paper" }).first().tap();
       await until(() => page.url().includes(`block=${paper.id}`), { what: "a tap opens the page" });
       assertNoProblems(page);
@@ -142,7 +143,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   await step("phone: a labelled bottom bar, the More sheet, no empty topbar, the Library tab as home", async () => {
     await alice.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
     const note = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "A phone title long enough to need a second line on a narrow screen" } });
-    await alice.api(`/api/blocks/${note.id}`, { method: "PUT", body: { properties: { category: "phonelabel" } } });
+    await alice.file(note.id, { labels: ["phonelabel"] });
     const ctx = await alice.context(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     try {
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);

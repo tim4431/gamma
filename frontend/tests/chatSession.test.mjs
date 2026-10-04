@@ -10,7 +10,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-for (const key of ["home", "home:Physics/Optics", "pdf-page"]) {
+for (const key of ["home", "folder-block-id", "pdf-page"]) {
   test(`${key}: a reply and its Stop control survive losing every subscriber`, async () => {
     const saved = [];
     const session = createChatSession(async (key, messages) => saved.push({ key, messages }));

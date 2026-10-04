@@ -2,33 +2,22 @@
 
 import pytest
 
-from conftest import login as _login, make_user as _make_user
+from conftest import drop_user, login as _login, make_user as _make_user
 from gamma.logbuf import log, scrub, tail
-
-
-def _drop_user(username):
-    """Remove the account again — test_admin_users assumes it knows every
-    admin in the shared users.db, so this module must not leave one behind."""
-    from gamma.db import connect_users_db
-
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
 
 
 @pytest.fixture(scope="module")
 def logadmin(client):
     _make_user("logadmin", "logadminpw", is_admin=1)
     yield _login("logadmin", "logadminpw")
-    _drop_user("logadmin")
+    drop_user("logadmin")
 
 
 @pytest.fixture(scope="module")
 def plainuser(client):
     _make_user("plainuser", "plainpw", is_admin=0)
     yield _login("plainuser", "plainpw")
-    _drop_user("plainuser")
+    drop_user("plainuser")
 
 
 def test_scrub_masks_secret_shapes():

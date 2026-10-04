@@ -11,8 +11,9 @@ instance can never lock itself out.
 
 Accounts and workspaces are separate (gamma/workspaces.py): creating an
 account creates its personal workspace, deleting one removes the workspaces
-it alone owned, renaming touches rows only (workspace directories are named
-by id, never by account).
+it alone owned, renaming changes its username alone (everything else names
+the account by its id, ``users.id``). The endpoints address an account by
+username, as the people who manage it do.
 """
 
 import os
@@ -26,12 +27,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import (ai_settings, backup_schedule, backups, chatgpt_oauth, cloud_auth, integrity, jobs,
-               publisher_sessions, workspaces)
+from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, integrity, jobs, offsite, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
-from ..db import connect_users_db
+from ..db import account_name, connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
 from ..seed import create_account
@@ -70,19 +70,20 @@ def _user_list(conn: sqlite3.Connection, with_usage: bool = False) -> list:
     the GET listing pays for it; mutation responses omit used_bytes and the
     client keeps its last known values."""
     rows = conn.execute(
-        "SELECT username, is_guest, is_admin, created_at, max_upload_mb, quota_mb, default_workspace "
+        "SELECT username, is_guest, is_admin, created_at, max_upload_mb, quota_mb, default_workspace, id "
         "FROM users ORDER BY created_at"
     ).fetchall()
     return [{"username": u, "is_guest": bool(g), "is_admin": bool(a), "created_at": c,
              "max_upload_mb": mu, "quota_mb": q,  # overrides; null = server default
              "default_workspace": dw,
-             **({"used_bytes": usage_bytes(u)} if with_usage else {})}
-            for u, g, a, c, mu, q, dw in rows]
+             **({"used_bytes": usage_bytes(i)} if with_usage else {})}
+            for u, g, a, c, mu, q, dw, i in rows]
 
 
 def _get_user(conn: sqlite3.Connection, username: str):
+    """``(id, is_guest, is_admin)`` of the account named ``username``, or None."""
     return conn.execute(
-        "SELECT username, is_guest, is_admin FROM users WHERE username = ?", (username,)
+        "SELECT id, is_guest, is_admin FROM users WHERE username = ?", (username,)
     ).fetchone()
 
 
@@ -255,12 +256,14 @@ def add_ai_provider(payload: AIProviderRequest, request: Request):
 
 @router.post("/ai-providers/chatgpt/start")
 def shared_chatgpt_start(request: Request, payload: ChatGPTAuthStart | None = None):
-    return begin_chatgpt_signin(("server", require_admin(request)), request, payload)
+    require_admin(request)
+    return begin_chatgpt_signin(("server", request.state.user_id), request, payload)
 
 
 @router.post("/ai-providers/chatgpt/status")
 def shared_chatgpt_status(payload: ChatGPTAuthStatus, request: Request):
-    return chatgpt_oauth.status(("server", require_admin(request)), payload.state)
+    require_admin(request)
+    return chatgpt_oauth.status(("server", request.state.user_id), payload.state)
 
 
 # Sync def: the code exchange and the model listing are network round trips.
@@ -268,7 +271,8 @@ def shared_chatgpt_status(payload: ChatGPTAuthStatus, request: Request):
 def shared_chatgpt_complete(payload: ChatGPTAuthComplete, request: Request):
     """Redeem a shared sign-in: a new shared ChatGPT entry, or, with
     ``provider_id``, new tokens on an existing one (reconnect)."""
-    me = require_admin(request)
+    require_admin(request)
+    me = request.state.user_id
     oauth = redeem_chatgpt_signin(("server", me), payload.state, payload.callback)
     if payload.provider_id:
         def reconnect(config):
@@ -325,6 +329,72 @@ def list_workspaces(request: Request):
     return {"workspaces": workspaces.all_workspaces(), "orphans": workspaces.orphan_dirs()}
 
 
+# --- off-site copies (gamma/offsite.py) --------------------------------------
+# Settings → Backups → Off-site copies. The secret key is write-only: a GET
+# says whether one is set, a PUT or a test without it keeps the saved one.
+# While GAMMA_S3_BUCKET is set the environment decides (``from_env``): a PUT
+# is refused with 409 and a test checks the environment's bucket.
+
+class OffsiteSettingsRequest(BaseModel):
+    enabled: bool | None = None
+    bucket: str | None = None
+    endpoint: str | None = None
+    region: str | None = None
+    access_key: str | None = None
+    secret_key: str | None = None   # only when changing it: absent or "" keeps the saved one
+    prefix: str | None = None
+    interval_s: int | None = None   # seconds between rounds, at least 60
+    keep: int | None = None         # copies kept per database, at least 1
+
+
+def _offsite_view() -> dict:
+    conf = offsite.settings()
+    return {"settings": offsite.public(conf), "from_env": conf["from_env"], "status": offsite.status(conf)}
+
+
+@router.get("/offsite")
+def get_offsite(request: Request):
+    """``{settings: {enabled, bucket, endpoint, region, access_key,
+    secret_set, prefix, interval_s, keep}, from_env, status}`` —
+    ``status`` is ``offsite.status``."""
+    require_admin(request)
+    return _offsite_view()
+
+
+@router.put("/offsite")
+def update_offsite(payload: OffsiteSettingsRequest, request: Request):
+    """Save the fields sent (a field left out stays as it is); the GET's
+    answer. 400 with the reason when one is wrong, 409 while the
+    environment sets the bucket."""
+    require_admin(request)
+    try:
+        offsite.save(payload.model_dump(exclude_none=True))
+    except offsite.FromEnvError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _offsite_view()
+
+
+# Sync def: one listing of the bucket, a network round trip.
+@router.post("/offsite/test")
+def test_offsite(request: Request, payload: OffsiteSettingsRequest | None = None):
+    """One listing of the bucket, tried once, with the saved settings or
+    the unsaved ones sent laid over them: ``{ok, message}``, 200 either
+    way."""
+    require_admin(request)
+    return offsite.test(payload.model_dump(exclude_none=True) if payload else None)
+
+
+@router.post("/offsite/run")
+def run_offsite(request: Request):
+    """Copy now: ``{started: true}``, or ``{started: false, message}`` with
+    the copies off or a round running. The pane follows the round through
+    the GET's ``status.running``."""
+    require_admin(request)
+    return offsite.run_now()
+
+
 # --- server backups (gamma/backups.py) ---------------------------------------
 
 @router.get("/backups")
@@ -358,7 +428,7 @@ def start_server_backup(payload: BackupCreateRequest, request: Request):
     """``POST /api/admin/backups`` as a background job (kind
     ``server-backup``, what Settings → Server's snapshot menu starts): its
     result is the new snapshot's info."""
-    admin = require_admin(request)
+    require_admin(request)
     label = payload.label.strip() or "manual"
     if not backups.LABEL_RE.match(label):
         raise HTTPException(status_code=400, detail="label must be 1-40 chars of letters, digits, _ . -")
@@ -369,7 +439,7 @@ def start_server_backup(payload: BackupCreateRequest, request: Request):
         except OSError as e:
             raise OSError(f"the backup could not be written: {e}") from e
 
-    return jobs.start("server-backup", owner=admin, run=run, title="Server snapshot",
+    return jobs.start("server-backup", owner=request.state.user_id, run=run, title="Server snapshot",
                       params={"label": label, "uploads": payload.uploads})
 
 
@@ -458,11 +528,11 @@ def update_user(username: str, payload: UserUpdateRequest, request: Request):
         if payload.password is not None:
             password = _check_password(payload.password)
             pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-            conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (pwhash, username))
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pwhash, row[0]))
             # Revoke existing sessions so a changed/leaked password can't be
             # ridden by an already-open session (incl. an attacker's).
-            conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-            conn.execute("DELETE FROM integration_tokens WHERE username = ?", (username,))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (row[0],))
+            conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (row[0],))
         if payload.is_admin is not None:
             if not conn.in_transaction:
                 # the count and the write as one step: two admins demoting
@@ -470,15 +540,15 @@ def update_user(username: str, payload: UserUpdateRequest, request: Request):
                 conn.execute("BEGIN IMMEDIATE")
             if not payload.is_admin and row[2] and _admin_count(conn) <= 1:
                 raise HTTPException(status_code=400, detail="cannot demote the last admin")
-            conn.execute("UPDATE users SET is_admin = ? WHERE username = ?",
-                         (1 if payload.is_admin else 0, username))
+            conn.execute("UPDATE users SET is_admin = ? WHERE id = ?",
+                         (1 if payload.is_admin else 0, row[0]))
         try:
             if "max_upload_mb" in payload.model_fields_set:
                 value = None if payload.max_upload_mb is None else validate_upload_mb(payload.max_upload_mb)
-                conn.execute("UPDATE users SET max_upload_mb = ? WHERE username = ?", (value, username))
+                conn.execute("UPDATE users SET max_upload_mb = ? WHERE id = ?", (value, row[0]))
             if "quota_mb" in payload.model_fields_set:
                 value = None if payload.quota_mb is None else validate_quota_mb(payload.quota_mb)
-                conn.execute("UPDATE users SET quota_mb = ? WHERE username = ?", (value, username))
+                conn.execute("UPDATE users SET quota_mb = ? WHERE id = ?", (value, row[0]))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         conn.commit()
@@ -489,54 +559,24 @@ class UserRenameRequest(BaseModel):
     new_username: str
 
 
-def rename_account(conn: sqlite3.Connection, old: str, new: str) -> None:
-    """Rename an account (shared by the GUI and manage.py): its rows
-    (``rename_account_rows``) and the owner of its backup tasks, which are
-    files (``backup_schedule.renaming``). Commits. Raises
-    ``backup_schedule.TaskBusy``, with nothing renamed, while one of its
-    tasks runs."""
-    with backup_schedule.renaming(old, new):
-        rename_account_rows(conn, old, new)
-        conn.commit()
-    jobs.renamed(old, new)
+def rename_account(conn: sqlite3.Connection, user_id: str, new: str) -> None:
+    """Rename an account (shared by the GUI and manage.py). Every other row
+    and file names the account by its id, so this is its username and the
+    one convention that follows it: a personal workspace of the account
+    named after it takes the new name. Sessions, share links, tokens,
+    tasks and jobs keep working — nobody is logged out, including the
+    renamed user. Commits; sqlite3.IntegrityError when ``new`` is taken."""
+    old = account_name(conn, user_id)
+    conn.execute("UPDATE users SET username = ? WHERE id = ?", (new, user_id))
+    conn.execute("UPDATE workspaces SET name = ? WHERE name = ? AND kind = 'personal' "
+                 "AND id IN (SELECT workspace_id FROM workspace_members WHERE user_id = ?)", (new, old, user_id))
+    conn.commit()
 
 
-def rename_account_rows(conn: sqlite3.Connection, old: str, new: str) -> None:
-    """Every row that names an account. Sessions and share tokens keep
-    working — nobody is logged out, including the renamed user. Workspace
-    directories are named by id, so no files move. What the account
-    controls follows it — its offline copies, its usage record, its
-    publisher connections, the invitations it sent — so nothing of it
-    passes to a later account that takes the old name."""
-    conn.execute("UPDATE users SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE sessions SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE integration_tokens SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE identities SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE shares SET created_by = ? WHERE created_by = ?", (new, old))
-    conn.execute("UPDATE workspace_members SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE workspace_members SET added_by = ? WHERE added_by = ?", (new, old))
-    conn.execute("UPDATE workspaces SET created_by = ? WHERE created_by = ?", (new, old))
-    conn.execute("UPDATE workspaces SET name = ? WHERE name = ? AND created_by = ?", (new, old, new))
-    conn.execute("UPDATE user_prefs SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE mirrors SET owner = ? WHERE owner = ?", (new, old))
-    conn.execute("UPDATE ai_usage SET username = ? WHERE username = ?", (new, old))
-    conn.execute("UPDATE jobs SET owner = ? WHERE owner = ?", (new, old))
-    conn.execute("UPDATE pending_memberships SET invited_by = ? WHERE invited_by = ?", (new, old))
-    publisher_sessions.rename_account(conn, old, new)
-    # Invited-people lists on shares ("carol:edit,dave:view") name accounts too.
-    for token, allowed in conn.execute("SELECT token, allowed_users FROM shares WHERE allowed_users != ''").fetchall():
-        parts = [p.strip() for p in allowed.split(",") if p.strip()]
-        changed = [(new + p[len(old):]) if p == old or p.startswith(old + ":") else p for p in parts]
-        if changed != parts:
-            conn.execute("UPDATE shares SET allowed_users = ? WHERE token = ?", (",".join(changed), token))
-
-
-# Sync def: it rewrites the account's backup task files.
 @router.post("/users/{username}/rename")
 def rename_user(username: str, payload: UserRenameRequest, request: Request):
     """Rename an account (sessions and share tokens keep working — nobody is
-    logged out, including the renamed user). 409 while one of its backup
-    tasks runs."""
+    logged out, including the renamed user)."""
     require_admin(request)
     new = payload.new_username.strip()
     if not _USERNAME_RE.match(new):
@@ -553,9 +593,9 @@ def rename_user(username: str, payload: UserRenameRequest, request: Request):
         if _get_user(conn, new):
             raise HTTPException(status_code=409, detail="user already exists")
         try:
-            rename_account(conn, username, new)
-        except backup_schedule.TaskBusy as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            rename_account(conn, row[0], new)
+        except sqlite3.IntegrityError:  # taken by another request since the check
+            raise HTTPException(status_code=409, detail="user already exists")
         return {"users": _user_list(conn), "renamed": {"from": username, "to": new}}
 
 
@@ -577,7 +617,7 @@ def delete_user(username: str, request: Request):
         if row[2] and _admin_count(conn) <= 1:
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
     try:
-        deleted = workspaces.delete_account(username, by=me)
+        deleted = workspaces.delete_account(row[0], by=request.state.user_id)
     except workspaces.FinalCopyError as e:
         raise HTTPException(status_code=507, detail=str(e))
     with connect_users_db() as conn:

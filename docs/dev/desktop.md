@@ -19,6 +19,9 @@ nothing in `backend/` or `frontend/` needs to know about it:
 
 The only contract Gamma keeps for the shell: the env variables
 `GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`, `GAMMA_ADMIN_USER`,
-`GAMMA_ADMIN_PASSWORD`; `/api/health`; `/api/session` + `/api/login` for the
-silent first login; and the `data-theme` attribute on `<html>` (the shell
-mirrors it into its own chrome).
+`GAMMA_ADMIN_PASSWORD`; `/api/health` (a 200, or the 503 with
+`error: data_directory_not_upgradable` a server answers when it cannot
+upgrade its data directory — up either way, and the window then shows that
+server's guidance page, [migrations.md](migrations.md)); `/api/session` +
+`/api/login` for the silent first login; and the `data-theme` attribute on
+`<html>` (the shell mirrors it into its own chrome).

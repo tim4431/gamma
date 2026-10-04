@@ -55,6 +55,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { generateNKeysBetween } from "fractional-indexing";
 import { applyOps, diffTrees, indexTree, someNode, withTexts } from "../shared/model/blockOps.js";
+import { isHighlightBlock } from "../shared/model/blockModel.js";
 import { isTextBox, mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -153,7 +154,7 @@ export function describeTransition(before, after) {
   if (props.length) {
     if (props.every((n) => n.properties?.ink_url !== undefined)) return t("handwriting note update");
     if (props.every(isTextBox)) return textBoxChange(props.map((n) => [a.get(n.id)?.properties?.text_box, n.properties.text_box]));
-    if (props.every((n) => n.properties?.highlight_id)) {
+    if (props.every(isHighlightBlock)) {
       return props.every((n) => a.get(n.id)?.properties?.color !== n.properties.color) ? t("highlight color change") : t("highlight edit");
     }
     return t("note properties change");

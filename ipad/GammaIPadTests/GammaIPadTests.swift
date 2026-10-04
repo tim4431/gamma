@@ -20,7 +20,7 @@ final class StoreTests: XCTestCase {
     }
 
     private func page(_ title: String) -> [String: Any] {
-        ["p1": ["parent": "root", "position": "a0", "content": title, "props": ["folder": "x"]],
+        ["p1": ["parent": "root", "position": "a0", "content": title, "props": ["folders": ["f1"]]],
          "b1": ["parent": "p1", "position": "a0", "content": "note", "props": [:]]]
     }
 
@@ -129,6 +129,30 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(url.hasPrefix("/api/uploads/") && url.hasSuffix(".ink"))
         XCTAssertEqual(replica.inkFile(url)?.array("strokes").count, 1)
         XCTAssertEqual(try replica.store.localChanges()["pages"] as? [String], [book], "an edit made here waits for a round")
+    }
+
+    func testTheLibraryNamesFoldersAndLabelsFromTheirTrees() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let connection = Connection(id: "t", server: URL(string: "https://example.invalid")!, user: "u", workspace: "w", workspaceName: "W")
+        let replica = try Replica(connection: connection, token: "gamma_test", directory: dir)
+        // the trees arrive as two more snapshots (round.js), stored like pages
+        _ = try replica.store.write("folders", snapshot: [
+            "folders": ["parent": NSNull(), "position": "a2", "content": "", "props": [:]],
+            "f1": ["parent": "folders", "position": "a0", "content": "Physics", "props": [:]],
+            "f2": ["parent": "f1", "position": "a0", "content": "QEC / codes", "props": [:]],
+        ], version: 0, edit: false)
+        _ = try replica.store.write("labels", snapshot: [
+            "labels": ["parent": NSNull(), "position": "a3", "content": "", "props": [:]],
+            "l1": ["parent": "labels", "position": "a0", "content": "to read", "props": [:]],
+        ], version: 0, edit: false)
+        _ = try replica.store.write("p1", snapshot: [
+            "p1": ["parent": "root", "position": "a0", "content": "Surface codes", "props": ["folders": ["f2", "gone"], "labels": ["l1"]]],
+        ], version: 0, edit: false)
+        let rows = replica.libraryRows()
+        XCTAssertEqual(rows.map { $0.string("id") }, ["p1"], "the trees' roots are no pages")
+        XCTAssertEqual(rows.first?.array("folders") as? [String], ["Physics / QEC / codes"], "a path, never split on / or ,; a dangling id names nothing")
+        XCTAssertEqual(rows.first?.array("labels") as? [String], ["to read"])
     }
 
     func testAPageAmongANotesBlocksIsReadLikeANotebooksPage() throws {

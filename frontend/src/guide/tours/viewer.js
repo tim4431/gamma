@@ -1,22 +1,23 @@
 import { T } from "../../shared/i18n/i18n.js";
-// The viewer's left edge, top to bottom: the PDF's table of contents, the
-// tool column, full screen. The PDF and the notebook viewer share the
-// column up to the pen, and full screen, so their tours are siblings: the
-// steps about those are `shared`, the same objects in both. Once the user
-// has finished either tour, the other drops them for its `recap` card, which
-// points at the same buttons and moves on to what is new there
-// (stepApplies in guide/triggers.js, docs/dev/onboarding.md).
+// The viewer's left edge, top to bottom: the PDF's table of contents, then
+// the tool column. The PDF and the notebook viewer share the column up to
+// the pen, so their tours are siblings: the zoom and pen steps are `shared`,
+// the same objects in both, and a user who has finished either tour gets
+// the other without them — only what is new there (stepApplies in
+// guide/triggers.js, docs/dev/onboarding.md).
 
 const zoom = { id: "viewer-zoom", anchor: "viewer.zoom", placement: "right", shared: true,
-  title: T("Zoom in and out, or fit the page to the width"),
-  body: T("{key:Mod} and the scroll wheel zoom around the pointer."),
-  bodyTouch: T("Pinching zooms too.") };
+  title: T("Zoom, or fit to the width"),
+  body: T("{key:Mod} + scroll zooms at the pointer."),
+  bodyTouch: T("Pinching zooms too."),
+  // Zoom out, zoom in, fit to width: the column's three buttons, top to bottom.
+  scene: [{ point: "viewer.zoom", at: [0.5, 0.17] }, { point: "viewer.zoom", at: [0.5, 0.5] }, { point: "viewer.zoom", at: [0.5, 0.83] }] };
 const pen = { id: "viewer-pen", anchor: "pdf.inkButton", placement: "right", shared: true, requires: { editable: true },
   title: T("Write and draw on the page"),
-  body: T("Pens, highlighters, an eraser, a lasso and text boxes; {key:Escape} puts them away.") };
-const fullscreen = { id: "viewer-fullscreen", anchor: "viewer.fullscreen", placement: "right", shared: true,
-  title: T("Full screen: only the page"),
-  body: T("{key:Escape} brings the rest back.") };
+  body: T("{key:Escape} puts the pen away."),
+  // The stroke goes on the pane, which holds either viewer: the notebook
+  // viewer has no pdf.viewer of its own.
+  scene: [{ click: "pdf.inkButton" }, { stroke: "pdf.pane", at: [0.14, 0.3, 0.44, 0.4] }] };
 
 export const pdfViewer = {
   id: "pdf-viewer",
@@ -30,27 +31,19 @@ export const pdfViewer = {
   trigger: { event: "page.opened" },
   offerAnchor: "viewer.tools",
   offerPlacement: "right",
-  offer: { title: T("You opened a paper"), line: T("Zoom, contents, translation and the pen sit down its left edge.") },
+  offer: { title: T("You opened a paper"), line: T("Its tools sit down the left edge.") },
   steps: [
     { id: "pdf-outline", anchor: "viewer.outline", placement: "right", optional: true,
-      title: T("The paper's table of contents"),
-      body: T("Click a heading to go to that section.") },
+      title: T("Click a heading to jump there") },
     zoom,
-    { id: "pdf-recap", anchor: "viewer.common", placement: "right", recap: true, requires: { editable: true },
-      title: T("Zoom, fit and the pen work as in the notebook view"),
-      body: T("So does full screen, bottom left. Here is what a PDF adds.") },
-    { id: "pdf-recap-zoom", anchor: "viewer.common", placement: "right", recap: true, requires: { editable: false },
-      title: T("Zoom and fit work as in the notebook view"),
-      body: T("So does full screen, bottom left. Here is what a PDF adds.") },
     pen,
     { id: "pdf-translate", anchor: "viewer.translate", placement: "right", optional: true,
       title: T("Translate the page you're reading"),
-      body: T("Right-click for the whole document and the language; hold {key:Alt} to peek at the original."),
-      bodyTouch: T("Long-press for the whole document and the language.") },
+      body: T("Right-click for options; hold {key:Alt} for the original."),
+      bodyTouch: T("Long-press for options.") },
     { id: "pdf-select", anchor: "viewer.selectMode", placement: "right", requires: { phone: true },
       title: T("Choose what a drag does"),
-      body: T("Select text, or draw a box around a figure or a formula.") },
-    fullscreen,
+      body: T("Select text, or box a figure.") },
   ],
 };
 
@@ -68,19 +61,12 @@ export const notebookView = {
   offer: { title: T("You're in the notebook view"), line: T("Its tools, its paper, and the way back to your notes.") },
   steps: [
     zoom,
-    { id: "nbv-recap", anchor: "viewer.common", placement: "right", recap: true, requires: { editable: true },
-      title: T("Zoom, fit and the pen work as on a PDF"),
-      body: T("So does full screen, bottom left. Here is what the notebook view adds.") },
-    { id: "nbv-recap-zoom", anchor: "viewer.common", placement: "right", recap: true, requires: { editable: false },
-      title: T("Zoom and fit work as on a PDF"),
-      body: T("So does full screen, bottom left. Here is what the notebook view adds.") },
     pen,
     { id: "nbv-paper", anchor: "viewer.paper", placement: "right", requires: { editable: true },
-      title: T("The paper of the page in view"),
-      body: T("Size, pattern and background. **Apply to all pages** gives every page the same.") },
+      title: T("Change this page's paper"),
+      body: T("**Apply to all pages** sets every page at once.") },
     { id: "nbv-notes", anchor: "viewer.notesView", placement: "right", media: "page-notebook",
       title: T("Back to your notes"),
-      body: T("The same pages, standing among your notes again. × at the bottom right does the same.") },
-    fullscreen,
+      body: T("The same pages, among your notes again.") },
   ],
 };

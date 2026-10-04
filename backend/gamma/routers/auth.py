@@ -22,15 +22,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def new_session(username: str, via: str = "") -> str:
-    """Mint a session row for an account; the caller sets the cookie. Shared
-    by the password login and the cloud sign-in callback, which passes
-    ``via="cloud"``: the grant check ends those sessions, and only those,
-    when the account server refuses the account's grant."""
+def new_session(user_id: str, via: str = "") -> str:
+    """Mint a session row for an account (its id); the caller sets the
+    cookie. Shared by the password login and the cloud sign-in callback,
+    which passes ``via="cloud"``: the grant check ends those sessions, and
+    only those, when the account server refuses the account's grant."""
     token = secrets.token_urlsafe(32)
     with connect_users_db() as conn:
-        conn.execute("INSERT INTO sessions (token, username, created_at, via) VALUES (?, ?, ?, ?)",
-                     (token, username, page_now(), via))
+        conn.execute("INSERT INTO sessions (token, user_id, created_at, via) VALUES (?, ?, ?, ?)",
+                     (token, user_id, page_now(), via))
         conn.commit()
     return token
 
@@ -44,7 +44,7 @@ def login(payload: LoginRequest, request: Request):
     ratelimit.check(f"login:user:{payload.username}", max_hits=10, window_seconds=300)
     with connect_users_db() as conn:
         row = conn.execute(
-            "SELECT username, password_hash, is_guest FROM users WHERE username = ?",
+            "SELECT username, password_hash, is_guest, id FROM users WHERE username = ?",
             (payload.username,),
         ).fetchone()
     # Guest accounts have no password; a cloud-provisioned account has an
@@ -55,7 +55,7 @@ def login(payload: LoginRequest, request: Request):
         raise HTTPException(status_code=401, detail="invalid credentials")
     ratelimit.reset(f"login:ip:{ip}")
     ratelimit.reset(f"login:user:{payload.username}")
-    token = new_session(row[0])
+    token = new_session(row[3])
     resp = JSONResponse({"ok": True, "username": row[0]})
     set_session_cookie(resp, token, request)
     return resp
@@ -72,8 +72,8 @@ def logout(request: Request):
         with connect_users_db() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
-    if request.state.is_guest and request.state.user:
-        workspaces.delete_account(request.state.user)
+    if request.state.is_guest and request.state.user_id:
+        workspaces.delete_account(request.state.user_id)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("session")
     return resp
@@ -92,11 +92,12 @@ def get_session(request: Request):
         return {"user": None, "build": build}
     if is_token(request):  # a token is no session: GET /api/sync/whoami says who it is
         raise HTTPException(status_code=403, detail=TOKEN_REFUSAL)
+    user_id = request.state.user_id
     out = {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
-           "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
-           "workspaces": workspaces.list_for_user(user), "build": build}
+           "default_workspace": request.state.default_ws or workspaces.ensure_personal(user_id),
+           "workspaces": workspaces.list_for_user(user_id), "build": build}
     if request.state.is_guest:
-        out["guest_expires_at"] = guests.account_expires_at(user)  # when the account and its workspace go
+        out["guest_expires_at"] = guests.account_expires_at(user_id)  # when the account and its workspace go
     return out
 
 
@@ -129,15 +130,11 @@ def login_guest(request: Request):
     # Each call creates an account and a workspace directory: a tight rate per
     # IP, and GAMMA_GUEST_MAX live guests at most (new_guest's 503).
     ratelimit.check(f"guest:ip:{client_ip(request)}", max_hits=10, window_seconds=3600)
-    username = guests.new_guest()
+    user_id, username = guests.new_guest()
     now = page_now()
     token = secrets.token_urlsafe(32)
     with connect_users_db() as conn:
-        # guest_date: the creation date — kept in the schema, read by nothing
-        conn.execute(
-            "INSERT INTO sessions (token, username, guest_date, created_at) VALUES (?, ?, ?, ?)",
-            (token, username, now[:10], now),
-        )
+        conn.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)", (token, user_id, now))
         conn.commit()
     resp = JSONResponse({"ok": True, "username": username})
     set_session_cookie(resp, token, request)

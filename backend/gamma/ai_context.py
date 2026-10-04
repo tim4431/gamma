@@ -8,9 +8,11 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
-from .blocks_store import fetch_subtree, page_attachment, page_for_doc, page_root_id
-from .db import connect_data_db, connect_pages_db, page_now, pdf_upload_path
-from .foldertags import parse_tags
+from .ai_protocols.base import reasoning_text
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
+                           page_attachment, page_for_doc, page_root_id)
+from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
+from .highlights import is_highlight, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .notebook import is_sheet
@@ -18,7 +20,7 @@ from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, image_part, outline, page_count, page_label, render_page)
 from .server_settings import can_store
-from .storage import write_atomic
+from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
 
@@ -231,7 +233,8 @@ def handwriting_label(props: dict) -> str:
     handwriting block or a page of paper, whose text is only a caption; ""
     for any other block."""
     if props.get("ink_url"):
-        where = f"on p. {props['pdf_page']}" if props.get("pdf_page") else "on the page of paper above"
+        page = page_of(props)
+        where = f"on p. {page}" if page else "on the page of paper above"
         return f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)"
     if is_sheet(props):
         return "(a page of paper: the handwriting under it is written on it)"
@@ -489,6 +492,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
             total += estimate_tokens(content)
         if message.get("tool_calls"):
             total += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
+        for text in reasoning_text(message.get("reasoning")).values():
+            total += estimate_tokens(text)
         total += _IMAGE_TOKENS * len(message.get("images") or ())
     return total + _IMAGE_TOKENS * len(images or ())
 
@@ -509,7 +514,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
     front of the question itself, so the document ``context`` — glued to
     the oldest user turn — reads the same on every turn of a conversation.
     ``drop_turns`` leaves out that many of the oldest history items (a
-    conversation the model's window can't hold any more).
+    conversation the model's window can't hold any more). A saved reply's
+    ``reasoning`` (the thinking its wire reported) rides on its first
+    replayed assistant turn, for the wire that echoes it back.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -524,16 +531,19 @@ def build_messages(payload, context: str, with_tools: bool = False,
     for i, history_item in enumerate(history):
         role = "assistant" if history_item.get("role") == "ai" else "user"
         content = history_item.get("text", "")
+        thinking = reasoning_text(history_item.get("reasoning")) if role == "assistant" else {}
         if with_tools:
             actions = _replayable(history_item)
             if actions:
                 # Calls first, then their results, then the reply prose — the
                 # order the turn actually happened in. Synthetic call ids only
-                # need to pair within this one request.
+                # need to pair within this one request. The thinking led to
+                # the calls, so it rides on them.
                 messages.append({"role": "assistant", "content": "", "tool_calls": [
                     {"id": f"call_h{i}_{j}", "name": canonical_tool(a["tool"]),
                      "arguments": a.get("args") or {}}
-                    for j, a in enumerate(actions)]})
+                    for j, a in enumerate(actions)], **({"reasoning": thinking} if thinking else {})})
+                thinking = {}
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
@@ -548,7 +558,7 @@ def build_messages(payload, context: str, with_tools: bool = False,
         if role == "user" and context and not context_used:
             content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
             context_used = True
-        messages.append({"role": role, "content": content})
+        messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {})})
     content = final_prompt(payload, located)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
     if message_context:
@@ -625,14 +635,14 @@ def context_markdown(title: str, system: str, messages: list, tools: list | None
     return "\n".join(out)
 
 
-def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:
-    """Best-effort download of a missing PDF from its recorded source URL."""
-    log.info(f"[ai_chat] PDF NOT FOUND at {pdf_path}, attempting download from source_url")
+def _download_pdf_from_source(ws: str, doc_id: str, name: str) -> None:
+    """Best-effort download of a missing PDF from its recorded source URL,
+    stored as the workspace's ``name``."""
+    log.info(f"[ai_chat] PDF NOT FOUND: {name} in workspace {ws}, attempting download from source_url")
     try:
         with connect_pages_db(ws) as connection:
             row = connection.execute(
-                "SELECT properties FROM unified_blocks "
-                "WHERE json_extract(properties, '$.doc_id') = ?",
+                "SELECT properties FROM unified_blocks WHERE doc_id = ?",
                 (doc_id,),
             ).fetchone()
         if not row:
@@ -650,21 +660,24 @@ def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:
         if not can_store(ws, len(pdf_data)):
             log.info(f"[ai_chat] not caching {doc_id} ({len(pdf_data)} bytes): over storage limits")
             return
-        write_atomic(pdf_path, pdf_data)
+        put_upload(ws, name, pdf_data)
         log.info(f"[ai_chat] downloaded {len(pdf_data)} bytes from {source}")
     except Exception as error:
         log.warning(f"[ai_chat] download failed: {error}")
 
 
 def pdf_path(ws: str, doc_id: str):
-    """Return a document's local PDF path, downloading it when possible."""
+    """Return a document's local PDF path (``storage.find_upload_file``),
+    downloading it from its source when it is not stored."""
     try:
-        path = pdf_upload_path(ws, doc_id)
+        name = f"{safe_doc_id(doc_id)}.pdf"
     except ValueError:
         return None
-    if not path.exists():
-        _download_pdf_from_source(ws, doc_id, path)
-    return path if path.exists() else None
+    path = find_upload_file(name, ws)
+    if path is None:
+        _download_pdf_from_source(ws, doc_id, name)
+        path = find_upload_file(name, ws)
+    return path
 
 
 def truncate(text: str, limit: int) -> str:
@@ -1181,22 +1194,20 @@ def area_highlight(properties: dict) -> tuple[int, tuple] | None:
     text highlight, for any block that is not a highlight (a text box has
     no quote either but is never one), or for one without a usable
     rectangle. The stored rectangle is in pixels of a capture-time render
-    of ``width`` × ``height``."""
-    if not properties.get("highlight_id") or is_text_box(properties):
+    of the position's ``width`` × ``height``."""
+    if not is_highlight(properties):
         return None
-    position = properties.get("pdf_position")
-    if not isinstance(position, dict):
-        return None
+    position = properties["pdf_position"]
     rect = position.get("boundingRect")
     if not isinstance(rect, dict):
         return None
-    if not (position.get("area") or rect.get("area") or not (properties.get("quote") or "").strip()):
+    if not (position.get("area") or not (properties.get("quote") or "").strip()):
         return None
     try:
-        width, height = float(rect.get("width") or 0), float(rect.get("height") or 0)
+        width, height = float(position.get("width") or 0), float(position.get("height") or 0)
         xs = sorted((float(rect["x1"]) / width, float(rect["x2"]) / width))
         ys = sorted((float(rect["y1"]) / height, float(rect["y2"]) / height))
-        page = int(properties.get("pdf_page") or position.get("pageNumber") or 0)
+        page = int(position.get("pageNumber") or 0)
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         return None
     box = (max(0.0, xs[0] - _AREA_PAD), max(0.0, ys[0] - _AREA_PAD),
@@ -1229,15 +1240,12 @@ def under_sheet(conn, block_id: str) -> bool:
     starting at that block (a focused note, ``read_block`` of one block)
     begins. The walks below it pass that on themselves."""
     row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
-    for _ in range(10000):  # cycle guard, as page_root_id
+    for _ in range(10000):  # cycle guard
         if not row or row[0] in (None, "root"):
             return False
-        row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (row[0],)).fetchone()
-        try:
-            if row and is_sheet(json.loads(row[1] or "{}")):
-                return True
-        except ValueError:
-            pass
+        row = conn.execute("SELECT parent_id, kind FROM unified_blocks WHERE id = ?", (row[0],)).fetchone()
+        if row and row[1] == "sheet":
+            return True
     return False
 
 
@@ -1258,19 +1266,37 @@ def render_area_crops(ws: str, doc_id: str, areas: list) -> list[tuple[str, str]
     return images
 
 
-def page_properties_line(properties: dict) -> str:
+def paths_text(paths: dict, folders: list[str]) -> list[str]:
+    """The paths of ``folders`` (ids) as they read, given ``folder_paths``;
+    an id that is no folder is left out."""
+    return [PATH_SEP.join(paths[f]) for f in folders if f in paths]
+
+
+def quoted_paths(paths: dict, folders: list[str]) -> str:
+    """``paths_text`` as one phrase: each path in quotes (a name may hold a
+    comma), "" for none."""
+    return ", ".join(f'"{path}"' for path in paths_text(paths, folders))
+
+
+def page_properties_line(connection, properties: dict) -> str:
     """One line describing what a page carries and how it is filed —
-    folders, labels, cached metadata (authors, year, venue, DOI/arXiv), web
-    source, attachment — so the model can tell a paper from a note about one.
-    "" when the page has none of it."""
+    folders (their paths), labels (their names), cached metadata (authors,
+    year, venue, DOI/arXiv), web source, attachment — so the model can tell
+    a paper from a note about one. "" when the page has none of it. A filed
+    page's folders and labels are read from their trees, one query each."""
     properties = properties or {}
     bits = []
-    folders = parse_tags(properties.get("folder"))
+    folders = filing(properties, FOLDERS)
     if folders:
-        bits.append("folders: " + ", ".join(folders))
-    labels = parse_tags(properties.get("category"))
+        quoted = quoted_paths(folder_paths(connection), folders)
+        if quoted:
+            bits.append("folders: " + quoted)
+    labels = filing(properties, LABELS)
     if labels:
-        bits.append("labels: " + ", ".join(labels))
+        names = label_names(connection)
+        quoted = [f'"{names[label]}"' for label in labels if label in names]
+        if quoted:
+            bits.append("labels: " + ", ".join(quoted))
     meta = properties.get("meta") or {}
     if isinstance(meta, dict):
         authors = [str(a).strip() for a in (meta.get("authors") or []) if str(a).strip()]
@@ -1373,7 +1399,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         walk(page_id, 0)
     sections = [f"### {root[3] or 'Untitled'}"]
     sections.append(f"Gamma page ID: {page_id}")
-    props_line = page_properties_line(properties)
+    props_line = page_properties_line(connection, properties)
     if props_line:
         sections.append(props_line)
     if properties.get("summary"):

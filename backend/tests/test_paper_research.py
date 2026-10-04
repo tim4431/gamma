@@ -19,6 +19,7 @@ def _provider(ai_provider):
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     monkeypatch.setattr("gamma.ai_catalog.context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
 
 
 def _reply(*blocks):
@@ -57,6 +58,7 @@ def test_research_reads_the_library_and_files_its_report(org, monkeypatch):
             # not on the table at all.
             assert "becomes a page in their library" in system
             assert "Nobody is at the keyboard" in system
+            assert f'the folder "readout" (id {ids["readout"]})' in system  # it reads where it started
             assert "rename_page" not in rounds[0]["tools"] and "save_paper" not in rounds[0]["tools"]
             assert "read_paper" in rounds[0]["tools"]
             return FakeResp(_tool_use("s1", "search_library", {"query": "cavity"}))
@@ -64,15 +66,15 @@ def test_research_reads_the_library_and_files_its_report(org, monkeypatch):
                                "\n\nSee [the PRL](https://doi.org/10.1/x), p. 3."))
 
     monkeypatch.setattr("gamma.paper_research.open_ai", fake_open)
-    job = paper_research.start(user=ids["user"], ws=ids["ws"],
-                               question="what limits the density?", folder="readout")
+    job = paper_research.start(user_id=ids["user_id"], ws=ids["ws"],
+                               question="what limits the density?", folder=ids["readout"])
     done = jobs.wait(job["id"], timeout=30)
     assert done["state"] == "done", done.get("error")
     result = jobs.get(job["id"], full=True)["result"]
     assert result["steps"] == 1
     title, page_props = _page(ids["ws"], result["page_id"])
     assert title == "Research: what limits the density?"
-    assert page_props.get("folder") == "readout", "filed where the user started it"
+    assert page_props.get("folders") == [ids["readout"]], "filed where the user started it"
     blocks = _page_blocks(ids["ws"], result["page_id"])
     assert blocks[0] == "**Question.** what limits the density?"
     assert "light-assisted collisions" in blocks[1] and "p. 3" in blocks[1]
@@ -92,7 +94,7 @@ def test_research_lists_what_it_read_and_what_stayed_blocked(org, monkeypatch):
     monkeypatch.setattr("gamma.ai_web.fetch_document", lambda source, published_only=False: {
         "kind": "pdf", "url": source, "title": "A paper", "pages": ["[p. 1]\ntext"],
         "chars": 4, "version": "publisher", "note": ""})
-    job = paper_research.start(user=ids["user"], ws=ids["ws"], question="anything?")
+    job = paper_research.start(user_id=ids["user_id"], ws=ids["ws"], question="anything?")
     done = jobs.wait(job["id"], timeout=30)
     assert done["state"] == "done", done.get("error")
     result = jobs.get(job["id"], full=True)["result"]
@@ -100,6 +102,13 @@ def test_research_lists_what_it_read_and_what_stayed_blocked(org, monkeypatch):
     assert "**Read for this report**" in blocks[-1]
     assert "[A paper](https://example.org/p.pdf)" in blocks[-1]
     assert result["blocked"] == []
+
+
+def test_a_report_whose_folder_went_meanwhile_lands_at_the_library_root(org):
+    _, ids = org
+    page_id, _ = paper_research._file_report(ids["ws"], ids["user_id"], "why?", "folder-gone",
+                                             "Because.", [])
+    assert "folders" not in _page(ids["ws"], page_id)[1]
 
 
 def test_a_research_job_stops_when_asked(org, monkeypatch):
@@ -113,7 +122,7 @@ def test_a_research_job_stops_when_asked(org, monkeypatch):
         return FakeResp(_tool_use(f"s{len(rounds)}", "search_library", {"query": "again"}))
 
     monkeypatch.setattr("gamma.paper_research.open_ai", fake_open)
-    job = paper_research.start(user=ids["user"], ws=ids["ws"], question="loop forever")
+    job = paper_research.start(user_id=ids["user_id"], ws=ids["ws"], question="loop forever")
     jobs.cancel(job["id"])
     done = jobs.wait(job["id"], timeout=30)
     assert done["state"] == "cancelled"
@@ -128,7 +137,9 @@ def test_a_research_job_needs_a_question_and_answers_through_the_api(org, monkey
     monkeypatch.setattr("gamma.paper_research.open_ai", fake_open)
     r = c.post("/api/jobs/research", json={"question": "  ", "folder": ""})
     assert r.status_code == 400 and "needs a question" in r.text
-    r = c.post("/api/jobs/research", json={"question": "what limits it?", "folder": "readout"})
+    r = c.post("/api/jobs/research", json={"question": "what limits it?", "folder": "no-such-folder"})
+    assert r.status_code == 400 and "no such folder" in r.text
+    r = c.post("/api/jobs/research", json={"question": "what limits it?", "folder": ids["readout"]})
     assert r.status_code == 200, r.text
     done = jobs.wait(r.json()["id"], timeout=30)
     assert done["state"] == "done", done.get("error")

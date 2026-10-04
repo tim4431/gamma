@@ -1,14 +1,15 @@
-import { api, getSettings, login, normalizeServer, originPattern, removeServer, setSettings } from "./api.js";
+import { api, defaultFolder, folderByPath, getSettings, login, normalizeServer, originPattern, removeServer, setSettings } from "./api.js";
 import { renderServerList } from "./serverList.js";
 import { connectPublisher, describeSession, publisherHost, publisherRoot } from "./publisherSessions.js";
+import { folderPicker, icon, menuRow, NEW_FOLDER } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on = true) => $(id).classList.toggle("hidden", !on);
 
 let tab = null;
 let state = null;
-let picker = { folders: [], labels: [] };  // from GET /api/library/folders
-let folderValue = "";                      // "" = library root, "__new__" = the new-folder input
+let folderSelect = null;                   // the folder picker (ui.js); NEW_FOLDER = the new-folder input
+let labelNames = [];                       // the library's labels (GET /api/library/folders), suggested
 let labelTags = [];                        // committed label chips; #labels holds the fragment being typed
 let labelSelIdx = -1;                      // keyboard selection in the label suggestion menu
 let pub = null;                            // publisher sessions: the worker's `publisher-status` answer
@@ -86,28 +87,6 @@ function hostOf(origin) {
 
 function openPath(path) {
   send({ type: "open", path }).then(() => window.close());
-}
-
-// ---------- icons (mirrors frontend/src/shared/ui/Icons.jsx — 24×24 stroke glyphs) ----------
-
-const ICON_PATHS = {
-  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
-  folderPlus: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/>',
-  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
-  check: '<path d="M20 6 9 17l-5-5"/>',
-  scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
-
-  chevronDown: '<path d="m6 9 6 6 6-6"/>',
-  cookie: '<path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/>',
-  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-};
-
-// Gamma's icon sizes (14 inline with text, 16 in buttons) and its stroke:
-// 1.6 px at any size (a check mark 2 px), like Icons.jsx's iconStroke.
-function icon(name, cls = "", size = 14, weight = 1.6) {
-  const span = document.createElement("span");
-  span.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${(weight * 24) / size}" stroke-linecap="round" stroke-linejoin="round"${cls ? ` class="${cls}"` : ""}>${ICON_PATHS[name]}</svg>`;
-  return span.firstChild;
 }
 
 // ---------- views ----------
@@ -338,59 +317,20 @@ function renderHead(st) {
 // ---------- folder + label pickers (MenuSelect / ctxMenu style, plain JS) ----------
 
 async function fillPickers(settings) {
-  try { const r = await api("/library/folders"); picker = { folders: r.folders || [], labels: r.labels || [] }; }
-  catch { picker = { folders: [], labels: [] }; }
-  const remembered = settings.folder || "";
-  if (remembered && !picker.folders.includes(remembered)) picker.folders.unshift(remembered);
-  folderValue = picker.folders.includes(remembered) ? remembered : "";
-  renderFolderBtn();
-  show("folder-new-row", false);
+  let library = { folders: [], labels: [] };
+  try { library = await api("/library/folders"); } catch {}
+  labelNames = library.labels.map((l) => l.name);
+  // The default folder; a path stored before folders had ids picks the folder
+  // of that path, else comes up as a new folder (the save makes it).
+  const { folder, folder_path } = defaultFolder(settings);
+  folderSelect.set(library.folders, folder_path ? folderByPath(library.folders, folder_path) || NEW_FOLDER : folder);
+  $("folder-new").value = folderSelect.value === NEW_FOLDER ? folder_path : "";
+  show("folder-new-row", folderSelect.value === NEW_FOLDER);
   // Prefill the options-page default labels only — the last save's labels are
-  // deliberately not remembered (doSave persists just the folder).
+  // deliberately not remembered (a save remembers just its folder).
   labelTags = [...new Set((settings.labels || []).map((s) => String(s).trim()).filter(Boolean))];
   renderLabelTags();
   $("labels").value = "";
-}
-
-function renderFolderBtn() {
-  const btn = $("folder-btn");
-  btn.innerHTML = "";
-  const ic = document.createElement("span"); ic.className = "ctxMenuIcon";
-  ic.appendChild(icon(folderValue === "__new__" ? "folderPlus" : "folder"));
-  const label = document.createElement("span"); label.className = "uiSelectLabel";
-  label.textContent = folderValue === "__new__" ? "New folder…" : (folderValue || "Library root");
-  btn.title = label.textContent;
-  btn.append(ic, label, icon("chevronDown", "uiSelectChev"));
-}
-
-function menuRow(text, iconName, selected, onPick) {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "ctxMenuItem ctxMenuItemIconed";
-  const ic = document.createElement("span"); ic.className = "ctxMenuIcon"; ic.appendChild(icon(iconName));
-  const t = document.createElement("span"); t.className = "ctxMenuText"; t.textContent = text; t.title = text;
-  b.append(ic, t);
-  if (selected) b.appendChild(icon("check", "ctxMenuCheck", 14, 2));
-  // mousedown, not click: keeps focus where it is (the labels input relies on this).
-  b.addEventListener("mousedown", (e) => e.preventDefault());
-  b.addEventListener("click", onPick);
-  return b;
-}
-
-function openFolderMenu() {
-  const menu = $("folder-menu");
-  menu.innerHTML = "";
-  const pick = (value) => () => {
-    folderValue = value;
-    renderFolderBtn();
-    show("folder-menu", false);
-    show("folder-new-row", value === "__new__");
-    if (value === "__new__") $("folder-new").focus();
-  };
-  menu.appendChild(menuRow("Library root", "folder", folderValue === "", pick("")));
-  for (const f of picker.folders) menu.appendChild(menuRow(f, "folder", folderValue === f, pick(f)));
-  menu.appendChild(menuRow("New folder…", "folderPlus", folderValue === "__new__", pick("__new__")));
-  show("folder-menu");
 }
 
 // Labels are the app's categoryTag chips: typing "," or Enter commits the
@@ -422,7 +362,7 @@ function renderLabelTags() {
 function labelSuggestions() {
   const frag = $("labels").value.trim().toLowerCase();
   const chosen = new Set(labelTags.map((l) => l.toLowerCase()));
-  return picker.labels.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8);
+  return labelNames.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8);
 }
 
 function updateLabelMenu() {
@@ -448,8 +388,11 @@ function updateLabelMenu() {
   show("label-menu");
 }
 
+// As POST /api/clip names it: a folder id, or a typed new folder's path.
 function chosenFolder() {
-  return folderValue === "__new__" ? $("folder-new").value.trim() : folderValue;
+  return folderSelect.value === NEW_FOLDER
+    ? { folder: "", folder_path: $("folder-new").value.trim() }
+    : { folder: folderSelect.value, folder_path: "" };
 }
 
 function chosenLabels() {
@@ -462,7 +405,7 @@ function chosenLabels() {
 
 async function doSave({ candidate, force } = {}) {
   const c = candidate || state.candidate;
-  const folder = chosenFolder();
+  const folder = chosenFolder();  // the worker remembers it once the save succeeds
   const labels = chosenLabels();
   $("save").disabled = true; $("save-anyway").disabled = true;
   show("result", false);
@@ -474,10 +417,7 @@ async function doSave({ candidate, force } = {}) {
     // <all_urls> is already granted and this resolves silently.
     const fetchUrl = c.pdf_url || (c.is_pdf_tab ? c.source_url : "");
     if (fetchUrl) { try { await chrome.permissions.request({ origins: [originPattern(new URL(fetchUrl).origin)] }); } catch {} }
-    // Remember the folder for next time; labels are per-paper, so they are
-    // NOT persisted — the next popup starts from the options-page defaults.
-    await setSettings({ folder });
-    const out = await send({ type: "save", tabId: tab.id, candidate: c, folder, labels, source_url: force ? (tab && tab.url) : undefined });
+    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
     const r = $("result");
     r.className = "msg " + (out.note ? "warn" : "ok");
@@ -574,7 +514,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-form").addEventListener("submit", doLogin);
   $("login-btn").onclick = doLogin;
   $("offline-retry").onclick = () => refresh(true);
-  $("folder-btn").onclick = () => { $("folder-menu").classList.contains("hidden") ? openFolderMenu() : show("folder-menu", false); };
+  folderSelect = folderPicker($("folder-btn"), $("folder-menu"), (value) => {
+    show("folder-new-row", value === NEW_FOLDER);
+    if (value === NEW_FOLDER) $("folder-new").focus();
+  }, { newFolder: true });
   $("labels-box").addEventListener("pointerdown", (e) => {
     if (e.target === $("labels-box")) { e.preventDefault(); $("labels").focus(); }
   });
@@ -607,12 +550,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("labels").addEventListener("blur", () => { labelSelIdx = -1; show("label-menu", false); });
   document.addEventListener("pointerdown", (e) => {
     if (!e.target.closest("#server-menu, [data-server-switch]")) closeServerMenu();
-    if (!e.target.closest("#folder-wrap")) show("folder-menu", false);
     if (!e.target.closest("#labels-wrap")) show("label-menu", false);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("server-menu").classList.contains("hidden")) closeServerMenu(true);
-    if (e.key === "Escape") { show("folder-menu", false); show("label-menu", false); closeDrawer(); }
+    if (e.key === "Escape") { show("label-menu", false); closeDrawer(); }
   });
   $("save").onclick = () => doSave();
   $("save-anyway").onclick = () => doSave({ candidate: { kind: "none", source_url: tab.url, title: tab.title }, force: true });

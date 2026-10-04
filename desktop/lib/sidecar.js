@@ -73,7 +73,13 @@ async function healthy(url, timeoutMs = 1500) {
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     const r = await fetch(url + '/api/health', { signal: ctrl.signal });
     clearTimeout(t);
-    return r.ok;
+    if (r.ok) return true;
+    // A server whose data directory it cannot upgrade is up too: it answers
+    // every request with a 503 carrying its guidance, and the window shows
+    // that page (backend/gamma/app.py _blocked_app).
+    if (r.status !== 503) return false;
+    const body = await r.json().catch(() => null);
+    return body?.error === 'data_directory_not_upgradable';
   } catch {
     return false;
   }

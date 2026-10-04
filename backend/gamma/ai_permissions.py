@@ -3,7 +3,7 @@ waits for when a tool needs the user's answer first.
 
 Every tool belongs to one permission (the ``perm`` of its entry in
 ``ai_tools.TOOLS``), and a chat request carries a state per permission
-(``AIChatRequest.permissions``, Settings → AI → Chat → Tools):
+(``AIChatRequest.permissions``, Settings → AI → Tool usage → Tools):
 
 - ``"allow"``: the tool runs whenever the model calls it.
 - ``"ask"``: the tool is offered, but each call waits for the user's decision
@@ -58,19 +58,19 @@ def permission_state(perms, key: str, changes: bool) -> str:
     return "ask" if changes else "allow"
 
 
-def open_approval(user: str) -> str | None:
-    """A new waiting approval of ``user``'s: its id, or None when the account
+def open_approval(user_id: str) -> str | None:
+    """A new waiting approval of ``user_id``'s: its id, or None when the account
     already has too many waiting (the call then counts as not answered)."""
     with _lock:
-        if sum(1 for a in _pending.values() if a["user"] == user) >= MAX_PENDING_PER_USER:
+        if sum(1 for a in _pending.values() if a["user"] == user_id) >= MAX_PENDING_PER_USER:
             return None
         approval_id = secrets.token_urlsafe(18)
-        _pending[approval_id] = {"user": user, "decided": threading.Event(), "decision": None, "note": ""}
+        _pending[approval_id] = {"user": user_id, "decided": threading.Event(), "decision": None, "note": ""}
         return approval_id
 
 
-def answer(approval_id: str, user: str, decision: str, note: str = "") -> bool:
-    """Record ``user``'s decision on their waiting approval, and with a
+def answer(approval_id: str, user_id: str, decision: str, note: str = "") -> bool:
+    """Record ``user_id``'s decision on their waiting approval, and with a
     decline what they want done instead (``note``, kept for "deny" only).
     False when none of theirs waits under that id: answered already, timed
     out, its stream closed, or never theirs."""
@@ -78,7 +78,7 @@ def answer(approval_id: str, user: str, decision: str, note: str = "") -> bool:
         return False
     with _lock:
         approval = _pending.get(approval_id)
-        if not approval or approval["user"] != user or approval["decision"]:
+        if not approval or approval["user"] != user_id or approval["decision"]:
             return False
         approval["decision"] = decision
         approval["note"] = str(note or "").strip()[:MAX_NOTE] if decision == "deny" else ""

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import backup_schedule as tasks
-from ..auth import require_personal_user
+from ..auth import require_personal_user_id
 
 router = APIRouter(prefix='/api/backup-tasks', tags=['backups'])
 
@@ -27,7 +27,7 @@ class PreviewInput(BaseModel):
 
 
 def owner(request):
-    return require_personal_user(request, 'Sign in to manage backup tasks.')
+    return require_personal_user_id(request, 'Sign in to manage backup tasks.')
 
 
 def call(fn, *args, **kwargs):

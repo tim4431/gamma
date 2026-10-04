@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config
+from . import accounts, config, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -42,7 +42,7 @@ a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline
 .btn--danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line-2))}.btn--danger:hover{background:var(--danger-soft)}
 .btn--sm{padding:4px 9px;font-size:13px}.btn--block{width:100%;padding:9px 12px}
 label{display:block;font-size:12.5px;font-weight:500;color:var(--text-2);margin:12px 0 5px}label small{font-weight:400;color:var(--muted)}
-input,select{width:100%;padding:8px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:inherit;font:inherit;font-size:14px}input:focus,select:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0;border-color:var(--accent)}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:inherit;font:inherit;font-size:14px}textarea{min-height:110px;resize:vertical;font-family:var(--mono);font-size:12.5px;line-height:1.5}input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0;border-color:var(--accent)}
 form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;font-size:13px;margin-top:8px;color:var(--danger)}.msg.ok{color:var(--ok)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:2px 8px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);white-space:nowrap}
 .pill--ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}.pill--warn{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
@@ -204,7 +204,7 @@ def _js(value) -> str:
 
 def _head(title: str) -> str:
     turnstile = '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' \
-        if config.TURNSTILE_SITEKEY else ""
+        if settings.turnstile_sitekey() else ""
     return (f"<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{esc(title)} · Gamma Cloud</title><meta name=color-scheme content='light dark'>"
             f"<link rel=icon type=image/svg+xml href='data:image/svg+xml,{html.escape(LOGO.replace('#', '%23'))}'>"
@@ -244,9 +244,10 @@ def app(title: str, lead: str, account: dict, active: str, inner: str, script: s
 
 
 def turnstile_widget() -> str:
-    if not config.TURNSTILE_SITEKEY:
+    sitekey = settings.turnstile_sitekey()
+    if not sitekey:
         return ""
-    return f'<div class="cf-turnstile" data-sitekey="{esc(config.TURNSTILE_SITEKEY)}"></div>'
+    return f'<div class="cf-turnstile" data-sitekey="{esc(sitekey)}"></div>'
 
 
 def error_page(title: str, message: str, back: str = "/") -> str:
@@ -274,7 +275,7 @@ def _password_fields() -> str:
 
 def _to_register() -> str:
     return ("<p class=switch>New to Gamma Cloud? <a href=/register>Create an account</a></p>"
-            if config.REGISTRATION != "closed" else "")
+            if settings.registration() != "closed" else "")
 
 
 def _terms() -> str:
@@ -282,7 +283,8 @@ def _terms() -> str:
 
 
 def _invite_field() -> str:
-    return "<label>Invite code<input name=invite required autocomplete=off></label>" if config.REGISTRATION == "invite" else ""
+    return ("<label>Invite code<input name=invite required autocomplete=off></label>"
+            if settings.registration() == "invite" else "")
 
 
 # --- auth pages ---------------------------------------------------------------
@@ -296,7 +298,7 @@ def login_page(social: dict | None = None) -> str:
 
 
 def register_page(social: dict | None = None) -> str:
-    if config.REGISTRATION == "closed":
+    if settings.registration() == "closed":
         return error_page("Registration is closed", "Gamma Cloud is not taking new accounts right now.")
     tiles, script = _social(social, "sign up", "signup")
     inner = ("<form id=f><label>E-mail<input name=email type=email autocomplete=email required autofocus></label>"
@@ -455,6 +457,8 @@ def _server_row(e: dict, manage: bool) -> str:
     if grant:
         meta.append(esc(_platform(grant.get("user_agent"))))
     meta.append(f"linked {_date(srv['linked_at'])}" if srv else f"signed in {_date(grant['created_at'])}")
+    if manage and srv:
+        meta += [esc(srv["version"]), f"schema {srv['schema']}" if srv["schema"] is not None else ""]
     if manage and grant and grant.get("ip"):
         meta.append(f"last seen at {esc(grant['ip'])}")
     active = max((srv or {}).get("last_seen_at", ""), (grant or {}).get("last_used_at", ""))
@@ -611,44 +615,50 @@ def _connections(linked: list[dict], enabled: list[str]) -> str:
     return rows
 
 
-def settings_page(account: dict, linked: list[dict] | None = None, enabled: list[str] | None = None) -> str:
-    def row(title, sub, body):
-        return f"<div class=srow><div class=desc><b>{title}</b><span>{sub}</span></div><div>{body}</div></div>"
+def srow(title: str, sub: str, body: str) -> str:
+    """A settings row: what it is on the left, the form on the right. Used by
+    the account's Settings page and the Admin page's Settings tab."""
+    return f"<div class=srow><div class=desc><b>{title}</b><span>{sub}</span></div><div>{body}</div></div>"
 
-    def foot(label, cls=""):
-        return f"<div class=formfoot><button type=submit class='btn btn--sm {cls}'>{label}</button><div class=msg></div></div>"
+
+def formfoot(label: str, cls: str = "") -> str:
+    """A form's submit button with the message line its handler writes to."""
+    return f"<div class=formfoot><button type=submit class='btn btn--sm {cls}'>{label}</button><div class=msg></div></div>"
+
+
+def settings_page(account: dict, linked: list[dict] | None = None, enabled: list[str] | None = None) -> str:
     # the password a change needs appears once the field above it is edited
     # (``data-gated``); an account without one confirms with its session
     has_pw = account["has_password"]
     pw = ("<label>Password <small>to confirm it is you</small>"
           "<input name=password type=password autocomplete=current-password required></label>") if has_pw else ""
     profile = (
-        row("Display name", "Shown on Gamma servers next to your username.",
-            f"<form id=name><label><span class=sr>Display name</span><input name=display_name value='{esc(account['display_name'])}' maxlength=100 "
-            f"placeholder='{esc(account['username'])}'></label>{foot('Save')}</form>")
-        + row("Username", "Your name on every Gamma server: lowercase letters, digits and hyphens.",
-              f"<form id=user data-gated><label><span class=sr>Username</span><input name=username value='{esc(account['username'])}' "
-              f"pattern='{USERNAME_PATTERN}' required></label><div class=reveal hidden>{pw}</div>"
-              f"{foot('Change username')}</form>"))
-    email = row("E-mail address", "A confirmation link goes to the new address; the current one stays until you open it.",
-                f"<div class=current>{esc(account['email'])} {_email_pill(account)}</div>"
-                "<form id=em data-gated><label>New address<input name=new_email type=email placeholder='name@example.org' required></label>"
-                f"<div class=reveal hidden>{pw}</div>{foot('Send confirmation')}</form>")
+        srow("Display name", "Shown on Gamma servers next to your username.",
+             f"<form id=name><label><span class=sr>Display name</span><input name=display_name value='{esc(account['display_name'])}' maxlength=100 "
+             f"placeholder='{esc(account['username'])}'></label>{formfoot('Save')}</form>")
+        + srow("Username", "Your name on every Gamma server: lowercase letters, digits and hyphens.",
+               f"<form id=user data-gated><label><span class=sr>Username</span><input name=username value='{esc(account['username'])}' "
+               f"pattern='{USERNAME_PATTERN}' required></label><div class=reveal hidden>{pw}</div>"
+               f"{formfoot('Change username')}</form>"))
+    email = srow("E-mail address", "A confirmation link goes to the new address; the current one stays until you open it.",
+                 f"<div class=current>{esc(account['email'])} {_email_pill(account)}</div>"
+                 "<form id=em data-gated><label>New address<input name=new_email type=email placeholder='name@example.org' required></label>"
+                 f"<div class=reveal hidden>{pw}</div>{formfoot('Send confirmation')}</form>")
     new_pw = ("<label>New password <small>8+ characters</small>"
               "<input name=new type=password autocomplete=new-password minlength=8 required></label>")
     if has_pw:
-        password = row("Password", "Changing it signs out every other browser and device.",
-                       "<form id=pw><div class=fields><label>Current password<input name=current type=password "
-                       f"autocomplete=current-password required></label>{new_pw}</div>{foot('Change password')}</form>")
+        password = srow("Password", "Changing it signs out every other browser and device.",
+                        "<form id=pw><div class=fields><label>Current password<input name=current type=password "
+                        f"autocomplete=current-password required></label>{new_pw}</div>{formfoot('Change password')}</form>")
     else:
-        password = row("Password", "You sign in with a connected account. A password lets you sign in with your "
-                       "e-mail or username too.", f"<form id=pw><div class=fields>{new_pw}</div>{foot('Set password')}</form>")
+        password = srow("Password", "You sign in with a connected account. A password lets you sign in with your "
+                        "e-mail or username too.", f"<form id=pw><div class=fields>{new_pw}</div>{formfoot('Set password')}</form>")
     conns = _connections(linked or [], enabled or [])
-    connected = row("Connected accounts", "Sign in with one click instead of a password.",
-                    f"{conns}<div class=msg id=smsg></div>") if conns else ""
-    delete = row("Delete account", "Signs everything out and removes the account after a grace period. Gamma servers keep their data.",
-                 "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
-                 f"<form id=del class=reveal hidden>{pw}{foot('Delete my account', 'btn--danger')}</form>")
+    connected = srow("Connected accounts", "Sign in with one click instead of a password.",
+                     f"{conns}<div class=msg id=smsg></div>") if conns else ""
+    delete = srow("Delete account", "Signs everything out and removes the account after a grace period. Gamma servers keep their data.",
+                  "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
+                  f"<form id=del class=reveal hidden>{pw}{formfoot('Delete my account', 'btn--danger')}</form>")
     inner = (_notice(account)
              + f"<section class=section><h2>Profile</h2>{profile}</section>"
              + f"<section class=section><h2>Sign-in</h2>{email}{connected}{password}</section>"
@@ -673,11 +683,42 @@ bind('del', async d => { if (!confirm('Delete this account? This cannot be undon
                f"const HAS_PW = {_js(has_pw)};" + script)
 
 
+def _settings_tab() -> str:
+    """The sign-up gate (``settings.py``). The forms are filled in by the
+    script from ``/api/admin/settings`` like the other tabs, and refilled
+    from each save's answer."""
+    registration = srow(
+        "Registration", "Who can create an account. An invite code works in open mode too and still grants its plan.",
+        "<form id=setreg><label><span class=sr>Registration</span><select name=registration>"
+        + "".join(f"<option value={m}>{m}</option>" for m in settings.REGISTRATION_MODES)
+        + f"</select></label>{formfoot('Save')}</form>")
+    turnstile = srow(
+        "Anti-bot check", "Cloudflare Turnstile on the sign-up and reset forms. It runs once both keys are stored.",
+        "<div class=current id=tsstate></div><form id=setts><div class=fields>"
+        "<label>Site key<input name=turnstile_sitekey placeholder='0x4AAA…' autocomplete=off></label>"
+        "<label>Secret key<input name=turnstile_secret type=password autocomplete=off></label></div>"
+        "<div class=formfoot><button type=submit class='btn btn--sm'>Save</button>"
+        "<button type=button class='btn btn--sm' id=clearsecret hidden>Clear secret</button><div class=msg></div></div></form>")
+    blocked = srow(
+        "Blocked e-mail domains", "Refused at registration, on top of the built-in list of throwaway-mail services. "
+        "A domain covers its subdomains. One per line.",
+        "<form id=setdom><label><span class=sr>Blocked e-mail domains</span>"
+        f"<textarea name=blocked_email_domains placeholder='spam.example'></textarea></label>{formfoot('Save')}</form>")
+    return ("<div id=tab-settings hidden>"
+            "<div class=notice id=unguarded hidden><span>Registration is open and the anti-bot check is off, so only "
+            "the rate limits stop a script. Its accounts stay unverified and cannot sign in to a Gamma server.</span></div>"
+            "<div class=section><h2>Sign-up<span>who may register, and what a sign-up has to pass</span></h2>"
+            + registration + turnstile + blocked + "</div>"
+            "<p class=empty>The public URL, mail and the Google/GitHub clients are set in the container's environment.</p>"
+            "</div>")
+
+
 def admin_page(account: dict) -> str:
     plans = "".join(f"<option value={p}>{p}</option>" for p in config.PLANS)
     inner = (
         "<div class=tabs><button class=on data-tab=accounts>Accounts</button><button data-tab=invites>Invites</button>"
-        "<button data-tab=clients>Clients</button><button data-tab=audit>Audit log</button></div>"
+        "<button data-tab=clients>Clients</button><button data-tab=settings>Settings</button>"
+        "<button data-tab=audit>Audit log</button></div>"
         "<div id=tab-accounts><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Username</th><th>E-mail</th><th>Plan</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody id=accounts></tbody></table></div></div>"
         "<div class=actions><button class='btn btn--sm' id=more>Load more</button></div></div>"
@@ -691,11 +732,12 @@ def admin_page(account: dict) -> str:
         "<label>Callback URL<input name=redirect placeholder='https://name.gammapdf.com/api/auth/cloud/callback' required></label>"
         "<button type=submit class='btn btn--primary btn--sm'>Create</button><div class=msg></div></form><div id=secret hidden class=secretbox></div></div></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Client id</th><th>Name</th><th>Kind</th><th>Callback</th><th></th></tr></thead><tbody id=clients></tbody></table></div></div></div>"
-        "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
+        + _settings_tab()
+        + "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
     script = """
 const PLANS = %s; let offset = 0, query = '';
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  for (const t of ['accounts','invites','clients','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
+  for (const t of ['accounts','invites','clients','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
 function planSelect(a){ return '<select class=sm data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === a.plan ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'; }
 function accountRow(a){
   const status = (a.deleted_at ? '<span class=pill>deleted</span> ' : '') + (a.email_verified ? '<span class="pill pill--ok">verified</span>' : '<span class="pill pill--warn">unverified</span>') + (a.is_admin ? ' <span class=pill>admin</span>' : '');
@@ -733,6 +775,7 @@ function wire(){
 async function load(tab){
   if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
+  if (tab === 'settings') showSettings(await api('/api/admin/settings', undefined, 'GET'));
   if (tab === 'audit') { const d = await api('/api/admin/audit?limit=300', undefined, 'GET'); document.getElementById('audit').innerHTML = d.audit.map(a => '<tr><td class=mono>' + esc(a.at.slice(0,19).replace('T',' ')) + '</td><td>' + esc(a.event) + '</td><td class=mono>' + esc(a.account_id) + '</td><td class=mono>' + esc(a.actor) + '</td><td>' + esc(a.detail) + '</td></tr>').join(''); }
   wire();
 }
@@ -741,9 +784,28 @@ document.getElementById('more').onclick = () => loadAccounts(false);
 bind('inv', async (d, msg) => { const r = await api('/api/admin/invites', {uses: Number(d.uses), plan: d.plan, note: d.note}); say(msg, 'Invite ' + r.invite.code + ' created.'); load('invites'); });
 bind('cli', async (d, msg) => { const r = await api('/api/admin/clients', {name: d.name, kind: d.kind, redirect_uris: [d.redirect]}); const box = document.getElementById('secret'); box.hidden = false;
   box.textContent = 'GAMMA_CLOUD_CLIENT_ID=' + r.client_id + '\\nGAMMA_CLOUD_CLIENT_SECRET=' + r.client_secret + '   (shown once)'; say(msg, 'Client created.'); load('clients'); });
+function showSettings(s){
+  const reg = document.getElementById('setreg').elements, ts = document.getElementById('setts').elements;
+  reg.registration.value = s.registration;
+  ts.turnstile_sitekey.value = s.turnstile_sitekey;
+  ts.turnstile_secret.value = ''; ts.turnstile_secret.placeholder = s.turnstile_secret_set ? 'stored · leave blank to keep' : '';
+  document.getElementById('setdom').elements.blocked_email_domains.value = s.blocked_email_domains;
+  document.getElementById('tsstate').innerHTML = s.turnstile_on ? '<span class="pill pill--ok">on</span>'
+    : '<span class="pill pill--warn">off</span><span class=empty>' + (s.turnstile_secret_set || s.turnstile_sitekey ? 'needs both keys' : 'no keys stored') + '</span>';
+  document.getElementById('clearsecret').hidden = !s.turnstile_secret_set;
+  document.getElementById('unguarded').hidden = !s.unguarded;
+}
+const saveSettings = async (body, msg) => { showSettings(await api('/api/admin/settings', body, 'PATCH')); if (msg) say(msg, 'Saved.'); };
+bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
+bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, turnstile_secret: d.turnstile_secret}, msg));
+bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
+const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySelector('.msg');
+cs.onclick = () => { if (!confirm('Clear the Turnstile secret? The anti-bot check stops running.')) return;
+  act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
 loadAccounts(true);
 """ % json.dumps(list(config.PLANS))
-    return app("Admin", "Accounts, invites, the clients of hosted servers, and what happened.", account, "admin", inner, script)
+    return app("Admin", "Accounts, invites, the clients of hosted servers, the sign-up settings, and what "
+               "happened.", account, "admin", inner, script)
 
 
 # --- the authorize page -------------------------------------------------------

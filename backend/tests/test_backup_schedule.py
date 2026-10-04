@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import login, make_user
+from conftest import account_of, login, make_user
 from gamma import backup_schedule as tasks, ws_backup
 from gamma.routers.backup_tasks import TaskInput
 
@@ -20,7 +20,7 @@ def workspace(tmp_path, monkeypatch, client):
 
 def create(ws, **changes):
     data = TaskInput(name='Nightly research', workspaces=[ws], **changes).model_dump()
-    return tasks.save('scheduled_owner', data)
+    return tasks.save(account_of('scheduled_owner'), data)
 
 
 @pytest.mark.parametrize('cron,expected', [
@@ -95,7 +95,7 @@ def test_task_retention_catchup_and_manual_isolation(workspace, monkeypatch):
     with pytest.raises(ws_backup.BackupError):
         ws_backup.create(workspace, label='manual-full')
     before = ws_backup.list_backups(workspace)
-    tasks.mutate('scheduled_owner', count['id'], 'delete')
+    tasks.mutate(account_of('scheduled_owner'), count['id'], 'delete')
     assert ws_backup.list_backups(workspace) == before
 
 
@@ -104,7 +104,7 @@ def test_run_now_wakes_the_running_scheduler(tmp_path, monkeypatch, client):
     # must not wait for the next 30 s round.
     monkeypatch.setattr(tasks.config, 'BACKUPS_DIR', tmp_path / 'backups')
     task = create(make_user('scheduled_owner', 'schedulepass1'), enabled=False)
-    tasks.mutate('scheduled_owner', task['id'], 'run')
+    tasks.mutate(account_of('scheduled_owner'), task['id'], 'run')
     deadline = time.monotonic() + 10
     while tasks.read(task['id'])['state'] != 'finished' and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -123,7 +123,7 @@ def test_write_waits_out_a_reader_holding_the_file(workspace, monkeypatch):
         return real(self, target)
 
     monkeypatch.setattr(pathlib.Path, 'replace', replace)
-    tasks.mutate('scheduled_owner', task['id'], 'run')
+    tasks.mutate(account_of('scheduled_owner'), task['id'], 'run')
     assert len(refusals) == 2 and tasks.read(task['id'])['state'] == 'queued'
 
 
@@ -133,14 +133,14 @@ def test_run_now_paused_and_regular_schedule_preserved(workspace, monkeypatch):
     task = create(workspace, enabled=False)
     tasks.run_due(at)
     assert ws_backup.list_backups(workspace) == []
-    tasks.mutate('scheduled_owner', task['id'], 'run')
+    tasks.mutate(account_of('scheduled_owner'), task['id'], 'run')
     assert tasks.read(task['id'])['state'] == 'queued'
     tasks.run_due(at)
     state = tasks.read(task['id'])
     assert state['state'] == 'finished' and state['next_run'] is None
     assert len(ws_backup.list_backups(workspace)) == 1
     enabled = create(workspace)
-    tasks.mutate('scheduled_owner', enabled['id'], 'run')
+    tasks.mutate(account_of('scheduled_owner'), enabled['id'], 'run')
     tasks.run_due(at)
     assert tasks.read(enabled['id'])['next_run'] == enabled['next_run']
 
@@ -185,4 +185,4 @@ def test_multiple_targets_dynamic_scope_and_revocation(workspace, monkeypatch):
     assert 'no longer owns' in tasks.read(selected['id'])['last_error']
     assert not any(b['task_id'] == selected['id'] for b in ws_backup.list_backups(workspace))
     data = {k: v for k, v in selected.items() if k in TaskInput.model_fields}
-    assert not tasks.save('scheduled_owner', {**data, 'enabled': False}, selected['id'])['enabled']
+    assert not tasks.save(account_of('scheduled_owner'), {**data, 'enabled': False}, selected['id'])['enabled']

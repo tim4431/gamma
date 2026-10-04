@@ -4,31 +4,22 @@ network)."""
 
 import pytest
 
-from conftest import login as _login, make_user as _make_user
+from conftest import drop_user, login as _login, make_user as _make_user
 from gamma import version
-
-
-def _drop_user(username):
-    from gamma.db import connect_users_db
-
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
 
 
 @pytest.fixture(scope="module")
 def infoadmin(client):
     _make_user("infoadmin", "infoadminpw", is_admin=1)
     yield _login("infoadmin", "infoadminpw")
-    _drop_user("infoadmin")
+    drop_user("infoadmin")
 
 
 @pytest.fixture(scope="module")
 def infouser(client):
     _make_user("infouser", "infouserpw", is_admin=0)
     yield _login("infouser", "infouserpw")
-    _drop_user("infouser")
+    drop_user("infouser")
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +39,8 @@ def test_parse_version():
 
 def test_server_info_requires_admin(anon, infouser):
     assert anon.get("/api/admin/server-info").status_code == 401
-    assert infouser.get("/api/admin/server-info").status_code == 403
+    r = infouser.get("/api/admin/server-info")
+    assert r.status_code == 403 and "version" not in r.text
 
 
 def test_server_info_reports_the_build_and_a_newer_release(infoadmin, monkeypatch):

@@ -2,7 +2,8 @@ from urllib.parse import urlencode
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import login, make_folder, make_page, make_user
+from gamma.db import connect_users_db, page_now
 from test_mcp import connection, rpc
 
 
@@ -26,6 +27,18 @@ def test_page_block_and_share_links_read_the_same_page(client, connection):
         assert share["token"] not in str(result)
         if "block" in target:
             assert ref["block_id"] == note["id"]
+    # The token names its workspace (<workspace id>.<secret>): the bare secret a
+    # link minted before carries, another workspace's prefix, or a share whose
+    # token names another workspace than its own resolves nothing.
+    assert share["token"].startswith(ws + ".")
+    secret = share["token"].partition(".")[2]
+    stray = make_page(c, "Stray prefix")
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_by, created_at) VALUES (?, ?, ?, '', ?)",
+                     (f"elsewhere.{secret}x", ws, stray["id"], page_now()))
+    for stale in (secret, f"elsewhere.{secret}", f"elsewhere.{secret}x"):
+        result = read(client, credential["token"], url=f"http://localhost/?share={stale}")
+        assert result["isError"] and "unavailable" in result["content"][0]["text"], result
     # Existing workspace permission also covers a restricted share on that page.
     c.put(f"/api/share-settings/{page['id']}", json={"audience": "list"})
     assert not read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["isError"]
@@ -112,13 +125,16 @@ def test_link_canonical_origin_and_revoked_connection(client, connection, monkey
 
 def test_folder_share_links_list_the_folder(client, connection):
     c, ws, credential = connection
-    paper = make_page(c, "Paper in the group folder", {"folder": "group/sub"})
+    group = make_folder(c, "group")
+    paper = make_page(c, "Paper in the group folder", {"folders": [make_folder(c, "group/sub")]})
     other = make_page(c, "Elsewhere in the library")
-    share = c.post("/api/share/folder", params={"name": "group"}).json()
+    share = c.post(f"/api/share/folder/{group}").json()
     result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
     assert not result["isError"], result
     ref = result["structuredContent"]
-    assert ref == {"workspace_id": ws, "folder": "group", "url": f"http://localhost/?ws={ws}&folder=group"}
+    # The folder by id (its path as the title), as the share names it.
+    assert ref == {"workspace_id": ws, "folder": group, "title": "group",
+                   "url": f"http://localhost/?ws={ws}&folder={group}"}
     text = result["content"][0]["text"]
     assert "Paper in the group folder" in text and paper["id"] in text
     assert "Elsewhere in the library" not in text and share["token"] not in text
@@ -130,5 +146,12 @@ def test_folder_share_links_list_the_folder(client, connection):
     assert result["structuredContent"]["title"] == "Paper in the group folder"
     # but never one outside it
     assert read(client, credential["token"], url=f"http://localhost/?share={share['token']}&page={other['id']}")["isError"]
-    c.delete("/api/share-settings/folder", params={"name": "group"})
+    c.delete(f"/api/share-settings/folder/{group}")
     assert read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["isError"]
+    # A share whose folder went by a raw op (no DELETE /folders to stop it) reads nothing.
+    gone = make_folder(c, "gone")
+    share = c.post(f"/api/share/folder/{gone}").json()
+    r = c.post("/api/pages/folders/ops", json={"ops": [{"op": "delete", "id": gone}]})
+    assert r.status_code == 200, r.text
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
+    assert result["isError"] and "unavailable" in result["content"][0]["text"]

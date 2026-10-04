@@ -1,11 +1,17 @@
 """The collaboration write path under trouble: concurrency conflicts that
-name the op they refuse, a retried batch applied once, a re-sent insert
-that never undoes someone's newer edit, text a browser can send but SQLite
-can't store, and the page socket's room bookkeeping — a tab reconnecting,
-the log position in the hello, access revoked while the socket is open."""
+name the op they refuse, a retried batch applied once — answered from its
+row of the op log, across a restart, until the row is pruned —, a re-sent
+insert that never undoes someone's newer edit, text a browser can send but
+SQLite can't store, and the page socket's room bookkeeping — a tab
+reconnecting, the log position in the hello, access revoked while the
+socket is open."""
 
 import json
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +21,7 @@ from starlette.websockets import WebSocketDisconnect
 from conftest import guest_name, login, make_page, make_user, recv, workspace_of
 from gamma import collab, ops
 from gamma.app import app
+from gamma.db import connect_pages_db
 
 
 def _ops(client, page_id, ops, client_id="t", batch="", **kw):
@@ -99,11 +106,80 @@ def test_a_retried_batch_is_answered_again_not_applied_twice(guest):
     # the id is the client's own: another tab using it is another batch
     other = _ops(guest, page["id"], [{"op": "set", "id": "rtA", "content": "tab C"}], client_id="tabC", batch="b-1")
     assert other.json()["seq"] == seqs[-1] + 1
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        assert conn.execute("SELECT seq, client FROM page_ops WHERE page_id = ? AND batch_id = 'b-1' ORDER BY seq",
+                            (page["id"],)).fetchall() == [(first.json()["seq"], "tabA"), (other.json()["seq"], "tabC")]
     # a refused batch is not remembered: fixed and sent again, it applies
     r = _ops(guest, page["id"], [{"op": "set", "id": "nope", "content": "x"}], client_id="tabA", batch="b-2")
     assert r.status_code == 404
     r = _ops(guest, page["id"], [{"op": "set", "id": "rtA", "content": "second"}], client_id="tabA", batch="b-2")
     assert r.status_code == 200 and guest.get("/api/blocks/rtA").json()["content"] == "second"
+
+
+_RETRY_IN_A_FRESH_PROCESS = """
+import json, sys
+from gamma import ops
+from gamma.db import connect_pages_db
+ws, page, batch, cursor = json.loads(sys.argv[1])
+with connect_pages_db(ws) as conn:
+    print(json.dumps(ops.apply_ops(conn, page, batch, actor="t", client="tabR", batch_id="r-1", cursor=cursor)))
+"""
+
+
+def test_a_retry_is_answered_from_the_log_across_a_restart():
+    """The answer is the batch's row of the op log, not anything this
+    process holds: a fresh process (a restart) answers the retry with the
+    first attempt's seq, time, ops and caret as stored (remapped by the
+    merge) and applies nothing. A batch without a name logs neither."""
+    ws = make_user("rb_restart", "rb-password-1")
+    page = make_page(login("rb_restart", "rb-password-1"), "Retry across a restart")["id"]
+    caret = {"block": "rbA", "anchor": 10, "head": 10}
+    batch = [{"op": "set", "id": "rbA", "base": "alpha", "content": "alpha beta"}]
+    with connect_pages_db(ws) as conn:
+        ops.apply_ops(conn, page, [{"op": "insert", "id": "rbA", "parent": page, "content": "alpha"}], actor="t")
+        ops.apply_ops(conn, page, [{"op": "set", "id": "rbA", "base": "alpha", "content": "the alpha"}],
+                      actor="t", client="tabS", cursor={"block": "rbA", "anchor": 0, "head": 3})
+        first = ops.apply_ops(conn, page, batch, actor="t", client="tabR", batch_id="r-1", cursor=caret)
+    assert first["cursor"] == {"block": "rbA", "anchor": 14, "head": 14}  # into "the alpha beta"
+
+    out = subprocess.run([sys.executable, "-c", _RETRY_IN_A_FRESH_PROCESS, json.dumps([ws, page, batch, caret])],
+                         capture_output=True, text=True, env=os.environ, timeout=120,
+                         cwd=str(Path(__file__).resolve().parent.parent))
+    assert out.returncode == 0, out.stderr
+    again = json.loads(out.stdout.strip().splitlines()[-1])
+    assert again["replayed"] is True
+    assert {k: again[k] for k in ("seq", "at", "actor", "client", "ops", "cursor")} == json.loads(json.dumps(
+        {k: first[k] for k in ("seq", "at", "actor", "client", "ops", "cursor")}))
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT content FROM unified_blocks WHERE id = 'rbA'").fetchone()[0] == "the alpha beta"
+        rows = conn.execute("SELECT seq, client, batch_id, cursor FROM page_ops WHERE page_id = ? "
+                            "AND client != '' ORDER BY seq", (page,)).fetchall()
+    assert [r[:3] for r in rows] == [(first["seq"] - 1, "tabS", ""), (first["seq"], "tabR", "r-1")]
+    assert rows[0][3] == "" and json.loads(rows[1][3]) == first["cursor"]
+
+
+def test_a_retry_whose_row_was_pruned_is_applied_again(monkeypatch):
+    """The answer goes with its row: once pruning has taken it, a retry is
+    a batch like any other and is applied again — the limit of the replay
+    (the create-if-absent insert and the merge's "already the text" rule
+    keep most such retries harmless)."""
+    monkeypatch.setattr(ops, "KEEP_OPS", 3)
+    monkeypatch.setattr(ops, "PRUNE_EVERY", 1)
+    ws = make_user("rb_pruned", "rb-password-1")
+    page = make_page(login("rb_pruned", "rb-password-1"), "Retry after pruning")["id"]
+    batch = [{"op": "set", "id": "rbP", "base": "alpha", "content": "alpha beta"}]
+    with connect_pages_db(ws) as conn:
+        ops.apply_ops(conn, page, [{"op": "insert", "id": "rbP", "parent": page, "content": "alpha"}], actor="t")
+        first = ops.apply_ops(conn, page, batch, actor="t", client="tabR", batch_id="p-1")
+        assert ops.apply_ops(conn, page, batch, actor="t", client="tabR", batch_id="p-1")["seq"] == first["seq"]
+        for i in range(3):  # three newer batches: the log keeps those
+            ops.apply_ops(conn, page, [{"op": "insert", "id": f"rbQ{i}", "parent": page, "content": "x"}],
+                          actor="t", client="tabS")
+        assert not conn.execute("SELECT 1 FROM page_ops WHERE page_id = ? AND batch_id = 'p-1'", (page,)).fetchone()
+        again = ops.apply_ops(conn, page, batch, actor="t", client="tabR", batch_id="p-1")
+        assert "replayed" not in again and again["seq"] == first["seq"] + 4
+        assert conn.execute("SELECT seq FROM page_ops WHERE page_id = ? AND batch_id = 'p-1'",
+                            (page,)).fetchall() == [(again["seq"],)]
 
 
 def test_a_resent_insert_never_undoes_a_newer_edit(guest):
@@ -154,6 +230,43 @@ def test_a_lone_surrogate_is_stored_as_a_replacement_character(guest):
     assert guest.get("/api/blocks/suA").json()["content"] == "put �"
     r = raw("/api/blocks", {"parent_id": page["id"], "content": "new \udc00"})
     assert r.status_code == 200 and guest.get(f"/api/blocks/{r.json()['id']}").json()["content"] == "new �"
+
+
+def test_a_number_that_is_not_finite_is_refused(guest):
+    """Python's JSON reader takes a bare NaN or Infinity (and 1e999), which
+    a stored row would hand to every answer naming the block. The op batch
+    and the block create and update bodies refuse it with one 400, and
+    write nothing."""
+    page = make_page(guest, "Not a number")
+    assert _ops(guest, page["id"], [{"op": "insert", "id": "nfA", "parent": page["id"], "content": "a"}]).status_code == 200
+    seq = guest.get(f"/api/pages/{page['id']}/ops").json()["seq"]
+    pages = len(guest.get("/api/blocks/root/children").json()["children"])
+
+    def raw(path, body, method="POST"):  # json.dumps writes NaN and Infinity bare, as a client could
+        text = body if isinstance(body, str) else json.dumps(body)
+        return guest.request(method, path, content=text, headers={"Content-Type": "application/json"})
+
+    for value, word in ((float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")):
+        refused = (400, f"not a finite number: {word}")
+        r = raw(f"/api/pages/{page['id']}/ops", {"client": "t", "ops": [
+            {"op": "set", "id": "nfA", "content": "changed", "props": {"x": value}}]})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw(f"/api/pages/{page['id']}/ops", {"client": "t", "ops": [
+            {"op": "insert", "id": "nfB", "parent": page["id"], "content": "b", "props": {"x": {"y": [value]}}}]})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks/nfA", {"content": "changed", "properties": {"x": [1, value]}}, method="PUT")
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks", {"parent_id": page["id"], "content": "new", "properties": {"x": value}})
+        assert (r.status_code, r.json()["detail"]) == refused
+        r = raw("/api/blocks", {"parent_id": "root", "content": "new page", "properties": {"x": value}})
+        assert (r.status_code, r.json()["detail"]) == refused
+    r = raw("/api/blocks/nfA", '{"properties": {"x": 1e999}}', method="PUT")  # too big for a float: inf
+    assert (r.status_code, r.json()["detail"]) == (400, "not a finite number: Infinity")
+    # nothing written: the block as it was, no new block or page, no batch logged
+    children = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
+    assert [(c["id"], c["content"], c["properties"]) for c in children] == [("nfA", "a", {})]
+    assert guest.get(f"/api/pages/{page['id']}/ops").json()["seq"] == seq
+    assert len(guest.get("/api/blocks/root/children").json()["children"]) == pages
 
 
 # --- the socket ------------------------------------------------------------------

@@ -17,7 +17,7 @@ export function LibraryDisplaySettings({ value }) {
         <figcaption>{t("Recently viewed")}</figcaption>
         <PageCard className="libraryDisplayCard" title={t("Patterns in nature")} kind="PDF" time={t("Just now")}
           glyph={<FileGlyph />} snap={value.recentThumbs ? sampleLibraryPage : null}
-          folders={[t("Reading list")]} labels={[t("Research")]} labelMode={value.fileLabels} />
+          folders={[{ id: "f", name: t("Reading list") }]} labels={[{ id: "l", name: t("Research") }]} labelMode={value.fileLabels} />
       </figure>
       <div className="libraryDisplayControls" role="group" aria-label={t("Card elements")}>
         <div data-setting={t("Recents thumbnails")}>

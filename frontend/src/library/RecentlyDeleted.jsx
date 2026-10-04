@@ -3,14 +3,15 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { DialogButtons, Empty, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, Trash2Icon, UndoIcon } from "../shared/ui/Icons";
-import { formatFullDate, formatRelativeTime } from "./libraryUtils.js";
+import { firstFolderPath, formatFullDate, formatRelativeTime } from "./libraryUtils.js";
 
 // Recently deleted (docs/dev/home_library.md): the pages deleted in the last
 // 30 days (GET /api/trash, gamma/trash.py), newest first. Restore puts one
 // back where it was filed; the trash icon deletes it for good after a
 // confirmation, and so does Empty for all of them. `confirm` is App's
-// confirm box, `onRestored()` refreshes the library.
-export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatus }) {
+// confirm box, `onRestored()` refreshes the library; `tree` (the listing's,
+// libraryUtils.libraryTree) names the folder a row was filed in.
+export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatus, tree }) {
   const [list, setList] = useState(null); // {pages, keep_days} | {error}
   const [busy, setBusy] = useState(false); // a restore or delete is running
 
@@ -75,7 +76,7 @@ export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatu
               {[page.deleted_by ? t("Deleted {when} by {name}", { when: formatRelativeTime(page.deleted_at), name: page.deleted_by })
                 : t("Deleted {when}", { when: formatRelativeTime(page.deleted_at) }),
               page.purge_at ? tn("{n} day left", "{n} days left", daysLeft(page.purge_at)) : "",
-              page.folder].filter(Boolean).join(" · ")}
+              firstFolderPath(tree, page.folders)].filter(Boolean).join(" · ")}
             </span>
           </span>
           <span className="aiProvActions">

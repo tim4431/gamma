@@ -9,11 +9,13 @@ import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, S
 import { t } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → General "File
-// labels" preference ("off" | "labels" | "folders" | "both"). Purely
-// informational — chips don't navigate; `onLabelMenu(name)` optionally wires
-// the label rename/delete context menu where the caller offers one. With the
-// chips enabled the span always renders, empty or not: on a card it is the
-// reserved chip line that keeps every footer the same height.
+// labels" preference ("off" | "labels" | "folders" | "both"). `folders` and
+// `labels` are {id, name} — a folder's name its path — as App's page rows
+// carry them (`_folderChips` / `_labelChips`). Purely informational — chips
+// don't navigate; `onLabelMenu(id)` optionally wires the label rename/delete
+// context menu where the caller offers one. With the chips enabled the span
+// always renders, empty or not: on a card it is the reserved chip line that
+// keeps every footer the same height.
 function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "cardLabels" }) {
   if (mode === "off") return null;
   const showFolders = (mode === "both" || mode === "folders") && folders?.length > 0;
@@ -21,20 +23,20 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
   return (
     <span className={className} data-guide={showFolders || showLabels ? "home.cardLabels" : undefined}>
       {showFolders ? folders.map((f) => (
-        <span key={`f:${f}`} className="folderTagBadge" title={t("In folder {f}", { f })}>
+        <span key={`f:${f.id}`} className="folderTagBadge" title={t("In folder {f}", { f: f.name })}>
           <FolderIcon size={10} />
-          {f}
+          {f.name}
         </span>
       )) : null}
       {showLabels ? labels.map((l) => (
         <span
-          key={`l:${l}`}
+          key={`l:${l.id}`}
           className="labelTagBadge"
-          title={onLabelMenu ? t("Label: {l} — right-click to rename or delete", { l: l }) : t("Label: {l}", { l: l })}
-          onContextMenu={onLabelMenu ? onLabelMenu(l) : undefined}
+          title={onLabelMenu ? t("Label: {l} — right-click to rename or delete", { l: l.name }) : t("Label: {l}", { l: l.name })}
+          onContextMenu={onLabelMenu ? onLabelMenu(l.id) : undefined}
         >
           <LabelIcon size={10} />
-          {l}
+          {l.name}
         </span>
       )) : null}
     </span>

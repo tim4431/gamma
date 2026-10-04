@@ -14,6 +14,11 @@ A confidential client (share host, container, server) may only register
 an address on the origin of one of its redirect URIs; the public desktop
 client may register any address, since every sidecar is that client.
 
+A server also reports its build (``version``, the label it shows in its
+own admin dashboard) and its data directory's schema version (``schema``),
+so the Devices page shows which installs are behind. A call that sends
+neither (an older server) leaves what the row has.
+
 Each row remembers the grant of the token that registered it
 (``grant_id``), so the portal shows a server and its sign-in as one row
 (``merge``); signing that grant out on the portal takes the row off.
@@ -89,17 +94,25 @@ def allowed_for(client: dict, url: str) -> bool:
     return url in origins
 
 
-def link(conn, account_id: str, url: str, name: str, grant_id: str = "") -> dict:
-    """Add or refresh a server; its row."""
+def norm_version(raw) -> str | None:
+    """The build label a server reports, cut like a name; None when absent."""
+    return norm_name(raw, "") or None
+
+
+def link(conn, account_id: str, url: str, name: str, grant_id: str = "", version: str | None = None,
+         schema: int | None = None) -> dict:
+    """Add or refresh a server; its row. ``version`` and ``schema`` (None =
+    not reported) replace what the row had only when given."""
     ts = now()
     exists = conn.execute("SELECT 1 FROM servers_linked WHERE account_id = ? AND url = ?", (account_id, url)).fetchone()
     if not exists and conn.execute("SELECT COUNT(*) FROM servers_linked WHERE account_id = ?",
                                    (account_id,)).fetchone()[0] >= MAX_SERVERS:
         raise Problem(400, f"An account lists at most {MAX_SERVERS} servers.")
-    conn.execute("INSERT INTO servers_linked (account_id, url, name, linked_at, last_seen_at, grant_id) "
-                 "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (account_id, url) DO UPDATE SET name = excluded.name, "
-                 "last_seen_at = excluded.last_seen_at, grant_id = excluded.grant_id",
-                 (account_id, url, name, ts, ts, grant_id))
+    conn.execute("INSERT INTO servers_linked (account_id, url, name, linked_at, last_seen_at, grant_id, version, schema) "
+                 "VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, ''), ?) ON CONFLICT (account_id, url) DO UPDATE SET "
+                 "name = excluded.name, last_seen_at = excluded.last_seen_at, grant_id = excluded.grant_id, "
+                 "version = COALESCE(?, version), schema = COALESCE(?, schema)",
+                 (account_id, url, name, ts, ts, grant_id, version, schema, version, schema))
     return _public(conn.execute("SELECT * FROM servers_linked WHERE account_id = ? AND url = ?",
                                 (account_id, url)).fetchone())
 
@@ -110,7 +123,8 @@ def unlink(conn, account_id: str, url: str) -> bool:
 
 def _public(row) -> dict:
     return {"url": row["url"], "name": row["name"], "kind": "linked", "local": is_local(row["url"]),
-            "linked_at": row["linked_at"], "last_seen_at": row["last_seen_at"]}
+            "linked_at": row["linked_at"], "last_seen_at": row["last_seen_at"], "version": row["version"],
+            "schema": row["schema"]}
 
 
 def of_account(conn, account_id: str, *, grants: bool = False) -> list[dict]:

@@ -6,8 +6,11 @@ opens as the conventional reading window. PDF reading is a feature of one kind
 of attachment, not the organizing principle of the app.
 
 This doc records the target model, the inventory of PDF-centric assumptions
-that contradict it (as of 2026-09-02), and the staged plan to remove them.
-Update it as stages land.
+that contradicted it (as of 2026-09-02), and the staged plan that removed
+them. The stored shapes it builds on are described where they live:
+[user_db.md](user_db.md) "pages.db" (the block table, its `kind` and
+`doc_id` columns), [api.md](api.md) "The block dict" / "The highlight
+shape" and [home_library.md](home_library.md) "Folders and labels".
 
 ## Target model
 
@@ -29,7 +32,11 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   days, then purged ([user_db.md](user_db.md) "Stored files").
 - A **document** is the ONE PDF a page *carries*: `properties.doc_id`
   (content hash → `uploads/<doc_id>.pdf`) plus `source_url` /
-  `original_filename` / `web_url` describing where it came from. The viewer,
+  `original_filename` / `web_url` describing where it came from. A page
+  stores `source_url` only when the file is fetched from elsewhere (a
+  proxied URL, a copy without the `doc_id`): the stored copy's
+  `/api/uploads/<doc_id>.pdf` is derived by the helpers below, and no
+  writer stores it (`attachment_props`, `create_page`, the op path). The viewer,
   highlights, metadata, the PDF search index, AI context and `by-doc` dedup
   all key on it. Code reads it through ONE helper on each side —
   `page_attachment(props)` (backend) / `pageAttachment(block)` (frontend)
@@ -46,16 +53,17 @@ same dock, only the presence of a viewer differs — and the viewer is
 collapsible (`pdfHidden`) rather than a mode. Layout derives from
 `pageAttachment(page)`, never from a `pdfUrl` state variable.
 
-**Kinds.** No `kind` column, no page-type enum. Cards, badges and AI listings
-describe a page by what it carries ("has PDF", "has web source", labels),
-not by a PDF/Note dichotomy.
+**Kinds.** No page-type enum: the block table's `kind` calls every page
+`page`. Cards, badges and AI listings describe a page by what it carries
+("has PDF", "has web source", labels), not by a PDF/Note dichotomy.
 
-**Handwriting** groups are child blocks too (`ink_url` + `pdf_page` +
-`pdf_position`, [handwriting.md](handwriting.md)); the stroke file's `space`
-already names a `canvas` kind for ink on a page without a PDF.
+**Handwriting** groups are child blocks too (`ink_url` + `pdf_position`,
+[handwriting.md](handwriting.md)); the stroke file's `space` already names
+a `canvas` kind for ink on a page without a PDF.
 
-**Highlights** stay child blocks with `highlight_id` / `pdf_position`; they
-anchor to the page's document, implicitly — a page has one.
+**Highlights** stay child blocks with a `pdf_position` (the block id is the
+highlight's id, [api.md](api.md) "The highlight shape"); they anchor to the
+page's document, implicitly — a page has one.
 
 **Metadata** (`properties.meta`, the bibliographic record) is a page
 property, and that is the right place: the page is the Zotero *item*, the
@@ -88,7 +96,7 @@ finds it afterwards (`pages_for_docs` matches `doc_id` and
 **Sub-pages.** Not a new structure: the tree already nests arbitrarily and
 `?block=<id>` opens any block on its page. A sub-page is a Logseq-style
 zoom-in on a subtree (focus mode), not a second page table. The flat library
-with folder labels stays the navigation model.
+with folders and labels stays the navigation model.
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
 
@@ -120,6 +128,10 @@ Backend
   (the shares table is keyed by workspace and page now).
 - `export-pdf` 400s without `doc_id` (correct — that format IS the PDF); the
   dialog already falls back to notes-as-PDF.
+- ~~Every uploaded PDF's page stores `source_url = /api/uploads/<doc_id>.pdf`,
+  `doc_id` again.~~ Derived from `doc_id` by `page_attachment` /
+  `pageAttachment` (schema version 30); the lookups by URL (the clip, the
+  library lookup) compare the attachment's URL.
 - ~~`metadata/status` skips pages with neither `doc_id` nor `source_url`
   (now via `page_attachment()` — correct until stage 3 widens it).~~ Lists
   pages with `properties.meta` too (`has_file: false`).
@@ -287,7 +299,9 @@ raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
   `gamma/block_index.py` (`block_fts` + `block_fts_meta(page_id,
   updated_at, ver)` in data.db; rebuilt lazily per page when the page
   root's `updated_at` moved, the version bumped, or a block writer called
-  `mark_page_dirty`; pruned with the page), `gamma/pdf_index.py` (the
+  `mark_page_dirty`; pruned with the page — since 2026-10 the index is
+  `block_fts` in pages.db, kept by triggers in every write's transaction,
+  [user_db.md](user_db.md) "The notes index"), `gamma/pdf_index.py` (the
   `pdf_fts` schema plus the two queries every consumer shares —
   `pdf_missing`, `search_pdf`; extraction stays in `routers/search.py`),
   `blocks_store.root_pages` (the one library/folder page scan the search,
@@ -305,8 +319,8 @@ raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
   `page_attachment`; a page without one always contributes its notes);
   `doc_id` is still accepted as a compatibility input: it resolves to its
   page (`blocks_store.page_for_doc`), and a doc no page carries contributes
-  nothing (the app cannot produce one — `block_index.purge_page_data`
-  drops a page's index rows with the page) — the frontend should send
+  nothing (the app cannot produce one — deleting a page drops its index
+  rows with it) — the frontend should send
   `page_id`. `CONTEXT_INTRO` +
   `page_report_section` (title, `page_properties_line`, document text,
   highlights, notes); the long-paper machinery (excerpt label, document map,
@@ -396,7 +410,7 @@ Still open from the old stage 4: zoom-in on any block as a focused sub-page
 (breadcrumb back to the page); tabs and `?block=` already carry the id.
 
 ## Non-goals (for now)
-- No `kind` column or page-type enum — describe pages by what they carry.
-- No page-tree sidebar replacing folder labels; the library stays the
+- No page-type enum — describe pages by what they carry.
+- No page-tree sidebar replacing folders; the library stays the
   navigation surface.
 - No rewrite of the viewer; it remains the PDF attachment's renderer.

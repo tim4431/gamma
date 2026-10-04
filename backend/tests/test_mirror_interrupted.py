@@ -211,7 +211,7 @@ def test_linking_keeps_the_blocks_only_the_copy_had():
     local.client.post("/api/pages", json={"id": page["id"], "title": "Linked"}).raise_for_status()
     local.insert(page["id"], "lb1", "the copy's text")
     local.insert(page["id"], "lb2", "only the copy wrote this")
-    token = create_token(remote.name, remote.ws, "link", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws, "adopt": "theirs"})
     assert r.status_code == 201, r.text
@@ -417,7 +417,7 @@ def test_linking_a_restored_backup_keeps_the_pages_deleted_on_the_original(adopt
             local.insert(p["id"], bid, text)
     # this morning the chapter was deleted on the original — the reason for the recovery
     remote.client.delete(f"/api/blocks/{lost['id']}").raise_for_status()
-    token = create_token(remote.name, remote.ws, "recover", 90, scope="write")["token"]
+    token = create_token(remote.id, remote.ws, "recover", 90, scope="write")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws, "adopt": adopt})
     assert r.status_code == 201, r.text
@@ -440,7 +440,7 @@ def test_a_receive_only_link_keeps_a_page_the_original_deleted():
     local.client.post("/api/pages", json={"id": lost["id"], "title": "Deleted there"}).raise_for_status()
     local.insert(lost["id"], "rp1", "kept here")
     remote.client.delete(f"/api/blocks/{lost['id']}").raise_for_status()
-    token = create_token(remote.name, remote.ws, "recover", 90, scope="read")["token"]
+    token = create_token(remote.id, remote.ws, "recover", 90, scope="read")["token"]
     r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
                                                 "workspace_id": local.ws})
     assert r.status_code == 201 and r.json()["mode"] == "pull", r.text
@@ -459,7 +459,7 @@ def test_a_drawing_whose_push_never_arrived_is_merged_when_sent_again(monkeypatc
     page = remote.page("Lost drawing")
     u0 = _ink_file(remote, [("a", 100)])
     remote.ops(page["id"], [{"op": "insert", "id": "inkL", "parent": page["id"], "content": "",
-                             "props": {"ink_url": u0, "pdf_page": 1, "ink_strokes": 1}}])
+                             "props": {"ink_url": u0, "ink_strokes": 1}}])
     _sync(local)
     ul = _ink_file(local, [("a", 100), ("b", 400)])
     local.ops(page["id"], [{"op": "set", "id": "inkL", "props": {"ink_url": ul, "ink_strokes": 2},

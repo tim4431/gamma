@@ -1,7 +1,8 @@
 // Conflict resolution for a clone (docs/dev/mirror.md), in git's words:
 // local is this clone, remote is origin. One card — ConflictCard — serves
 // every surface: the chip on a block row (its popover walks the page's
-// conflicts one by one), the sync pill's list and Settings → Account & sync.
+// conflicts one by one), the sync pill's list and Settings (Workspaces →
+// Clones, Account & sync → Publishing).
 // A block both sides edited shows what each side changed as a word diff
 // against the text before either edit (removed words struck through, added
 // words in the side's colour), and under them the text that is in the block
@@ -243,7 +244,7 @@ function Decision({ conflict }) {
 }
 
 // A mirror's open conflicts and their resolution, for the lists (the sync
-// pill's review view, Settings → Account & sync → Clones): `[items, busy,
+// pill's review view, Settings → Workspaces → Clones): `[items, busy,
 // resolve]` — `items` null while loading; `resolve(conflict, choice)` posts
 // the choice, drops the row and raises `gamma:mirror` so the page's chips
 // and the pill follow; `onError(message)` hears a failed post.

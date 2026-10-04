@@ -20,7 +20,8 @@ import bcrypt
 from fractional_indexing import generate_n_keys_between
 
 from .config import WORKSPACES_DIR
-from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_pages_db, connect_users_db, page_now, safe_ws_id
+from .db import (DATA_SCHEMA, PAGES_SCHEMA, SCHEMA_VERSION, connect_pages_db, connect_users_db, new_account_id,
+                 page_now, register_functions, safe_ws_id)
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
@@ -101,7 +102,8 @@ def _insert_ops(page_id: str, tree: list) -> list[dict]:
 def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     """Seed the Welcome page into a workspace that has no pages yet: a page
     marked ``properties.seeded = "welcome"`` carrying the sample PDF, its
-    notes inserted as one op batch like every other block writer's. A
+    notes inserted as one op batch like every other block writer's (logged
+    under ``actor``, the account's id). A
     guest's page ends with a callout naming the lifetime. Returns the page
     id, or None when skipped (the workspace already has pages, welcome.md is
     missing, or this server is a share host, whose workspaces hold published
@@ -133,14 +135,14 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
                 # deletes the workspace); /api/pdf-info makes it on first open.
                 filename, _existed = store_file(ws, welcome_pdf(text), ".pdf")
                 doc_id = filename[:-len(".pdf")]
-                attachment, _auto = attachment_props(doc_id, f"/api/uploads/{filename}", _WELCOME_PDF_NAME)
+                attachment, _auto = attachment_props(doc_id, original_filename=_WELCOME_PDF_NAME)
                 # A record of its own, so opening the page looks nothing up
                 # (the tour works offline) and asks no AI for a citation.
                 props.update(attachment, meta={"title": document, "kind": "notes", "source": "manual"},
                              ppt_cite=f"Gamma, *{document}*")
             except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
                 log.warning(f"[seed] welcome PDF skipped: {e}")
-            page = create_page(conn, title, props)
+            page = create_page(conn, title, props, actor=actor)
             # commit_ops on a connection closed here (a handle left for the
             # GC would keep the directory from being deleted on Windows)
             after_commit(ws, conn, apply_ops(conn, page["id"], _insert_ops(page["id"], tree), actor=actor))
@@ -152,8 +154,10 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
 
 def create_workspace_files(ws_id: str):
     """Create fresh pages.db, data.db and uploads/ under workspaces/<id>/
-    (existing files are kept). The Welcome page is ``seed_welcome``'s, once
-    the workspace's rows exist (gamma/workspaces.py)."""
+    (existing files are kept). A new pages.db is stamped SCHEMA_VERSION:
+    it has the current shape, so no migration step ever runs on it
+    (gamma/migrations.py). The Welcome page is ``seed_welcome``'s, once the
+    workspace's rows exist (gamma/workspaces.py)."""
     target = WORKSPACES_DIR / safe_ws_id(ws_id)
     target.mkdir(parents=True, exist_ok=True)
     nw = page_now()
@@ -165,17 +169,22 @@ def create_workspace_files(ws_id: str):
         # WAL from the start: connect_pages_db would switch it on first
         # open, which needs the file to itself — two first openers race.
         pages_db.execute("PRAGMA journal_mode=WAL")
+        register_functions(pages_db)
+        fresh = not pages_db.execute("SELECT 1 FROM sqlite_master").fetchone()
         for stmt in PAGES_SCHEMA:
             pages_db.execute(stmt)
+        if fresh:
+            pages_db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         if not pages_db.execute("SELECT 1 FROM unified_blocks WHERE id = 'root'").fetchone():
             pages_db.execute(
                 "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
                 "VALUES ('root', NULL, 'a0', '', '{}', ?, ?)",
                 (nw, nw),
             )
-        from .blocks_store import ensure_trash  # local, like seed_welcome's
+        from .blocks_store import TRASH, TREES, ensure_reserved  # local, like seed_welcome's
 
-        ensure_trash(pages_db)  # Recently deleted's reserved parent, beside root
+        for reserved in (TRASH, *TREES):  # Recently deleted's parent and the folder and label trees, beside root
+            ensure_reserved(pages_db, reserved)
         pages_db.commit()
 
     with closing(sqlite3.connect(str(target / "data.db"))) as data_db:
@@ -212,12 +221,9 @@ def ensure_admin_seed():
                          "python manage.py set-admin <user> on")
             return None
         pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        conn.execute(
-            "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) VALUES (?, ?, 0, 1, ?)",
-            (username, pwhash, page_now()),
-        )
+        user_id = insert_account(conn, username, pwhash, is_admin=True)
         conn.commit()
-    workspaces.ensure_personal(username, welcome=True)
+    workspaces.ensure_personal(user_id, welcome=True)
     # ASCII only: this prints during startup, and a redirected Windows console
     # (GBK) raises UnicodeEncodeError on characters it can't encode.
     # Raw print()s on purpose — the one-time password must go to the console
@@ -230,19 +236,25 @@ def ensure_admin_seed():
     return username, password
 
 
+def insert_account(conn, username: str, password_hash: str, *, is_admin: bool = False) -> str:
+    """The users row of a new (non-guest) account under a fresh id
+    (``db.new_account_id``); returns the id. sqlite3.IntegrityError when
+    the username is taken. The caller commits and gives it its personal
+    workspace."""
+    user_id = new_account_id()
+    conn.execute(
+        "INSERT INTO users (id, username, password_hash, is_guest, is_admin, created_at) VALUES (?, ?, ?, 0, ?, ?)",
+        (user_id, username, password_hash, 1 if is_admin else 0, page_now()),
+    )
+    return user_id
+
+
 def create_cloud_account(username: str, is_admin: bool = False) -> str:
     """An account only its cloud identity can sign in as: a real (non-guest)
     row with an EMPTY password hash — the password login refuses those —
-    plus its personal workspace (gamma/cloud_auth.py ``provision``)."""
-    from . import workspaces
-
-    with connect_users_db() as conn:
-        conn.execute(
-            "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) VALUES (?, '', 0, ?, ?)",
-            (username, 1 if is_admin else 0, page_now()),
-        )
-        conn.commit()
-    return workspaces.ensure_personal(username, welcome=True)
+    plus its personal workspace (gamma/cloud_auth.py ``provision``). Returns
+    the workspace id."""
+    return create_account(username, None, is_admin)
 
 
 def create_account(username: str, password: str | None, is_admin: bool = False) -> str:
@@ -255,9 +267,6 @@ def create_account(username: str, password: str | None, is_admin: bool = False) 
 
     pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode() if password else ""
     with connect_users_db() as conn:
-        conn.execute(
-            "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) VALUES (?, ?, 0, ?, ?)",
-            (username, pwhash, 1 if is_admin else 0, page_now()),
-        )
+        user_id = insert_account(conn, username, pwhash, is_admin=is_admin)
         conn.commit()
-    return workspaces.ensure_personal(username, welcome=True)
+    return workspaces.ensure_personal(user_id, welcome=True)

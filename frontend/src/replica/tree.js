@@ -20,6 +20,13 @@ import { inkProps, mergeInk } from "../ink/ink.js";
 import { mergeTextBox } from "../markup/textBox.js";
 import { merge as textMerge } from "./textmerge.js";
 
+// The folder and label trees (docs/dev/collab.md "The folder and label
+// trees"): two pseudo-pages a replica holds as snapshots like a page's,
+// their root a reserved row whose parent is null. A folder is a block under
+// `folders` or under another folder, its content the name; a label is a
+// child of `labels`.
+export const TREES = ["folders", "labels"];
+
 // Deep equality of JSON values, blind to object key order (Python's ==).
 export function same(a, b) {
   if (a === b) return true;

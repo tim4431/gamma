@@ -94,7 +94,7 @@ export function translateModelFor(pick, engines, models) {
   return "";
 }
 
-// Agent tool permissions (Settings → AI → Chat › Tools), one map per chat
+// Agent tool permissions (Settings → AI → Tool usage › Tools), one map per chat
 // KIND: "folder" (the home/folder chat), "pdf" (a page with a PDF attached)
 // and "notes" (a page without one), each holding a state per permission
 // ("allow" / "ask" / "off", chat/chatSettings.js). The chat picks its kind's
@@ -149,7 +149,7 @@ export const PREFS = {
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),
   // Where the header's sync pill shows for a publication (pages published
-  // to Gamma Cloud; Settings → Account & sync › Sync status): on the
+  // to Gamma Cloud; Settings → Appearance › Sync status): on the
   // published pages only, or on every page of the workspace. A clone's pill
   // is on every page regardless (it syncs them all).
   syncPillScope: pref("gamma-sync-pill", ACCOUNT, "synced", oneOf(["synced", "all"])),
@@ -257,8 +257,13 @@ export const PREFS = {
   dictationModel: pref("gamma-dictation-model", BROWSER, "gpt-4o-transcribe"),
   dictationLang: pref("gamma-dictation-lang", BROWSER, ""),
 
-  // --- Chat behaviour (Settings → AI → Chat / Advanced) ---
+  // --- Chat behaviour (Settings → AI → Chat / Tool usage) ---
   chatEffort: pref("gamma-chat-effort", ACCOUNT, ""),
+  // Which service tier the chat asks the provider for ("" = its usual
+  // routing, "flex" cheaper and slower, "fast" the premium low-latency one
+  // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
+  // that tier; a model without one is called as usual.
+  chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
   // Connection check of the active provider at login (POST /api/ai/health):
   // "ping" (default) is the free credential check — OAuth entries hit the
   // usage endpoint, API keys list /v1/models, both 401 on a dead credential
@@ -290,12 +295,12 @@ export const PREFS = {
   // clears quoted text selections.
   chatImgAutoClear: flag("gamma-chat-img-autoclear", ACCOUNT, false),
 
-  // --- Context budgets (Settings → AI → Advanced) ---
+  // --- Context budgets (Settings → AI → Chat) ---
   chatContextChars: pref("gamma-chat-context-chars", ACCOUNT, 60000, CONTEXT_CHARS),
   metaContextChars: pref("gamma-meta-context-chars", ACCOUNT, 6000, CONTEXT_CHARS),
   multiContextChars: pref("gamma-multi-context-chars", ACCOUNT, 120000, CONTEXT_CHARS),
 
-  // --- Prompts (Settings → AI → Prompts; "" = built-in default from /api/ai/models) ---
+  // --- Prompts (Settings → AI → Chat; "" = built-in default from /api/ai/models) ---
   chatSystem: pref("gamma-chat-system", ACCOUNT, ""),
   agentSystem: pref("gamma-agent-system", ACCOUNT, ""),
   metaPrompt: pref("gamma-meta-prompt", ACCOUNT, ""),

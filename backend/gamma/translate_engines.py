@@ -97,7 +97,7 @@ _health_lock = threading.Lock()
 _health = {"failures": 0, "since": "", "error": "", "users": set(), "warned": False}
 
 
-def _note_outcome(engine: str, user: str, error: str | None) -> None:
+def _note_outcome(engine: str, user_id: str, error: str | None) -> None:
     if engine != FREE_ENGINE:
         return
     with _health_lock:
@@ -108,7 +108,7 @@ def _note_outcome(engine: str, user: str, error: str | None) -> None:
             _health["since"] = page_now()
         _health["failures"] += 1
         _health["error"] = error
-        _health["users"].add(user)
+        _health["users"].add(user_id)
         warn = _health["failures"] >= FREE_ALERT_AFTER and not _health["warned"]
         _health["warned"] = _health["warned"] or warn
     if warn:
@@ -116,11 +116,11 @@ def _note_outcome(engine: str, user: str, error: str | None) -> None:
                     f"({error}); its endpoint may have changed. Google or Youdao keys are the fallback.")
 
 
-def free_failing(user: str) -> dict | None:
+def free_failing(user_id: str) -> dict | None:
     """The free service's current failure streak ({since, error}) once it has
     reached FREE_ALERT_AFTER, for an account that met it; else None."""
     with _health_lock:
-        if _health["failures"] < FREE_ALERT_AFTER or user not in _health["users"]:
+        if _health["failures"] < FREE_ALERT_AFTER or user_id not in _health["users"]:
             return None
         return {"since": _health["since"], "error": _health["error"]}
 
@@ -133,11 +133,11 @@ def _engines_of(value) -> dict:
     return {k: v for k, v in value.items() if k in ENGINES and isinstance(v, dict)}
 
 
-def load(user: str) -> dict:
-    return _engines_of(get_pref(user, ENGINES_PREF_KEY)[0])
+def load(user_id: str) -> dict:
+    return _engines_of(get_pref(user_id, ENGINES_PREF_KEY)[0])
 
 
-def _update(user: str, change) -> None:
+def _update(user_id: str, change) -> None:
     """Read-modify-write the stored engines in one transaction
     (db.update_pref): ``change(saved)`` edits the dict in place and may
     raise to abort, so saving one engine never drops another saved
@@ -146,7 +146,7 @@ def _update(user: str, change) -> None:
         saved = _engines_of(value)
         change(saved)
         return saved
-    update_pref(user, ENGINES_PREF_KEY, apply)
+    update_pref(user_id, ENGINES_PREF_KEY, apply)
 
 
 def _complete(engine: str, conf: dict | None) -> bool:
@@ -155,18 +155,18 @@ def _complete(engine: str, conf: dict | None) -> bool:
     return bool(conf) and all((conf.get(f["id"]) or "").strip() for f in ENGINES[engine]["fields"])
 
 
-def configured(user: str) -> list:
+def configured(user_id: str) -> list:
     """[{id: "engine:<id>", label}] for every engine with all its fields set —
     what the translation picker offers."""
-    saved = load(user)
+    saved = load(user_id)
     return [{"id": MODEL_PREFIX + eid, "label": e["label"]}
             for eid, e in ENGINES.items() if _complete(eid, saved.get(eid))]
 
 
-def masked(user: str, can_edit: bool) -> dict:
+def masked(user_id: str, can_edit: bool) -> dict:
     """The settings view: every engine, its fields (secrets as a last-4 hint),
     and whether it is ready to use."""
-    saved = load(user)
+    saved = load(user_id)
     rows = []
     for eid, e in ENGINES.items():
         conf = saved.get(eid) or {}
@@ -177,11 +177,11 @@ def masked(user: str, can_edit: bool) -> dict:
         rows.append({"id": eid, "label": e["label"], "configured": _complete(eid, conf),
                      "needs_key": bool(e["fields"]), "fields": fields,
                      "updated_at": conf.get("updated_at", ""),
-                     "failing": free_failing(user) if eid == FREE_ENGINE else None})
+                     "failing": free_failing(user_id) if eid == FREE_ENGINE else None})
     return {"engines": rows, "can_edit": can_edit}
 
 
-def save(user: str, engine: str, fields: dict) -> None:
+def save(user_id: str, engine: str, fields: dict) -> None:
     """Set an engine's credentials. A secret field left empty keeps the stored
     value (the form never sees it); a plain field is taken as given."""
     if engine not in ENGINES:
@@ -190,7 +190,7 @@ def save(user: str, engine: str, fields: dict) -> None:
         raise HTTPException(status_code=400, detail=f"{ENGINES[engine]['label']} needs no key")
     def change(saved):
         saved[engine] = form_fields(ENGINES[engine]["fields"], saved.get(engine) or {}, fields)
-    _update(user, change)
+    _update(user_id, change)
 
 
 def form_fields(specs: list, old: dict, given: dict) -> dict:
@@ -214,8 +214,8 @@ def form_fields(specs: list, old: dict, given: dict) -> dict:
     return conf
 
 
-def remove(user: str, engine: str) -> None:
-    _update(user, lambda saved: saved.pop(engine, None))
+def remove(user_id: str, engine: str) -> None:
+    _update(user_id, lambda saved: saved.pop(engine, None))
 
 
 def engine_of(model: str) -> str:
@@ -225,12 +225,12 @@ def engine_of(model: str) -> str:
     return ""
 
 
-def credentials(user: str, engine: str) -> dict:
+def credentials(user_id: str, engine: str) -> dict:
     """The stored credentials for a request; 404 for an unknown engine and
     503 (like a missing AI provider) when it isn't set up."""
     if engine not in ENGINES:
         raise HTTPException(status_code=404, detail="unknown translation engine")
-    conf = load(user).get(engine)
+    conf = load(user_id).get(engine)
     if not _complete(engine, conf):
         raise HTTPException(status_code=503,
                             detail=f"{ENGINES[engine]['label']} is not set up — add its key in Settings → Reading")
@@ -239,9 +239,9 @@ def credentials(user: str, engine: str) -> dict:
 
 # --- translation --------------------------------------------------------------
 
-def translate(engine: str, conf: dict, texts: list, lang: str, user: str) -> list:
+def translate(engine: str, conf: dict, texts: list, lang: str, user_id: str) -> list:
     """``texts`` translated into ``lang`` (a TRANSLATE_LANGS code), same length
-    and order, for ``user`` (the free service's health counts per account).
+    and order, for ``user_id`` (the free service's health counts per account).
     Split into the engine's batch limits; raises EngineError."""
     e = ENGINES[engine]
     target = e["langs"].get(lang)
@@ -253,9 +253,9 @@ def translate(engine: str, conf: dict, texts: list, lang: str, user: str) -> lis
         for batch in _batches(texts, *e["batch"]):
             out.extend(call(conf, batch, target))
     except EngineError as err:
-        _note_outcome(engine, user, str(err))
+        _note_outcome(engine, user_id, str(err))
         raise
-    _note_outcome(engine, user, None)
+    _note_outcome(engine, user_id, None)
     return out
 
 

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import gamma.routers.ai as ai_mod
 from ai_fixtures import FakeResp
-from conftest import login, make_user, workspace_of
+from conftest import account_of, login, make_folder, make_user, workspace_of
 from gamma import ai_usage, backup_schedule, sync_engine, workspaces
 from gamma import publisher_sessions as sessions
 from gamma.app import app
@@ -33,15 +33,16 @@ def lab(client):
     """A shared workspace with an owner, an editor and a viewer, one page."""
     for name in ("wa_owner", "wa_editor", "wa_viewer"):
         make_user(name, "pw")
-    lab_ws = workspaces.create("WA lab", "wa_owner", kind="shared")["id"]
-    workspaces.set_member(lab_ws, "wa_editor", "editor", by="wa_owner")
-    workspaces.set_member(lab_ws, "wa_viewer", "viewer", by="wa_owner")
+    owner = account_of("wa_owner")
+    lab_ws = workspaces.create("WA lab", owner, kind="shared")["id"]
+    workspaces.set_member(lab_ws, account_of("wa_editor"), "editor", by=owner)
+    workspaces.set_member(lab_ws, account_of("wa_viewer"), "viewer", by=owner)
     clients = {}
     for name in ("wa_owner", "wa_editor", "wa_viewer"):
         c = login(name, "pw")
         c.headers["X-Gamma-Workspace"] = lab_ws
         clients[name.removeprefix("wa_")] = c
-    page = clients["owner"].post("/api/pages", json={"title": "Lab paper", "properties": {"folder": "lab"}})
+    page = clients["owner"].post("/api/pages", json={"title": "Lab paper", "folders": [make_folder(clients["owner"], "lab")]})
     return lab_ws, clients, page.json()["id"]
 
 
@@ -123,7 +124,7 @@ def test_a_read_token_reads_but_never_writes(client, monkeypatch):
     page_id = c.post("/api/pages", json={"title": "Token paper"}).json()["id"]
     c.put(f"/api/chats/{page_id}", json={"messages": [{"role": "user", "text": "keep me"}]})
     bearer = TestClient(app)
-    bearer.headers["Authorization"] = "Bearer " + create_token("wa_tokens", ws, "assistant", 90, scope="read")["token"]
+    bearer.headers["Authorization"] = "Bearer " + create_token(account_of("wa_tokens"), ws, "assistant", 90, scope="read")["token"]
     armed = _agent_chat(bearer, monkeypatch, page_id)
     assert "read_page" in armed and not armed & {"rename_page", "move_page", "edit_block"}
     assert c.get(f"/api/blocks/{page_id}").json()["content"] == "Token paper"
@@ -157,8 +158,8 @@ COOKIE = {"name": "access", "value": "renamed-publisher-secret", "domain": ".aps
           "hostOnly": False, "path": "/"}
 
 
-def _cookie_for(username):
-    token = sessions.current_user.set(username)
+def _cookie_for(user_id):
+    token = sessions.current_user.set(user_id)
     try:
         jar = sessions.cookie_jar()
     finally:
@@ -180,18 +181,19 @@ def test_a_renamed_account_keeps_its_copies_tasks_and_connections(client, transp
     login("wa_remote", "pw").post("/api/pages", json={"title": "Grant proposal (confidential)"})
     make_user("wa_alice", "pw")
     alice = login("wa_alice", "pw")
-    token = create_token("wa_remote", remote_ws, "mirror", 90, scope="write")["token"]
+    token = create_token(account_of("wa_remote"), remote_ws, "mirror", 90, scope="write")["token"]
     r = alice.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token})
     assert r.status_code == 201, r.text
     copy_ws = r.json()["workspace_id"]
     sync_engine.sync_workspace(copy_ws)
-    task = _task("wa_alice")
-    ai_usage.record("wa_alice", "chat", "p1", "Provider", "model", {"input": 7, "output": 3})
-    sessions.save("wa_alice", "journals.aps.org", [COOKIE])
-    lab_ws = workspaces.create("WA invites", "wa_alice", kind="shared")["id"]
+    alice_id = account_of("wa_alice")
+    task = _task(alice_id)
+    ai_usage.record(alice_id, "chat", "p1", "Provider", "model", {"input": 7, "output": 3})
+    sessions.save(alice_id, "journals.aps.org", [COOKIE])
+    lab_ws = workspaces.create("WA invites", alice_id, kind="shared")["id"]
     with connect_users_db() as conn:
         conn.execute("INSERT INTO pending_memberships (workspace_id, subject, username, role, invited_by, "
-                     "created_at) VALUES (?, 'sub-wa', 'someone', 'editor', 'wa_alice', ?)", (lab_ws, page_now()))
+                     "created_at) VALUES (?, 'sub-wa', 'someone', 'editor', ?, ?)", (lab_ws, alice_id, page_now()))
         conn.commit()
 
     admin = login("wa_admin", "pw")
@@ -199,25 +201,29 @@ def test_a_renamed_account_keeps_its_copies_tasks_and_connections(client, transp
     assert r.status_code == 200, r.text
 
     renamed = login("wa_alice.old", "pw")
+    assert account_of("wa_alice.old") == alice_id
     assert [m["workspace_id"] for m in renamed.get("/api/mirrors").json()["mirrors"]] == [copy_ws]
     assert renamed.get(f"/api/mirrors/{copy_ws}/log").status_code == 200
     assert [t["id"] for t in renamed.get("/api/backup-tasks").json()["tasks"]] == [task["id"]]
-    assert "renamed-publisher-secret" in _cookie_for("wa_alice.old")
+    assert "renamed-publisher-secret" in _cookie_for(alice_id)
     with connect_users_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM ai_usage WHERE username = 'wa_alice.old'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM ai_usage WHERE user_id = ?", (alice_id,)).fetchone()[0] == 1
         assert conn.execute("SELECT invited_by FROM pending_memberships WHERE subject = 'sub-wa'"
-                            ).fetchone()[0] == "wa_alice.old"
-        assert not conn.execute("SELECT 1 FROM ai_usage WHERE username = 'wa_alice'").fetchone()
+                            ).fetchone()[0] == alice_id
 
     # Someone new takes the old name: none of it is theirs.
     assert admin.post("/api/admin/users", json={"username": "wa_alice", "password": "newpass123"}).status_code == 200
     newcomer = login("wa_alice", "newpass123")
+    newcomer_id = account_of("wa_alice")
+    assert newcomer_id != alice_id
+    with connect_users_db() as conn:
+        assert not conn.execute("SELECT 1 FROM ai_usage WHERE user_id = ?", (newcomer_id,)).fetchone()
     assert newcomer.get("/api/mirrors").json()["mirrors"] == []
     for path in (f"/api/mirrors/{copy_ws}", f"/api/mirrors/{copy_ws}/log", f"/api/mirrors/{copy_ws}/conflicts"):
         assert newcomer.get(path).status_code == 404, path
     assert newcomer.post(f"/api/mirrors/{copy_ws}/force", json={"direction": "push"}).status_code == 404
     assert newcomer.get("/api/backup-tasks").json()["tasks"] == []
-    assert _cookie_for("wa_alice") == ""
+    assert _cookie_for(newcomer_id) == ""
 
 
 def test_mirror_controls_need_the_owner_of_the_copy(client, transport):
@@ -225,31 +231,30 @@ def test_mirror_controls_need_the_owner_of_the_copy(client, transport):
     make_user("wa_bob", "pw")
     make_user("wa_carol", "pw")
     bob = login("wa_bob", "pw")
-    token = create_token("wa_remote2", remote_ws, "mirror", 90, scope="write")["token"]
+    token = create_token(account_of("wa_remote2"), remote_ws, "mirror", 90, scope="write")["token"]
     copy_ws = bob.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token}).json()["workspace_id"]
     # A mirror row naming an account that doesn't own the copy's workspace
     # (a stale owner) opens nothing for it.
     with connect_users_db() as conn:
-        conn.execute("UPDATE mirrors SET owner = 'wa_carol' WHERE workspace_id = ?", (copy_ws,))
+        conn.execute("UPDATE mirrors SET owner = ? WHERE workspace_id = ?", (account_of("wa_carol"), copy_ws))
         conn.commit()
     carol = login("wa_carol", "pw")
     assert carol.get("/api/mirrors").json()["mirrors"] == []
     assert carol.get(f"/api/mirrors/{copy_ws}").status_code == 404
 
 
-def test_a_rename_waits_for_a_running_backup_task(client):
+def test_a_rename_leaves_a_running_backup_task_alone(client):
+    """The task names its owner by id: a rename neither waits for a running
+    one nor rewrites it."""
     make_user("wa_admin2", "pw", is_admin=1)
     make_user("wa_dave", "pw")
-    task = _task("wa_dave")
+    dave = account_of("wa_dave")
+    task = _task(dave)
     admin = login("wa_admin2", "pw")
     with backup_schedule.locked(task["id"]) as held:
         assert held
         r = admin.post("/api/admin/users/wa_dave/rename", json={"new_username": "wa_dave2"})
-    assert r.status_code == 409 and "backup task" in r.json()["detail"]
-    with connect_users_db() as conn:
-        assert conn.execute("SELECT 1 FROM users WHERE username = 'wa_dave'").fetchone()
-    assert backup_schedule.read(task["id"])["owner"] == "wa_dave"
-    # Once it finished, the rename goes through and takes the task along.
-    assert admin.post("/api/admin/users/wa_dave/rename", json={"new_username": "wa_dave2"}).status_code == 200
-    assert backup_schedule.read(task["id"])["owner"] == "wa_dave2"
+    assert r.status_code == 200, r.text
+    assert account_of("wa_dave2") == dave and backup_schedule.read(task["id"])["owner"] == dave
+    assert [t["id"] for t in login("wa_dave2", "pw").get("/api/backup-tasks").json()["tasks"]] == [task["id"]]
     assert workspace_of("wa_dave2")

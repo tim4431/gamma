@@ -7,7 +7,7 @@ from urllib.request import Request
 import pytest
 
 from ai_fixtures import FakeResp
-from conftest import guest_name, login, make_user, make_page
+from conftest import account_of, guest_name, login, make_user, make_page
 from gamma import ai_web
 from gamma import publisher_sessions as sessions
 from gamma.db import connect_users_db
@@ -54,6 +54,7 @@ def ai_fetch(accounts, monkeypatch):
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
     monkeypatch.setattr(pdf_mod, "_open_access_pdfs", lambda doi: [])
     ai_web.clear_cache()
 
@@ -80,7 +81,7 @@ def accounts(client):
     for name in ("pub_alice", "pub_bob"):
         make_user(name, "publisher-password")
         with connect_users_db() as conn:
-            conn.execute("DELETE FROM publisher_sessions WHERE username=?", (name,))
+            conn.execute("DELETE FROM publisher_sessions WHERE user_id=?", (account_of(name),))
             conn.commit()
     return login("pub_alice", "publisher-password"), login("pub_bob", "publisher-password")
 
@@ -92,7 +93,7 @@ def connect(client, cookies=None, host=HOST, **kwargs):
 
 
 def cookie_header(username, url):
-    token = sessions.current_user.set(username)
+    token = sessions.current_user.set(username and account_of(username))
     try:
         jar = sessions.cookie_jar()
     finally:
@@ -110,7 +111,8 @@ def test_connect_encrypted_private_and_disconnect(accounts):
     assert SECRET not in result.text and "encrypted" not in result.text
     assert bob.get("/api/publisher-sessions").json()["sessions"] == []
     with connect_users_db() as conn:
-        encrypted = conn.execute("SELECT encrypted FROM publisher_sessions WHERE username='pub_alice'").fetchone()[0]
+        encrypted = conn.execute("SELECT encrypted FROM publisher_sessions WHERE user_id=?",
+                                 (account_of("pub_alice"),)).fetchone()[0]
     assert SECRET not in encrypted
     assert cookie_header("pub_alice", f"https://{HOST}/paper.pdf") == "access=" + SECRET
     assert cookie_header("pub_bob", f"https://{HOST}/paper.pdf") is None
@@ -282,8 +284,9 @@ def test_ai_fetch_guest_and_anonymous_do_not_borrow_sessions(
     from gamma.ai_settings import load_provider_entries, save_provider_entries
 
     # Even if a guest somehow has stored credentials, the chat excludes them.
-    sessions.save(guest_name(), HOST, [COOKIE])
-    save_provider_entries(guest_name(), load_provider_entries("pub_alice"))
+    guest_id = account_of(guest_name())
+    sessions.save(guest_id, HOST, [COOKIE])
+    save_provider_entries(guest_id, load_provider_entries(account_of("pub_alice")))
     try:
         routes, seen = transport
         routes[AI_SOURCE] = (302, {"Location": AI_PDF}, b"")
@@ -294,8 +297,8 @@ def test_ai_fetch_guest_and_anonymous_do_not_borrow_sessions(
         assert anon.post("/api/ai/chat", json={"prompt": "Read it"}).status_code == 401
         assert seen == []
     finally:
-        sessions.disconnect(guest_name(), HOST)
-        save_provider_entries(guest_name(), [])
+        sessions.disconnect(guest_id, HOST)
+        save_provider_entries(guest_id, [])
 
 
 def test_connected_cookie_does_not_follow_external_redirect(accounts, transport):
@@ -304,7 +307,7 @@ def test_connected_cookie_does_not_follow_external_redirect(accounts, transport)
     routes[start] = (302, {"Location": target}, b"")
     routes[target] = (200, {}, b"done")
     connect(accounts[0])
-    token = sessions.current_user.set("pub_alice")
+    token = sessions.current_user.set(account_of("pub_alice"))
     try:
         with guarded_urlopen(start) as response:
             response.read()
@@ -325,7 +328,8 @@ def test_reimport_replaces_cookie_snapshot_and_caps_lifetime(accounts):
 def test_corrupt_ciphertext_does_not_break_pdf_fetch(accounts):
     connect(accounts[0])
     with connect_users_db() as conn:
-        conn.execute("UPDATE publisher_sessions SET encrypted='broken' WHERE username='pub_alice'")
+        conn.execute("UPDATE publisher_sessions SET encrypted='broken' WHERE user_id=?",
+                     (account_of("pub_alice"),))
         conn.commit()
     assert cookie_header("pub_alice", f"https://{HOST}/") is None
 
@@ -343,10 +347,11 @@ def test_delete_account_removes_connections(accounts):
     connect(alice)
     make_user("pub_admin", "publisher-password", is_admin=1)
     admin = login("pub_admin", "publisher-password")
+    alice_id = account_of("pub_alice")
     response = admin.delete("/api/admin/users/pub_alice")
     assert response.status_code == 200, response.text
     with connect_users_db() as conn:
-        assert conn.execute("SELECT host FROM publisher_sessions WHERE username='pub_alice'").fetchall() == []
+        assert conn.execute("SELECT host FROM publisher_sessions WHERE user_id=?", (alice_id,)).fetchall() == []
 
 
 def test_import_rejects_plain_text_and_oversized_payload(accounts):

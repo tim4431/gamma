@@ -15,7 +15,7 @@ from .mcp_oauth import SCOPE, TTL, load, store
 
 
 class GammaCode(AuthorizationCode):
-    username: str
+    user_id: str
     workspace_id: str
     session_hash: str
 
@@ -61,13 +61,13 @@ class Provider:
         if not value or value["client_id"] != client.client_id or value["resource"] != self.resource:
             raise TokenError("invalid_grant", "The authorization code is no longer valid.")
         with connect_users_db() as conn:
-            user = conn.execute("SELECT is_guest FROM users WHERE username = ?", (value["username"],)).fetchone()
-            sessions = conn.execute("SELECT token FROM sessions WHERE username = ?", (value["username"],)).fetchall()
+            user = conn.execute("SELECT is_guest FROM users WHERE id = ?", (value["user_id"],)).fetchone()
+            sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (value["user_id"],)).fetchall()
         if (not user or user[0] or not any(token_digest(s[0]) == value["session_hash"] for s in sessions)
-                or not workspaces.role_of(value["workspace_id"], value["username"])):
+                or not workspaces.role_of(value["workspace_id"], value["user_id"])):
             raise TokenError("invalid_grant", "Workspace access is no longer available.")
         try:
-            issued = create_token(value["username"], value["workspace_id"],
+            issued = create_token(value["user_id"], value["workspace_id"],
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
                                   oauth_resource=self.resource)
         except HTTPException as exc:

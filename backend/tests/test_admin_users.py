@@ -120,8 +120,8 @@ def test_lockout_rails(boss):
     # workspace goes with it)
     from gamma import guests, workspaces
     from gamma.db import ws_dir
-    name = guests.new_guest()
-    ws = workspaces.default_workspace(name)
+    user_id, name = guests.new_guest()
+    ws = workspaces.default_workspace(user_id)
     assert boss.put(f"/api/admin/users/{name}", json={"password": "x"}).status_code == 400
     r = boss.delete(f"/api/admin/users/{name}")
     assert r.status_code == 200 and r.json()["deleted_workspaces"] == [ws]
@@ -148,11 +148,107 @@ def test_rename_user_via_gui(boss):
     # collisions / guest / bad names / ghosts rejected
     assert boss.post("/api/admin/users/renata/rename", json={"new_username": "boss"}).status_code == 409
     from gamma import guests
-    name = guests.new_guest()
+    _, name = guests.new_guest()
     assert boss.post(f"/api/admin/users/{name}/rename", json={"new_username": "g2"}).status_code == 400
     assert boss.delete(f"/api/admin/users/{name}").status_code == 200
     assert boss.post("/api/admin/users/renata/rename", json={"new_username": "bad name"}).status_code == 400
     assert boss.post("/api/admin/users/ghost/rename", json={"new_username": "x"}).status_code == 404
+
+
+def _table_rows(conn) -> dict:
+    """Every table of a database, its rows as a sorted list (to compare)."""
+    tables = [t for t, in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                         "AND name NOT LIKE 'sqlite_%'")]
+    return {t: sorted(map(repr, conn.execute(f"SELECT * FROM {t}").fetchall())) for t in tables}
+
+
+def test_a_rename_rewrites_no_row_but_the_name(boss):
+    """Every row and file names an account by its id (docs/dev/user_db.md
+    "Accounts are named by id"), so a rename is the users row's username and
+    the personal workspace named after the account — no other row of
+    users.db or of the workspace's pages.db changes — and the account's
+    session, prefs, op log, trashed page, integration token, membership,
+    share invitation, mirror, job and publisher session all keep working."""
+    import json
+
+    from conftest import account_of, make_page
+    from gamma import jobs, publisher_sessions, sync_engine, workspaces
+    from gamma.app import app
+    from gamma.db import connect_pages_db, connect_users_db
+    from gamma.integrations import create_token
+
+    _make_user("ren_carol", "rcpw")
+    carol = _login("ren_carol", "rcpw")
+    user_id, ws = account_of("ren_carol"), workspace_of("ren_carol")
+    # What an account leaves behind, in every place that names it.
+    carol.put("/api/prefs/profile", json={"value": {"theme": "sepia"}}).raise_for_status()
+    page = make_page(carol, "Carol's notes")
+    carol.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "ren-note", "parent": page["id"], "content": "a note"}]}).raise_for_status()
+    draft = make_page(carol, "Carol's draft")
+    carol.delete(f"/api/blocks/{draft['id']}").raise_for_status()
+    token = create_token(user_id, ws, "script", 1)["token"]
+    lab = boss.post("/api/workspaces", json={"name": "Rename lab", "kind": "shared"}).json()["id"]
+    boss.put(f"/api/workspaces/{lab}/members/ren_carol", json={"role": "editor"}).raise_for_status()
+    shared = make_page(boss, "For Carol")
+    share = boss.post(f"/api/share/{shared['id']}").json()["token"]
+    boss.put(f"/api/share-settings/{shared['id']}", json={
+        "audience": "list", "users": [{"name": "ren_carol", "role": "edit"}]}).raise_for_status()
+    whoami = json.dumps({"user": "carol", "workspace": {"id": "remote-ws", "name": "Remote lab"},
+                         "role": "editor", "scope": "write"}).encode()
+    mirror = sync_engine.create_mirror(user_id, "https://remote.example", "gamma_rename",
+                                       fetch=lambda *request: (200, whoami))
+    job = jobs.start("export", owner=user_id, title="Carol's export", run=lambda job: {"ok": True})
+    assert jobs.wait(job["id"])["state"] == "done"
+    host = "journals.aps.org"
+    carol.post("/api/publisher-sessions", headers={"x-forwarded-proto": "https"}, json={
+        "host": host, "cookies": [{"name": "access", "value": "v", "domain": host, "hostOnly": True,
+                                   "path": "/"}]}).raise_for_status()
+    assert workspaces.get(ws)["name"] == "ren_carol"
+    with connect_users_db() as conn:
+        users_before = _table_rows(conn)
+    with connect_pages_db(ws) as conn:
+        pages_before = _table_rows(conn)
+
+    r = boss.post("/api/admin/users/ren_carol/rename", json={"new_username": "ren_caroline"})
+    assert r.status_code == 200, r.text
+
+    with connect_users_db() as conn:
+        users_after = _table_rows(conn)
+        assert conn.execute("SELECT id FROM users WHERE username = 'ren_caroline'").fetchone() == (user_id,)
+    with connect_pages_db(ws) as conn:
+        assert _table_rows(conn) == pages_before
+    # One row changed in each of two tables: the name, and the personal
+    # workspace's name. The mirror's workspace keeps its own.
+    assert {t for t in users_before if users_before[t] != users_after[t]} == {"users", "workspaces"}
+    for table in ("users", "workspaces"):
+        assert len(set(users_before[table]) ^ set(users_after[table])) == 2, table
+    assert workspaces.get(ws)["name"] == "ren_caroline"
+    assert workspaces.get(mirror["workspace_id"])["name"] == "Remote lab (offline copy)"
+
+    # The session: no new login, and the new name everywhere it is shown.
+    assert carol.get("/api/session").json()["user"] == "ren_caroline"
+    assert carol.get("/api/prefs/profile").json()["value"] == {"theme": "sepia"}
+    batches = carol.get(f"/api/pages/{page['id']}/ops", params={"since": 0}).json()["batches"]
+    assert [b["actor"] for b in batches] == [user_id]
+    assert {p["id"]: p["deleted_by"] for p in carol.get("/api/trash").json()["pages"]} == {draft["id"]: "ren_caroline"}
+    bearer = TestClient(app)
+    bearer.headers["Authorization"] = f"Bearer {token}"
+    assert page["id"] in {b["id"] for b in bearer.get("/api/blocks/root/children").json()["children"]}
+    assert ("ren_caroline", "editor") in {(m["username"], m["role"]) for m in workspaces.members(lab)}
+    assert carol.get("/api/blocks/root/children", headers={"X-Gamma-Workspace": lab}).status_code == 200
+    assert carol.get(f"/api/share/{share}").json()["can_edit"] is True
+    assert boss.get(f"/api/share-settings/{shared['id']}").json()["users"] == [{"name": "ren_caroline", "role": "edit"}]
+    assert [m["workspace_id"] for m in carol.get("/api/mirrors").json()["mirrors"]] == [mirror["workspace_id"]]
+    assert job["id"] in {j["id"] for j in carol.get("/api/jobs").json()["jobs"]}
+    assert [s["host"] for s in carol.get("/api/publisher-sessions").json()["sessions"]] == [host]
+    bound = publisher_sessions.current_user.set(user_id)
+    try:  # the snapshot is sealed with the id: it still opens
+        assert [c.name for c in publisher_sessions.cookie_jar()] == ["access"]
+    finally:
+        publisher_sessions.current_user.reset(bound)
+    assert TestClient(app).post("/api/login", json={"username": "ren_carol", "password": "rcpw"}).status_code == 401
+    _login("ren_caroline", "rcpw")
 
 
 def test_self_rename_keeps_the_session_working(boss):

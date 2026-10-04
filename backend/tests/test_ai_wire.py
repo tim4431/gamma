@@ -47,6 +47,31 @@ def test_anthropic_wire_maps_minimal_effort_to_low():
     assert body["output_config"] == {"effort": "high"}
 
 
+def test_fast_mode_goes_out_as_each_wire_names_it():
+    msgs = [{"role": "user", "content": "hi"}]
+    # Anthropic: a top-level speed plus the beta flag the preview needs.
+    req = anthropic_request({**CONF, "base_url": "https://api.anthropic.com"}, msgs, "", "m", speed="fast")
+    assert json.loads(req.data)["speed"] == "fast"
+    assert req.headers["Anthropic-beta"] == "fast-mode-2026-02-01"
+    # OpenAI and the Codex backend: the service tier, "priority" for fast.
+    for request in (openai_request, openai_responses_request, chatgpt_request):
+        conf = {**CONF, "base_url": "https://api.openai.com"}
+        assert json.loads(request(conf, msgs, "", "m", speed="fast").data)["service_tier"] == "priority"
+        assert json.loads(request(conf, msgs, "", "m", speed="flex").data)["service_tier"] == "flex"
+        assert "service_tier" not in json.loads(request(conf, msgs, "", "m").data)
+
+
+def test_a_wire_without_a_tier_leaves_the_field_out():
+    # Only the providers' own endpoints route by tier; a service merely
+    # speaking their API gets the plain request (and Anthropic no flag).
+    msgs = [{"role": "user", "content": "hi"}]
+    req = anthropic_request({**CONF, "base_url": "https://api.moonshot.ai/anthropic"}, msgs, "", "m", speed="fast")
+    assert "speed" not in json.loads(req.data) and "Anthropic-beta" not in req.headers
+    body = json.loads(openai_request({**CONF, "base_url": "https://api.deepseek.com"},
+                                     msgs, "", "m", speed="fast").data)
+    assert "service_tier" not in body
+
+
 def test_openai_output_cap_field_follows_the_endpoint():
     # OpenAI itself wants max_completion_tokens; compatible servers such as
     # DeepSeek only read max_tokens.
@@ -553,3 +578,204 @@ def test_hosted_search_streams_report_the_pages_found():
     assert events == [("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
                       ("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
                       ("text", "done")]
+
+
+def test_streams_report_the_speed_the_provider_served():
+    """The tier that actually served a turn rides on its token report as
+    ``speed`` (a SPEED_ORDER name, "" for the usual routing): Anthropic's
+    usage.speed, Chat Completions' per-chunk service_tier, the Responses
+    API's response.service_tier. A provider that names none leaves the key
+    out, so the caller keeps what it asked for."""
+    def reported(stream, wire):
+        return [u for k, u in sse_events(stream, wire) if k == "usage"][0]
+
+    # Anthropic: asked for fast, served standard — on either usage object.
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5, "speed": "standard"}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}})
+    assert reported(stream, "anthropic") == {"input": 5, "output": 2, "cache_read": 0, "cache_write": 0, "speed": ""}
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                  "usage": {"output_tokens": 2, "speed": "fast"}})
+    assert reported(stream, "anthropic")["speed"] == "fast"
+    # Chat Completions: every chunk names the tier; "priority" is fast mode, "default" the usual route.
+    stream = sse({"choices": [{"delta": {"content": "hi"}}], "service_tier": "priority"},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}, "service_tier": "priority"})
+    assert reported(stream, "openai")["speed"] == "fast"
+    stream = sse({"choices": [{"delta": {"content": "hi"}}], "service_tier": "default"},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}, "service_tier": "default"})
+    assert reported(stream, "openai")["speed"] == ""
+    # Responses API (OpenAI's and the Codex backend): the finished response says.
+    for wire in ("openai-responses", "chatgpt"):
+        stream = sse({"type": "response.output_text.delta", "delta": "hi"},
+                     {"type": "response.completed", "response": {
+                         "status": "completed", "service_tier": "flex",
+                         "usage": {"input_tokens": 3, "output_tokens": 2}}})
+        assert reported(stream, wire)["speed"] == "flex"
+    # Nothing said: no key — not even "" — on any wire.
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}})
+    assert "speed" not in reported(stream, "anthropic")
+    stream = sse({"choices": [{"delta": {"content": "hi"}}]},
+                 {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}})
+    assert "speed" not in reported(stream, "openai")
+    stream = sse({"type": "response.output_text.delta", "delta": "hi"},
+                 {"type": "response.completed", "response": {
+                     "status": "completed", "usage": {"input_tokens": 3, "output_tokens": 2}}})
+    assert "speed" not in reported(stream, "openai-responses")
+
+
+def test_whole_replies_report_the_speed_the_provider_served():
+    """The non-streamed body too: Anthropic's usage.speed, Chat Completions'
+    top-level service_tier (a compatible server's body, without it, names
+    no speed). A tier Gamma has no name for counts as the usual routing."""
+    from gamma.ai_protocols.base import served_speed_name
+
+    class Body:
+        def __init__(self, data):
+            self._data = json.dumps(data).encode()
+
+        def read(self):
+            return self._data
+
+    heard = []
+    text = WIRES["anthropic"].read_reply(Body({
+        "content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn",
+        "usage": {"input_tokens": 4, "output_tokens": 1, "speed": "fast"}}), heard.append)
+    assert text == "hi" and heard == [{"input": 4, "output": 1, "cache_read": 0, "cache_write": 0, "speed": "fast"}]
+    heard = []
+    WIRES["openai"].read_reply(Body({
+        "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}, "service_tier": "default"}), heard.append)
+    assert heard[0]["speed"] == ""
+    heard = []
+    WIRES["openai"].read_reply(Body({
+        "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}}), heard.append)
+    assert "speed" not in heard[0]
+    # The mapping itself: Gamma's names, the providers' spellings, the rest.
+    assert served_speed_name("fast") == "fast" and served_speed_name("priority") == "fast"
+    assert served_speed_name("flex") == "flex" and served_speed_name("Priority ") == "fast"
+    assert served_speed_name("standard") == "" and served_speed_name("default") == ""
+    assert served_speed_name("scale") == ""
+    assert served_speed_name("") is None and served_speed_name(None) is None and served_speed_name(3) is None
+
+
+# --- other OpenAI-compatible services --------------------------------------------
+
+def test_openai_paths_follow_a_versioned_base_url():
+    """A base URL that already ends in a version keeps it: a pasted /v1 stays
+    one, and GLM's /api/paas/v4 is reachable as documented. The Anthropic
+    wire keeps its own fixed path."""
+    msgs = [{"role": "user", "content": "hi"}]
+    url = lambda base: openai_request({**CONF, "base_url": base}, msgs, "", "m").full_url  # noqa: E731
+    assert url("https://api.openai.com") == "https://api.openai.com/v1/chat/completions"
+    assert url("https://api.moonshot.ai/v1") == "https://api.moonshot.ai/v1/chat/completions"
+    assert url("https://api.z.ai/api/paas/v4") == "https://api.z.ai/api/paas/v4/chat/completions"
+    listing = WIRES["openai"].models_request({**CONF, "base_url": "https://api.z.ai/api/paas/v4"})
+    assert listing.full_url == "https://api.z.ai/api/paas/v4/models"
+    assert anthropic_request(CONF, msgs, "", "m").full_url == "https://example.test/v1/messages"
+
+
+def test_openai_stream_reports_the_thinking_ahead_of_the_calls():
+    stream = sse(
+        {"choices": [{"delta": {"reasoning_content": "Look "}}]},
+        {"choices": [{"delta": {"reasoning_content": "it up."}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "function": {"name": "list_pages", "arguments": "{}"}}]},
+            "finish_reason": "tool_calls"}]},
+    )
+    events = [(kind, data) for kind, data in sse_events(stream, "openai") if kind != "tool_delta"]
+    assert events == [("reasoning", {"reasoning_content": "Look it up."}),
+                      ("tool", {"id": "c1", "name": "list_pages", "arguments": {}}),
+                      ("stop", "tool_calls")]
+
+
+THOUGHT_TURNS = [
+    {"role": "user", "content": "tidy up"},
+    {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "list_pages", "arguments": {}}],
+     "reasoning": {"reasoning_content": "List first."}},
+    {"role": "tool", "call_id": "c1", "content": "Pages…"},
+    {"role": "assistant", "content": "Done."},
+    {"role": "user", "content": "and now?"},
+]
+
+
+def test_thinking_goes_back_to_a_compatible_server_only():
+    body = json.loads(openai_request({**CONF, "base_url": "https://api.deepseek.com"},
+                                     THOUGHT_TURNS, "", "m").data)
+    called, answered = [m for m in body["messages"] if m["role"] == "assistant"]
+    assert called["reasoning_content"] == "List first."
+    # Every assistant turn carries the field, empty where none was kept.
+    assert answered == {"role": "assistant", "content": "Done.", "reasoning_content": ""}
+    # OpenAI itself and the other wires send exactly what they sent before.
+    plain = [{k: v for k, v in m.items() if k != "reasoning"} for m in THOUGHT_TURNS]
+    official = {**CONF, "base_url": "https://api.openai.com"}
+    assert openai_request(official, THOUGHT_TURNS, "", "m").data == openai_request(official, plain, "", "m").data
+    for request in (anthropic_request, openai_responses_request, chatgpt_request):
+        assert json.loads(request(CONF, THOUGHT_TURNS, "", "m").data) == json.loads(request(CONF, plain, "", "m").data)
+
+
+def test_openrouter_thinking_details_are_kept_whole_and_sent_back():
+    stream = sse(
+        {"choices": [{"delta": {"reasoning": "Hm", "reasoning_details": [
+            {"type": "reasoning.text", "index": 0, "text": "Hm"}]}}]},
+        {"choices": [{"delta": {"reasoning": "m.", "reasoning_details": [
+            {"type": "reasoning.text", "index": 0, "text": "m.", "signature": "sig"}]}}]},
+        {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}]},
+    )
+    (kept,) = [data for kind, data in sse_events(stream, "openai") if kind == "reasoning"]
+    assert kept == {"reasoning": "Hmm.", "reasoning_details": [
+        {"type": "reasoning.text", "index": 0, "text": "Hmm.", "signature": "sig"}]}
+    turns = [{**m, "reasoning": kept} if m.get("tool_calls") else m for m in THOUGHT_TURNS]
+    body = json.loads(openai_request({**CONF, "base_url": "https://openrouter.ai/api/v1"}, turns, "", "m").data)
+    called, answered = [m for m in body["messages"] if m["role"] == "assistant"]
+    assert called["reasoning"] == "Hmm." and called["reasoning_details"] == kept["reasoning_details"]
+    assert answered["reasoning"] == "" and "reasoning_details" not in answered
+
+
+def test_openrouter_listing_names_windows_efforts_and_pictures():
+    data = {"data": [
+        {"id": "deepseek/deepseek-v4-pro", "context_length": 1_048_576,
+         "supported_parameters": ["reasoning", "tools"], "reasoning": {"supported_efforts": ["xhigh", "high"]},
+         "architecture": {"input_modalities": ["text"]}},
+        {"id": "meta/plain", "context_length": 8192, "supported_parameters": ["tools"],
+         "architecture": {"input_modalities": ["text", "image"]}},
+    ]}
+    rows = {m["id"]: m for m in WIRES["openai"].models(data, {**CONF, "base_url": "https://openrouter.ai/api/v1"})}
+    assert rows["deepseek/deepseek-v4-pro"] == {"id": "deepseek/deepseek-v4-pro", "context_window": 1_048_576,
+                                                "efforts": ["xhigh", "high"], "speeds": None, "images": False}
+    assert rows["meta/plain"]["efforts"] == [] and rows["meta/plain"]["images"] is True
+
+
+def test_a_named_service_that_takes_the_cache_key_gets_it():
+    msgs = [{"role": "user", "content": "hi"}]
+    body = lambda base: json.loads(openai_request(  # noqa: E731
+        {**CONF, "protocol": "openai", "base_url": base}, msgs, "", "m", cache_key="k1").data)
+    assert body("https://api.moonshot.ai")["prompt_cache_key"] == "k1"
+    assert "prompt_cache_key" not in body("https://api.deepseek.com")
+
+
+def test_build_messages_sends_a_replys_thinking_back():
+    """A saved reply's thinking rides on its first replayed assistant turn:
+    the tool calls it led to, else the reply itself. Anything but text is
+    dropped."""
+    from gamma.ai_context import prompt_tokens
+
+    history = [{"role": "user", "text": "tidy"},
+               {"role": "ai", "text": "Done.", "reasoning": {"reasoning_content": "List first.", "junk": 3},
+                "actions": [{"tool": "list_pages", "args": {}, "result": "Pages…"}]},
+               {"role": "user", "text": "thanks"},
+               {"role": "ai", "text": "Welcome.", "reasoning": {"reasoning_content": "Be brief."}},
+               {"role": "user", "text": "again"},
+               {"role": "ai", "text": "Sure.", "reasoning": "not a mapping"}]
+    messages = build_messages(payload(history), "", with_tools=True)
+    called = next(m for m in messages if m.get("tool_calls"))
+    assert called["reasoning"] == {"reasoning_content": "List first."}
+    replies = {m["content"]: m.get("reasoning") for m in messages
+               if m["role"] == "assistant" and not m.get("tool_calls")}
+    assert replies == {"Done.": None, "Welcome.": {"reasoning_content": "Be brief."}, "Sure.": None}
+    # The thinking counts toward the prompt's size.
+    assert prompt_tokens([{"role": "assistant", "content": "", "reasoning": {"reasoning_content": "x" * 400}}]) == 100

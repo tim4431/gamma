@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conftest import login, make_user, workspace_of
-from gamma import block_index, ops, storage, upload_gc
+from conftest import login, make_folder, make_user, workspace_of
+from gamma import ops, pdf_index, storage, upload_gc
 from gamma.db import connect_pages_db, ws_uploads_dir
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -114,6 +114,7 @@ def test_block_moved_to_another_page_keeps_its_file(ann):
 
 def test_a_batch_hands_over_only_what_it_dropped(ann, monkeypatch):
     c, ws = ann
+    reading = make_folder(c, "Reading")
     seen = []
     monkeypatch.setattr(upload_gc, "schedule", lambda w, names: seen.append(sorted(names)))
     url, name = _image(c, "typing")
@@ -127,7 +128,7 @@ def test_a_batch_hands_over_only_what_it_dropped(ann, monkeypatch):
     # filing a PDF page in a folder drops nothing
     doc = c.post("/api/uploads", files={"file": ("a.pdf", io.BytesIO(PDF + b"typing"), "application/pdf")}).json()
     assert c.post(f"/api/pages/{page}/attachment", json={"doc_id": doc["doc_id"]}).status_code == 200
-    assert c.put(f"/api/blocks/{page}", json={"properties": {"folder": "Reading"}}).status_code == 200
+    assert c.put(f"/api/blocks/{page}", json={"properties": {"folders": [reading]}}).status_code == 200
     assert seen == [[], [], [], [], []]
     # only a change that really drops a name hands it over
     _ops(c, page, [{"op": "set", "id": "gcT2", "content": "gone"}])
@@ -152,15 +153,15 @@ def test_a_deleted_page_hands_over_its_files(ann):
 def test_only_a_deleted_pdf_block_costs_the_library_wide_cleanup(ann, monkeypatch):
     c, ws = ann
     calls = []
-    real = block_index.purge_page_data
-    monkeypatch.setattr(block_index, "purge_page_data",
-                        lambda w, conn, ids, **kw: (calls.append(kw.get("library", True)), real(w, conn, ids, **kw)))
+    real = pdf_index.purge_unused
+    monkeypatch.setattr(pdf_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
     page = _page(c)
     _ops(c, page, [{"op": "insert", "id": "gcL1", "parent": page, "content": "plain"},
                    {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": {"doc_id": "d" * 24}}])
     _ops(c, page, [{"op": "delete", "id": "gcL1"}])
+    assert calls == []
     _ops(c, page, [{"op": "delete", "id": "gcL2"}])
-    assert calls == [False, True]
+    assert calls == [ws]
 
 
 # --- the full pass --------------------------------------------------------------------
@@ -266,6 +267,39 @@ def test_purge_refuses_too_many_files_at_once(ann, monkeypatch):
     assert all((ws_uploads_dir(ws) / n).is_file() for n in names)
     monkeypatch.setattr(upload_gc, "PURGE_MAX", 100)
     upload_gc.reconcile(ws)
+    assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
+
+
+def test_the_purge_dates_each_due_file_and_lists_nothing_under_the_write_lock(gc, monkeypatch):
+    """Under the write lock the purge dates each due file on its own
+    (``storage.stat``), never by listing the workspace while writers wait,
+    and asks no more once a refusal is certain."""
+    make_user("gc_dated", "pw")
+    c, ws = login("gc_dated", "pw"), workspace_of("gc_dated")
+    page = _page(c, "dated")
+    _ops(c, page, [{"op": "insert", "id": "gcD", "parent": page, "content": "x"}])
+    names = sorted(_image(c, f"dated-{i}")[1] for i in range(5))
+    for name in names:
+        _age(ws, name, 31)
+    stored = len(storage.list(ws))
+    lists, stats = [], []
+    real_list, real_stat, real_purge = storage.list, storage.stat, upload_gc._purge
+    monkeypatch.setattr(storage, "list", lambda w: lists.append(w) or real_list(w))
+    monkeypatch.setattr(storage, "stat", lambda w, n: stats.append(n) or real_stat(w, n))
+
+    def purge(*args):  # everything _purge does, it does under the write lock
+        lists.clear()
+        stats.clear()
+        return real_purge(*args)
+
+    monkeypatch.setattr(upload_gc, "_purge", purge)
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 2)
+    out = upload_gc.reconcile(ws)
+    assert out["purged"] == [] and out["blocked"].startswith(f"5 of its {stored} files at once")
+    assert lists == [] and len(stats) == 3  # past the cap at the third: the last two never asked
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 100)
+    assert upload_gc.reconcile(ws)["purged"] == names
+    assert lists == [] and sorted(stats) == names
     assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
 
 

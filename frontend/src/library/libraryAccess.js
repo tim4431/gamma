@@ -1,3 +1,5 @@
+import { EMPTY_TREE, inFolder } from "./libraryUtils.js";
+
 // What the person may do with the LIBRARY they are looking at — the home
 // listing, its folders and labels — as opposed to a page's notes (that is
 // App's `readOnly`). One object derived from how the library was reached,
@@ -13,15 +15,16 @@
 //             write to the library's structure, incl. sharing a folder
 //   pin       pins and the pinned strip (page pins are a block write)
 //   history   the recents strip and the account's view history
-//   contains  whether a folder path is inside `root`
-//   clamp     that path when it is, else `root`
+//   contains  whether a folder (an id) is inside `root`
+//   clamp     that folder when it is, else `root`
 //
 // A workspace viewer browses everything but organizes nothing; a share
-// visitor browses the shared folder only.
-export function libraryAccess({ shareMode = false, shareFolder = "", role = "" } = {}) {
+// visitor browses the shared folder only. `tree` is the listing's folder
+// tree (libraryUtils.libraryTree), which says what is below `root`.
+export function libraryAccess({ shareMode = false, shareFolder = "", role = "", tree = EMPTY_TREE } = {}) {
   const root = shareMode ? shareFolder : "";
   const organize = !shareMode && role !== "viewer";
-  const contains = (path) => !root || path === root || path.startsWith(root + "/");
+  const contains = (id) => !root || id === root || inFolder(tree, id, root);
   return {
     root,
     browse: !shareMode || !!shareFolder,
@@ -29,6 +32,6 @@ export function libraryAccess({ shareMode = false, shareFolder = "", role = "" }
     pin: organize,
     history: !shareMode,
     contains,
-    clamp: (path) => (contains(path || "") ? path || "" : root),
+    clamp: (id) => (contains(id || "") ? id || "" : root),
   };
 }

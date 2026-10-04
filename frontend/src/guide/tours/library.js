@@ -6,10 +6,10 @@ import { T } from "../../shared/i18n/i18n.js";
 // The step that matters is `lib-model`: a label and a folder are the same
 // mechanism, and filing a paper never copies it. That is a model rather than
 // a control, so it is a centred card with the drawing and no anchor — which
-// also keeps it from being passed over. The steps that do point at controls
-// are `optional`: a library with nothing pinned, nothing viewed lately, or a
-// card showing no chips passes over them silently instead of pointing at
-// nothing (docs/dev/home_library.md).
+// also keeps it from being passed over. The later steps that point at
+// controls are `optional`: a library with nothing viewed lately, or nothing
+// deleted, passes over them silently instead of pointing at nothing
+// (docs/dev/home_library.md).
 export default {
   id: "library",
   version: 1,
@@ -18,27 +18,22 @@ export default {
   trigger: { requires: { growingLibrary: true } },
   offerAnchor: "home.listing",
   offerPlacement: "bottom",
-  offer: { title: T("Your library is growing"), line: T("Folders and labels are what keep it findable.") },
+  offer: { title: T("Your library is growing"), line: T("Folders and labels keep it findable.") },
   steps: [
     { id: "lib-menu", anchor: "home.card", placement: "right",
-      title: T("Right-click a page for everything you can do to it"),
-      body: T("Move it to a folder, label it, pin it, rename it, share it."),
-      bodyTouch: T("Long-press a page for everything you can do to it: move it to a folder, label it, pin it, rename it, share it.") },
+      title: T("Right-click a page for its menu"),
+      body: T("Move, label, pin, rename or share it."),
+      bodyTouch: T("Long-press a page to move, label, pin, rename or share it."),
+      scene: [{ click: "home.card", button: "right", at: [0.5, 0.4] }] },
     { id: "lib-model", anchor: null, media: "labels-folders",
-      title: T("Labels find papers; a folder is a label that nests"),
-      body: T("A label is anything you will look for later — an author, an acronym, a project. Filing never copies the paper: one paper sits in as many folders as you like and carries any number of labels at once.") },
-    { id: "lib-chips", anchor: "home.cardLabels", placement: "right", optional: true,
-      title: T("A card wears the folders and labels it has"),
-      body: T("Click one to see everything filed under it.") },
-    { id: "lib-pinned", anchor: "home.pinned", placement: "bottom", optional: true,
-      title: T("Pin what you are working on this week"),
-      body: T("Pinned pages and folders stay at the top, whatever the sort says.") },
+      title: T("A folder is a label that nests"),
+      body: T("Filing never copies: one paper can sit in many folders.") },
     { id: "lib-recents", anchor: "home.recents", placement: "bottom", optional: true,
-      title: T("Recently viewed remembers where you were"),
-      body: T("{key:app.quickOpen} reaches the same pages from anywhere, without coming back here.") },
+      title: T("Pick up where you left off"),
+      body: T("Pin a page to keep it at the top.") },
     { id: "lib-trash", anchor: "home.trash", placement: "bottom", optional: true,
-      title: T("A deleted page waits here for 30 days"),
-      body: T("Restore it and it goes back to the folders and labels it had."),
+      title: T("Deleted pages wait here 30 days"),
+      body: T("Restored, they return to their folders and labels."),
       next: T("Done") },
   ],
 };

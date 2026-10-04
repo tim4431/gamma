@@ -74,21 +74,21 @@ module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
 
-Named services (`SERVICES` in `gamma/ai_protocols/__init__.py`, sent as `services` with the
-settings) are form presets: a protocol plus a fixed endpoint and its key
-hints, offered under the connect dialog's Other tile above "Custom
-endpoint". DeepSeek is
-the `openai` protocol at `https://api.deepseek.com`. An entry made from one
-stores only protocol + base URL; `provider_label` recognizes the pair and
-names the entry after the service when it has no name of its own. The
-`openai` wire follows the endpoint (`is_openai_platform` in `ai_protocols/openai.py`):
-only OpenAI itself gets `max_completion_tokens`, the Responses API for tool
-calls, and the gpt-/o-family filter on its model listing. Compatible servers
-get `max_tokens`, Chat Completions tools and their full listing (minus
-embedding/audio/image models). Anthropic subscription sign-in is deliberately
-absent: Anthropic's terms forbid third-party apps from routing requests
-through Free/Pro/Max plan credentials, so Claude is reached with a Console API
-key.
+Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
+`services` with the settings) are form presets, data rather than code: a
+protocol plus a fixed endpoint and its key hints. An entry made from one
+stores only protocol + base URL; `service_of(conf)` recognizes the pair
+again, and `provider_label` names the entry after the service when it has
+no name of its own. See "Other services" below for the list and what a
+preset's optional fields change. The `openai` wire follows the endpoint
+(`is_openai_platform` in `ai_protocols/openai.py`): only OpenAI itself gets
+`max_completion_tokens`, the Responses API for tool calls, and the
+gpt-/o-family filter on its model listing. Compatible servers get
+`max_tokens`, Chat Completions tools and their full listing (minus
+embedding/audio/image models). Anthropic subscription sign-in is
+deliberately absent: Anthropic's terms forbid third-party apps from routing
+requests through Free/Pro/Max plan credentials, so Claude is reached with a
+Console API key.
 
 The Connections pane also exposes `POST /api/ai/providers/{id}/usage`. For a
 ChatGPT OAuth entry it reads normalized subscription rate-limit windows
@@ -108,6 +108,70 @@ or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
 
+### Other services
+
+The connect dialog's Other tile lists the presets by vendor (`group`), then
+the vendor's plans (`plan`) when it has several, then "Custom endpoint".
+All of them ride the `openai` wire. The branches for OpenAI's and
+Anthropic's own endpoints (`is_openai_platform`, `is_anthropic_platform`)
+never apply to them.
+
+| Vendor | Plans (base URL) |
+|---|---|
+| DeepSeek | API key (`https://api.deepseek.com`) |
+| Kimi | API key (`https://api.moonshot.ai`), China (`https://api.moonshot.cn`), Kimi Code subscription (`https://api.kimi.com/coding/v1`) |
+| Qwen | Model Studio international (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), China (`https://dashscope.aliyuncs.com/compatible-mode/v1`), Coding Plan (`https://coding-intl.dashscope.aliyuncs.com/v1`, China `https://coding.dashscope.aliyuncs.com/v1`) |
+| GLM | Z.ai (`https://api.z.ai/api/paas/v4`), Zhipu China (`https://open.bigmodel.cn/api/paas/v4`), GLM Coding Plan (`…/api/coding/paas/v4` on either host) |
+| OpenRouter | API key (`https://openrouter.ai/api/v1`) |
+
+A subscription is an API key the vendor's console makes for its coding
+plan, pointed at the plan's own endpoint, so it is an ordinary key entry.
+Alibaba's terms allow the Qwen Coding Plan only inside coding tools; the
+preset's `note` says so under the Plan menu.
+
+A preset's optional fields are read by host-independent code. An absent
+field changes nothing:
+
+- `catalog`: the models.dev provider key, added to `Protocol.catalog_hints`
+  for hosts that name none (`dashscope.aliyuncs.com` → `alibaba-cn`).
+- `cache_key`: the endpoint takes OpenAI's `prompt_cache_key` (Kimi).
+- `max_tokens`: the chat's reply cap (`ai_catalog.reply_cap`). These
+  vendors' models count their thinking toward it, so the presets set
+  32,768, bounded by the model's own output limit from models.dev and left
+  at the default 8,192 when that limit is unknown. OpenAI, Anthropic,
+  OpenRouter and custom endpoints keep 8,192.
+- `note`: a sentence shown under the Plan menu. Plan labels and notes are a
+  fixed vocabulary the browser translates (`SERVICE_WORDING` in
+  `settings/providerEditor.js` names them for the catalog).
+
+Three host-independent rules make these endpoints work.
+
+**Paths.** `api_url` (`ai_protocols/base.py`) appends `/v1/…` to a base URL
+unless it already ends in a version segment. So GLM's `/api/paas/v4` is
+reachable, and a pasted `…/v1` stays one. The Anthropic wire keeps its
+fixed `/v1/messages`.
+
+**Thinking.** A compatible server streams the model's thinking as
+`reasoning_content` (DeepSeek, Kimi, Qwen, GLM) or `reasoning` (OpenRouter,
+Ollama), plus OpenRouter's signed `reasoning_details`. `OpenAIChat`
+collects them and yields `("reasoning", {field: value})` before the tool
+calls. The agent loop keeps it on the assistant turn it replays, and the
+wire echoes it back under the name it arrived by. A field that one
+assistant turn carries goes on every assistant turn of the request, empty
+where none was kept. DeepSeek refuses a request with tools when any
+earlier assistant turn lacks `reasoning_content`. Nothing is echoed to
+api.openai.com, and the Anthropic and Responses wires ignore the field.
+"Replay across turns" covers how it survives between messages.
+
+**Pictures.** Whether a model reads pictures is a model fact like its
+window (`ai_catalog.image_input`): OpenRouter's listing names
+`architecture.input_modalities`, else models.dev's `modalities.input` says.
+For a model that reads text only, the chat leaves out the user's pictures
+and selection crops and says how many in a line of the question. It arms
+no `PICTURE_TOOLS` (`view_pdf_page`, `view_ink`) and drops the pictures
+tool results carry, and the composer's file picker takes PDFs only. A
+model no source knows gets pictures.
+
 ### Protocol adapters
 
 Everything that differs between providers lives on one adapter per wire in
@@ -119,9 +183,10 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 |---|---|
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
-| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
+| speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
+| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts}]` (`listed_window` / `listed_efforts` read whatever the listing carries), `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds, images}]` (`listed_window` / `listed_efforts` / `listed_speeds` / `listed_images` read whatever the listing carries), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
@@ -275,7 +340,7 @@ of three endings:
 - **Pasted.** The redirect page fails to load and the user pastes its
   address; a paste that doesn't parse leaves the sign-in waiting.
 
-The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+The form (`useProviderEditor` in `settings/providerEditor.js`) asks `status` every 2.5 s
 while the server may catch the sign-in, and calls `complete` with an empty
 `callback` once it is `ready`. A paste of a callback address connects without
 the Connect button, and in Chromium the address is also picked up from the
@@ -288,7 +353,8 @@ maintenance.
 `/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
 Completions API. Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
-set — some models reject it; see "Reasoning effort" below), optional `system` override, pasted `images`
+set — some models reject it; see "Reasoning effort" below), optional `speed`
+(the provider's service tier; see "Speed" below), optional `system` override, pasted `images`
 (data URLs → native image content parts), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
 (the open page). A page's PDF attachment is derived server-side
@@ -297,7 +363,9 @@ compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
-`{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
+`{"delta"}`/`{"error"}` parsed from the provider's SSE, and a
+`{"reasoning": {field: text}}` line per provider turn whose thinking the
+wire reported (see "Other services"); upstream failures
 before the first byte still return normal HTTP errors. Every AI NDJSON
 stream (chat, the tool loop, translation) runs through `keepalive_lines`
 (`routers/ai.py`), which pumps the source generator from a worker thread.
@@ -441,8 +509,8 @@ Every request re-sends the whole conversation (no wire keeps state:
 `store` stays off on the Responses API, and there is no
 `previous_response_id` — the conversation is Gamma's to keep). What makes
 that cheap is the providers' prefix caches, which every adapter now asks
-for. The chat sends `chat_key` (the bucket: a page id, `home`,
-`home:<folder>`); `_cache_key` in `routers/ai.py` hashes it with the
+for. The chat sends `chat_key` (the bucket: a page id, a folder id,
+`home`); `_cache_key` in `routers/ai.py` hashes it with the
 account and workspace into one opaque id per conversation that
 `ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
 
@@ -454,7 +522,8 @@ account and workspace into one opaque id per conversation that
   (`is_anthropic_platform`): a service speaking the API behind another
   host may reject the field.
 - OpenAI: `prompt_cache_key` on Chat Completions and on `/v1/responses`,
-  again only on the platform itself (`is_openai_platform`), never on a
+  again only on the platform itself (`is_openai_platform`) and on a named
+  service whose preset sets `cache_key` (Kimi), never on another
   compatible server.
 - The Codex backend: the same `prompt_cache_key` in the body and the
   `session_id` header, one per conversation like Codex CLI's (a fresh
@@ -472,7 +541,7 @@ estimates the prompt (`ai_context.prompt_tokens`: four ASCII characters or
 one other character — CJK, symbols — per token, 1,600 per picture; native
 PDF files are not counted) against the model's window
 (`ai_catalog.context_window`, the same lookup as the header's ring) less
-`_WINDOW_RESERVE` for the reply, and leaves the oldest history items out
+the reply cap (`ai_catalog.reply_cap`) and `_ESTIMATE_SLACK`, and leaves the oldest history items out
 (`build_messages(drop_turns=)`: two, then doubling; the kept history opens
 on a question, the document context moves to the oldest kept one) until it
 fits. A provider that still answers `too_long` (no source knew the window,
@@ -503,18 +572,77 @@ token budget has none). `[]` means the model has no effort control: the
 chip's menu drops its effort section and nothing is sent. A model no source
 knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
 preference itself never changes with the model: `effortFor` in
-`chat/effort.js` sends it as it is when the model takes it, else the
+`chat/modelPrefs.js` sends it as it is when the model takes it, else the
 nearest level the model does (a tie goes to the lower), so `xhigh` becomes
 `high` on a model that stops there and comes back on the next model that
 has it. The chip shows that effective level beside the model's name. The
 server accepts `EFFORT_ORDER` (none … max) and drops anything else.
 
 Every reply names what answered it: the stream's `{"model": {id, name,
-effort}}` line (after `{context}`) is saved on the reply as `model` and
-`effort`, and the reply's foot shows "gpt-5.5 · high" before the token line.
+effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
+`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
+token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
+— a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
+tooltip names the tier, since the glyph carries no text). The line comes a
+second time, corrected, when the provider's report says the turn ran at
+another speed than the one asked for (see "Speed" below); the chat keeps
+the latest.
 `GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
 offline server; the browser suite sets it); model facts then come from the
 providers' listings alone.
+
+### Speed (service tier)
+
+Providers sell a faster route to the same model: Anthropic's fast mode,
+OpenAI's and Codex's `service_tier`. One account pref covers them all:
+`chatSpeed`, set from the composer's model chip or Settings → AI → Chat. Its
+values are `ai_protocols.SPEED_ORDER`, `flex` (slower and cheaper) and
+`fast` (the premium low-latency route, around twice the price per token), or
+"" for the provider's usual routing, which leaves the field out.
+
+Each wire maps those canonical names to its own (`Protocol.speeds`,
+`speed_value`), so nothing outside `ai_protocols/` knows a provider's
+spelling:
+
+| Wire | What goes out for `fast` |
+|---|---|
+| `anthropic` | `"speed": "fast"` in the body plus the `anthropic-beta: fast-mode-2026-02-01` header, only against Anthropic's own endpoint (a service speaking the API elsewhere gets neither). No `flex`: standard is its default |
+| `openai`, `openai-responses` | `"service_tier": "priority"` (fast mode's older, still-accepted name), only against OpenAI itself — a compatible server may reject the field. `flex` → `"flex"` |
+| `chatgpt` | the same over the Codex backend; `priority` is the tier id its own catalog names |
+
+`GET /api/ai/model-info` names a model's tiers, cheapest first
+(`ai_catalog.speed_tiers`): the entry's own listing first (the Codex
+backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
+the wire itself can ask for (`"protocol"`). `[]` means no speed control and
+the chip's menu drops its Speed section. Anthropic's listing carries no
+speed facts, so its answer is wire-wide: fast mode is offered for every
+model that endpoint serves. A model that doesn't take it (fast mode is the
+Opus line only) is refused upstream with the provider's own message; the
+alternative, a table of model names in the repository, would go stale.
+
+`speedFor` in `chat/modelPrefs.js` sends the preference only when the model
+has that tier. Unlike effort there is no nearest tier: paying for a speed
+the model doesn't offer, and silently dropping to the cheap one, are both
+decisions that are the user's to make.
+
+What a reply reports is the speed that *served* it, as far as the provider
+says. Each wire reads the tier out of its response — OpenAI's
+`service_tier` (on the completion body and on every streamed chunk, and on
+the Responses API's finished `response`), Anthropic's `usage.speed` (`fast`
+/ `standard`, present once a speed was asked for) — and
+`ai_protocols.base.served_speed_name` maps it onto `SPEED_ORDER`: `priority`
+and `fast` are `fast`, `flex` is `flex`, anything else the provider calls it
+(`default`, `standard`, `scale`) is `""`, the usual routing. The name rides on
+the turn's token report as `speed` (`Protocol.events`, `read_reply`) and the
+chat route (`_served_speed` in `routers/ai.py`) lifts it off before the
+`{usage}` line goes out — that line stays counts only — and makes it the
+reply's `speed`, re-sending the `{model}` line when it changed; over an
+agent reply's rounds the last report wins. A provider that says nothing
+leaves standing what the wire asked for, which is the requested tier only
+when the wire has it on that endpoint (`_sent_speed`, `Protocol.speed_tiers`):
+fast mode asked of an OpenAI-compatible server or of a service speaking
+Anthropic's API behind another host is never sent, so the reply says `""`
+rather than claim a tier nobody was asked for.
 
 ### Selected PDF passages
 
@@ -704,7 +832,7 @@ integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
-### Permissions and knobs (Settings → AI → Chat)
+### Permissions and knobs (Settings → AI → Tool usage)
 
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat. The chat header's Tools button and settings
@@ -739,7 +867,7 @@ leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
 its own, so it is only Allow or Off.
 
-Settings → AI → Chat → Tools compares permissions in a table: named, explained
+Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
 with a column for each chat kind. Each cell is a state menu whose icon shows
 the state: a green check, the accent's question mark, a muted ban.
@@ -1045,6 +1173,15 @@ and `run_agent_tool` canonicalize the name before the permission check and
 dispatch, and the resulting action chip carries the current name. Old names
 are never offered as tools.
 
+A reply's thinking travels the same way. The chat keeps the reply's
+`{"reasoning"}` lines on the saved message as `reasoning` (`{field: text}`,
+rounds joined by a blank line; `addReasoning` in `ChatDock.jsx`) and sends
+it back in `history`. `build_messages` puts it on the reply's first
+replayed assistant turn (the tool calls it led to, else the reply itself),
+for the wire to echo, and counts it in the prompt estimate. Only the text
+crosses messages: OpenRouter's signed `reasoning_details` must match the
+original sequence, so they are replayed within one reply only.
+
 OpenAI-protocol calls that carry tools are rerouted to the platform
 `/v1/responses` (`OpenAIChat.wire`) — gpt-5.x rejects function tools on chat
 completions — but only against the official api.openai.com base URL; custom
@@ -1242,8 +1379,9 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   `context_length` / `max_model_len` of OpenRouter, vLLM, Groq, …). A
   listing without sizes (OpenAI's, DeepSeek's) falls back to the public
   models.dev catalog. There the provider this entry talks to wins
-  (`Protocol.catalog_hints`: the endpoint's host labels, OpenAI for the
-  ChatGPT backend), else the value most providers agree on. Both lookups
+  (`Protocol.catalog_hints`: the endpoint's host labels and a named
+  service's `catalog` key, OpenAI for the ChatGPT backend), else the value
+  most providers agree on. Both lookups
   are cached like the Codex version (6 h; a failed lookup retried after
   10 min, the last good answer kept). A model neither knows gets `null`: no
   ring, and the popover shows the token count alone. The client asks once
@@ -1282,19 +1420,17 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 
 ## Chat history buckets
 
-Focused page id in the paper view, `home` at the library root,
-`home:<folder path>` per folder — each folder keeps its own conversation, and
-switching folders re-scopes the next message. The
-`/api/chats/{block_id:path}` routes take the `:path` converter for the nested
-keys, and folder rename/move/delete calls `POST /api/folders/rename`
-(`chats.move_folder_buckets`; {src, dst}, dst "" for a delete) BEFORE rewriting the tags so the destination
-bucket exists when ChatDock reloads (a destination holding a real conversation
-stays active and the moved-in one is filed into its history; empty save-echo
-rows are overwritten) — folder conversations follow renames and moves. No
-conversation is ever dropped with a folder: a delete ("Keep pages" and
-"Delete pages too" alike) files each active one into its own bucket's
-history, which stays under the folder's key, so a page restored from
-Recently deleted brings its folder back with its chats.
+Focused page id in the paper view, `home` at the library root, the
+folder's own id per folder (folders are blocks,
+[home_library.md](home_library.md) "Folders and labels") — each folder keeps
+its own conversation, and switching folders re-scopes the next message. A
+bucket is always a block id or `home`, so a rename or a move of the folder
+changes nothing about its chat. No conversation is ever dropped with a
+folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
+pages too" alike) files the active conversation and the history of the
+folder and of every folder below it into the library chat's history
+(`home`, `chats.file_into_home`), where they stay findable. ChatDock's
+`chatKey` is the open page's id, else the open folder's id, else `home`.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1345,7 +1481,8 @@ and New chat starts over locally.
 
 ### Chat history
 
-Each bucket keeps its earlier conversations. `chats` (data.db) holds the
+Each bucket keeps its earlier conversations. `chats` (in the workspace's
+pages.db, beside the pages they are about) holds the
 one ACTIVE conversation per bucket — what the panel shows and autosaves —
 plus its `title`, its `updated_at` the conversation's version; `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
@@ -1382,8 +1519,12 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
     popover: closing it, or a search that hides a ticked row, drops them, so
     Delete never takes a row the user cannot see.
-- History follows its bucket: `POST /folders/rename` rewrites entry
-  buckets along with the active rows (a folder delete leaves them), and
-  `purge_page_data` drops the entries of a page deleted for good (a page in
-  Recently deleted keeps its chats). The gamma export/import and the account-merge path copy
-  only the active `chats` rows, not history.
+- History follows its bucket: a folder delete moves its entries into
+  `home`'s with the active rows, and `ops.delete_page` drops the active row
+  and the entries of a page deleted for good, in the deleting transaction
+  (a page in Recently deleted keeps its chats). A Gamma export carries its pages' buckets whole (the active
+  conversation and the history; on a folder export the folder views'
+  buckets too), and a backup merge or an import adds every conversation
+  the workspace lacks — a bucket's active one, an archived one by its id
+  (`db.copy_chats`); a replace restore brings the backup's chats with its
+  pages.

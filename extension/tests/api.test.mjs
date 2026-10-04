@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, getSettings, removeServer, setSettings, whoAmI } from "../api.js";
+import { api, checkedDefaultFolder, defaultFolder, folderByPath, getSettings, rememberFolder, removeServer, setSettings, whoAmI } from "../api.js";
 
 function settings(t, server) {
   const stored = { server };
@@ -109,13 +109,13 @@ test("guarded requests still reject redirects without retrying or changing setti
 
 test("switching servers remembers the existing address and deduplicates normalized origins", async (t) => {
   const { stored } = settings(t, "http://localhost:9001");
-  stored.folder = "Papers";
+  stored.defaultFolders = { "http://localhost:9001": "papers-id" };
   assert.deepEqual((await getSettings()).servers, [stored.server]);
   await setSettings({ server: "https://gamma.example/library" });
   await setSettings({ server: "localhost:9001/" });
   assert.equal(stored.server, "http://localhost:9001");
   assert.deepEqual(stored.servers, ["http://localhost:9001", "https://gamma.example"]);
-  assert.equal(stored.folder, "Papers");
+  assert.deepEqual(stored.defaultFolders, { "http://localhost:9001": "papers-id" });
   await setSettings({ allowOa: false });
   assert.deepEqual(stored.servers, ["http://localhost:9001", "https://gamma.example"]);
 });
@@ -142,4 +142,73 @@ test("forgetting a server persists without re-adding it or choosing a different 
   assert.deepEqual((await getSettings()).servers, ["https://gamma.example"]);
   await removeServer("https://gamma.example");
   assert.deepEqual((await getSettings()).servers, []);
+});
+
+test("the default folder is the connected server's id, else a stored old path sent as folder_path", async (t) => {
+  const { stored } = settings(t, "https://gamma.example");
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "" });
+  stored.folder = "Reading/2026";
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" });
+  stored.defaultFolders = { "https://gamma.example": "f1", "http://localhost:9001": "f2" };
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "f1", folder_path: "" });
+  stored.server = "https://other.example";
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" });
+});
+
+test("a folder path names the folder whose names it joins, as the clip splits it", () => {
+  const folders = [{ id: "f1", path: ["Reading"] }, { id: "f2", path: ["Reading", "2026"] }, { id: "f3", path: ["a/b"] }];
+  assert.equal(folderByPath(folders, "Reading/2026"), "f2");
+  assert.equal(folderByPath(folders, " Reading / 2026/ "), "f2");
+  assert.equal(folderByPath(folders, "Reading"), "f1");
+  assert.equal(folderByPath(folders, "Missing"), "");
+  // Typed "a/b" names folder a's subfolder b, as the clip files it — not a
+  // top-level folder whose own name is "a/b".
+  assert.equal(folderByPath(folders, "a/b"), "");
+  assert.equal(folderByPath([...folders, { id: "f4", path: ["a", "b"] }], "a/b"), "f4");
+  assert.equal(folderByPath([...folders, { id: "f4", path: ["a", "b"] }], "a"), "");
+  assert.equal(folderByPath(folders, "Reading/2026/more"), "");
+  // A path differing only in case names the folder too, as the server files
+  // it — but an exactly spelled folder wins over one that differs in case.
+  assert.equal(folderByPath(folders, "reading/2026"), "f2");
+  assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "reading"), "f5");
+  assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "READING"), "f1");
+});
+
+test("a save's folder becomes the server's default, a path by the id it now has", async (t) => {
+  const { stored, writes } = settings(t, "https://gamma.example");
+  stored.folder = "Reading/2026";
+  const fetch = t.mock.method(globalThis, "fetch", async (url, init) => {
+    assert.equal(url.href, "https://gamma.example/api/library/folders");
+    assert.equal(init.redirect, "error");
+    return response(url.href, { folders: [{ id: "f2", path: ["Reading", "2026"] }], labels: [] });
+  });
+  await rememberFolder(await getSettings(), { folder: "", folder_path: "Reading/2026" });
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.deepEqual(stored.defaultFolders, { "https://gamma.example": "f2" });
+  assert.equal(stored.folder, "");
+  // The same folder again writes nothing; another one, or the root, replaces it.
+  await rememberFolder(await getSettings(), { folder: "f2", folder_path: "" });
+  assert.equal(writes.length, 1);
+  await rememberFolder(await getSettings(), { folder: "", folder_path: "" });
+  assert.deepEqual(stored.defaultFolders, { "https://gamma.example": "" });
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test("a save without the popup forgets a default folder the library no longer has", async (t) => {
+  const { stored, writes } = settings(t, "https://gamma.example");
+  stored.defaultFolders = { "https://gamma.example": "gone", "http://localhost:9001": "f2" };
+  const fetch = t.mock.method(globalThis, "fetch", async (url) => {
+    assert.equal(url.href, "https://gamma.example/api/library/folders");
+    return response(url.href, { folders: [{ id: "f1", path: ["Reading"] }], labels: [] });
+  });
+  assert.deepEqual(await checkedDefaultFolder(await getSettings()), { folder: "", folder_path: "" });
+  assert.deepEqual(stored.defaultFolders, { "https://gamma.example": "", "http://localhost:9001": "f2" }, "forgotten for this server only");
+  assert.equal(writes.length, 1);
+  stored.defaultFolders = { "https://gamma.example": "f1" };
+  assert.deepEqual(await checkedDefaultFolder(await getSettings()), { folder: "f1", folder_path: "" });
+  assert.equal(fetch.mock.callCount(), 2);
+  stored.defaultFolders = {};
+  stored.folder = "Reading/2026";
+  assert.deepEqual(await checkedDefaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" }, "a path is sent as it is");
+  assert.equal(fetch.mock.callCount(), 2, "nothing to check");
 });

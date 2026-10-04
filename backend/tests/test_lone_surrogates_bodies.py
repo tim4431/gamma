@@ -1,10 +1,10 @@
 """Half an emoji ("\\ud83d" in the JSON a browser sends) never makes a 500:
-the request bodies of the metadata edit, the folder rename and the chat
-writes store it — and answer it — as U+FFFD (ops.StorableBody)."""
+the request bodies of the metadata edit, a folder's rename (an op on the
+folder tree) and the chat writes store it — and answer it — as U+FFFD (ops.StorableBody)."""
 
 import json
 
-from conftest import login, make_user
+from conftest import login, make_folder, make_user
 
 HALF = "\\ud83d"  # the JSON escape of a lone high surrogate
 
@@ -16,15 +16,18 @@ def _post(client, method, path, body: str):
 def test_metadata_folders_and_chats_take_half_an_emoji():
     make_user("lsb_owner", "lsbownerpw1")
     c = login("lsb_owner", "lsbownerpw1")
-    page = c.post("/api/pages", json={"title": "Paper", "properties": {"folder": "Reading"}}).json()
+    folder = make_folder(c, "Reading")
+    page = c.post("/api/pages", json={"title": "Paper", "folders": [folder]}).json()
 
     r = _post(c, "POST", "/api/metadata/update",
               json.dumps({"block_id": page["id"], "meta": {"title": "x"}}).replace('"x"', f'"Title {HALF}"'))
     assert r.status_code == 200, r.text
     assert r.json()["meta"]["title"] == "Title �"
 
-    r = _post(c, "POST", "/api/folders/rename", f'{{"src": "Reading", "dst": "Read {HALF}"}}')
+    r = _post(c, "POST", "/api/pages/folders/ops",
+              f'{{"ops": [{{"op": "set", "id": "{folder}", "content": "Read {HALF}"}}]}}')
     assert r.status_code == 200, r.text
+    assert c.get(f"/api/blocks/{folder}").json()["content"] == "Read �"
 
     r = _post(c, "PUT", f"/api/chats/{page['id']}",
               f'{{"messages": [{{"role": "user", "text": "hi {HALF}"}}], "title": "T {HALF}"}}')
