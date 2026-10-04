@@ -14,8 +14,9 @@
 # the release step from the merged commit. The publish job then dispatches
 # docker.yml with the version so the server image gets a matching tag, and
 # the Windows job submits the MSIX to the Microsoft Store when the Partner
-# Center secrets exist. The browser extension has its own workflow
-# (extension.yml).
+# Center secrets exist. The same release carries the Gamma Connector browser
+# extension (extension/, zipped with the release version) and the AI
+# assistant plugins.
 #
 # Every installer bundles the frozen backend (PyInstaller) + built frontend,
 # so a released app is fully self-contained — no Python or Node needed.
@@ -83,8 +84,8 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
           IN_PUBLISH: ${{ inputs.publish }}
         run: |
-          # Newest published desktop tag. Only plain vX.Y.Z counts: extension-v*
-          # and the historical desktop-v* are other series.
+          # Newest published desktop tag. Only plain vX.Y.Z counts: the
+          # historical extension-v* and desktop-v* are other series.
           prev=$(git ls-remote --tags --refs origin 'refs/tags/v*' | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
           floor=$(node -p "require('./desktop/package.json').version")
           if [ -n "$IN_VERSION" ]; then
@@ -400,8 +401,39 @@ jobs:
             dist/codex-plugin/*SHA256SUMS.txt
           if-no-files-found: error
 
+  # The Gamma Connector zip carries the release version in its manifest
+  # (the checkout's manifest stays untouched). Chrome's `version` takes only
+  # dot-separated numbers, so a pre-release suffix goes to `version_name`.
+  # Listing docs and .DS_Store stay out.
+  extension:
+    needs: meta
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Zip the extension
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          rm -rf /tmp/ext && cp -r extension /tmp/ext
+          jq --arg v "${VERSION%%-*}" --arg n "$VERSION" \
+            '.version = $v | if $n != $v then .version_name = $n else . end' \
+            extension/manifest.json > /tmp/ext/manifest.json
+          rm -f /tmp/ext/STORE.md /tmp/ext/README.md
+          find /tmp/ext -name .DS_Store -delete
+          (cd /tmp/ext && zip -r "$GITHUB_WORKSPACE/gamma-connector-$VERSION.zip" .)
+          unzip -l "gamma-connector-$VERSION.zip"
+          unzip -p "gamma-connector-$VERSION.zip" manifest.json | jq -r '"manifest version: " + .version'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gamma-connector
+          path: gamma-connector-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
-    needs: [meta, desktop, codex-plugin]
+    needs: [meta, desktop, codex-plugin, extension]
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -419,6 +451,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: gamma-codex-plugin
+          path: assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: gamma-connector
           path: assets
       - name: Release notes
         shell: bash
@@ -448,7 +484,7 @@ jobs:
           # descriptive, PR titles are all "Merge pull request #N from dev".
           # Tidied: no trailing punctuation, no repeats.
           if [ -n "$PREV" ]; then range="$PREV..HEAD"; else range="HEAD"; fi
-          git log "$range" --no-merges --format='%s' -- desktop backend frontend \
+          git log "$range" --no-merges --format='%s' -- desktop backend frontend extension \
             | sed -E 's/[[:space:];.,]+$//' \
             | awk 'NF && !seen[$0]++ { print "- " $0 }' > changes.md
           {
@@ -529,10 +565,10 @@ jobs:
             echo
             echo "## Browser extension"
             echo
-            btn "Gamma Connector releases" 4285F4 googlechrome "https://github.com/$REPO/releases?q=extension-v&expanded=true"
+            btn "Download Gamma Connector" 4285F4 googlechrome "$base/gamma-connector-$VERSION.zip"
             echo
             echo
-            echo "The Gamma Connector has its own releases, tagged \`extension-v<version>\`."
+            echo "For Chrome, Edge and other Chromium browsers. Unzip the download into a permanent folder, open \`chrome://extensions\`, turn on *Developer mode*, click *Load unpacked* and choose the unzipped folder."
             echo
           } > notes.md
           cat notes.md

@@ -2,8 +2,9 @@
 
 The one new service in the Gamma Cloud plan ([research/cloud-plans.md](../research/cloud-plans.md)):
 a small web service at `account.gammapdf.com` that owns who a person is,
-signs them in to any Gamma server through OpenID Connect, and (later)
-their plan, billing and hosted container. It holds no pages, files or
+signs them in to any Gamma server through OpenID Connect, and holds
+their plan, billing ([billing.md](billing.md)) and hosted container
+([hosted.md](hosted.md)). It holds no pages, files or
 notes, and a Gamma server never calls it on a data request: an ID token is
 verified locally with the published keys. Code: `cloud/` (package
 `gammacloud`, entry `cloud/app.py`, CLI `cloud/manage.py`), tests
@@ -16,9 +17,11 @@ and the public-URL rules (`servers.norm_url`, from
 
 Status: **v0**, plus the preference profile, the linked-server list and
 the username lookup (the account server's half of steps 7 and 8 of the
-plan). Not built: Stripe and provisioning (v1). Plans are a column an
-admin sets. The consumer side, "Sign in with Gamma Cloud" on every Gamma
-server, is under "The Gamma side" below.
+plan). Paid plans are sold through Stripe ([billing.md](billing.md)). The
+effective plan is the higher of a grant (an admin's or an invite's) and a
+live subscription. Plus and Pro accounts get a hosted container
+([hosted.md](hosted.md)). The consumer side, "Sign in with Gamma Cloud" on
+every Gamma server, is under "The Gamma side" below.
 
 ## What it owns
 
@@ -30,6 +33,7 @@ server, is under "The Gamma side" below.
 | identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
+| hosted servers | one Gamma container per account on a hosted plan, the hosts the fleet agents run on, and their job queue ([hosted.md](hosted.md)) |
 | admin | accounts, invites, OIDC clients, the audit log — API and `manage.py` |
 
 ## Running
@@ -120,6 +124,8 @@ the signing keys and every token hash.
 | `audit` | every account-changing event |
 | `prefs` | the preference profile: (`account_id`, `key`) → `value` (JSON text) and `updated_at`, the version (step 4) |
 | `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5), `version` (the build label it last reported, `''` until it does) and `schema` (its data directory's schema version, NULL until it reports; step 8) |
+| `hosts`, `hosted_servers`, `fleet_jobs` | the fleet's hosts, the hosted servers and the agents' job queue (step 9; [hosted.md](hosted.md) "Tables") |
+| `subscriptions`, `billing_events` | the account server's copy of each Stripe subscription, and the webhook events it has seen (step 9; [billing.md](billing.md)). `accounts.granted_plan` is the plan an admin or an invite gave; `accounts.plan` is the effective one |
 
 Every secret at rest is a SHA-256 of a long random token
 (`db.token_hash`); nothing in the file can be replayed. Timestamps are
@@ -165,7 +171,7 @@ page) and the **app** shell (a sidebar and a content column):
   undo it) with a progress bar, hidden once all three are done. Then
   *Gamma servers*, the first five of the Devices page's list (below)
   without its buttons. Beside them sit a plan
-  card (a placeholder pointing at self-hosting until hosted servers exist)
+  card (the plan, *Plan and billing* and *Self-host instead*)
   and an account summary: username, e-mail state, member since, and the
   account id with a copy button. The id is what Gamma servers key on; it
   never changes. `?mail=failed` (registration could not send the mail)
@@ -188,7 +194,9 @@ page) and the **app** shell (a sidebar and a content column):
     server's last check-in and the grant's last refresh or access-token
     use; the latter is written at most every 10 minutes
     (`config.LAST_ACTIVE_TOUCH`). A listed server without a live grant
-    shows *Signed out* and *Remove* (`POST /api/servers/remove`).
+    shows *Signed out* and *Remove* (`POST /api/servers/remove`). The
+    account's hosted server shows its state instead and has no *Remove*
+    ([hosted.md](hosted.md) "In the account's server list").
   - *Servers you connected* (only when there are any): the `server`
     clients this account owns ("Connecting a server" below), each with
     *Disconnect* (`POST /api/connected/{client_id}/disconnect`, behind a
@@ -216,7 +224,7 @@ page) and the **app** shell (a sidebar and a content column):
     revealed the same way.
   - Password.
   - Deletion in a danger zone, its form revealed by a first click.
-- **Admin** (`/admin`, `is_admin` only, 404 otherwise): five tabs.
+- **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs:
   - Accounts: search by username, e-mail or id, paged; plan select,
     verify, resend, admin on/off, rename, delete. A deleted account (the
     `deleted` pill) offers only Restore and Purge now.
@@ -224,6 +232,10 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
+  - Servers: the fleet's hosts, the hosted servers, upgrades in waves and
+    the job queue ([hosted.md](hosted.md) "Admin").
+  - Billing: the subscription copies by status, each with a Refresh from
+    Stripe and a link into Stripe's dashboard ([billing.md](billing.md)).
   - **Settings**: the sign-up gate above. Each row saves its own keys and
     the tab redraws from the answer (`settings.admin_view`). The Turnstile
     secret never leaves the server: the tab learns only whether one is
@@ -285,14 +297,17 @@ page) and the **app** shell (a sidebar and a content column):
   through a password reset or Google/GitHub on the same e-mail. **Purge
   now** (`POST /api/admin/accounts/{id}/purge`, `manage.py purge-account`)
   takes only a deleted account and frees its name and e-mail at once.
-  Tearing down a paid container is the provisioner's job (v1).
+  A purge deletes the account's hosted server first
+  (`hosted.purge_account`, [hosted.md](hosted.md)).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `is_admin`, `verified`
   and `username`; the rest of the admin API is listed under "Admin".
 - `GET /api/me`: the account, the signed-in devices (portal session only),
   `share_host` (the share host's address, "" when none is configured) and
-  `servers`: the provisioned ones (none until v1), then the linked ones,
-  latest seen first, each `{url, name, kind: "linked", local, linked_at,
-  last_seen_at, version, schema}`. It also accepts any bearer access token, which is how a
+  `servers`: the hosted one first while it is not deleted, then the linked
+  ones, latest seen first, each `{url, name, kind, hosted, local,
+  linked_at, last_seen_at, version, schema}`. `kind` is `linked`, or
+  `hosted` with a `state` ([hosted.md](hosted.md) "In the account's
+  server list"). It also accepts any bearer access token, which is how a
   Gamma sidecar discovers the person's servers.
 - The account itself (profile, password, e-mail, username, deletion,
   devices) and all of `/api/admin` are portal session only: a token minted
@@ -569,13 +584,15 @@ Clients tab and can delete it there.
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
-`clients`, `delete-client`, `rotate-key`, `settings`. Every command but `setup` and
+`clients`, `delete-client`, `rotate-key`, `settings`, and the fleet's
+`hosts`, `add-host`, `servers`, `provision`, `jobs` ([hosted.md](hosted.md)
+"Admin"). Every command but `setup` and
 `migrate` refuses an outdated `cloud.db`. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
 patch accounts (plan, admin, verified), resend a verify mail, delete,
 restore, purge; invites; `GET`/`PATCH /settings` (the sign-up gate,
-`settings.admin_view` / `settings.update`); OIDC clients; the audit log.
-The portal's Admin page, the API and `manage.py` are one surface: the page
+`settings.admin_view` / `settings.update`); OIDC clients; the audit log;
+hosts, hosted servers and jobs. The portal's Admin page, the API and `manage.py` are one surface: the page
 and the CLI call the same functions.
 
 ## Tests
@@ -679,7 +696,9 @@ KV: the account server's address (`cloud_issuer`; empty = off), the client
 `cloud_client_secret` encrypted, write-only) and the policy. A provisioned
 container gets the same through the environment — `GAMMA_CLOUD_ISSUER`,
 `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY`,
-`GAMMA_CLOUD_ADMIN_SUBJECT` — which makes the pane read-only. Under the
+`GAMMA_CLOUD_ADMIN_SUBJECT` — which makes the pane read-only (a hosted
+container's policy comes from its plan instead, "Hosted containers"
+below). Under the
 `provision` policy the pane also offers *Accept published pages*
 (`cloud_share_host`, env `GAMMA_CLOUD_SHARE_HOST=1`), which makes the server
 the share host (below).
@@ -724,12 +743,15 @@ on the account server. A refusal is a message on the login page
 
 **Which local account** (`cloud_auth.resolve_account`):
 
-| the identity is… | policy `refuse` (default) | `claim` | `provision` |
-|---|---|---|---|
-| linked already | that account | that account | that account |
-| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused with "sign in with its password and link it" | linked to it | linked to it |
-| unknown, username = username taken (guest, or linked to another subject) | refused | refused | refused |
-| unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace |
+| the identity is… | policy `refuse` (default) | `claim` | `provision` | `invited` |
+|---|---|---|---|---|
+| linked already | that account | that account | that account | that account |
+| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused with "sign in with its password and link it" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
+| unknown, username = username taken (guest, or linked to another subject) | refused | refused | refused | refused |
+| unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when an invitation to a shared workspace here waits for the subject, else refused with "This server admits invited people only" |
+
+On a hosted container a new account is also refused once the plan's
+account cap is reached ("Hosted containers" below).
 
 `GAMMA_CLOUD_ADMIN_SUBJECT` names one subject that becomes the server
 admin whatever the policy (creating or claiming the account under its
@@ -938,3 +960,120 @@ grant check refreshes every identity every hour, which is fine for a
 sidecar or a container but will need spreading out on a share host with
 many accounts (the exchange stores no refresh token, so an account that only
 publishes adds nothing to it).
+
+### Hosted containers
+
+`backend/gamma/hosted.py`, with its consumers in `server_settings.py`,
+`cloud_auth.py`, `app.py` (`read_only_gate`), `notices.py` and the Server
+pane's Plan section (`frontend/src/settings/SettingsServer.jsx`
+`HostedPlan`). Tests: `backend/tests/test_hosted.py`, against the fake
+account server above with `/api/hosted/sync` added. The design is
+[research/cloud-plans.md](../research/cloud-plans.md) "What a container
+enforces, and where it learns it from".
+
+A paid hosted container runs with `GAMMA_HOSTED=1` next to the cloud
+variables above. `GAMMA_CLOUD_CLIENT_ID` and `GAMMA_CLOUD_CLIENT_SECRET`
+must name the container's own confidential client: the sync
+authenticates with them, and without them it logs a warning and does
+nothing.
+
+**The sync.** At startup and then every hour (the app's `every()` loop,
+`hosted.tick`) the container posts its report to
+`<issuer>/api/hosted/sync` with HTTP Basic auth `client_id:client_secret`,
+through `cloud_auth._http` and its user agent:
+
+```json
+{"version": "v1.4.0 (abc123def456)", "schema": 31, "accounts": 4,
+ "uploads_bytes": 734003200, "data_bytes": 912680550,
+ "public_url": "https://alice.gammapdf.com"}
+```
+
+`accounts` counts non-guest accounts, `uploads_bytes` sums the uploads of
+every workspace (`storage.usage`), `data_bytes` is the size of the whole
+data directory and `public_url` the confirmed public URL ("" without one).
+The answer is the plan's limits:
+
+```json
+{"plan": "pro", "status": "active", "read_only": false,
+ "policy": "invited", "max_accounts": 10,
+ "quota_mb": 102400, "max_upload_mb": 250,
+ "offsite": {"interval_s": 3600, "keep": 30},
+ "grace_until": null, "message": ""}
+```
+
+`status` is `active`, `grace`, `read_only` or `stopped`; `policy` one of
+the policies above ("" leaves the environment's); `max_accounts`,
+`quota_mb` and `max_upload_mb` 0 for no limit. Each field is checked; an
+answer that is not a plan's limits counts as a failed call. The answer is
+kept with the time in the users.db `settings` KV under `hosted_limits`
+(with `status_since`, when the status took its value), so it survives a
+restart. A failed call (no network, a 5xx, the client refused) changes
+nothing: the last answer stands and the server log gets a warning. The
+pane names the failure, which is kept in memory only. A container that
+never synced runs on its own settings. Settings → Server → Plan → Sync now
+(`POST /api/admin/hosted/sync`) and `manage.py hosted-sync` run one sync on
+demand. The answer is read on every write (the gate below) and by every
+`cloud_auth.settings()`. So the server keeps it in memory, loaded from the
+KV at startup and replaced by its own syncs. A `manage.py hosted-sync` run
+beside a running server reaches it at the server's next sync.
+
+**Where each field lands:**
+
+| field | effect |
+|---|---|
+| `quota_mb`, `max_upload_mb` | the server-wide default quota and per-file cap (`server_settings._plan_caps`). With no saved default the plan's value is the default; a saved default, a per-account override or a shared workspace's quota counts only where it is lower. Saving a higher value (or an unlimited quota) is refused with 400: a hosted admin may tighten, never loosen. `GET /api/admin/settings` reports each default's source as `saved`, `default` or `plan`, and `plan_caps` |
+| `policy` | replaces `GAMMA_CLOUD_POLICY` (`cloud_auth.settings`, `policy_source: "plan"`), so a plan change switches it with the next sync |
+| `max_accounts` | once that many non-guest accounts exist, a cloud sign-in that would provision one is refused with "This server has reached its plan's N accounts.", and so is `POST /api/admin/users`. The admin subject is exempt |
+| `read_only` | the gate below; a `read_only` or `stopped` status sets it whatever the flag says |
+| `plan`, `status`, `grace_until`, `message` | the Plan rows, `GET /api/server-config` and the `hosted` notice |
+| `offsite` | the off-site copies' interval and copies kept (`offsite._held_to_plan`): the plan's value where `GAMMA_OFFSITE_INTERVAL` / `GAMMA_OFFSITE_KEEP` are unset. Over a value the environment sets, and over the saved settings, it wins only where it is stricter (a shorter interval, more copies) |
+
+**The `invited` policy.** A new account is provisioned only for a subject
+holding an invitation to a shared workspace here (a `pending_memberships`
+row, [workspaces.md](workspaces.md) "Pending invitations"); the sign-in
+then claims it as every sign-in does. Anyone else is refused with "This
+server admits invited people only. Ask its admin for an invitation." An
+existing unlinked account is not claimed, as under `refuse`. It is a policy
+like the others: the environment, the Sign-in pane and the admin API take
+it on any server.
+
+**Read-only.** While the cached answer says `read_only`, every POST, PUT,
+PATCH and DELETE under `/api/` is answered 423 with `{detail, read_only:
+true}`, `detail` being the account server's `message` or "This server is
+read-only: its plan has lapsed. You can still sign in, read and export your
+data." (`app.read_only_gate`, inside the session middleware so the refusal
+is logged). The rule is `hosted.read_only()` plus one documented tuple,
+`hosted.READ_ONLY_ALLOWED`, of what still goes through:
+
+- `/api/login`, `/api/logout` and everything under `/api/auth/cloud/`:
+  signing in and out;
+- `/api/jobs/export` and `/api/jobs/workspace-export`: the export jobs
+  (the downloads themselves are GETs, like the page and folder exports,
+  the workspace backups and the server snapshots);
+- `/api/pages/by-docs`: a read the file chips send as a POST;
+- `/api/notices/…/seen`, so a seen notice stays seen;
+- `/api/admin/hosted/sync`, the admin's Sync now, which is how a paid-up
+  server comes back without waiting for the hour.
+
+Reads are untouched. Collaboration needs nothing of its own: an op batch is
+`POST /api/pages/{id}/ops`, which the editor answers with its "Save
+rejected" message and a reload, and the page socket carries only carets.
+The guest login is refused like any write, and the login page hides its
+button. A cloud sign-in still opens an existing account but provisions no
+new one (the admin subject excepted). Background rounds (backup tasks,
+mirror syncs) are not gated.
+
+**What people see.** `GET /api/server-config` adds `read_only` and
+`hosted: {plan, status}` (null off a hosted server or before the first
+sync); the login page shows a read-only banner. The `hosted` notice
+([settings.md](settings.md) "Notices") warns admins during `grace`, naming
+`grace_until`, and is an error for everyone while read-only.
+
+Settings → Server → Plan reads the `hosted` block of `GET
+/api/admin/settings` (`hosted.pane()`: the cached answer, the account
+count, the last failure, the issuer). It shows the plan with its status
+and when it last synced, and the accounts, quota, per-file cap and sign-in
+policy the plan allows. Its buttons are a Manage plan link to the account
+server's `/plan` and Sync now. The storage rows under it name the plan's
+cap when it decides, and the Sign-in pane's policy row says the plan sets
+it.

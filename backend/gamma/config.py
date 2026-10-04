@@ -46,7 +46,8 @@ def cloud_env() -> dict:
     container gets it: ``GAMMA_CLOUD_ISSUER`` (the account server; set, it
     overrides the saved settings), ``GAMMA_CLOUD_CLIENT_ID`` /
     ``GAMMA_CLOUD_CLIENT_SECRET`` (a confidential client; unset = the public
-    desktop client), ``GAMMA_CLOUD_POLICY`` (refuse / claim / provision) and
+    desktop client), ``GAMMA_CLOUD_POLICY`` (refuse / claim / provision /
+    invited; on a hosted server the plan's policy replaces it) and
     ``GAMMA_CLOUD_ADMIN_SUBJECT`` (the cloud account that becomes this
     server's admin on first sign-in) and ``GAMMA_CLOUD_SHARE_HOST=1`` (this
     server is the free share host: it accepts published pages, refuses the
@@ -57,6 +58,13 @@ def cloud_env() -> dict:
             "policy": os.environ.get("GAMMA_CLOUD_POLICY", "").strip().lower(),
             "admin_subject": os.environ.get("GAMMA_CLOUD_ADMIN_SUBJECT", "").strip(),
             "share_host": os.environ.get("GAMMA_CLOUD_SHARE_HOST", "").strip().lower() in ("1", "true", "yes", "on")}
+
+
+def hosted() -> bool:
+    """``GAMMA_HOSTED=1``: this server is a paid hosted container. It learns
+    its plan's limits from the account server ``GAMMA_CLOUD_ISSUER`` names,
+    with the client id and secret of the cloud variables (gamma/hosted.py)."""
+    return os.environ.get("GAMMA_HOSTED", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # The share host's published-page cap per Gamma Cloud plan (gamma/publish.py

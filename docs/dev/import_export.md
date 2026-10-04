@@ -45,6 +45,15 @@ media-box flip. A text box's `imported_annot` key
 same annotation carries, so such a block counts as there and nothing comes
 twice.
 
+A text highlight's quote is the text under its quads, read through pdfium
+(`pdf_text.GlyphPages`, each page once, under the extraction lock;
+`pdf_text.quote_under`): a glyph counts when its centre lies in a quad, so
+a highlight that starts mid-line quotes from there, one across lines quotes
+both lines joined by a space, and a quad's edge never drags in the glyph it
+touches. A file pdfium can't open imports its highlights without quotes.
+PyPDF2's text visitor is no use for this: it reports each line at the
+position of the line after it, which once quoted the line above a highlight.
+
 Only what the page shows is imported (`pdf_export.annotation_shown`): an
 annotation flagged Hidden or NoView, or a review-state stamp (`/State`,
 `/StateModel`), makes nothing. A reply (`/IRT`, not a `/RT /Group` member)

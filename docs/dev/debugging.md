@@ -92,6 +92,11 @@ under the `settings` key `offsite`, the secret key encrypted with the data
 directory's key like the shared AI provider keys. A round reads them as it
 starts, and the pause after a round is read as the round ends. So a change
 applies from the next round, and a new interval from the pause after it.
+On a hosted container the plan's `offsite` answer holds the interval and
+the copies kept to its own, from either source. Its values fill what the
+environment leaves unset, and otherwise win only where they are stricter:
+a shorter interval, more copies ([cloud_accounts.md](cloud_accounts.md)
+"Hosted containers").
 
 **From the environment.** When `GAMMA_S3_BUCKET` is set, every setting
 comes from the environment and the pane shows them read-only:
@@ -309,7 +314,7 @@ and pure-module tests are still chosen by hand.
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt   # pytest, pytest-xdist, httpx
+pip install -r requirements-dev.txt   # pytest, pytest-xdist, pytest-timeout, httpx
 python -m pytest tests -q -n auto --dist loadfile   # parallel, ~15 s
 python -m pytest tests -q                           # serial, ~50 s (simpler tracebacks)
 ```
@@ -325,7 +330,15 @@ throwaway data directory, and `--dist loadfile` keeps each file's tests on
 one worker in file order (tests inside a file may build on each other;
 files never may). The shared `client` fixture carries the cookie of the last
 login on that worker, so a "not signed in" check uses the `anon` fixture (a
-fresh client), never `client`. One data directory serves every file on a
+fresh client), never `client`. Every client `conftest.py` hands out
+(`client`, `guest`, `anon`, `login()`, `fresh_client()`) runs on the session
+client's event loop, the one loop a uvicorn process has. A bare
+`TestClient(app)` gets a loop per request and per socket, and a room's
+fan-out sent from one socket's loop to a reader already waiting on another
+wakes no one: the read never returns. That hang held the CI job for hours
+at a time; `pytest.ini` now ends a test after 300 s with every thread's
+stack (pytest-timeout), xdist reports it as crashed and runs the rest on a
+fresh worker, and the job itself is capped at 20 minutes. One data directory serves every file on a
 worker, so an account name belongs to the module that creates it: prefix
 names with the module's area (`bk_admin`, `ca_alice`), create them through
 `conftest.make_user`, and pick folder names no other module uses in the
@@ -578,7 +591,8 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in
-  Chromium). `--only ipad`.
+  Chromium), and a note editor's editing bar by tap (none with a mouse).
+  `--only ipad`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

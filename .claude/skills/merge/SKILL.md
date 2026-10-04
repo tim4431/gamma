@@ -13,7 +13,7 @@ that only touches those); the merge itself triggers `docker.yml`
 `cloud/` or `sites/`) and, when the site's inputs changed, `site.yml`,
 which redeploys gammapdf.com from `main`. The desktop app and the browser
 extension are NOT released by a merge — run the `release` skill for that
-(it dispatches `desktop.yml` / `extension.yml` on `main`). The account
+(it dispatches `desktop.yml` on `main`, which releases both). The account
 server and the website do not need a merge at all: `update-account-server`
 / `build-site` publish them from the branch. Details:
 `docs/dev/github_actions.md`.

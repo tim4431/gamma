@@ -44,7 +44,7 @@ websocket-delivered state. Selectors the scenarios already use: `.folderNewBtn`
 Enter is a line break and Shift+Enter a new block (unless the
 `gamma-enter-new-note` preference is set), Escape does not close the editor
 (blur does: `closeEditor` in `scenarios/notes.mjs`), Tab / Shift+Tab remount
-the row (`reopenFocused`).
+the row and keep its editor open, the caret where it was.
 
 ## 2. One-off drives
 

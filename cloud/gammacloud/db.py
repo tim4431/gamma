@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -124,9 +124,88 @@ SETTINGS = """CREATE TABLE IF NOT EXISTS settings (
     updated_at TEXT NOT NULL
     )"""
 
+# --- plans, billing and hosted servers (step 9; docs/research/cloud-plans.md) ---
+# ``subscriptions``: the account server's copy of the Stripe subscription,
+# one per account (``billing.py``). ``status`` is Stripe's word; ``plan`` the
+# plan its price buys. ``billing_events`` makes webhook deliveries idempotent.
+SUBSCRIPTIONS = """CREATE TABLE IF NOT EXISTS subscriptions (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+    stripe_customer_id TEXT NOT NULL DEFAULT '',
+    stripe_subscription_id TEXT NOT NULL DEFAULT '',
+    price_id TEXT NOT NULL DEFAULT '',
+    plan TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'none',
+    cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+    current_period_end TEXT,
+    seats INTEGER NOT NULL DEFAULT 1,
+    past_due_since TEXT,
+    ended_at TEXT,
+    updated_at TEXT NOT NULL
+)"""
+BILLING_EVENTS = """CREATE TABLE IF NOT EXISTS billing_events (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    account_id TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    received_at TEXT NOT NULL
+)"""
+# ``hosts``: the machines the fleet agents run on (``fleet.py``); the token
+# is what an agent authenticates with. ``hosted_servers``: one paid
+# container per account (``hosted.py``); ``label`` is its hostname label
+# (the username at provisioning), ``limits`` the last answer the container
+# got from ``/api/hosted/sync``, ``report`` what it last reported.
+# ``fleet_jobs``: the queue a host's agent works through.
+HOSTS = """CREATE TABLE IF NOT EXISTS hosts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    address TEXT NOT NULL DEFAULT '',
+    token_hash TEXT NOT NULL,
+    memory_mb INTEGER NOT NULL DEFAULT 0,
+    disk_mb INTEGER NOT NULL DEFAULT 0,
+    memory_used_mb INTEGER NOT NULL DEFAULT 0,
+    disk_used_mb INTEGER NOT NULL DEFAULT 0,
+    accepting INTEGER NOT NULL DEFAULT 1,
+    agent_version TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT,
+    created_at TEXT NOT NULL
+)"""
+HOSTED_SERVERS = """CREATE TABLE IF NOT EXISTS hosted_servers (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL UNIQUE REFERENCES accounts(id),
+    label TEXT NOT NULL UNIQUE,
+    host_id TEXT NOT NULL DEFAULT '',
+    client_id TEXT NOT NULL DEFAULT '',
+    image_tag TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'provisioning',
+    read_only INTEGER NOT NULL DEFAULT 0,
+    limits TEXT NOT NULL DEFAULT '{}',
+    report TEXT NOT NULL DEFAULT '{}',
+    reported_at TEXT,
+    synced_at TEXT,
+    state_changed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
+)"""
+FLEET_JOBS = """CREATE TABLE IF NOT EXISTS fleet_jobs (
+    id TEXT PRIMARY KEY,
+    host_id TEXT NOT NULL,
+    server_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    state TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    result TEXT NOT NULL DEFAULT '',
+    wave TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+)"""
+FLEET_JOBS_INDEX = "CREATE INDEX IF NOT EXISTS fleet_jobs_host ON fleet_jobs(host_id, state)"
+SUBSCRIPTIONS_INDEX = "CREATE INDEX IF NOT EXISTS subscriptions_customer ON subscriptions(stripe_customer_id)"
+
 # A server connection a person approved (``connect.py``), waiting for the
 # server to fetch its client with the code (expires quickly).
-SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
+SERVER_CONNECTS ="""CREATE TABLE IF NOT EXISTS server_connects (
         code_hash TEXT PRIMARY KEY,
         account_id TEXT NOT NULL,
         server TEXT NOT NULL,
@@ -149,6 +228,7 @@ SCHEMA = [
         password_hash TEXT,
         display_name TEXT NOT NULL DEFAULT '',
         plan TEXT NOT NULL DEFAULT 'free',
+        granted_plan TEXT NOT NULL DEFAULT 'free',
         is_admin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         deleted_at TEXT,
@@ -275,6 +355,7 @@ SCHEMA = [
         created_at TEXT NOT NULL,
         retired_at TEXT
     )""",
+    SUBSCRIPTIONS, SUBSCRIPTIONS_INDEX, BILLING_EVENTS, HOSTS, HOSTED_SERVERS, FLEET_JOBS, FLEET_JOBS_INDEX,
     """CREATE TABLE IF NOT EXISTS audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         at TEXT NOT NULL,
@@ -405,6 +486,17 @@ def _step_server_build(conn) -> None:
     _add_column(conn, "servers_linked", "schema", "INTEGER")
 
 
+def _step_plans(conn) -> None:
+    """Plans that are paid for: the subscription copy, the webhook event
+    log, the hosts, the hosted servers and the fleet's job queue. The plan
+    an admin or an invite gave moves to ``granted_plan`` (backfilled from
+    ``plan``); ``plan`` stays the effective one every claim reads."""
+    _add_column(conn, "accounts", "granted_plan", "TEXT NOT NULL DEFAULT 'free'")
+    conn.execute("UPDATE accounts SET granted_plan = plan WHERE granted_plan = 'free' AND plan != 'free'")
+    for stmt in (SUBSCRIPTIONS, SUBSCRIPTIONS_INDEX, BILLING_EVENTS, HOSTS, HOSTED_SERVERS, FLEET_JOBS, FLEET_JOBS_INDEX):
+        conn.execute(stmt)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -414,6 +506,7 @@ STEPS: list = [
     (6, "email_canon", _step_email_canon),
     (7, "settings", _step_settings),
     (8, "server_build", _step_server_build),
+    (9, "plans", _step_plans),
 ]
 
 

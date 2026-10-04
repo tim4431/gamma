@@ -13,7 +13,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -203,6 +203,7 @@ and integration tokens get an empty list. The sources:
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
+| `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
 
 Warnings in the log are deliberately not a notice (too noisy for a dot).
@@ -440,8 +441,10 @@ Administration (admins only):
 - **Users**: accounts, each with its personal workspaces and
   labelled Storage / Edit buttons.
 - **Server**: the dashboard (build, uptime, warnings, the update
-  check), the public server URL, storage defaults (each box saves on Enter
-  or blur), **Guests**, the shared AI provider, shared workspaces,
+  check), the public server URL, on a hosted container the **Plan**
+  (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
+  containers"), storage defaults (each box saves on Enter or blur),
+  **Guests**, the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file, the
   damaged ones listed under the row), server backups and the log with its
   level filter ([user_db.md](user_db.md)).
@@ -496,7 +499,9 @@ The **server client**: how this Gamma identifies itself to the account
 server. Empty on a local machine (the built-in public desktop client); a
 hosted server enters the client id and write-only secret it was given. The
 secret field shows once an id is typed; the inputs refuse browser autofill.
-Unknown cloud accounts: a `Segmented` policy, Refuse / Claim / Provision.
+Unknown cloud accounts: a `Segmented` policy, Refuse / Claim / Provision /
+Invited. On a hosted container the plan sets it (`policy_source: "plan"`)
+and the row's hint says so.
 Under Provision a fourth row, the Toggle *Accept published pages*
 (`cloud_share_host`), makes this server the share host people publish pages
 to; it also turns the guest account off and limits the account list to
@@ -620,7 +625,9 @@ Two limits per account: max upload size per file (`max_upload_mb`, default
 are admin-editable in Settings → Server; per-account overrides (NULL =
 inherit) in the Users pane. They apply to the account's personal workspaces
 together; a shared workspace has its own optional quota (admins, Settings →
-Workspaces / Members & sharing — [workspaces.md](workspaces.md)). `GET
+Workspaces / Members & sharing — [workspaces.md](workspaces.md)). On a
+hosted container the plan caps all of them, and the storage rows name the
+cap ([cloud_accounts.md](cloud_accounts.md) "Hosted containers"). `GET
 /api/quota` reports the limits that apply to the current workspace and its
 usage — it feeds the pre-upload size check and the shared `QuotaMeter` bar
 (account popover, Library maintenance, Users rows, the workspace manager).

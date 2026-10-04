@@ -288,10 +288,12 @@ a trigger's `delete` must hand FTS5 what the current rules make of the old
 row, so a change to `normalize_text` ships with a migration step that
 rebuilds every workspace's index (`textnorm.INDEX_VERSION` versions the
 PDF index only); and the rowids must never be renumbered (no `VACUUM`).
-`INSERT INTO block_fts(block_fts) VALUES('rebuild')` (`block_index.rebuild`)
-is the whole recovery path: migration step 28 and every restore run it
-(`normalize.block_fts`), and so does Settings' rebuild
-(`POST /api/search-reindex`). An op batch pays the FTS write of each row it
+`block_index.rebuild` is the whole recovery path: the view, the table and
+the triggers put in place again (`IF NOT EXISTS`; a connection applies them
+as it opens, a cached one never again, so a trigger that is gone comes back
+here), then `INSERT INTO block_fts(block_fts) VALUES('rebuild')`. Migration
+step 28 and every restore run it (`normalize.block_fts`), and so does
+Settings' rebuild (`POST /api/search-reindex`). An op batch pays the FTS write of each row it
 changed: a 5,000-block import takes about 190 ms with the index against
 35 ms without, a one-block edit about 0.1 ms more, a rebuild of 5,000
 blocks about 55 ms (measured 2026-10).
@@ -605,6 +607,8 @@ workspaces only that account owned, each copied to `backups/deleted/`
 first — refused when a copy cannot be written; guest accounts too), `list-users`,
 `list-identities` / `link-identity` / `unlink-identity` (the Gamma Cloud
 identity of an account, [cloud_accounts.md](cloud_accounts.md)),
+`hosted-sync` (a hosted container's plan sync, run once and printed;
+[cloud_accounts.md](cloud_accounts.md) "Hosted containers"),
 `sweep-guests [--all]` (delete the expired guest accounts now; `--all`
 every guest), `setup` (idempotent: a personal workspace for every account +
 missing files; creates no guest). Workspaces: `list-workspaces`,

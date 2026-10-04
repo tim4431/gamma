@@ -175,3 +175,15 @@ Only text boxes and the ink menu enlarge for `(pointer: coarse)`.
   not part of a regular run.
 - **Not covered:** a touch text selection, any insert, menu or structure
   operation by touch, the soft keyboard, and notes undo.
+
+## Since
+
+- **The editing bar** answers the inserting, structure and undo gaps for an
+  open editor ([dev/ipad.md](../dev/ipad.md) "The editing bar"). For
+  formatting it adds buttons for bold, italic, link and inline math.
+- Inline code and strike still have no touch way in, and nothing handles
+  `beforeinput` `formatBold`.
+- Indent and outdent keep the editor open, and a Backspace in an empty
+  block moves on to the block above.
+- The typing aids (`contentAttributes`), the hidden handle, the menus,
+  hover-only tools, target sizes and one-off gaps above are as found.

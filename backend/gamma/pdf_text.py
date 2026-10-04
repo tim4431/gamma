@@ -53,7 +53,38 @@ MAX_PAGES = 5000
 # pypdfium2's finalizer template is wrapped at import to take the same lock
 # (_serialize_finalizers) — a finalizer on the walking thread re-enters the
 # RLock, one on any other thread waits its turn.
-_lock = threading.RLock()
+class _PdfiumLock:
+    """The one pdfium lock, handed over in turn between a walk's pages.
+
+    A bare RLock is not fair: the walker releases it after a page and takes
+    it back microseconds later, before a waiting thread has even woken up,
+    so on Linux a page count still waited out the whole book. A thread
+    taking the lock fresh therefore queues at the door first and holds the
+    door while it waits; the walker's next page queues behind it there, so
+    every waiter is in within one page. A thread that already holds the
+    lock re-enters without the door, and so do the finalizers (a GC between
+    the door and the lock runs them on that very thread): whoever holds the
+    lock never waits at the door, so the two locks cannot deadlock."""
+
+    def __init__(self):
+        self.rlock = threading.RLock()
+        self._door = threading.Lock()
+
+    def _is_owned(self) -> bool:
+        return self.rlock._is_owned()
+
+    def __enter__(self):
+        if self.rlock._is_owned():
+            self.rlock.acquire()
+        else:
+            with self._door:
+                self.rlock.acquire()
+
+    def __exit__(self, *exc):
+        self.rlock.release()
+
+
+_lock = _PdfiumLock()
 
 
 def _serialize_finalizers() -> None:
@@ -66,7 +97,7 @@ def _serialize_finalizers() -> None:
         return
 
     def locked_close(*args, **kwargs):
-        with _lock:
+        with _lock.rlock:
             return inner(*args, **kwargs)
 
     locked_close._gamma_locked = True
@@ -345,3 +376,121 @@ def image_part(image) -> tuple[str, str]:
     """A picture ``render_page`` made, as the ``(media type, base64)`` pair
     a chat message or a tool result carries."""
     return image[1], base64.standard_b64encode(image[0]).decode("ascii")
+
+
+# --- Glyphs under a highlight ------------------------------------------------
+
+class GlyphPages:
+    """A PDF's glyphs page by page, each with its box, for the text under a
+    highlight's quads (``quote_under``). Opens the file with pdfium on the
+    first page asked for and reads each page once; a file pdfium can't
+    open, or a page without a text layer, has no glyphs, so its highlights
+    import without a quote. A context manager; close it when done. Each
+    page's read takes the pdfium lock once, like iter_page_texts.
+
+    A glyph is ``(char, (left, bottom, right, top))`` in PDF user space,
+    the space /QuadPoints are in. The box is pdfium's loose char box, the
+    glyph's advance by the font's ascent and descent, so a thin "i" or "."
+    has a centre as sound as any letter's. The separators pdfium generates
+    between runs (spaces, line breaks) have an empty box and keep their
+    place in the order; a glyph of zero advance (a combining mark) does
+    too. ``src`` is a path str or PDF bytes."""
+
+    def __init__(self, src):
+        self._src = src
+        self._pdf = None
+        self._failed = False
+        self._pages = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        pdf, self._pdf = self._pdf, None
+        if pdf is not None:
+            with _lock:
+                pdf.close()
+
+    def page(self, page_no: int) -> list:
+        """The glyphs of page ``page_no`` (1-based), in pdfium's text order."""
+        if page_no not in self._pages:
+            self._pages[page_no] = self._read(page_no)
+        return self._pages[page_no]
+
+    def _read(self, page_no: int) -> list:
+        if self._pdf is None and not self._failed:
+            try:
+                import pypdfium2 as pdfium
+                with _lock:
+                    self._pdf = pdfium.PdfDocument(self._src)
+            except Exception as e:
+                log.warning(f"[pdf-text] pypdfium2 open failed ({e}); highlights import without quotes")
+                self._failed = True
+        if self._pdf is None:
+            return []
+        try:
+            with _lock:
+                if not 1 <= page_no <= len(self._pdf):
+                    return []
+            return _read_page(self._pdf, page_no - 1, _glyphs)
+        except Exception as e:
+            log.warning(f"[pdf-text] glyphs of page {page_no} failed: {e}")
+            return []
+
+
+def _glyphs(page) -> list:
+    """``GlyphPages``'s read of one page. A character beyond the BMP reaches
+    pdfium as a surrogate pair where wchar_t is 16-bit; the pair is one glyph."""
+    import pypdfium2.raw as pdfium_c
+    tp = page.get_textpage()
+    try:
+        out, high = [], None
+        for i in range(tp.count_chars()):
+            code = pdfium_c.FPDFText_GetUnicode(tp, i)
+            if not code:
+                continue
+            if 0xD800 <= code <= 0xDBFF:
+                high = (code, tp.get_charbox(i, loose=True))
+                continue
+            if 0xDC00 <= code <= 0xDFFF:
+                if high is not None:
+                    (hi, box), high = high, None
+                    out.append((chr(0x10000 + ((hi - 0xD800) << 10) + (code - 0xDC00)), box))
+                continue
+            high = None
+            out.append((chr(code), tp.get_charbox(i, loose=True)))
+        return out
+    finally:
+        tp.close()
+
+
+def quote_under(glyphs, quads, limit: int = 1000) -> str:
+    """The text under a highlight: the glyphs whose centre lies in one of
+    ``quads`` (``(x1, y1, x2, y2)`` boxes in PDF user space, bottom-left
+    origin), in page order, on one line. A glyph counts when more than half
+    of it is covered, so a quad's edge never drags in the neighbour it
+    touches, and a highlight that starts mid-line starts there. Whatever
+    the quads skip between two counted glyphs (a line's end and the next
+    line's start, an unhighlighted word, pdfium's own separators) reads as
+    one space. Clipped to ``limit`` characters."""
+    parts, gap = [], False
+    for ch, (x1, y1, x2, y2) in glyphs:
+        if x2 - x1 <= 0 or y2 - y1 <= 0:
+            # No box of its own: a generated separator, or a mark on the glyph before it.
+            if ch.isspace():
+                gap = gap or bool(parts)
+            elif parts and not gap:
+                parts.append(ch)
+            continue
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        if any(qx1 <= cx <= qx2 and qy1 <= cy <= qy2 for qx1, qy1, qx2, qy2 in quads):
+            if gap:
+                parts.append(" ")
+            parts.append(ch)
+            gap = False
+        elif parts:
+            gap = True
+    return re.sub(r"\s+", " ", "".join(parts)).strip()[:limit]

@@ -9,7 +9,11 @@ an admin saves them in Settings → Backups (``save``: users.db ``settings``
 key ``offsite``, the secret key Fernet-encrypted with the data directory's
 key like the shared AI provider keys), unless ``GAMMA_S3_BUCKET`` is set:
 then every field comes from the environment (``config.offsite_env``) and
-the pane shows them read-only (``from_env``).
+the pane shows them read-only (``from_env``). On a hosted container the
+plan's ``offsite`` answer (gamma/hosted.py) holds both sources to its
+interval and copies kept: it fills an interval or keep the environment
+leaves unset, and otherwise wins only where it is stricter (a shorter
+interval, more copies) — ``_plan_offsite``.
 
 ``tick``, which the app's ``every()`` loop runs at startup and then after
 each pause of ``wait_s``, runs one round while the copies are on;
@@ -129,9 +133,8 @@ def _number(raw, default: int, least: int, most: int) -> int:
     return min(max(value, least), most)
 
 
-def _saved() -> dict:
-    """The saved settings, the secret key decrypted ("" when it no longer
-    decrypts: the data directory's key changed); {} when there are none.
+def _kv(key: str) -> dict:
+    """A JSON object in the users.db ``settings`` KV, {} when there is none.
     Read on a connection of its own that never creates users.db, so it
     works before the schema guard (manage.py) and on an empty data
     directory, and holds nothing a restore's in-use check would see."""
@@ -140,11 +143,50 @@ def _saved() -> dict:
         return {}
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)) as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key = ?", (SETTINGS_KEY,)).fetchone()
-        value = json.loads(row[0]) if row else {}
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        value = json.loads(row[0]) if row and row[0] else {}
     except (sqlite3.Error, ValueError, TypeError):
         return {}
-    if not isinstance(value, dict):
+    return value if isinstance(value, dict) else {}
+
+
+def _plan_offsite() -> dict:
+    """A hosted container's plan for the copies (gamma/hosted.py, the cached
+    answer's ``offsite``): ``{interval_s, keep}``, 0 where the plan sets
+    none; {} off a hosted container or before its first sync."""
+    if not config.hosted():
+        return {}
+    from .hosted import SETTINGS_KEY as HOSTED_KEY  # the key only: hosted.limits would open users.db
+
+    limits = _kv(HOSTED_KEY).get("limits")
+    plan = limits.get("offsite") if isinstance(limits, dict) else None
+    if not isinstance(plan, dict):
+        return {}
+    return {k: plan[k] if isinstance(plan.get(k), int) and not isinstance(plan.get(k), bool) else 0
+            for k in ("interval_s", "keep")}
+
+
+def _held_to_plan(conf: dict, unset=()) -> dict:
+    """``conf`` with a hosted plan's interval and keep: the plan's value
+    where ``conf``'s field is in ``unset`` (the environment leaves it
+    out), else the stricter of the two — the shorter interval, the more
+    copies kept."""
+    plan = _plan_offsite()
+    if plan.get("interval_s"):
+        interval = min(max(plan["interval_s"], INTERVAL_MIN_S), INTERVAL_MAX_S)
+        conf["interval_s"] = interval if "interval_s" in unset else min(conf["interval_s"], interval)
+    if plan.get("keep"):
+        keep = min(max(plan["keep"], 1), KEEP_MAX)
+        conf["keep"] = keep if "keep" in unset else max(conf["keep"], keep)
+    return conf
+
+
+def _saved() -> dict:
+    """The saved settings, the secret key decrypted ("" when it no longer
+    decrypts: the data directory's key changed); {} when there are none
+    (read like every KV value here, ``_kv``)."""
+    value = _kv(SETTINGS_KEY)
+    if not value:
         return {}
     sealed = value.get("secret_key")
     try:
@@ -162,7 +204,8 @@ def settings() -> dict:
     ``GAMMA_S3_BUCKET`` set, all from the environment (``GAMMA_S3_*``,
     ``GAMMA_OFFSITE`` on unless 0/false/no/off, ``GAMMA_OFFSITE_INTERVAL``,
     ``GAMMA_OFFSITE_KEEP``); else the saved ones, off until an admin turns
-    them on. The interval is 3600 s and the copies kept 7 by default."""
+    them on. The interval is 3600 s and the copies kept 7 by default. A
+    hosted plan holds both to its own (``_held_to_plan``)."""
     env = config.offsite_env()
     if env["bucket"]:
         flag = env["enabled"].lower()
@@ -170,6 +213,8 @@ def settings() -> dict:
                 **{k: env[k] for k in ("bucket", "endpoint", "region", "access_key", "secret_key", "prefix")},
                 "interval_s": _number(env["interval"], DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S),
                 "keep": _number(env["keep"], DEFAULT_KEEP, 1, KEEP_MAX), "from_env": True}
+        conf = _held_to_plan(conf, unset=[name for name, raw in (("interval_s", env["interval"]), ("keep", env["keep"]))
+                                          if not raw])
     else:
         saved = _saved()
 
@@ -181,6 +226,7 @@ def settings() -> dict:
                 **{k: text(k) for k in ("bucket", "endpoint", "region", "access_key", "secret_key", "prefix")},
                 "interval_s": _number(saved.get("interval_s"), DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S),
                 "keep": _number(saved.get("keep"), DEFAULT_KEEP, 1, KEEP_MAX), "from_env": False}
+        conf = _held_to_plan(conf)
     return conf
 
 

@@ -3,7 +3,8 @@
 // an account sees its link row. The round trip through a real account server
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
 // sent there (the button's target is asserted, not followed).
-import { Account, wanted } from "../harness.mjs";
+import { Account, Server, wanted } from "../harness.mjs";
+import { FakeCloud } from "../fakeCloud.mjs";
 
 export async function cloudSignInScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
@@ -135,6 +136,65 @@ export async function cloudSignInScenarios(env) {
     } finally {
       await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "" } });
       await ctx.close();
+    }
+  });
+
+  // A hosted container (docs/dev/cloud_accounts.md "Hosted containers"): a
+  // second Gamma started with GAMMA_HOSTED=1 learns its plan from the fake
+  // account server at startup. The Server pane shows the plan and its caps
+  // and the storage rows name the cap; a plan turned read-only arrives with
+  // Sync now, the pane and the login page say so, and a write is refused.
+  await step("cloud sign-in: a hosted container shows its plan and goes read-only", async () => {
+    const cloud = new FakeCloud();
+    await cloud.start();
+    const active = { plan: "pro", status: "active", read_only: false, policy: "invited", max_accounts: 10,
+      quota_mb: 1000, max_upload_mb: 100, offsite: { interval_s: 3600, keep: 7 }, grace_until: null, message: "" };
+    cloud.hosted = { clientId: "gc_e2e", secret: "e2e-secret", reports: [], answer: active };
+    const hosted = new Server({ env: { GAMMA_HOSTED: "1", GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_CLIENT_ID: "gc_e2e",
+      GAMMA_CLOUD_CLIENT_SECRET: "e2e-secret" } });
+    let ctx = null;
+    try {
+      await hosted.start();
+      hosted.manage("create-user", "host-admin", "host-admin-pw");
+      hosted.manage("set-admin", "host-admin", "on");
+      const owner = await new Account(hosted, "host-admin", "host-admin-pw").login();
+      await until(() => owner.api("/api/admin/settings").then((v) => v.hosted?.limits?.plan === "pro"), { what: "the startup sync" });
+      ctx = await owner.context(browser);
+      const page = await openPage(ctx, hosted.base);
+      await openSettings(page, "Server");
+      const planRow = page.locator('.setRow[data-setting="Plan"]');
+      await planRow.locator(".uiTag").filter({ hasText: /^active$/ }).waitFor();
+      await planRow.getByText(/^pro · last synced/).waitFor();
+      await page.locator('.setRow[data-setting="Plan limits"]').getByText(/\d+ of 10 accounts/).waitFor();
+      await page.locator('.setRow[data-setting="Default quota"]').getByText("The plan's cap of 1000 MB", { exact: false }).waitFor();
+      await page.locator('.setRow[data-setting="Unknown cloud accounts"]').getByText("Set by this server's plan", { exact: true }).waitFor();
+      await assertNoProblems(page);
+      // the plan lapses: Sync now brings it, and the pane says what still works
+      cloud.hosted.answer = { ...active, status: "read_only", read_only: true };
+      await planRow.getByRole("button", { name: "Sync now", exact: true }).click();
+      await planRow.locator(".uiTag").filter({ hasText: /^read-only$/ }).waitFor();
+      await page.getByRole("alert").filter({ hasText: "This server is read-only" }).first().waitFor();
+      const refused = await owner.api("/api/pages", { method: "POST", body: { title: "Too late" } }).catch((e) => e);
+      assertEq(refused.status, 423, "a write is refused while read-only");
+      // a signed-out visitor sees it on the login page, without the guest button
+      const anon = await browser.newContext();
+      try {
+        const login = await openPage(anon, hosted.base);
+        await login.getByRole("alert").filter({ hasText: "This server is read-only" }).waitFor();
+        assertEq(await login.getByRole("button", { name: "Continue as guest", exact: true }).count(), 0, "no guest while read-only");
+        await assertNoProblems(login);
+      } finally { await anon.close(); }
+      // and paid up again it takes writes
+      cloud.hosted.answer = active;
+      await planRow.getByRole("button", { name: "Sync now", exact: true }).click();
+      await planRow.locator(".uiTag").filter({ hasText: /^active$/ }).waitFor();
+      await owner.api("/api/pages", { method: "POST", body: { title: "Back again" } });
+      // what the app wrote on its own while read-only (its preference sync) was refused, as it should be
+      await assertNoProblems(page, [/-> 423$/]);
+    } finally {
+      if (ctx) await ctx.close();
+      await hosted.stop();
+      await cloud.stop();
     }
   });
 }

@@ -5,3 +5,4 @@ pydantic==2.13.2
 python-multipart==0.0.26
 cryptography==50.0.1
 PyJWT==2.14.0
+stripe==16.0.0

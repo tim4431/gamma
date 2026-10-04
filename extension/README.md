@@ -12,7 +12,7 @@ Chrome only installs extensions from the Web Store or as an unpacked folder
 
 1. Get the folder: clone the repo, or download
    `gamma-connector-<version>.zip` from the
-   [releases page](https://github.com/tim4431/gamma/releases) and unzip it
+   [latest release](https://github.com/tim4431/Gamma/releases/latest) and unzip it
    somewhere permanent (Chrome loads it from that path).
 2. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
    pick the folder.
@@ -22,10 +22,11 @@ Chrome only installs extensions from the Web Store or as an unpacked folder
    shared. The server must run a Gamma version that has `/api/clip`
    (see `docs/dev/extension.md`).
 
-Releases: the `release` GitHub workflow (run from the Actions tab, no tags
-to push) zips the extension as `gamma-connector-<manifest version>.zip` and
-attaches it to the same GitHub Release as the desktop app. Chrome Web Store
-publishing (manual, needs a developer account): [STORE.md](STORE.md).
+Releases: the `desktop` GitHub workflow (the `release` skill dispatches it;
+no tags to push) zips the extension as `gamma-connector-<version>.zip`, with
+the release's version written into the zipped manifest, and attaches it to
+the same GitHub Release as the desktop app. Chrome Web Store publishing
+(manual, needs a developer account): [STORE.md](STORE.md).
 
 Edge and other Chromium browsers load it the same way. Firefox needs a
 `background.scripts` manifest variant (not included yet).

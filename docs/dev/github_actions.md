@@ -1,9 +1,10 @@
 # GitHub Actions
 
 Seven workflows live in `.github/workflows/`. A merge to `main` publishes
-only the Docker image and, when the site or its inputs changed, the website. The desktop app and the extension are released by
-dispatching their workflows — the `release` skill does that — and nothing
-is bumped or tagged by hand: versions are computed from the tags. The
+only the Docker image and, when the site or its inputs changed, the website. The desktop app, with the browser extension on the same
+release, is released by dispatching `desktop.yml` — the `release` skill
+does that — and nothing is bumped or tagged by hand: versions are computed
+from the tags. The
 account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
@@ -15,8 +16,7 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
-| `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
-| `extension` | `extension.yml` | manual dispatch only (`release` skill) | `gamma-connector-<version>.zip` → GitHub Release `extension-v<version>` |
+| `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
@@ -24,8 +24,9 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 | `Codex plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
 The `desktop` workflow also builds the versioned Codex plugin ZIP, its setup
-scripts for Windows and macOS/Linux, and checksums, and uploads them onto the
-same release (`tools/release_codex_plugin.py`).
+scripts for Windows and macOS/Linux, and checksums
+(`tools/release_codex_plugin.py`), and the browser extension zip, and uploads
+them onto the same release.
 
 ```
 PR → main ──▶ check (pytest, npm test + build, e2e, extension zip)   ← merge skill waits for this
@@ -40,12 +41,12 @@ update-demo-server ──▶ main's newest docker.yml run: pin its :sha-<short>
                        in the demo's project                      ← after a merge, like update-server
 update-needed ──▶ compares what each deployment runs with the code, then runs
                   update-account-server → update-demo-server → update-server for the ones behind
-release skill ─┬──▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
- (gh workflow  │        build Win/mac/Linux with that version pinned, smoke on all three
-  run)         │        publish: Release v<version> (notes = commits since previous tag)
-               │        └─▶ dispatch docker.yml -f version   ─▶ ghcr :<version> :<major.minor>
-               │        Windows leg: MSIX → msstore publish (if PARTNER_CENTER_* secrets)
-               └──▶ extension.yml  same rule on extension-v* tags; manifest pinned inside the zip
+release skill ───▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
+ (gh workflow           build Win/mac/Linux with that version pinned, smoke on all three
+  run)                  zip the extension, the same version pinned into its manifest
+                        publish: Release v<version> (notes = commits since previous tag)
+                        └─▶ dispatch docker.yml -f version   ─▶ ghcr :<version> :<major.minor>
+                        Windows leg: MSIX → msstore publish (if PARTNER_CENTER_* secrets)
 ```
 
 ## Versions and tags
@@ -55,7 +56,11 @@ The **newest tag is the source of truth**; the files hold a floor.
 | Deliverable | Floor | Tag series | Release name |
 |---|---|---|---|
 | Desktop app | `desktop/package.json` `"version"` | `v<version>` | `Gamma <version>` |
-| Extension | `extension/manifest.json` `"version"` | `extension-v<version>` | `Gamma Connector <version>` |
+
+The browser extension has no series of its own: its zip carries the
+release's version. Up to `extension-v0.1.1` it was released separately as
+`extension-v<version>`; those tags and releases stay, and the `v*` rule
+ignores them.
 
 On every run the `meta` step lists the tags of its series on the remote and
 takes the newest. If the floor is higher than that, the floor is the
@@ -83,15 +88,15 @@ Consequences:
 **The repository's "latest release" must be a desktop release.** Installed
 apps update through electron-updater, which resolves
 `https://github.com/tim4431/Gamma/releases/latest` and reads that release's
-`latest*.yml`. The extension workflow therefore publishes with
-`make_latest: false`. If you ever create a release by hand, keep that
+`latest*.yml`. The old `extension-v*` releases were therefore published
+with `make_latest: false`. If you ever create a release by hand, keep that
 invariant or every installed app reports *Update check failed* until the
 next desktop release. Emergency lever for a bad desktop release: edit it
 and tick *pre-release* — the previous release becomes *Latest* again and
 clients stop seeing the bad one. Feed details:
 [desktop/docs/release.md](../../desktop/docs/release.md#auto-update-feed).
 
-Each release workflow has a `concurrency` group per ref with
+The release workflow has a `concurrency` group per ref with
 `cancel-in-progress: false`, so two merges in quick succession queue and get
 consecutive numbers instead of racing.
 
@@ -119,9 +124,17 @@ exit from `grep -q` or `head` can break the pipe and fail the release under
 `pipefail` even when the signature is valid. Signature verification errors
 must still fail the job.
 
-The `publish` job merges the three artifacts, writes the notes — download
-table, per-platform install hints, **Changes: the commit subjects since the
-previous tag, restricted to `desktop/ backend/ frontend/`** (this repo's PR
+The `extension` job copies `extension/` with the version written into
+`manifest.json` (a pre-release suffix such as `-rc1` goes to `version_name`,
+since Chrome's `version` takes only numbers), leaves out `STORE.md`,
+`README.md` and `.DS_Store`, and zips it as `gamma-connector-<version>.zip`.
+The Chrome Web Store upload stays manual
+([extension/STORE.md](../../extension/STORE.md)).
+
+The `publish` job merges the platform, plugin and extension artifacts,
+writes the notes — download table, per-platform install hints, **Changes:
+the commit subjects since the previous tag, restricted to
+`desktop/ backend/ frontend/ extension/`** (this repo's PR
 titles are all "Merge pull request #N from dev", so GitHub's generator
 would say nothing) — creates the release + tag with `make_latest: true`,
 then runs `gh workflow run docker.yml --ref v<version> -f version=…` so the
@@ -138,20 +151,13 @@ No push trigger: the app bundles the backend and the frontend, so a path
 filter would release it on nearly every merge. It runs only when dispatched
 (`release` skill).
 
-## `extension.yml`
-
-One Ubuntu job: compute the version, copy `extension/` with the version
-written into `manifest.json` (minus `STORE.md`, `README.md`, `.DS_Store`),
-zip it, upload it as an artifact, publish `extension-v<version>` with
-`make_latest: false` and the commit subjects under `extension/` as notes.
-The Chrome Web Store upload stays manual
-([extension/STORE.md](../../extension/STORE.md)).
-
 ## `check.yml`
 
 Five parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
 backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
-`-n auto` over pytest-xdist), the frontend unit tests + build (Node 22,
+`-n auto` over pytest-xdist; the job is capped at 20 minutes and a single
+test at 300 s, after which it fails with every thread's stack instead of
+holding the job), the frontend unit tests + build (Node 22,
 `npm test` then `npm run build`, then the iPad app's JavaScript bundled and
 run in a bare context, `ipad/scripts/core.test.mjs`), the browser suite
 (`npm run e2e -- --continue` against a backend started from the checkout with
@@ -243,7 +249,6 @@ deploy with `main`'s.
 gh workflow run desktop.yml --ref main                       # release (next version) — the `release` skill
 gh workflow run desktop.yml --ref main -f publish=false      # build check only
 gh workflow run desktop.yml --ref main -f prerelease=true -f version=1.2.0-rc1
-gh workflow run extension.yml --ref main                     # extension release — the `release` skill
 gh workflow run docker.yml --ref v0.2.3 -f version=0.2.3     # re-tag an image
 gh workflow run docker.yml --ref dev                         # branch image :sha-<short> only (never :latest)
 gh workflow run site.yml --ref dev                           # check + deploy gammapdf.com — the `build-site` skill

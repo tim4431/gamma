@@ -216,11 +216,43 @@ def _no_network(monkeypatch):
     yield
 
 
+_SESSION: dict = {}  # "client": the worker's context-managed TestClient
+
+
+def session_client():
+    """The worker's one context-managed TestClient: it runs the app's
+    lifespan, and its portal is the event loop every client made here
+    shares (``fresh_client``), so the whole suite's sockets live on one
+    loop, as they do under uvicorn. Entered on first use, left when the
+    session ends (``pytest_sessionfinish``)."""
+    c = _SESSION.get("client")
+    if c is None:
+        from gamma.app import app
+        c = _SESSION["client"] = TestClient(app).__enter__()
+    return c
+
+
+def pytest_sessionfinish(session, exitstatus):
+    c = _SESSION.pop("client", None)
+    if c is not None:
+        c.__exit__(None, None, None)
+
+
+def fresh_client(**kwargs):
+    """A TestClient of its own (its own cookies) on the session client's
+    loop. A bare ``TestClient(app)`` opens a loop per request and per
+    socket; a room's fan-out, sent from one socket's loop to a reader
+    already waiting on another, wakes no one, and the test hangs for
+    good. So every client the tests make comes from here."""
+    from gamma.app import app
+    c = TestClient(app, **kwargs)
+    c.portal = session_client().portal
+    return c
+
+
 @pytest.fixture(scope="session")
 def client():
-    from gamma.app import app
-    with TestClient(app) as c:
-        yield c
+    return session_client()
 
 
 @pytest.fixture
@@ -228,8 +260,7 @@ def anon():
     """A TestClient with no session at all — for "not signed in" checks.
     (`client` is shared by the whole run and carries whatever cookie the
     last login left, so it is never anonymous by the time most tests run.)"""
-    from gamma.app import app
-    return TestClient(app)
+    return fresh_client()
 
 
 _GUEST: dict = {}
@@ -318,8 +349,7 @@ def workspace_of(username):
 
 def login(username, password):
     """A fresh TestClient logged in as the account (cookie persists on it)."""
-    from gamma.app import app
-    c = TestClient(app)
+    c = fresh_client()
     r = c.post("/api/login", json={"username": username, "password": password})
     assert r.status_code == 200, r.text
     return c
@@ -480,3 +510,11 @@ def recv(sock, kind, skip=None):
             return msg
         assert skip is None or msg["t"] in skip, msg
     raise AssertionError(f"no {kind} message")
+
+
+def recv_hello(sock):
+    """A fresh page socket's hello. Another peer's presence (join, leave,
+    cursor) may come first: the socket is in the room before the server
+    reads the log position the hello carries, and the hello's peer list
+    replaces whatever presence came before it (collabSession.js)."""
+    return recv(sock, "hello", ("join", "leave", "cursor"))

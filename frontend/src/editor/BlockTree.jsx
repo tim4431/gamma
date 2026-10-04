@@ -31,6 +31,7 @@ import {
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
+import EditBar from "./EditBar";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
@@ -788,6 +789,7 @@ function BlockRow({
   inlineSheets,
   onInsertSheet,
   onNewPage,
+  onUndo,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -1105,6 +1107,13 @@ function BlockRow({
     if (typing) setSlashIdx(0);
   }
 
+  // What a block command runs with (blockCommands.js): the row's keydown
+  // dispatches with it, and the editing bar builds one per press.
+  const commandContext = () => ({
+    block, tree, view, folded: collapsed, readOnly, editor: ref.current,
+    row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
+  });
+
   function runSlashCommand(c) {
     const ta = ref.current;
     if (!ta || !slashMenu) return;
@@ -1246,26 +1255,26 @@ function BlockRow({
     if (link?.kind === "block") {
       const blockId = link.blockId;
       return [
-        { name: "mention", glyph: "@", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
-        { name: "synced", glyph: "⧉", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "mention", icon: "link", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
+        { name: "synced", icon: "embed", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "citation") {
       return [
-        { name: "gamma", glyph: "❝", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "gamma", icon: "citation", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "page") {
       return [
-        { name: "gamma", glyph: "▤", label: T("Page link"), hint: T("card with the title") },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "gamma", icon: "pageCard", label: T("Page link"), hint: T("card with the title") },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     return [
-      { name: "url", glyph: "↗", label: "URL", hint: T("link chip") },
-      { name: "titled", glyph: "Aa", label: T("Titled link"), hint: T("fetch the page title") },
+      { name: "url", icon: "url", label: "URL", hint: T("link chip") },
+      { name: "titled", icon: "title", label: T("Titled link"), hint: T("fetch the page title") },
     ];
   }
 
@@ -1412,9 +1421,9 @@ function BlockRow({
           userEvent: "input",
         });
         const items = [
-          ...(tsvMd ? [{ name: "table", glyph: "▦", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
-          { name: "text", glyph: "¶", label: T("Text"), hint: T("keep in this block") },
-          { name: "blocks", glyph: "≡", label: T("Blocks"), hint: T("split into nested blocks") },
+          ...(tsvMd ? [{ name: "table", icon: "table", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
+          { name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") },
+          { name: "blocks", icon: "blocks", label: T("Blocks"), hint: T("split into nested blocks") },
         ];
         const anchor = ta.caretCoords(start);
         requestAnimationFrame(() => {
@@ -1663,6 +1672,7 @@ function BlockRow({
                 setTimeout(() => setRefPopup(null), 120);
               }}
               onPaste={handleEditorPaste}
+              onUndo={onUndo}
               onKeyDown={(e) => {
                 if (pasteMenu) {
                   const n = pasteMenu.items.length;
@@ -1695,10 +1705,7 @@ function BlockRow({
                 // move / duplicate / delete the block, formatting, the hop to
                 // the neighbouring block at the caret's top or bottom line…
                 // A handled key stops here; the outliner's own keys follow.
-                if (dispatchHotkey(BLOCK_COMMANDS, e, {
-                  block, tree, view, folded: collapsed, readOnly, editor: ref.current,
-                  row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
-                }, keybindings)) return;
+                if (dispatchHotkey(BLOCK_COMMANDS, e, commandContext(), keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
                 // groups snippet-style — \frac{1|}{} lands in the second {} —
                 // Shift+Tab hops back. Only when there's somewhere to go;
@@ -1796,8 +1803,10 @@ function BlockRow({
                   e.preventDefault();
                   onToggle(block.id);
                 } else if (e.key === "Backspace" && (block._isEmpty || !(block.content || "").trim()) && !(block.quote || "").trim()) {
+                  // The caret goes on to the end of the block shown above, as
+                  // in any outliner (and the on-screen keyboard stays up).
                   e.preventDefault();
-                  onDelete(block.id);
+                  onDelete(block.id, { focusAbove: true });
                 }
               }}
               placeholder={t("Type — '/' for commands")}
@@ -1872,9 +1881,10 @@ function BlockRow({
           ) : null}
         </>
       ) : null}
+      {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} footer />
+          grouped={!slashMenu.query} commands />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />

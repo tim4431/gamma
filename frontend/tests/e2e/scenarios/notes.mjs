@@ -27,18 +27,13 @@ export async function editRow(page, text) {
   await page.keyboard.press("End");
 }
 
-// Tab / Shift+Tab re-parent the block, which remounts its row and closes the
-// editor; reopen it in place (same trick as the readme-media drivers).
-export async function reopenFocused(page) {
-  await page.waitForSelector(".blockRow.focused", { timeout: 5000 });
-  await page.evaluate(() => {
-    const r = document.querySelector(".blockRow.focused");
-    const body = r.querySelector(".blockBody") || r;
-    const b = body.getBoundingClientRect();
-    r.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: b.left + 40, clientY: b.top + b.height / 2 }));
-  });
-  await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-  await page.keyboard.press("End");
+// Tab / Shift+Tab re-parent the block, which remounts its row: its editor
+// stays open with the focus, the caret where it was (App's keepEditorThrough).
+async function stillEditing(page, text) {
+  await page.waitForFunction((text) => {
+    const ed = document.activeElement?.closest(".blockEditorCm");
+    return !!ed && ed.closest(".blockRow")?.textContent.includes(text);
+  }, text, { timeout: 5000 });
 }
 
 // Escape never closes the editor (it only dismisses popups); an in-page blur does.
@@ -123,11 +118,11 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("second");
     await page.keyboard.press("Tab");
-    await reopenFocused(page);
+    await stillEditing(page, "second");
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("third");
     await page.keyboard.press("Shift+Tab");
-    await reopenFocused(page);
+    await stillEditing(page, "third");
     await page.keyboard.press("Shift+Enter");
     // The new (empty) block's editor has the focus before Backspace removes it
     // (an empty CodeMirror doc shows its placeholder widget, so test for that).

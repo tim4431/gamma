@@ -14,7 +14,14 @@ and the rules for an identity this server has not seen (``policy``):
   container does, whose first admin was seeded under the customer's username;
 - ``provision``: a new account is created under the username (empty password,
   so only the cloud can sign it in) with its personal workspace — the free
-  share host.
+  share host;
+- ``invited``: like ``provision`` for a subject holding an invitation to a
+  shared workspace here (``pending_memberships``), like ``refuse`` for
+  everyone else — a Pro server that invites its members.
+
+On a hosted container the plan's policy replaces ``GAMMA_CLOUD_POLICY``,
+and the plan's ``max_accounts`` stops provisioning once that many accounts
+exist (gamma/hosted.py).
 
 ``GAMMA_CLOUD_ADMIN_SUBJECT`` names the one subject that becomes (or claims)
 the server admin whatever the policy — how a provisioned container gets its
@@ -86,13 +93,14 @@ from .publisher_sessions import cipher
 from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_settings, validate_public_url
 
 PROVIDER = "gamma-cloud"
-POLICIES = ("refuse", "claim", "provision")
+POLICIES = ("refuse", "claim", "provision", "invited")
 DEFAULT_CLIENT_ID = "gamma-desktop"
 # Every client asks for a refresh token (offline_access) and the preference
 # profile (prefs); the account server lets a confidential client have the
 # first only together with the second.
 SCOPE = "openid email profile offline_access prefs"
 CALLBACK_PATH = "/api/auth/cloud/callback"
+INVITED_ONLY = "This server admits invited people only. Ask its admin for an invitation."
 NOT_CONNECTED = ("This server is not connected to Gamma Cloud yet. An admin connects it in "
                  "Settings → Server → Sign-in.")
 PENDING_TTL = 600
@@ -133,13 +141,25 @@ def settings() -> dict:
     ``has_secret``, ``enabled``, ``share_host`` (this server accepts
     published pages, gamma/publish.py; only with cloud sign-in on), and
     ``source`` (``environment`` when ``GAMMA_CLOUD_ISSUER`` is set, else
-    ``saved``). The secret itself is never returned."""
+    ``saved``), ``policy_source`` (``plan`` when a hosted plan sets the
+    policy, else ``source``). The secret itself is never returned."""
+    cfg = _configured()
+    from . import hosted  # local: hosted imports this module
+
+    plan_policy = hosted.policy()
+    if plan_policy:
+        cfg["policy"], cfg["policy_source"] = plan_policy, "plan"
+    return cfg
+
+
+def _configured() -> dict:
+    """``settings`` as the environment or the saved settings have it."""
     env = config.cloud_env()
     if env["issuer"]:
         return {"issuer": env["issuer"], "client_id": env["client_id"] or DEFAULT_CLIENT_ID,
                 "policy": env["policy"] if env["policy"] in POLICIES else "refuse",
                 "has_secret": bool(env["client_secret"]), "enabled": True, "share_host": env["share_host"],
-                "source": "environment"}
+                "source": "environment", "policy_source": "environment"}
     issuer = _get_raw("cloud_issuer")
     client_id = _get_raw("cloud_client_id")
     policy = _get_raw("cloud_policy")
@@ -147,7 +167,8 @@ def settings() -> dict:
     share_host = bool(issuer) and (env["share_host"] or _get_raw("cloud_share_host") == "1")
     return {"issuer": issuer, "client_id": client_id or DEFAULT_CLIENT_ID,
             "policy": policy if policy in POLICIES else "refuse",
-            "has_secret": has_secret, "enabled": bool(issuer), "share_host": share_host, "source": "saved"}
+            "has_secret": has_secret, "enabled": bool(issuer), "share_host": share_host, "source": "saved",
+            "policy_source": "saved"}
 
 
 def client_secret() -> str:
@@ -193,7 +214,7 @@ def save_settings(*, issuer=None, client_id=None, client_secret=None, policy=Non
         _set_raw("cloud_client_secret", cipher().encrypt(secret.encode("utf-8")).decode("ascii") if secret else "")
     if policy is not None:
         if policy not in POLICIES:
-            raise ValueError("policy must be refuse, claim or provision")
+            raise ValueError("policy must be refuse, claim, provision or invited")
         _set_raw("cloud_policy", policy)
     if share_host is not None:
         _set_raw("cloud_share_host", "1" if share_host else "")
@@ -723,8 +744,15 @@ def resolve_account(claims: dict) -> tuple[str, str]:
     return user_id, username
 
 
+def _invited(conn, subject: str) -> bool:
+    """Whether an invitation to a shared workspace here waits for ``subject``."""
+    return conn.execute(
+        "SELECT 1 FROM pending_memberships p JOIN workspaces w ON w.id = p.workspace_id "
+        "WHERE p.subject = ? AND w.kind = 'shared' LIMIT 1", (subject,)).fetchone() is not None
+
+
 def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
-    from . import seed
+    from . import hosted, seed
 
     cfg = settings()
     subject = claims["sub"]
@@ -776,9 +804,17 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
             conn.commit()
             log.info(f"cloud sign-in: {local} claimed by cloud username {username}")
             return row["id"], local
-        if not (cfg["policy"] == "provision" or is_admin_seed):
-            raise CloudAuthError("Your Gamma Cloud account is not linked to an account on this server. "
-                                 "Ask the admin to create one, or sign in with a password and link it.")
+        if not is_admin_seed:
+            if cfg["policy"] == "invited":
+                if not _invited(conn, subject):
+                    raise CloudAuthError(INVITED_ONLY)
+            elif cfg["policy"] != "provision":
+                raise CloudAuthError("Your Gamma Cloud account is not linked to an account on this server. "
+                                     "Ask the admin to create one, or sign in with a password and link it.")
+            full = hosted.account_cap(conn) or ("This server is read-only: it takes no new accounts."
+                                                if hosted.read_only() else "")
+            if full:
+                raise CloudAuthError(full)
     # New account: the seed helper makes the row + personal workspace.
     seed.create_cloud_account(username, is_admin=is_admin_seed)
     with connect_users_db() as conn:

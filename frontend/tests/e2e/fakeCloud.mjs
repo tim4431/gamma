@@ -5,7 +5,10 @@
 // as if they were signed in there), the token endpoint (authorization code
 // with PKCE, refresh with rotation), EdDSA ID tokens and their JWKS,
 // /userinfo (what a share host checks a publishing server's token against),
-// revocation, and the preference profile and server list cloud_sync calls.
+// revocation, the preference profile and server list cloud_sync calls, and
+// the plan sync a hosted container makes with its own client
+// (/api/hosted/sync, gamma/hosted.py: `hosted` holds the client, the answer
+// and the reports it got).
 import crypto from "node:crypto";
 import http from "node:http";
 
@@ -20,6 +23,7 @@ export class FakeCloud {
     this.refresh = new Map();  // live refresh token -> subject
     this.prefs = new Map();    // `${subject} ${path}` -> {value, updated_at}
     this.shareHost = "";
+    this.hosted = null;        // {clientId, secret, answer, reports}: what /api/hosted/sync answers
     this.login = "";           // the subject the authorization endpoint answers for
     this.kid = "e2e-key";
     ({ publicKey: this.publicKey, privateKey: this.privateKey } = crypto.generateKeyPairSync("ed25519"));
@@ -110,6 +114,12 @@ export class FakeCloud {
       return json(400, { error: "unsupported_grant_type" });
     }
     if (path === "/revoke") return json(200, {});
+    if (path === "/api/hosted/sync" && req.method === "POST") {
+      const basic = Buffer.from((req.headers.authorization || "").replace(/^Basic /, ""), "base64").toString();
+      if (!this.hosted || basic !== `${this.hosted.clientId}:${this.hosted.secret}`) return json(401, { error: "invalid_client" });
+      this.hosted.reports.push(JSON.parse(raw || "{}"));
+      return json(200, this.hosted.answer);
+    }
     const sub = bearer();
     if (path === "/userinfo") return sub ? json(200, this.people.get(sub)) : json(401, { error: "invalid_token" });
     if (path.startsWith("/api/me/")) {

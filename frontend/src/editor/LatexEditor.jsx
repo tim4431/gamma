@@ -8,6 +8,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import katex from "katex";
 import { escapedAt } from "./latexInput";
+import { editBarSpace } from "./EditBar";
 import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 
@@ -64,7 +65,8 @@ export function useCaretAnchored(anchor, preferAbove, deps) {
     const place = () => {
       const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
       const width = viewport?.width || window.innerWidth;
-      const height = viewport?.height || window.innerHeight;
+      // the touch editing bar takes the bottom of the view (EditBar.jsx)
+      const height = (viewport?.height || window.innerHeight) - editBarSpace();
       const rect = anchor.getRect?.() || anchor;
       const dock = rect.dock && rect.dock.right - rect.dock.left >= 240 ? rect.dock : null;
       el.style.setProperty("--caret-max-width",

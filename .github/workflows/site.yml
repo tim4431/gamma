@@ -58,7 +58,7 @@ jobs:
       - name: Pages assembled
         working-directory: sites
         run: |
-          for f in index.html 404.html privacy/index.html _redirects _headers media/favicon.svg; do
+          for f in index.html 404.html pricing.html privacy/index.html _redirects _headers media/favicon.svg; do
             test -s "dist/$f" || { echo "::error::dist/$f is missing"; exit 1; }
           done
           if grep -rl '<!--#include' dist --include='*.html'; then

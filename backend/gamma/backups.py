@@ -82,6 +82,25 @@ def _upload_dirs() -> list[Path]:
     return dirs
 
 
+def _claim_name(label: str) -> tuple[Path, Path]:
+    """A new snapshot's ``backups/<time>-<label>`` and its ``.part`` work
+    directory, made here. The exclusive mkdir is the claim: a second
+    snapshot of the label in the same second (another thread, or
+    ``manage.py`` beside the server) moves on to the next second instead of
+    writing into this one's copy, and a ``.part`` an interrupted snapshot
+    left is passed over, never reused."""
+    while True:
+        target = config.BACKUPS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{label}"
+        work = config.BACKUPS_DIR / f".{target.name}.part"
+        if not target.exists():
+            try:
+                work.mkdir()
+                return target, work
+            except FileExistsError:
+                pass
+        time.sleep(1)
+
+
 def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces: bool = True,
            progress=None) -> dict:
     """Snapshot the data directory into ``backups/<time>-<label>/`` (relative
@@ -101,14 +120,7 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces:
     if not LABEL_RE.match(label or ""):
         raise ValueError("label must be 1-40 chars of letters, digits, _ . -")
     config.BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    target = config.BACKUPS_DIR / f"{stamp}-{label}"
-    if target.exists():
-        time.sleep(1)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        target = config.BACKUPS_DIR / f"{stamp}-{label}"
-    work = config.BACKUPS_DIR / f".{target.name}.part"
-    shutil.rmtree(str(work), ignore_errors=True)
+    target, work = _claim_name(label)
     checks = {}
     try:
         files = []

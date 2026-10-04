@@ -64,7 +64,6 @@
     .then(releases => {
       const published = releases.filter(r => !r.draft && !r.prerelease);
       const desktop = published.find(r => /^v\d/.test(r.tag_name));
-      const extension = published.find(r => /^extension-v\d/.test(r.tag_name));
       if (desktop) {
         document.querySelectorAll('[data-version]').forEach(el => { el.textContent = desktop.tag_name; });
         document.querySelectorAll('[data-version-link]').forEach(a => { a.href = desktop.html_url; });
@@ -79,7 +78,8 @@
         const mine = { macos: links.dmg, linux: links.deb }[os];
         if (mine) document.querySelectorAll('[data-download]').forEach(a => { a.href = mine; });
       }
-      const zip = assetFor(extension, n => /\.zip$/i.test(n));
+      // The Connector zip rides on the desktop release; older ones had their own extension-v* release.
+      const zip = published.map(r => assetFor(r, n => /^gamma-connector-.*\.zip$/i.test(n))).find(Boolean);
       if (zip) document.querySelectorAll('[data-asset="extension"]').forEach(a => { a.href = zip; });
     })
     .catch(() => {});

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import guest_name, login, make_page, make_user, recv, workspace_of
+from conftest import guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
 from gamma import collab, ops
 from gamma.app import app
 from gamma.db import connect_pages_db
@@ -271,12 +271,6 @@ def test_a_number_that_is_not_finite_is_refused(guest):
 
 # --- the socket ------------------------------------------------------------------
 
-def _hello(ws):
-    msg = ws.receive_json()
-    assert msg["t"] == "hello"
-    return msg
-
-
 PRESENCE = ("join", "leave", "cursor")  # all that may come before the message a test waits for
 
 
@@ -285,12 +279,12 @@ def test_a_tab_reconnecting_keeps_its_place_and_the_others_room(client, guest):
     page = make_page(guest, "Reconnect page")
     old = client.websocket_connect(f"/api/ws/page/{page['id']}?client=TAB1")
     old.__enter__()
-    color = _hello(old)["color"]
+    color = recv_hello(old)["color"]
     with client.websocket_connect(f"/api/ws/page/{page['id']}?client=OTHER") as watcher:
-        _hello(watcher)
+        recv_hello(watcher)
         # the tab reconnects (same client id) before the server noticed its old socket drop
         with client.websocket_connect(f"/api/ws/page/{page['id']}?client=TAB1") as new:
-            hello = _hello(new)
+            hello = recv_hello(new)
             assert hello["color"] == color and sorted(p["client"] for p in hello["peers"]) == ["OTHER", "TAB1"]
             # the server closes the replaced socket; its teardown removes nothing
             try:
@@ -316,14 +310,14 @@ def test_a_stale_room_never_takes_the_current_one_down(client, guest):
     page = make_page(guest, "Cascade page")
     a = client.websocket_connect(f"/api/ws/page/{page['id']}?client=A1")
     a.__enter__()
-    _hello(a)
+    recv_hello(a)
     room = collab.room_for(ws_id, page["id"])
     a.__exit__(None, None, None)
     time.sleep(0.2)
     assert collab.room_for(ws_id, page["id"]) is None
     # an old handler still holding the emptied room must not unregister the new one
     with client.websocket_connect(f"/api/ws/page/{page['id']}?client=Z") as z:
-        _hello(z)
+        recv_hello(z)
         current = collab.room_for(ws_id, page["id"])
         assert current is not room
         ghost = collab.Peer(ws=None, client="A1", user="", name="", color=0, can_edit=True)
@@ -351,7 +345,7 @@ def test_the_hello_counts_a_batch_committed_while_joining(client, guest, monkeyp
     monkeypatch.setattr(collab, "join", join_after_a_write)
     with client.websocket_connect(f"/api/ws/page/{page['id']}?client=late") as s:
         # the log position is read after joining: the client sees it is behind
-        assert _hello(s)["seq"] == tree_seq + 1
+        assert recv_hello(s)["seq"] == tree_seq + 1
 
 
 def test_revoking_access_closes_the_open_socket(client):
@@ -365,7 +359,7 @@ def test_revoking_access_closes_the_open_socket(client):
         anon.portal = ow.portal  # the visitor's socket on the same loop as the owner's requests
         with ow.websocket_connect(f"/api/ws/page/{page['id']}?client=OWN") as o, \
                 anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
-            _hello(o), _hello(v)
+            recv_hello(o), recv_hello(v)
             assert recv(o, "join", PRESENCE)["peer"]["client"] == "VIS"
             # upgrading the link to edit re-announces the visitor with its new right
             assert ow.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone", "role": "edit"}).status_code == 200
@@ -397,8 +391,8 @@ def test_a_removed_member_is_closed_and_a_new_viewer_loses_edit(client):
         mem.portal = ad.portal
         url = f"/api/ws/page/{page['id']}?ws={ws_id}"
         with ad.websocket_connect(url + "&client=ADM") as a, mem.websocket_connect(url + "&client=MEM") as m:
-            _hello(a)
-            assert next(p for p in _hello(m)["peers"] if p["client"] == "MEM")["can_edit"] is True
+            recv_hello(a)
+            assert next(p for p in recv_hello(m)["peers"] if p["client"] == "MEM")["can_edit"] is True
             assert recv(a, "join", PRESENCE)["peer"]["client"] == "MEM"
             assert ad.put(f"/api/workspaces/{ws_id}/members/cr_member", json={"role": "viewer"}).status_code == 200
             peer = recv(a, "join", PRESENCE)["peer"]

@@ -20,6 +20,13 @@
   python manage.py delete-client <client_id>
   python manage.py rotate-key
   python manage.py settings [<key> <value>]       show the sign-up settings, or set one (an empty value clears it)
+  python manage.py subscriptions [--status S]     the Stripe subscription copies
+  python manage.py billing-sync                   reconcile them with Stripe now
+  python manage.py hosts                          the fleet's hosts
+  python manage.py add-host <name> [--address A]  a new host; prints its agent token once
+  python manage.py servers                        the hosted servers
+  python manage.py provision <username>           host an account on a hosted plan by hand
+  python manage.py jobs [--state S]               the fleet's job queue, newest first
 """
 
 import argparse
@@ -27,7 +34,7 @@ import getpass
 import sys
 from contextlib import closing
 
-from gammacloud import accounts, config, db, oidc, settings
+from gammacloud import accounts, config, db, fleet, hosted, oidc, settings
 from gammacloud.accounts import Problem, make_invite
 
 
@@ -229,6 +236,92 @@ def cmd_settings(args):
         print("warning: registration is open without Turnstile; only the rate limits stop a script")
 
 
+# --- billing (gammacloud/billing.py) -------------------------------------------
+
+def cmd_subscriptions(args):
+    with closing(db.connect()) as conn:
+        rows = conn.execute("SELECT s.*, a.username, a.plan AS effective FROM subscriptions s "
+                            "LEFT JOIN accounts a ON a.id = s.account_id WHERE (? = '' OR s.status = ?) "
+                            "ORDER BY s.updated_at DESC", (args.status, args.status)).fetchall()
+    for r in rows:
+        print(f"{r['username'] or r['account_id']:<20} {r['plan']:<5} {r['status']:<10} "
+              f"ends={(r['current_period_end'] or '')[:10]:<10} {'cancels ' if r['cancel_at_period_end'] else ''}"
+              f"{r['stripe_customer_id']} effective={r['effective']}")
+
+
+def cmd_billing_sync(args):
+    from gammacloud import billing
+    if not billing.enabled():
+        sys.exit("billing is off: GAMMA_CLOUD_STRIPE_SECRET is not set")
+    with closing(db.connect()) as conn:
+        try:
+            result = billing.reconcile(conn)
+        except billing.BillingError as e:
+            sys.exit(f"Stripe did not answer: {e}")
+        conn.commit()
+    print(f"seen {result['seen']}, repaired {result['repaired']}, no account for {result['unknown']}")
+
+
+def _billing_commands(sub):
+    s = sub.add_parser("subscriptions"); s.add_argument("--status", default=""); s.set_defaults(fn=cmd_subscriptions)
+    sub.add_parser("billing-sync").set_defaults(fn=cmd_billing_sync)
+
+
+def cmd_hosts(args):
+    with closing(db.connect()) as conn:
+        rows = fleet.hosts(conn)
+    for h in rows:
+        print(f"{h['name']:<16} {h['id']:<16} {'accepting' if h['accepting'] else 'closed':<9} "
+              f"{'stale' if h['stale'] else 'fresh':<5} mem={h['memory_used_mb']}/{h['memory_mb']}MB "
+              f"disk={h['disk_used_mb']}/{h['disk_mb']}MB servers={h['servers']} seen={h['last_seen_at'] or 'never'}")
+
+
+def cmd_add_host(args):
+    with closing(db.connect()) as conn:
+        try:
+            host, token = fleet.add_host(conn, args.name, args.address or "", actor="cli")
+        except Problem as e:
+            sys.exit(e.detail)
+        conn.commit()
+    print(f"host {host['name']} ({host['id']})\nGAMMA_FLEET_HOST_TOKEN={token}\n(the token is shown once)")
+
+
+def cmd_servers(args):
+    with closing(db.connect()) as conn:
+        rows = hosted.servers(conn)
+    for s in rows:
+        print(f"{s['label']:<20} {s['username'] or s['account_id']:<20} {s['limits'].get('plan', s['plan']):<5} "
+              f"{s['state']:<12} {'read-only ' if s['read_only'] else ''}host={s['host'] or '-'} "
+              f"version={s['report'].get('version', '')} synced={s['synced_at'] or 'never'}")
+
+
+def cmd_provision(args):
+    with closing(db.connect()) as conn:
+        account = _account(conn, args.username)
+        try:
+            server = hosted.provision(conn, account["id"], "cli")
+        except Problem as e:
+            sys.exit(e.detail)
+        conn.commit()
+    print(f"{server['label']}: {server['state']}" + (f" on {server['host']}" if server["host"] else " (no host has room yet)"))
+
+
+def cmd_jobs(args):
+    with closing(db.connect()) as conn:
+        rows = fleet.jobs(conn, args.state, 100)
+    for j in rows:
+        print(f"{j['created_at'][:19]} {j['id']:<16} {j['kind']:<8} {j['state']:<8} {j['label'] or j['server_id']:<20} "
+              f"{j['host'] or j['host_id']} {j['wave']} {j['result'][:80]}")
+
+
+def _fleet_commands(sub):
+    sub.add_parser("hosts").set_defaults(fn=cmd_hosts)
+    ah = sub.add_parser("add-host"); ah.add_argument("name"); ah.add_argument("--address"); ah.set_defaults(fn=cmd_add_host)
+    sub.add_parser("servers").set_defaults(fn=cmd_servers)
+    pv = sub.add_parser("provision"); pv.add_argument("username"); pv.set_defaults(fn=cmd_provision)
+    jb = sub.add_parser("jobs"); jb.add_argument("--state", default=""); jb.set_defaults(fn=cmd_jobs)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -257,6 +350,8 @@ def main(argv=None):
     sub.add_parser("rotate-key").set_defaults(fn=cmd_rotate_key)
     st = sub.add_parser("settings"); st.add_argument("key", nargs="?", choices=tuple(settings.DEFAULTS))
     st.add_argument("value", nargs="?", default=""); st.set_defaults(fn=cmd_settings)
+    _billing_commands(sub)
+    _fleet_commands(sub)
     args = p.parse_args(argv)
     if args.cmd not in ("migrate", "setup"):
         version = db.data_version()

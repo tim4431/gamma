@@ -1,5 +1,6 @@
 // One glyph per command, for the surfaces that list them: Settings →
-// Keyboard and the command palette. Kept apart from the catalogs
+// Keyboard, the command palette and the touch editing bar
+// (editor/EditBar.jsx). Kept apart from the catalogs
 // (app/appCommands.js, editor/blockCommands.js) so those stay plain
 // modules the node tests import. Each glyph is the one the same action
 // wears elsewhere (header, account menu, block menu); a command missing
@@ -9,10 +10,10 @@ import {
   ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, BackspaceIcon, BoldIcon, BugIcon, ChevronDownIcon, ChevronRightIcon,
   ChevronUpIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon,
   DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
-  ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, ItalicIcon, KeyboardIcon, LinkIcon, MarkdownIcon,
-  MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, RedoIcon,
-  SearchIcon, SettingsIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon, TerminalIcon, TextCursorIcon,
-  TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
+  ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
+  MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon,
+  RedoIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon, TerminalIcon,
+  TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
 
 const COMMAND_ICONS = {
@@ -51,6 +52,8 @@ const COMMAND_ICONS = {
   "block.duplicateDown": CopyIcon,
   "block.deleteLine": DeleteLineIcon,
   "block.newAbove": InsertAboveIcon,
+  "block.newBelow": InsertBelowIcon,
+  "block.insertMenu": SlashIcon,
   "block.indent": IndentIcon,
   "block.outdent": OutdentIcon,
   "block.fold": CollapseIcon,
@@ -63,6 +66,7 @@ const COMMAND_ICONS = {
   "block.strike": StrikethroughIcon,
   "block.highlight": HighlightIcon,
   "block.link": LinkIcon,
+  "block.math": SigmaIcon,
   "block.addToChat": MessageSquareIcon,
   "block.moveToPage": ExportIcon,
   "block.delete": Trash2Icon,

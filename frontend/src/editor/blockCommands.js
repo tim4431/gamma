@@ -5,9 +5,9 @@
 // entries (Ctrl+Shift+P) until the account binds them in Settings →
 // Keyboard. BlockRow's keydown dispatches this catalog
 // (shared/lib/hotkeys.js) after its popups and before the outliner's
-// Enter/Tab/Backspace; the command palette and the Settings → Keyboard pane
-// read the same list, so a key, a menu entry and the cheat sheet can never
-// disagree.
+// Enter/Tab/Backspace; the command palette, the Settings → Keyboard pane and
+// the touch editing bar (editor/EditBar.jsx) read the same list, so a key, a
+// menu entry, a bar button and the cheat sheet can never disagree.
 //
 // ctx: { block, tree (the page's blocks), view (the viewer's editing /
 // folding state, blockModel's `view`), folded (whether this block's
@@ -18,12 +18,19 @@
 // have an editor says so with `needsEditor`; `edits` ones are skipped on a
 // read-only page. `run` returning false declines the key.
 import { t } from "../shared/i18n/i18n.js";
-import { visibleNeighbor } from "../shared/model/blockModel.js";
+import { getParentInfo } from "../shared/model/blockModel.js";
 import { toggleTodoLine } from "./mdMarks.js";
-import { runInsertLink, runToggleMark } from "./markCommands.js";
+import { runInsertLink, runInsertMath, runInsertSlash, runToggleMark } from "./markCommands.js";
 
 export const GROUP_NOTES = t("Notes");
 export const GROUP_FORMAT = t("Formatting");
+
+// Where the block stands among its siblings: what moving and nesting it can
+// do (the editing bar greys a button out, the palette leaves it out).
+const place = (c) => getParentInfo(c.tree, c.block.id);
+const hasPrev = (c) => (place(c)?.index || 0) > 0;
+const hasNext = (c) => { const p = place(c); return !!p && p.index < p.siblings.length - 1; };
+const nested = (c) => !!place(c)?.parent;
 
 // Is there no visual line above (dir -1) / below (+1) the caret in this
 // editor? Wrapped lines count, so the check is by coordinates: when moving
@@ -62,11 +69,11 @@ export const BLOCK_COMMANDS = [
     run: (c) => c.row.onHop?.(c.block.id, 1) === true,
   },
   {
-    id: "block.moveUp", label: t("Move block up"), group: GROUP_NOTES, keys: null, edits: true,
+    id: "block.moveUp", label: t("Move block up"), group: GROUP_NOTES, keys: null, edits: true, when: hasPrev,
     run: (c) => c.row.onMoveBlock?.(c.block.id, -1) === true,
   },
   {
-    id: "block.moveDown", label: t("Move block down"), group: GROUP_NOTES, keys: null, edits: true,
+    id: "block.moveDown", label: t("Move block down"), group: GROUP_NOTES, keys: null, edits: true, when: hasNext,
     run: (c) => c.row.onMoveBlock?.(c.block.id, 1) === true,
   },
   {
@@ -93,8 +100,7 @@ export const BLOCK_COMMANDS = [
         view.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: "delete" });
         return true;
       }
-      const prev = visibleNeighbor(c.tree, c.block.id, -1, c.view);
-      c.row.onDelete?.(c.block.id, { keepChildren: true, focus: prev?.id || null });
+      c.row.onDelete?.(c.block.id, { keepChildren: true, focusAbove: true });
       return true;
     },
   },
@@ -103,11 +109,22 @@ export const BLOCK_COMMANDS = [
     run: (c) => { c.row.onEnterSibling?.(c.block.id, { above: true }); },
   },
   {
-    id: "block.indent", label: t("Indent block"), group: GROUP_NOTES, keys: null, edits: true,
+    // What the new-note Enter does (Settings → Keyboard, "Enter makes"),
+    // for the editing bar and anyone who wants it on another key.
+    id: "block.newBelow", label: t("New block below"), group: GROUP_NOTES, keys: null, edits: true,
+    run: (c) => { c.row.onEnterSibling?.(c.block.id); },
+  },
+  {
+    // The slash menu without typing "/" (editor/SlashMenu.jsx).
+    id: "block.insertMenu", label: t("Insert…"), group: GROUP_NOTES, keys: null, edits: true, needsEditor: true,
+    run: (c) => runInsertSlash(c.editor.view),
+  },
+  {
+    id: "block.indent", label: t("Indent block"), group: GROUP_NOTES, keys: null, edits: true, when: hasPrev,
     run: (c) => { c.row.onIndent?.(c.block.id); },
   },
   {
-    id: "block.outdent", label: t("Outdent block"), group: GROUP_NOTES, keys: null, edits: true,
+    id: "block.outdent", label: t("Outdent block"), group: GROUP_NOTES, keys: null, edits: true, when: nested,
     run: (c) => { c.row.onOutdent?.(c.block.id); },
   },
   {
@@ -141,6 +158,10 @@ export const BLOCK_COMMANDS = [
   {
     id: "block.link", label: t("Link"), group: GROUP_FORMAT, keys: "Mod-k", edits: true, needsEditor: true, palette: false,
     run: (c) => runInsertLink(c.editor.view),
+  },
+  {
+    id: "block.math", label: t("Inline equation"), group: GROUP_FORMAT, keys: null, edits: true, needsEditor: true, palette: false,
+    run: (c) => runInsertMath(c.editor.view),
   },
   // The ⋮⋮ handle menu's entries, for the palette.
   {

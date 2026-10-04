@@ -11,19 +11,13 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import login, make_folder, make_page, make_user, recv, workspace_of
+from conftest import login, make_folder, make_page, make_user, recv, recv_hello, workspace_of
 from gamma import collab
 from gamma.app import app
 from gamma.db import connect_users_db
 from gamma.routers import collab as rcollab
 
 PRESENCE = ("join", "leave", "cursor")
-
-
-def _hello(sock):
-    msg = sock.receive_json()
-    assert msg["t"] == "hello", msg
-    return msg
 
 
 def _closed(sock):
@@ -47,7 +41,7 @@ def test_a_page_refiled_out_of_a_shared_folder_closes_the_folder_visitor():
         anon.portal = ow.portal
         with ow.websocket_connect(f"/api/ws/page/{page['id']}?client=OWN") as o, \
                 anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
-            _hello(o), _hello(v)
+            recv_hello(o), recv_hello(v)
             assert recv(o, "join", PRESENCE)["peer"]["client"] == "VIS"
             # the owner files the page elsewhere: the visitor leaves and is closed
             r = ow.post(f"/api/pages/{page['id']}/ops", json={"client": "OWN", "ops": [
@@ -73,7 +67,7 @@ def test_a_subfolder_moved_out_of_a_shared_folder_closes_the_folder_visitor():
         anon = TestClient(app)
         anon.portal = ow.portal
         with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
-            _hello(v)
+            recv_hello(v)
             # the folder holding the page leaves the shared one: one move on the tree
             r = ow.post("/api/pages/folders/ops", json={"client": "OWN", "ops": [
                 {"op": "move", "id": sub, "parent": "folders"}]})
@@ -101,7 +95,7 @@ def test_deleting_an_account_closes_its_sockets_and_those_of_its_workspaces():
         with ad.websocket_connect(team_url + "&client=ADM") as a, \
                 mem.websocket_connect(team_url + "&client=MEM") as m, \
                 ad.websocket_connect(f"/api/ws/page/{own_page['id']}?client=VIS&share={token}") as visitor:
-            _hello(a), _hello(m), _hello(visitor)
+            recv_hello(a), recv_hello(m), recv_hello(visitor)
             assert recv(a, "join", PRESENCE)["peer"]["client"] == "MEM"
             assert ad.delete("/api/admin/users/cag_member").status_code == 200
             assert recv(a, "leave", PRESENCE)["client"] == "MEM"
@@ -133,9 +127,9 @@ def test_a_share_stopped_during_the_handshake_is_caught_after_the_join(monkeypat
         anon = TestClient(app)
         anon.portal = ow.portal
         with ow.websocket_connect(f"/api/ws/page/{page['id']}?client=OWN") as o:
-            _hello(o)
+            recv_hello(o)
             with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=VIS&share={token}") as v:
-                _hello(v)  # still the first message; the close follows at once
+                recv_hello(v)  # still the first message; the close follows at once
                 assert _closed(v) == collab.CLOSE_REVOKED
             assert "VIS" not in collab.room_for(ws, page["id"]).peers
 

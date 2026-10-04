@@ -3020,6 +3020,48 @@ mark.searchMark {
 /* The phone topbar holds only tabs and Back; with neither, it goes. */
 .topbar.phoneBare { display: none; }
 
+/* The touch editing bar (editor/EditBar.jsx): the markup tool strip's
+   surface (.pdfInkBar) and separators, centred and floating just above the
+   on-screen keyboard or, without one, the compact shell's bottom bar (`top`
+   is set inline), else the screen's edge clear of the home indicator
+   (`.atEdge`). While its place moves (the keyboard sliding, the view
+   panning) it is out of sight at once and fades back in where it lands
+   (`.moving`). Its ctlBtns are finger-sized, as the ink menu's are. The
+   tools scroll sideways on a narrow screen; Done stays at the right end. */
+.editBar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-editbar);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 5px;
+  width: max-content;              /* not shrink-to-fit: left: 50% would clamp it to half the screen */
+  max-width: calc(100vw - 16px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  touch-action: pan-x;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity var(--dur-base);
+}
+.editBar.moving { opacity: 0; pointer-events: none; transition: none; }
+[data-scheme="light"] .editBar { box-shadow: var(--shadow-2); }
+.editBar.atEdge { margin-top: calc(-1 * env(safe-area-inset-bottom)); }
+.editBarTools {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.editBarTools::-webkit-scrollbar { display: none; }
+.editBar .ctlBtn { width: 36px; height: 36px; flex-shrink: 0; }
+.editBar .pdfInkSep { flex-shrink: 0; }
+
 /* App fullscreen is the fallback when native fullscreen is unavailable.
    Confine overscroll to the app; the viewer's fullscreen button or Esc exits. */
 html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; overscroll-behavior: none; }
@@ -5711,12 +5753,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   white-space: nowrap;
 }
 
-/* "/" command menu in the block editor (editor/SlashMenu.jsx). */
+/* "/" command menu in the block editor (editor/SlashMenu.jsx). One width
+   whatever the query, so the list does not jump as it filters. */
 .slashMenu {
   position: fixed;
   z-index: var(--z-refpopup);
-  min-width: 240px;
-  max-height: 360px;
+  box-sizing: border-box;
+  width: min(300px, var(--caret-max-width, calc(100vw - 16px)));
+  max-height: min(400px, var(--caret-max-height, calc(100vh - 16px)));
   overflow-y: auto;
   padding: 3px;
 }
@@ -5745,24 +5789,45 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .slashMenuItem:hover { background: var(--bg-hover); }
 .slashMenuItem.selected { background: var(--accent-bg); }
-.slashMenuGlyph {
-  min-width: 30px;
-  padding: 3px 2px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+/* A row: an icon tile, then the label (and a command's "/name" at the
+   right) over a one-line description. */
+.slashMenuIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  font-size: var(--fs-md);
+  font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
-.slashMenuLabel { font-size: var(--fs-sm); }
-.slashMenuHint {
+.slashMenuText { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 1px; }
+.slashMenuHead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.slashMenuLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+.slashMenuName {
   margin-left: auto;
-  padding-left: 8px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   color: var(--text-dim);
   white-space: nowrap;
+}
+.slashMenuHint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
 }
 
 /* --- confirm / link dialogs --- */
