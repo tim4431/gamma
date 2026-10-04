@@ -80,7 +80,7 @@ REFRESH_REUSE_GRACE = 60               # a refresh token just rotated away still
 LAST_ACTIVE_TOUCH = 600                # a grant's last activity is written at most this often
 RETIRED_KEY_GRACE = 7 * 86400          # a rotated-out key stays in the JWKS this long
 
-PLANS = ("free", "plus", "pro")
+PLANS = ("free", "lite", "plus", "pro")
 PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 
 # What each plan buys on a hosted container (docs/research/cloud-plans.md
@@ -90,6 +90,8 @@ PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 # pending invitation there. Off-site copies: interval and generations kept.
 PLAN_LIMITS = {
     "free": {"hosted": False},
+    "lite": {"hosted": True, "quota_mb": 1024, "max_upload_mb": 50, "max_accounts": 1,
+             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 3},
     "plus": {"hosted": True, "quota_mb": 6 * 1024, "max_upload_mb": 100, "max_accounts": 1,
              "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 7},
     "pro": {"hosted": True, "quota_mb": 100 * 1024, "max_upload_mb": 250, "max_accounts": 10,
@@ -113,10 +115,12 @@ FLEET_IMAGE_TAG = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE_TAG", "").strip() or "
 STRIPE_SECRET = os.environ.get("GAMMA_CLOUD_STRIPE_SECRET", "").strip()
 STRIPE_WEBHOOK_SECRET = os.environ.get("GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET", "").strip()
 STRIPE_PRICES = {  # key the checkout form sends -> (plan, interval, price id)
+    "lite_month": ("lite", "month", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH", "").strip()),
+    "lite_year": ("lite", "year", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_LITE_YEAR", "").strip()),
     "plus_month": ("plus", "month", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_PLUS_MONTH", "").strip()),
     "plus_year": ("plus", "year", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_PLUS_YEAR", "").strip()),
     "pro_month": ("pro", "month", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_PRO_MONTH", "").strip()),
     "pro_year": ("pro", "year", os.environ.get("GAMMA_CLOUD_STRIPE_PRICE_PRO_YEAR", "").strip()),
 }
 # Shown on the plan page and the website; billing itself uses the Prices.
-PLAN_PRICES_USD = {"plus": {"month": 5, "year": 50}, "pro": {"month": 20, "year": 200}}
+PLAN_PRICES_USD = {"lite": {"month": 2, "year": 20}, "plus": {"month": 5, "year": 50}, "pro": {"month": 20, "year": 200}}

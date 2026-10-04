@@ -68,7 +68,7 @@ until it is set:
 |---|---|
 | `GAMMA_CLOUD_STRIPE_SECRET` | the secret key (`sk_live_…` / `sk_test_…`); empty = billing off |
 | `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET` | the webhook endpoint's signing secret (`whsec_…`) |
-| `GAMMA_CLOUD_STRIPE_PRICE_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the four recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id) |
+| `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the six recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id) |
 | `GAMMA_CLOUD_HOSTED_DOMAIN` | a paid plan is a hosted server, so checkout also needs hosting on |
 
 `config.PLAN_PRICES_USD` is what the pages show; what is charged is the
@@ -182,7 +182,7 @@ follows `pages_billing.can_buy`, the same test `checkout_url` applies
 checkout that would answer 409. It has six states
 (`pages_billing.plan_state`):
 
-- **Free.** Three cards, Free, Plus and Pro, with six lines each drawn from
+- **Free.** Four cards, Free, Lite, Plus and Pro, with six lines each drawn from
   `config.PLAN_LIMITS`, the monthly and the yearly price with the yearly
   saving, a Monthly/Yearly toggle, and "Choose Plus" / "Choose Pro", which
   post to checkout and follow the URL. A line under the cards points to
@@ -261,7 +261,7 @@ step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
    cd cloud
    export GAMMA_CLOUD_DATA_DIR=/tmp/gc-billing GAMMA_CLOUD_PUBLIC_URL=http://127.0.0.1:9150
    export GAMMA_CLOUD_HOSTED_DOMAIN=gammapdf.test GAMMA_CLOUD_STRIPE_SECRET=sk_test_...
-   export GAMMA_CLOUD_STRIPE_PRICE_PLUS_MONTH=price_... # and the other three
+   export GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH=price_... # and the other five
    python manage.py setup && python manage.py create-account you@example.org you --admin --verified
    ```
 

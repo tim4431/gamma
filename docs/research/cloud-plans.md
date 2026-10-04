@@ -36,25 +36,31 @@ mechanics are in [dev/cloud_accounts.md](../dev/cloud_accounts.md).
 
 ## The plans
 
-| | Free | Plus | Pro |
-|---|---|---|---|
-| Price | 0 | $5 a month, $50 a year | $20 a month, $200 a year |
-| Library | the desktop app, on disk | a hosted Gamma of your own at `<username>.gammapdf.com` | the same, for a group |
-| Accounts on the server | none | 1 | 10 included; more as seats later |
-| Shared workspaces | self-host only | no; share-by-link (view or edit) still works for anyone | yes: roles, live cursors, invitations by cloud username |
-| Storage for uploads | the share host's small default | 6 GB | 100 GB pooled, per-workspace quotas |
-| Per-file cap | 50 MB | 100 MB | 250 MB |
-| Published pages | 5 | unlimited | unlimited |
-| Devices | against a server you run | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | the same |
-| Off-site copies | none | daily, 7 kept | hourly, 30 kept |
-| AI | own key or ChatGPT sign-in | the same | the same, plus one shared connection the admin adds for the whole server |
-| Administration | none | you administer your server | users, workspaces, shared AI, guests |
+| | Free | Lite | Plus | Pro |
+|---|---|---|---|---|
+| Price | 0 | $2 a month, $20 a year | $5 a month, $50 a year | $20 a month, $200 a year |
+| Library | the desktop app, on disk | a hosted Gamma of your own at `<username>.gammapdf.com` | a hosted Gamma of your own at `<username>.gammapdf.com` | the same, for a group |
+| Accounts on the server | none | 1 | 1 | 10 included; more as seats later |
+| Shared workspaces | self-host only | no; share-by-link (view or edit) still works for anyone | no; share-by-link (view or edit) still works for anyone | yes: roles, live cursors, invitations by cloud username |
+| Storage for uploads | the share host's small default | 1 GB | 6 GB | 100 GB pooled, per-workspace quotas |
+| Per-file cap | 50 MB | 50 MB | 100 MB | 250 MB |
+| Published pages | 5 | unlimited | unlimited | unlimited |
+| Devices | against a server you run | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | the same |
+| Off-site copies | none | daily, 3 kept | daily, 7 kept | hourly, 30 kept |
+| AI | own key or ChatGPT sign-in | the same | the same | the same, plus one shared connection the admin adds for the whole server |
+| Administration | none | you administer your server | you administer your server | users, workspaces, shared AI, guests |
 
 **What Plus sells.** The desktop app is free and local, so the thing a
 Plus customer pays for is not storage: it is a server that is always on.
 Devices stay in sync through it, share links work with the laptop closed,
 the browser extension clips from any machine, and assistants reach the
 library at a public URL. The storage figure is a cap, not the headline.
+
+**Lite** came after the first three plans: $2 a month or $20 a year for the
+same single-account server with 1 GB, 50 MB per file and daily copies, 3
+kept. It is the entry price for someone who wants a hosted library but
+has a few hundred papers, and it costs the operator the same container
+as Plus.
 
 **Why these storage numbers.** Zotero's storage plans are the price list
 researchers know: 300 MB free, 2 GB for $20 a year, 6 GB for $60 a year,
