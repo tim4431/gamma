@@ -90,10 +90,11 @@ struct PageView: View {
         ink.load(view)
     }
 
-    /// "Add a page to write on": a sheet after the last, on a page without a PDF.
-    private var addPage: (() -> Void)? {
+    /// A page to write on, on a page without a PDF: after the block named (the
+    /// editing bar's Insert), else after the last page. → its id.
+    private var addPage: ((String?) -> String?)? {
         guard kind != "pdf" else { return nil }
-        return { _ = ink.addSheet() }
+        return { ink.addSheet(after: $0) }
     }
 
     /// From the notes alone: the notebook view, at the page or drawing (replaying it).

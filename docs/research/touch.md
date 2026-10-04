@@ -185,5 +185,7 @@ Only text boxes and the ink menu enlarge for `(pointer: coarse)`.
   `beforeinput` `formatBold`.
 - Indent and outdent keep the editor open, and a Backspace in an empty
   block moves on to the block above.
+- The native app's notes have the same bar ([dev/ipad.md](../dev/ipad.md)
+  "Editing the notes"), with "Handwritten note" in its Insert menu.
 - The typing aids (`contentAttributes`), the hidden handle, the menus,
   hover-only tools, target sizes and one-off gaps above are as found.

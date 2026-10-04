@@ -84,7 +84,7 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **Where a block can go** is each command's `when`: move up and indent need a sibling above, move down one below, outdent a parent (`getParentInfo`). The palette leaves an inapplicable one out, and the editing bar greys its button.
 - **Insert…** (unbound, needs the editor) → a `/` after the caret, with a space after a word, so the slash menu opens as if typed (`runInsertSlash`); nothing inside math or a fence. **Inline equation** (unbound, formatting) → `$…$` around the selection, else `$x$` with the x selected (`runInsertMath`).
 - **Toggle to-do** (unbound) → `toggleTodoLine` (mdMarks.js): `- [ ]` ↔ `- [x]` on the caret's line, a line without a box gets one after its list marker. **Select block text** (unbound) selects it. The handle menu's add-to-chat, move-to-page and delete-subtree are palette entries too.
-- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code.
+- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code. Their plans of the text alone (`markPlan`, `linkPlan`, `mathInsertAt`) are also what the iPad app's editing bar applies ([ipad.md](ipad.md#editing-the-notes)).
 
 From the palette a block command runs on the **focused row** with `editor: null` (opening the palette closes any editor); `needsEditor` commands are left out there.
 

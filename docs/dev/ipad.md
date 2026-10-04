@@ -31,7 +31,9 @@ in a web view for everything it does not do itself.
    ([notebooks.md](notebooks.md)) opens in the notebook view, its sheets
    one under the other; a toolbar button shows its notes alone and back.
    The notes open beside a PDF or the sheets. "Add a page to write on" at
-   the end of the notes adds a sheet after the last.
+   the end of the notes adds a sheet after the last. While a note is
+   edited, a bar over the keyboard nests, moves, adds and formats notes
+   ([Editing the notes](#editing-the-notes)).
 4. The Pencil writes. Fingers scroll, zoom and select. The tool strip has
    the pen and highlighter presets, the eraser, the hand (the Pencil
    scrolls), a new group, undo and redo. The Pencil's double tap switches
@@ -190,12 +192,60 @@ browser reads ([research/handwriting.md](../research/handwriting.md)).
 Converting to and from it resamples strokes and loses their identity.
 Raw touches carry everything `gamma-ink` stores.
 
+### Editing the notes
+
+`NotesView` lists a page's blocks as text fields, indented by depth. A
+note's text is sent as `setText` from the text it was edited from, so a
+text changed meanwhile merges. While a field has the keyboard, the editing
+bar (`Views/NoteEditBar.swift`) sits on it. It is the web app's bar
+([below](#the-editing-bar)), with the same tools in the same order:
+
+**Insert** · Outdent · Indent · Move up · Move down · New block · Bold ·
+Italic · Link · Inline equation · Undo · Redo … **Done**
+
+- **Where it sits.** It is the notes' bottom safe-area inset, and the
+  keyboard takes the safe area, so the bar rides on the keyboard without
+  measuring it. With a hardware keyboard it sits at the bottom of the
+  notes. Where the notes are narrow (the inspector beside a PDF), the
+  tools scroll sideways and Done stays.
+- **The outline.** Outdent, Indent, Move up, Move down and New block are
+  `edits.js` `outdent`, `indent`, `moveBlock` and `addNoteAfter`. Each is
+  the browser's own change of the page's tree (`blockModel.js`
+  `outdentBlock`, `indentBlock`, `moveSibling`, `insertSibling`), sent as
+  the ops the browser sends for it (`blockOps.js` `diffTrees`). A button is
+  greyed out where the web's is: Outdent at the top level, Indent and Move
+  up on a first child, Move down on a last.
+- **Undo and redo.** Each outline edit returns its undo, and `OutlineUndo`
+  registers it with the window's undo manager, which the bar's Undo and
+  Redo run.
+  - An undo is a list of placements: where each block the edit moved, made
+    or took away stood, as its parent and the sibling it followed.
+    `edits.js` `restore` puts them back and returns the redo.
+  - The keys are worked out when the undo runs, as the browser's undo
+    does. A round may have re-keyed a block meanwhile: the server re-keys
+    an insert whose key a sibling has.
+  - Whether the text fields' typing and the keyboard's own undo key use
+    the same manager is a device check.
+- **Text commands.** Bold, Italic, Link and Inline equation are the web
+  editor's own plans (`markCommands.js` `markPlan`, `linkPlan`,
+  `mathInsertAt`).
+  - Insert lists the `/` menu's text insertions (`slashInserts.js`) and,
+    on a page without a PDF, a page to write on after the note.
+  - The core's `format` and `insert` turn a plan into one replacement and
+    the selection after, in UTF-16 offsets. `KeyboardField` makes the
+    replacement through the field's own `UITextInput`, so it undoes like
+    typing.
+  - A link's address is not taken from the clipboard as the web's is:
+    reading it raises iPadOS's paste prompt.
+- **Done** takes the keyboard away, which commits the note.
+
 ### Tests
 
 - `ipad/scripts/core.test.mjs` runs the bundle in a bare context with no
   browser or Node globals. It covers ink, paper, the viewport transform,
-  a notebook made through a synchronous host, the replay's timeline, and
-  a page placed among a note's blocks. It runs in `check.yml` and
+  a notebook made through a synchronous host, the replay's timeline, a
+  page placed among a note's blocks, the editing bar's outline edits with
+  their undo and redo, and its text commands. It runs in `check.yml` and
   `ipad.yml`.
 - `frontend/tests/replica.test.mjs` covers the tree rules against the
   shared fixtures, the local merges, edit-beats-delete, the page views and
@@ -206,13 +256,16 @@ Raw touches carry everything `gamma-ink` stores.
 - The browser suite's `replica` group (`frontend/tests/e2e/scenarios/replica.mjs`,
   no browser) runs rounds against a real server: the first fill, the
   folder and label trees both ways with the library rows named from them,
-  pushes, text and drawings merged on both sides, an edit beating a delete
+  pushes, the editing bar's outline edits with their undo and redo, text
+  and drawings merged on both sides, an edit beating a delete
   both ways, a lost answer, a block moved between pages, deletions both
   ways, and receive-only.
 - `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`) covers the
   store's version, edit-mark and tombstone semantics, file names, and the
   bundled core through the Swift host (the replay's order, a page among a
-  note's blocks).
+  note's blocks, an outline edit and its undo). The editing bar itself
+  (`NoteEditBar`, `KeyboardField`, `OutlineUndo`) has no automated test;
+  it is checked on a device.
 
 ### Keeping the host in step
 
@@ -260,11 +313,10 @@ core.
   on a PDF page or a sheet nor makes them. A box shows as a note row with
   its text, which edits like any note. The browser redraws the box at the
   new text's size and stores that size at its next local edit of the box.
-- Shaping the notes. `NotesView` is a list of text fields: it edits a
-  note's text, adds one at the end and deletes one by a swipe. It cannot
-  indent, outdent, move, add a note after another or format, and the
-  replica's `edits.js` has no edits for those. The web app's editing bar
-  ([below](#the-editing-bar)) has no native counterpart.
+- The rest of the web outliner in the notes. Return makes no new note,
+  and Backspace in an empty note does not delete it. A typed `/` opens no
+  menu, and Insert offers no links, embeds, images or new pages. Notes do
+  not fold, and a note's markdown shows as its source.
 - A per-page choice of what to keep offline: every file comes over, like
   a desktop clone.
 - Sync in the background, and resolving a conflict from the app (the
@@ -381,6 +433,8 @@ keyboard (`editor/EditBar.jsx`):
 
 **Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
 block · Bold · Italic · Link · Inline equation · Undo · Redo … **Done**
+
+The native app's notes have the same bar ([Editing the notes](#editing-the-notes)).
 
 - **Every tool is a command.** All but Undo and Redo are block commands
   ([hotkeys.md](hotkeys.md)), run with the context the row's keydown

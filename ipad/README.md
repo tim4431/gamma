@@ -17,9 +17,10 @@ rules. Two layers do the work:
 
 - **JavaScript core.** The web app's own modules run in JavaScriptCore:
   the ink codec and geometry (`frontend/src/ink/ink.js`), the notebook
-  rules (`frontend/src/notebook/notebook.js`), and the replica
-  (`frontend/src/replica/`). The replica is the desktop mirror's sync
-  protocol and merges, ported to run on a device. `core/entry.js` is the
+  rules (`frontend/src/notebook/notebook.js`), the note editor's text
+  commands (`frontend/src/editor/markCommands.js`, `slashInserts.js`), and
+  the replica (`frontend/src/replica/`). The replica is the desktop
+  mirror's sync protocol and merges, ported to run on a device. `core/entry.js` is the
   bundle's entry, and `scripts/build-core.mjs` bundles it into
   `GammaIPad/Resources/gamma-core.js`.
 - **Swift host.** It stores, draws and talks to the network, and makes no
@@ -33,7 +34,7 @@ rules. Two layers do the work:
 |---|---|
 | `GammaIPad/App` | The app entry and the model: connection, replica, sync cadence |
 | `GammaIPad/Core` | The JavaScript bridge, the host, the store, files, HTTP, Keychain |
-| `GammaIPad/Views` | Connect (web sign-in, workspace, token), library, page, notes, web view |
+| `GammaIPad/Views` | Connect (web sign-in, workspace, token), library, page, notes and their editing bar, web view |
 | `GammaIPad/Reader` | The PDF reader (PDFKit with ink overlays) and the notebook |
 | `GammaIPad/Ink` | The ink session (groups, undo, save), the drawing view, the Pencil recognizer, the tool strip |
 | `GammaIPadTests` | XCTest: store semantics, file names, the bundled core through the host |

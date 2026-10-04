@@ -14,6 +14,14 @@ on:
       - "frontend/src/notebook/**"
       - "frontend/src/replica/**"
       - "frontend/src/shared/model/blockModel.js"
+      - "frontend/src/shared/model/blockOps.js"
+      # the note editor's text commands the editing bar runs (ipad/core/entry.js)
+      - "frontend/src/editor/markCommands.js"
+      - "frontend/src/editor/slashInserts.js"
+      - "frontend/src/editor/mdMarks.js"
+      - "frontend/src/editor/mdScan.js"
+      - "frontend/src/editor/fences.js"
+      - "frontend/src/editor/latexInput.js"
       - "frontend/package*.json"
       - ".github/workflows/ipad.yml"
   workflow_dispatch:

@@ -93,8 +93,8 @@ test("a notebook made through the host is the one the web app makes", async () =
   assert.deepEqual(timeline.strokes.map((s) => [s.id, s.index]), [["k1", 0]], "the replay's timeline, for the notes' replay");
 });
 
-test("a page among a note's blocks goes where the browser puts it", async () => {
-  const c = core();
+// A host that keeps pages in memory, versioned like the Swift store.
+function pagesHost() {
   const pages = new Map();
   const host = (method, args) => {
     const ok = (value) => JSON.stringify({ value: value ?? null });
@@ -108,6 +108,12 @@ test("a page among a note's blocks goes where the browser puts it", async () => 
     }
     return JSON.stringify({ error: `no ${method}` });
   };
+  return { pages, host };
+}
+
+test("a page among a note's blocks goes where the browser puts it", async () => {
+  const c = core();
+  const { pages, host } = pagesHost();
   const noteId = await c.run("createPage", host, { title: "Notes" });
   const a = await c.run("addNote", host, noteId, { content: "first" });
   const z = await c.run("addNote", host, noteId, { content: "last" });
@@ -123,6 +129,66 @@ test("a page among a note's blocks goes where the browser puts it", async () => 
   assert.equal(second.collapsed, true, "folded: the page shows its drawings");
   const last = await c.run("addSheet", host, noteId);                              // after the last page
   assert.deepEqual(c.pure("tree", pages.get(noteId).snapshot, noteId).map((n) => n.id), [a, p1, p2, last, z]);
+});
+
+test("the editing bar's outline edits go where the browser's do, and undo and redo put them back", async () => {
+  const c = core();
+  const { pages, host } = pagesHost();
+  const page = await c.run("createPage", host, { title: "Outline" });
+  const one = await c.run("addNote", host, page, { content: "one" });
+  const two = await c.run("addNote", host, page, { content: "two" });
+  const three = await c.run("addNote", host, page, { content: "three" });
+  // the outline as text: "one(two) three", a new empty note as "·"
+  const shape = () => {
+    const show = (list) => list.map((n) => (n.content || "·") + (n.children.length ? `(${show(n.children)})` : "")).join(" ");
+    return show(c.pure("tree", pages.get(page).snapshot, page));
+  };
+  assert.equal(await c.run("indent", host, page, one), null, "the first block has nothing to go under");
+  assert.equal(await c.run("outdent", host, page, one), null, "nor anything to come out of");
+  assert.equal(await c.run("moveBlock", host, page, three, 1), null, "the last goes no lower");
+  const fresh = c.pure("makeId");
+  const steps = [
+    [() => c.run("indent", host, page, two), "one(two) three", "under the block above, last among its children"],
+    [() => c.run("addNoteAfter", host, page, one, fresh), "one(two) · three", "a new note right after the block, past its children"],
+    [() => c.run("moveBlock", host, page, three, -1), "one(two) three ·", "one step up among its siblings"],
+    [() => c.run("outdent", host, page, two), "one two three ·", "right after the block it was under"],
+  ];
+  const undos = [];
+  for (const [edit, after, what] of steps) {
+    undos.push(await edit());
+    assert.equal(shape(), after, what);
+  }
+  // undone newest first, then redone, as an undo stack runs them
+  const before = ["one two three", ...steps.map((s) => s[1])];
+  const redos = [];
+  for (let i = undos.length - 1; i >= 0; i--) {
+    redos.push(await c.run("restore", host, page, undos[i]));
+    assert.equal(shape(), before[i], `undo ${i + 1}`);
+  }
+  for (let i = 0; i < steps.length; i++) {
+    await c.run("restore", host, page, redos[steps.length - 1 - i]);
+    assert.equal(shape(), steps[i][1], `redo ${i + 1}`);
+  }
+  assert.ok(fresh in pages.get(page).snapshot, "the new note came back under its id");
+});
+
+test("the editing bar's text commands are the web editor's, as one edit", () => {
+  const c = core();
+  const edit = (text, e) => e && { text: text.slice(0, e.from) + e.insert + text.slice(e.to), sel: [e.anchor, e.head] };
+  assert.deepEqual(edit("a word", c.pure("format", "bold", "a word", 2, 6)), { text: "a **word**", sel: [4, 8] });
+  assert.deepEqual(c.pure("format", "bold", "word", 2, 2), { from: 2, to: 2, insert: "****", anchor: 4, head: 4 },
+    "an empty pair at the caret, as a small edit");
+  assert.deepEqual(edit("a **word**", c.pure("format", "bold", "a **word**", 4, 8)), { text: "a word", sel: [2, 6] }, "toggled off");
+  assert.deepEqual(edit("it", c.pure("format", "italic", "it", 0, 2)), { text: "*it*", sel: [1, 3] });
+  assert.deepEqual(edit("site", c.pure("format", "link", "site", 0, 4)), { text: "[site]()", sel: [7, 7] }, "the caret in the (…) slot");
+  assert.deepEqual(edit("a", c.pure("format", "math", "a", 1, 1)), { text: "a$x$", sel: [2, 3] });
+  assert.equal(c.pure("format", "bold", "$x+y$", 2, 2), null, "no marks inside math");
+  assert.equal(c.pure("format", "nope", "a", 0, 0), null);
+  assert.deepEqual(edit("# Title", c.pure("insert", "h2", "# Title", 7)), { text: "## Title", sel: [8, 8] }, "a heading re-levelled");
+  assert.deepEqual(c.pure("insert", "h2", "# Title", 7), { from: 1, to: 1, insert: "#", anchor: 8, head: 8 });
+  assert.deepEqual(edit("abc", c.pure("insert", "divider", "abc", 3)), { text: "abc\n---\n", sel: [8, 8] }, "on a line of its own");
+  assert.deepEqual(edit("", c.pure("insert", "todo", "", 0)), { text: "- [ ] ", sel: [6, 6] });
+  assert.equal(c.pure("insert", "page", "", 0), null, "only the insertions that change the text alone");
 });
 
 test("the library names folders and labels from their trees", () => {

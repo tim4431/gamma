@@ -5,6 +5,7 @@
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { TEXT_COLORS, colorSpan } from "./mdMarks";
+import { TEXT_INSERTS, replaceRange } from "./slashInserts.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
@@ -12,42 +13,11 @@ import { t, T } from "../shared/i18n/i18n.js";
 //   { value, start, cursor, setText(newVal, selStart, selEnd),
 //     openRefPopup(), pickImage(), insertSheet(), newPage(id) }
 // start = index of the "/", cursor = caret (end of the typed query); commands
-// replace that range with their insertion. A command that `needs` one of
-// the editor's abilities is offered only where the editor has it
+// replace that range with their insertion (the text-only ones are
+// slashInserts.js's, which the iPad app runs too). A command that `needs`
+// one of the editor's abilities is offered only where the editor has it
 // (filterSlashCommands' `can`).
-
-function replaceRange(ctx, text, caretRel, selLen = 0) {
-  const { value, start, cursor } = ctx;
-  const newVal = value.slice(0, start) + text + value.slice(cursor);
-  const caret = start + (caretRel != null ? caretRel : text.length);
-  ctx.setText(newVal, caret, caret + selLen);
-}
-
-// Turn the current line into `prefix` + its text (swapping out an existing
-// markdown line prefix, so /h2 on a "# heading" re-levels instead of stacking).
-const LINE_PREFIX_RE = /^(#{1,6} |> |[-*+] \[[ xX]\] |[-*+] |\d+\. )/;
-function applyLinePrefix(ctx, prefix) {
-  const { value, start, cursor } = ctx;
-  let v = value.slice(0, start) + value.slice(cursor);
-  const lineStart = v.lastIndexOf("\n", start - 1) + 1;
-  const rest = v.slice(lineStart);
-  const m = rest.match(LINE_PREFIX_RE);
-  const stripped = m ? rest.slice(m[0].length) : rest;
-  v = v.slice(0, lineStart) + prefix + stripped;
-  const caret = Math.max(lineStart + prefix.length, start - (m ? m[0].length : 0) + prefix.length);
-  ctx.setText(v, caret, caret);
-}
-
-// Insertions that want their own line (divider, code block, table) prepend a
-// newline unless the "/" already sat at a line start.
-function blockInsert(ctx, body, caretRelInBody, selLen = 0) {
-  const atLineStart = ctx.start === 0 || ctx.value[ctx.start - 1] === "\n";
-  const lead = atLineStart ? "" : "\n";
-  replaceRange(ctx, lead + body, caretRelInBody != null ? lead.length + caretRelInBody : null, selLen);
-}
-
-const TABLE_MD = "| Column 1 | Column 2 |\n| --- | --- |\n|   |   |";
-const MERMAID_MD = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```";
+const I = TEXT_INSERTS;
 
 export const SLASH_COMMANDS = [
   {
@@ -63,49 +33,49 @@ export const SLASH_COMMANDS = [
   {
     name: "highlight", label: T("Highlight text"), glyph: "==", hint: "==marked==",
     keywords: ["mark", "yellow", "emphasize"],
-    run: (ctx) => replaceRange(ctx, "==x==", 2, 1),
+    run: I.highlight,
   },
   {
     name: "math", label: T("Inline equation"), glyph: "$x$", hint: T("LaTeX, rendered in place"),
     keywords: ["equation", "latex", "tex"],
-    run: (ctx) => replaceRange(ctx, "$x$", 1, 1),
+    run: I.math,
   },
   {
     name: "equation", label: T("Equation block"), glyph: "$$", hint: T("display math"),
     keywords: ["display", "math", "latex"],
-    run: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
+    run: I.equation,
   },
-  { name: "h1", label: T("Heading 1"), glyph: "H1", keywords: ["heading", "title"], run: (ctx) => applyLinePrefix(ctx, "# ") },
-  { name: "h2", label: T("Heading 2"), glyph: "H2", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "## ") },
-  { name: "h3", label: T("Heading 3"), glyph: "H3", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "### ") },
+  { name: "h1", label: T("Heading 1"), glyph: "H1", keywords: ["heading", "title"], run: I.h1 },
+  { name: "h2", label: T("Heading 2"), glyph: "H2", keywords: ["heading"], run: I.h2 },
+  { name: "h3", label: T("Heading 3"), glyph: "H3", keywords: ["heading"], run: I.h3 },
   {
     name: "todo", label: T("To-do"), glyph: "☐", hint: T("checkbox item"),
     keywords: ["task", "checkbox", "check"],
-    run: (ctx) => applyLinePrefix(ctx, "- [ ] "),
+    run: I.todo,
   },
-  { name: "bullet", label: T("Bulleted list"), glyph: "•", keywords: ["list", "ul"], run: (ctx) => applyLinePrefix(ctx, "- ") },
-  { name: "number", label: T("Numbered list"), glyph: "1.", keywords: ["list", "ol", "ordered"], run: (ctx) => applyLinePrefix(ctx, "1. ") },
-  { name: "quote", label: T("Quote"), glyph: "❝", keywords: ["blockquote", "cite"], run: (ctx) => applyLinePrefix(ctx, "> ") },
+  { name: "bullet", label: T("Bulleted list"), glyph: "•", keywords: ["list", "ul"], run: I.bullet },
+  { name: "number", label: T("Numbered list"), glyph: "1.", keywords: ["list", "ol", "ordered"], run: I.number },
+  { name: "quote", label: T("Quote"), glyph: "❝", keywords: ["blockquote", "cite"], run: I.quote },
   {
     name: "callout", label: T("Callout"), glyph: "[!]", hint: T("note · tip · warning · danger"),
     keywords: ["admonition", "aside", "banner", "note", "tip", "warning"],
-    run: (ctx) => applyLinePrefix(ctx, "> [!note] "),
+    run: I.callout,
   },
   {
     name: "code", label: T("Code block"), glyph: "</>", hint: T("fenced code"),
     keywords: ["fence", "pre", "snippet"],
-    run: (ctx) => blockInsert(ctx, "```\n\n```", 4),
+    run: I.code,
   },
   {
     name: "mermaid", label: T("Mermaid diagram"), glyph: "◇", hint: T("flowchart or sequence diagram"),
     keywords: ["diagram", "flowchart", "sequence", "chart"],
-    run: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
+    run: I.mermaid,
   },
-  { name: "divider", label: T("Divider"), glyph: "—", keywords: ["hr", "rule", "separator", "line"], run: (ctx) => blockInsert(ctx, "---\n") },
+  { name: "divider", label: T("Divider"), glyph: "—", keywords: ["hr", "rule", "separator", "line"], run: I.divider },
   {
     name: "table", label: T("Table"), glyph: "▦", hint: T("2×2 markdown table"),
     keywords: ["grid"],
-    run: (ctx) => blockInsert(ctx, TABLE_MD, 2, 8),
+    run: I.table,
   },
   {
     name: "image", label: T("Image"), glyph: "▣", hint: T("upload from disk"),
@@ -127,10 +97,7 @@ export const SLASH_COMMANDS = [
     needs: "sheet",
     run: (ctx) => { replaceRange(ctx, ""); ctx.insertSheet(); },
   },
-  {
-    name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"],
-    run: (ctx) => replaceRange(ctx, new Date().toISOString().slice(0, 10)),
-  },
+  { name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"], run: I.date },
   // Colored text / background tint, Notion's palette written as Obsidian-
   // compatible inline HTML (mdMarks TEXT_COLORS): an empty span with the
   // caret inside, like the `**|**` of Ctrl+B. `hidden` keeps the sixteen

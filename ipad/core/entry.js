@@ -1,8 +1,9 @@
 // The JavaScript the iPad app runs in JavaScriptCore (ipad/README.md): the
 // web app's own ink codec and geometry (frontend/src/ink/ink.js), the
-// notebook rules (frontend/src/notebook/notebook.js), and the replica —
-// the mirror protocol and merges a device without a server runs
-// (frontend/src/replica/*). Bundled by ipad/scripts/build-core.mjs into
+// notebook rules (frontend/src/notebook/notebook.js), the note editor's
+// text commands (frontend/src/editor/markCommands.js, slashInserts.js), and
+// the replica — the mirror protocol and merges a device without a server
+// runs (frontend/src/replica/*). Bundled by ipad/scripts/build-core.mjs into
 // GammaIPad/Resources/gamma-core.js; Swift talks to it through
 // GammaCore.swift in JSON strings only:
 //
@@ -48,6 +49,8 @@ if (!globalThis.btoa) {
 }
 
 import { getStroke } from "perfect-freehand";
+import { linkPlan, markPlan, mathInsertAt } from "../../frontend/src/editor/markCommands.js";
+import { TEXT_INSERTS } from "../../frontend/src/editor/slashInserts.js";
 import * as ink from "../../frontend/src/ink/ink.js";
 import * as notebook from "../../frontend/src/notebook/notebook.js";
 import * as edits from "../../frontend/src/replica/edits.js";
@@ -99,6 +102,48 @@ function viewportTransform(box, rotation) {
   return { transform: [a, b, c, d, ox - a * cx - c * cy, oy - b * cx - d * cy], width, height };
 }
 
+// The editing bar's text commands (docs/dev/ipad.md "Editing the notes"),
+// the web editor's own plans: a note's text with [from, to] selected → one
+// edit for the host to make, {from, to, insert} replaced (UTF-16 offsets,
+// as UITextInput counts them) and the selection after, {anchor, head}; or
+// null where the command does nothing.
+const FORMATS = {
+  bold: (text, from, to) => markPlan(text, from, to, "**"),
+  italic: (text, from, to) => markPlan(text, from, to, "*"),
+  link: linkPlan,
+  math: mathInsertAt,
+};
+
+// A plan's changes (CodeMirror's: offsets in the text before, none
+// overlapping) made.
+function planned(text, plan) {
+  let out = text;
+  for (const c of [...plan.changes].sort((x, y) => y.from - x.from)) out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+  return { text: out, anchor: plan.selection.anchor, head: plan.selection.head ?? plan.selection.anchor };
+}
+
+// The "/" menu's text insertion `name` at the caret.
+function inserted(name, text, at) {
+  const run = TEXT_INSERTS[name];
+  if (!run) return null;
+  let out = null;
+  run({ value: text, start: at, cursor: at, setText: (value, anchor, head) => { out = { text: value, anchor, head: head ?? anchor }; } });
+  return out;
+}
+
+// The text after (`next`, with its selection) as the one span of `text` it
+// replaced.
+function oneEdit(text, next) {
+  if (!next) return null;
+  const after = next.text;
+  let from = 0;
+  while (from < text.length && from < after.length && text[from] === after[from]) from++;
+  let tail = 0;
+  while (tail < text.length - from && tail < after.length - from
+    && text[text.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+  return { from, to: text.length - tail, insert: after.slice(from, after.length - tail), anchor: next.anchor, head: next.head };
+}
+
 const PURE = {
   pageView: (snapshot, pageId) => views.pageView(snapshot, pageId),
   libraryRows: (roots, trees) => views.libraryRows(roots, trees ?? {}),
@@ -124,6 +169,11 @@ const PURE = {
   paperSizes: () => notebook.PAPER_SIZES,
   viewportTransform: (box, rotation) => viewportTransform(box, rotation),
   makeId: () => makeBlockId(),
+  format: (name, text, from, to) => {
+    const plan = FORMATS[name]?.(text, from, to);
+    return plan ? oneEdit(text, planned(text, plan)) : null;
+  },
+  insert: (name, text, at) => oneEdit(text, inserted(name, text, at)),
 };
 
 const RUN = {
@@ -136,6 +186,12 @@ const RUN = {
   renamePage: (host, pageId, title, base) => edits.renamePage(host, pageId, title, base ?? undefined).then(() => null),
   addNote: (host, pageId, args) => edits.addNote(host, pageId, args),
   deleteBlock: (host, pageId, blockId) => edits.deleteBlock(host, pageId, blockId).then(() => null),
+  // the outline edits: → each one's undo, placements `restore` takes (null: nothing changed)
+  indent: (host, pageId, blockId) => edits.indent(host, pageId, blockId),
+  outdent: (host, pageId, blockId) => edits.outdent(host, pageId, blockId),
+  moveBlock: (host, pageId, blockId, dir) => edits.moveBlock(host, pageId, blockId, dir),
+  addNoteAfter: (host, pageId, after, id) => edits.addNoteAfter(host, pageId, after, id),
+  restore: (host, pageId, placements) => edits.restore(host, pageId, placements),
   createPage: (host, args) => edits.createPage(host, args),
   deletePage: (host, pageId) => edits.deletePage(host, pageId),
 };

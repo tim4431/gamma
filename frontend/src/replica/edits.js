@@ -16,22 +16,31 @@ import { inkProps } from "../ink/ink.js";
 import {
   firstSheetId, isSheet, newSheet, normalizePaper, paperBefore, sheetIdAfter, sheetsOf,
 } from "../notebook/notebook.js";
-import { makeBlockId } from "../shared/model/blockModel.js";
+import { diffTrees } from "../shared/model/blockOps.js";
+import {
+  findBlock, indentBlock, insertChild, insertSibling, makeBlockId, moveSibling, outdentBlock, removeBlockTree,
+} from "../shared/model/blockModel.js";
 import { inkFiles } from "./round.js";
-import { applyLocal, childrenOf, treeOf } from "./tree.js";
+import { applyLocal, childrenOf, treeOf, treeOrder } from "./tree.js";
 
 const TRIES = 5;
 const noNulls = (props) => Object.fromEntries(Object.entries(props).filter(([, v]) => v !== null && v !== undefined));
 
-// Apply `ops` to the page here: → the page's snapshot after them.
-export async function editPage(host, pageId, ops) {
+// Apply `ops` to the page here: → {before, after}, the snapshot they were
+// applied to and the one after them.
+async function applyHere(host, pageId, ops) {
   for (let attempt = 1; ; attempt++) {
     const { snapshot, version } = await host.page(pageId);
     if (!snapshot) throw new Error(`no page ${pageId} here`);
     const { snapshot: next } = await applyLocal(snapshot, ops, inkFiles(host));
-    if (await host.writeEdit(pageId, next, version)) return next;
+    if (await host.writeEdit(pageId, next, version)) return { before: snapshot, after: next };
     if (attempt >= TRIES) throw new Error(`page ${pageId} kept changing`);
   }
+}
+
+// Apply `ops` to the page here: → the page's snapshot after them.
+export async function editPage(host, pageId, ops) {
+  return (await applyHere(host, pageId, ops)).after;
 }
 
 // The key after the last child of `parent`.
@@ -143,6 +152,82 @@ export async function addNote(host, pageId, { parent = null, content = "", id = 
 
 export async function deleteBlock(host, pageId, blockId) {
   return editPage(host, pageId, [{ op: "delete", id: blockId }]);
+}
+
+// --- the outline -----------------------------------------------------------------------
+
+// The editing bar's outline edits (docs/dev/ipad.md "Editing the notes"),
+// made the browser's way: shared/model/blockModel.js's own change of the
+// page's tree, sent as the ops the browser sends for it (blockOps.js
+// diffTrees: the fewest moves, each keyed between its new neighbours).
+// → its undo (`restore` makes it), or null when it changes nothing (the
+// first block indented, the last one moved down).
+//
+// An undo says where each block the edit moved, made or took away stood
+// before, among its neighbours rather than by its key, so its keys are
+// worked out when it runs, as the browser's undo works them out
+// (editor/blockHistory.js planRestore): a round may have re-keyed a block
+// since (the server re-keys an insert whose key a sibling has). Each
+// placement is {id, parent, after: the sibling it followed, null for the
+// first; node: the block and what it holds, when the edit took it away},
+// or {id, gone: true} for a block the edit made.
+async function reshape(host, pageId, change) {
+  const { snapshot } = await host.page(pageId);
+  if (!snapshot) throw new Error(`no page ${pageId} here`);
+  const tree = treeOf(snapshot, pageId);
+  const next = change(tree);
+  if (next === tree) return null;
+  const ops = diffTrees(tree, next, pageId, new Map());
+  if (!ops.length) return null;
+  const { before, after } = await applyHere(host, pageId, ops);
+  return placementsOf(before, after, pageId, new Set(ops.map((op) => op.id)));
+}
+
+export const indent = (host, pageId, blockId) => reshape(host, pageId, (tree) => indentBlock(tree, blockId));
+export const outdent = (host, pageId, blockId) => reshape(host, pageId, (tree) => outdentBlock(tree, blockId));
+// One step up (dir -1) or down (+1) among its siblings.
+export const moveBlock = (host, pageId, blockId, dir) => reshape(host, pageId, (tree) => moveSibling(tree, blockId, dir));
+// A new empty note `id` right after block `after`, among its siblings (the
+// browser's Enter).
+export const addNoteAfter = (host, pageId, after, id) =>
+  reshape(host, pageId, (tree) => insertSibling(tree, after, { id, content: "", properties: {}, children: [] }, true));
+
+// An outline edit's undo, or an undo's redo. → the one that takes it back.
+export const restore = (host, pageId, placements) => reshape(host, pageId, (tree) => placed(tree, pageId, placements));
+
+// Where the blocks `ids` stood in `before`, in its order, so a block put
+// back after a sibling finds that sibling already back.
+function placementsOf(before, after, pageId, ids) {
+  const kids = childrenOf(before);
+  const out = [];
+  for (const id of treeOrder(before, pageId)) {
+    if (!ids.has(id)) continue;
+    const { parent, content, props } = before[id];
+    const siblings = kids.get(parent);
+    const i = siblings.indexOf(id);
+    out.push({ id, parent, after: i > 0 ? siblings[i - 1] : null,
+      ...(id in after ? {} : { node: { id, content, properties: props, children: treeOf(before, id) } }) });
+  }
+  for (const id of ids) if (!(id in before)) out.push({ id, gone: true });
+  return out;
+}
+
+// `tree` with each block placed as `placements` say. One whose parent is
+// gone, or is now inside the block itself, stays where it is.
+function placed(tree, pageId, placements) {
+  let next = tree;
+  for (const p of placements) {
+    const here = findBlock(next, p.id);
+    if (p.gone) { if (here) next = removeBlockTree(next, p.id); continue; }
+    const node = here || p.node;
+    const parent = p.parent === pageId ? null : findBlock(next, p.parent);
+    if (!node || (p.parent !== pageId && (!parent || findBlock([node], p.parent)))) continue;
+    if (here) next = removeBlockTree(next, p.id);
+    const siblings = p.parent === pageId ? next : findBlock(next, p.parent).children || [];
+    if (p.after && siblings.some((b) => b.id === p.after)) next = insertSibling(next, p.after, node, true);
+    else next = p.parent === pageId ? [node, ...next] : insertChild(next, p.parent, node, false);
+  }
+  return next;
 }
 
 // A page made here (a text page), filed in `folders` (folder block ids):
