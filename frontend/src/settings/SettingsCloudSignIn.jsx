@@ -1,7 +1,8 @@
 // Sign in with Gamma Cloud (backend gamma/cloud_auth.py, docs/dev/cloud_accounts.md):
 // - CloudSignInSettings — Settings → Server → Sign-in (admins): the account
 //   server's address, the client this server is, and what happens to a cloud
-//   identity this server has not seen (refuse / claim / provision), and
+//   identity this server has not seen (refuse / claim / provision / invited;
+//   on a hosted container the plan sets it, `policy_source` "plan"), and
 //   under provision whether it accepts published pages (the share host). A
 //   server with a public URL still on the desktop client (`needs_connect`)
 //   gets a Connect button: a round trip through the account server that
@@ -24,6 +25,7 @@ const POLICIES = [
   ["refuse", t("Refuse"), null, t("Only accounts already linked to a cloud account can sign in")],
   ["claim", t("Claim"), null, t("A cloud account whose username equals an unlinked username here signs in as it")],
   ["provision", t("Provision"), null, t("Any verified cloud account gets an account here, named after its username")],
+  ["invited", t("Invited"), null, t("A cloud account invited to a shared workspace here gets an account; nobody else")],
 ];
 
 // The connect round trip's outcome, read once from the address bar and dropped.
@@ -122,8 +124,9 @@ export function CloudSignInSettings({ setStatus, action }) {
       </span>
     </Row>
     <Row icon={UserIcon} label={t("Unknown cloud accounts")}
-      hint={t("What a cloud account that is not linked to an account here may do")}
-      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host.")}>
+      hint={saved?.policy_source === "plan" ? t("Set by this server's plan")
+        : t("What a cloud account that is not linked to an account here may do")}
+      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host. Invited: only a cloud account someone here invited to a shared workspace gets one.")}>
       <Segmented value={draft.policy} onChange={set("policy")} options={POLICIES} disabled={disabled} />
     </Row>
     {draft.policy === "provision" ? (

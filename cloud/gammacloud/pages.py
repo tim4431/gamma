@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config, settings
+from . import accounts, config, pages_billing, pages_fleet, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -172,6 +172,7 @@ document.querySelectorAll('[data-at]').forEach(e => { const d = new Date(e.datas
 """
 
 ICONS = {
+    "plan": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>',
     "home": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2z"/></svg>',
     "devices": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
     "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
@@ -227,7 +228,8 @@ def app(title: str, lead: str, account: dict, active: str, inner: str, script: s
     (the Overview's greeting)."""
     def item(key, href, label):
         return f"<a class='item {'on' if key == active else ''}' href='{href}'>{ICONS[key]}{label}</a>"
-    nav = item("home", "/", "Overview") + item("devices", "/devices", "Devices") + item("settings", "/settings", "Settings")
+    nav = (item("home", "/", "Overview") + item("plan", "/plan", "Plan") + item("devices", "/devices", "Devices")
+           + item("settings", "/settings", "Settings"))
     if account["is_admin"]:
         nav += "<div class=label>Server</div>" + item("admin", "/admin", "Admin")
     nav += ("<div class='label gl'>Gamma</div>"
@@ -463,12 +465,17 @@ def _server_row(e: dict, manage: bool) -> str:
         meta.append(f"last seen at {esc(grant['ip'])}")
     active = max((srv or {}).get("last_seen_at", ""), (grant or {}).get("last_used_at", ""))
     end = _last(active, "Last active")
-    if not grant:
+    hosted = bool(srv and srv.get("hosted"))
+    if hosted:
+        # A hosted server is listed by its hosted_servers row, not by a
+        # grant: it is never "signed out" and the Plan page retires it.
+        end = f"<span class=pill>{esc(srv.get('state') or 'hosted')}</span>" + end
+    elif not grant:
         end = "<span class=pill>Signed out</span>" + end
-    if manage:
-        end += (f"<button class='btn btn--sm' data-revoke='{esc(grant['id'])}' aria-label='Sign out {esc(label)}'>Sign out</button>"
-                if grant else
-                f"<button class='btn btn--sm' data-remove='{esc(srv['url'])}' aria-label='Remove {esc(label)}'>Remove</button>")
+    if manage and grant:
+        end += f"<button class='btn btn--sm' data-revoke='{esc(grant['id'])}' aria-label='Sign out {esc(label)}'>Sign out</button>"
+    elif manage and not hosted:
+        end += f"<button class='btn btn--sm' data-remove='{esc(srv['url'])}' aria-label='Remove {esc(label)}'>Remove</button>"
     return _row("desktop" if srv is None or srv["local"] else "server", title, meta, end)
 
 
@@ -540,9 +547,15 @@ def overview_page(account: dict, devices: list[dict], entries: list[dict], mail_
         f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div></div>")
     more = f"<a href='/devices'>Manage{f' all {len(entries)}' if len(entries) > 5 else ''}</a>"
     signins = f"<section class=section><h2>Gamma servers <span>{more}</span></h2><div class=list>{recent}</div></section>"
+    paid = account["plan"] != "free"
+    plantext = ("Your plan includes a hosted Gamma server of your own; the Plan page shows it and the billing."
+                if paid else
+                "The desktop app is your library. A hosted Gamma server of your own comes with the Plus and Pro plans.")
     plan = (f"<section class=section><h2>Plan</h2><div class=body><div class=planname>{esc(account['plan'])}</div>"
-            "<p class=plantext>The desktop app is your library. A hosted Gamma server of your own comes with the Plus and Pro plans.</p>"
-            f"<div class=actions><a class='btn btn--sm' href='{SITE}/#selfhost'>Self-host instead</a></div></div></section>")
+            f"<p class=plantext>{plantext}</p>"
+            f"<div class=actions><a class='btn btn--primary btn--sm' href='/plan'>Plan and billing</a>"
+            + ("" if paid else f"<a class='btn btn--sm' href='{SITE}/#selfhost'>Self-host instead</a>")
+            + "</div></div></section>")
     who = (f"<section class=section><h2>Account <span><a href='/settings'>Edit</a></span></h2><div class=body><dl class=kv>"
            f"<dt>Username</dt><dd title='Your name on every Gamma server'>{esc(account['username'])}</dd>"
            f"<dt>E-mail</dt><dd title='{esc(account['email'])}'>{_email_pill(account)}</dd>"
@@ -717,7 +730,8 @@ def admin_page(account: dict) -> str:
     plans = "".join(f"<option value={p}>{p}</option>" for p in config.PLANS)
     inner = (
         "<div class=tabs><button class=on data-tab=accounts>Accounts</button><button data-tab=invites>Invites</button>"
-        "<button data-tab=clients>Clients</button><button data-tab=settings>Settings</button>"
+        "<button data-tab=clients>Clients</button><button data-tab=servers>Servers</button>"
+        "<button data-tab=billing>Billing</button><button data-tab=settings>Settings</button>"
         "<button data-tab=audit>Audit log</button></div>"
         "<div id=tab-accounts><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Username</th><th>E-mail</th><th>Plan</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody id=accounts></tbody></table></div></div>"
@@ -732,13 +746,19 @@ def admin_page(account: dict) -> str:
         "<label>Callback URL<input name=redirect placeholder='https://name.gammapdf.com/api/auth/cloud/callback' required></label>"
         "<button type=submit class='btn btn--primary btn--sm'>Create</button><div class=msg></div></form><div id=secret hidden class=secretbox></div></div></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Client id</th><th>Name</th><th>Kind</th><th>Callback</th><th></th></tr></thead><tbody id=clients></tbody></table></div></div></div>"
+        + pages_fleet.ADMIN_TAB + pages_billing.ADMIN_TAB
         + _settings_tab()
         + "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
     script = """
 const PLANS = %s; let offset = 0, query = '';
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  for (const t of ['accounts','invites','clients','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
-function planSelect(a){ return '<select class=sm data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === a.plan ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'; }
+  for (const t of ['accounts','invites','clients','servers','billing','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
+// The select sets the granted plan (accounts.set_plan), so it shows that one, with the effective plan beside it when a subscription lifts it higher.
+function planSelect(a){
+  const g = a.granted_plan || a.plan;
+  return '<select class=sm title="Granted plan" data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === g ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'
+    + (a.plan !== g ? ' <span class="pill pill--ok" title="Paid through Stripe">' + esc(a.plan) + ' paid</span>' : '');
+}
 function accountRow(a){
   const status = (a.deleted_at ? '<span class=pill>deleted</span> ' : '') + (a.email_verified ? '<span class="pill pill--ok">verified</span>' : '<span class="pill pill--warn">unverified</span>') + (a.is_admin ? ' <span class=pill>admin</span>' : '');
   return '<tr data-id="' + esc(a.id) + '"><td><b>' + esc(a.username) + '</b><br><span class=mono>' + esc(a.id) + '</span></td><td>' + esc(a.email) + '</td><td>' + planSelect(a) + '</td><td>' + status + '</td><td>' + esc(a.created_at.slice(0,10)) + '</td>'
@@ -775,6 +795,8 @@ function wire(){
 async function load(tab){
   if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
+  if (tab === 'servers') await loadServers();
+  if (tab === 'billing') await loadBilling();
   if (tab === 'settings') showSettings(await api('/api/admin/settings', undefined, 'GET'));
   if (tab === 'audit') { const d = await api('/api/admin/audit?limit=300', undefined, 'GET'); document.getElementById('audit').innerHTML = d.audit.map(a => '<tr><td class=mono>' + esc(a.at.slice(0,19).replace('T',' ')) + '</td><td>' + esc(a.event) + '</td><td class=mono>' + esc(a.account_id) + '</td><td class=mono>' + esc(a.actor) + '</td><td>' + esc(a.detail) + '</td></tr>').join(''); }
   wire();
@@ -803,7 +825,7 @@ const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySe
 cs.onclick = () => { if (!confirm('Clear the Turnstile secret? The anti-bot check stops running.')) return;
   act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
 loadAccounts(true);
-""" % json.dumps(list(config.PLANS))
+""" % json.dumps(list(config.PLANS)) + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS
     return app("Admin", "Accounts, invites, the clients of hosted servers, the sign-up settings, and what "
                "happened.", account, "admin", inner, script)
 

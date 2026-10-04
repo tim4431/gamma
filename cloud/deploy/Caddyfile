@@ -16,11 +16,11 @@
 }
 
 # The share host and every account's page host (share.gammapdf.com and
-# <username>-pages.gammapdf.com), and the public demo (demo.gammapdf.com) —
-# one wildcard site. Named records such as account.gammapdf.com win over the
-# wildcard, and the internal certificate covers *.gammapdf.com, so no DNS
-# challenge is needed (Cloudflare "Full"). Anything else under the wildcard
-# is a 404.
+# <username>-pages.gammapdf.com), the public demo (demo.gammapdf.com) and
+# the hosted servers (<username>.gammapdf.com) — one wildcard site. Named
+# records such as account.gammapdf.com win over the wildcard, and the
+# internal certificate covers *.gammapdf.com, so no DNS challenge is needed
+# (Cloudflare "Full"). Anything else under the wildcard is a 404.
 #
 # The demo is its own compose project (cloud/deploy/demo/): Caddy reaches
 # it as `gamma-demo` on the shared network `gamma-edge`, resolved per
@@ -51,6 +51,19 @@
 	}
 	handle @pages {
 		reverse_proxy share:9001
+	}
+	# Every other <label>.gammapdf.com is a hosted Gamma server: the fleet
+	# agent names its container gamma-<label> on the external network
+	# gamma-fleet, which Caddy joins (labels count from the right: com is 0,
+	# gammapdf 1, the label 2). The name is resolved per request, so a
+	# stopped or unknown server is a 502 for its name and nothing else. The
+	# container trusts gamma-fleet's subnet for X-Forwarded-For
+	# (FORWARDED_ALLOW_IPS), so Caddy passes Cloudflare's client address.
+	@hosted header_regexp Host ^[a-z0-9][a-z0-9-]*\.gammapdf\.com$
+	handle @hosted {
+		reverse_proxy gamma-{http.request.host.labels.2}:9001 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
 	}
 	handle {
 		respond 404

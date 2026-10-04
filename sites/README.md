@@ -1,13 +1,15 @@
 # gammapdf.com
 
-The product website: one static page plus the privacy policy, served by a
-Cloudflare Worker with static assets. Nothing here is part of the app; the
-app's own README and `docs/` stay the source of the copy and the artwork.
+The product website: the front page, the pricing page and the privacy
+policy, served by a Cloudflare Worker with static assets. Nothing here is
+part of the app; the app's own README and `docs/` stay the source of the
+copy and the artwork. The pricing page's numbers follow the account
+server's plans ([docs/dev/billing.md](../docs/dev/billing.md) "The website").
 
 ```
 sites/
-  site/            the pages as deployed: index.html, styles.css, site.js,
-                   404.html, robots.txt, sitemap.xml, _redirects, _headers
+  site/            the pages as deployed: index.html, pricing.html, styles.css,
+                   site.js, 404.html, robots.txt, sitemap.xml, _redirects, _headers
   templates/       header, footer and the wrapper for Markdown pages,
                    pulled into every page by `<!--#include name -->`
   build.mjs        assembles dist/ (see below)

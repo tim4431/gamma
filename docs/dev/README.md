@@ -91,6 +91,8 @@ These describe the implementation unless explicitly marked as plans.
 | Electron shell, local servers, packaging, and QA | [Desktop](desktop.md) |
 | The native iPad app (offline replica, Pencil), the home-screen web app, and the touch editing bar | [iPad](ipad.md) |
 | Gamma Cloud identity service and server sign-in | [Cloud accounts](cloud_accounts.md) |
+| Paid hosted containers: limits sync, lifecycle, the fleet agent and batch upgrades | [Hosted servers](hosted.md) |
+| Plans, Stripe checkout and webhooks, the effective-plan rule, the Plan page | [Billing](billing.md) |
 | Public website build and deployment | [Website](../../sites/README.md) |
 
 ## Plans and research

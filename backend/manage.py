@@ -9,6 +9,8 @@ Usage:
   python manage.py set-admin <username> <on|off>   # admin = privilege flag, manages users in the GUI
   python manage.py list-identities | link-identity <user> <sub> <username> [email] | unlink-identity <user>
                                                    # Sign in with Gamma Cloud (docs/dev/cloud_accounts.md)
+  python manage.py hosted-sync                     # a hosted container (GAMMA_HOSTED=1): fetch the plan's
+                                                   #   limits from Gamma Cloud now and print them
   python manage.py rename-user <old> <new>
   python manage.py delete-user <username>          # + the workspaces only they owned (guests too;
                                                    #   a final copy of each goes to backups/deleted/)
@@ -281,6 +283,22 @@ def unlink_identity(username):
     print(f"Unlinked '{username}'. Set a password with set-password if it has none.")
 
 
+def hosted_sync():
+    """One sync of a hosted container's plan limits (gamma/hosted.py). A
+    running server keeps the answer in memory: it takes this one at its own
+    next sync (Settings → Server → Plan → Sync now, or within the hour)."""
+    from gamma import hosted
+
+    if not hosted.enabled():
+        print("GAMMA_HOSTED is not set: this is not a hosted Gamma server.")
+        sys.exit(1)
+    found = hosted.sync_now()
+    if found is None:
+        print(f"The sync failed (the last answer stands): {hosted.pane()['last_failure']['error']}")
+        sys.exit(2)
+    print(json.dumps(found, indent=2))
+
+
 def setup():
     """Idempotent setup: a personal workspace for every account, missing
     workspace files recreated. Guest accounts are made per visitor by the
@@ -519,6 +537,8 @@ def main():
         delete_user(args[0])
     elif cmd == "list-users":
         list_users()
+    elif cmd == "hosted-sync":
+        hosted_sync()
     elif cmd == "list-identities":
         list_identities()
     elif cmd == "link-identity":

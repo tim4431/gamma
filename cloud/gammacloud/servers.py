@@ -2,8 +2,10 @@
 confirmed public URL under the account when the link is made
 (``POST /api/me/servers``) and removes it on unlink, so the portal and the
 desktop launcher list the lab server someone was invited to, not only
-what the account server provisioned. Provisioned servers (v1) join the
-same list in ``of_account``; there are none yet.
+what the account server provisioned. The account's hosted server
+(``hosted_servers``, docs/dev/hosted.md) joins the same list in
+``of_account`` while it is not deleted, as ``kind`` ``hosted``: it comes
+from that table, so an unlink or a Remove never takes it off.
 
 A URL is normalized with the rules Gamma's own public-URL setting uses
 (``backend/gamma/server_settings.py`` ``validate_public_url``, copied):
@@ -28,8 +30,10 @@ import re
 from ipaddress import IPv6Address
 from urllib.parse import urlsplit
 
+from . import config, fleet
 from .accounts import Problem
 from .db import now
+from .hosted import url_of
 from .oidc import LOOPBACK_HOSTS
 
 MAX_NAME = 80
@@ -121,19 +125,53 @@ def unlink(conn, account_id: str, url: str) -> bool:
     return bool(conn.execute("DELETE FROM servers_linked WHERE account_id = ? AND url = ?", (account_id, url)).rowcount)
 
 
+HOSTED_NAME = "Your hosted Gamma"
+
+
 def _public(row) -> dict:
-    return {"url": row["url"], "name": row["name"], "kind": "linked", "local": is_local(row["url"]),
+    return {"url": row["url"], "name": row["name"], "kind": "linked", "hosted": False, "local": is_local(row["url"]),
             "linked_at": row["linked_at"], "last_seen_at": row["last_seen_at"], "version": row["version"],
             "schema": row["schema"]}
 
 
+def _hosted(conn, account_id: str) -> dict | None:
+    """The account's hosted server as a list row, or None (none, deleted,
+    or hosting off). ``version``/``schema`` and ``last_seen_at`` come from
+    the container's last sync."""
+    if not config.HOSTED_DOMAIN:
+        return None
+    row = conn.execute("SELECT * FROM hosted_servers WHERE account_id = ? AND state != 'deleted'",
+                       (account_id,)).fetchone()
+    if row is None:
+        return None
+    report = fleet.json_dict(row["report"])
+    schema = report.get("schema")
+    return {"url": url_of(row["label"]), "name": HOSTED_NAME, "kind": "hosted",
+            "hosted": True, "local": False, "linked_at": row["created_at"],
+            "last_seen_at": row["synced_at"] or row["reported_at"] or row["created_at"],
+            "version": str(report.get("version") or ""), "schema": schema if isinstance(schema, int) else None,
+            "state": row["state"]}
+
+
 def of_account(conn, account_id: str, *, grants: bool = False) -> list[dict]:
-    """Every server of an account: provisioned ones (none until v1), then
-    the linked ones, the latest seen first. ``grants`` adds each row's
-    ``grant_id`` (the portal's, never the API's)."""
+    """Every server of an account: its hosted one first, then the linked
+    ones, the latest seen first. The hosted server, once its owner signed
+    in there, has a linked row of its own at the same address: the two are
+    one entry (the hosted one, with that row's grant). ``grants`` adds each
+    row's ``grant_id`` (the portal's, never the API's)."""
     rows = conn.execute("SELECT * FROM servers_linked WHERE account_id = ? ORDER BY last_seen_at DESC",
                         (account_id,)).fetchall()
-    return [{**_public(r), "grant_id": r["grant_id"]} if grants else _public(r) for r in rows]
+    hosted = _hosted(conn, account_id)
+    out = []
+    if hosted is not None:
+        twin = next((r for r in rows if r["url"] == hosted["url"]), None)
+        if twin is not None:
+            rows = [r for r in rows if r is not twin]
+            hosted["version"] = hosted["version"] or twin["version"]
+            hosted["schema"] = hosted["schema"] if hosted["schema"] is not None else twin["schema"]
+            hosted["last_seen_at"] = max(hosted["last_seen_at"], twin["last_seen_at"])
+        out.append({**hosted, "grant_id": twin["grant_id"] if twin is not None else ""} if grants else hosted)
+    return out + [{**_public(r), "grant_id": r["grant_id"]} if grants else _public(r) for r in rows]
 
 
 def merge(devices: list[dict], linked: list[dict]) -> list[dict]:

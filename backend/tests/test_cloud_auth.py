@@ -385,7 +385,8 @@ def test_admin_settings_roundtrip(monkeypatch):
     assert r.status_code == 200, r.text
     cfg = r.json()["cloud"]
     assert cfg == {"issuer": "https://account.example", "client_id": "gc_abc", "policy": "claim", "has_secret": True,
-                   "enabled": True, "share_host": False, "source": "saved", "needs_connect": False}
+                   "enabled": True, "share_host": False, "source": "saved", "policy_source": "saved",
+                   "needs_connect": False}
     assert cloud_auth.client_secret() == "shh"
     # the share host switch (gamma/publish.py), off again for the rest of the suite
     assert c.put("/api/admin/settings", json={"cloud_share_host": True}).json()["cloud"]["share_host"] is True

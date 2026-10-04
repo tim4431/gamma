@@ -92,6 +92,11 @@ under the `settings` key `offsite`, the secret key encrypted with the data
 directory's key like the shared AI provider keys. A round reads them as it
 starts, and the pause after a round is read as the round ends. So a change
 applies from the next round, and a new interval from the pause after it.
+On a hosted container the plan's `offsite` answer holds the interval and
+the copies kept to its own, from either source. Its values fill what the
+environment leaves unset, and otherwise win only where they are stricter:
+a shorter interval, more copies ([cloud_accounts.md](cloud_accounts.md)
+"Hosted containers").
 
 **From the environment.** When `GAMMA_S3_BUCKET` is set, every setting
 comes from the environment and the pane shows them read-only:

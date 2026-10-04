@@ -1,6 +1,7 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
-// update check), the storage defaults every account inherits, guests and
+// update check), on a hosted container the plan its limits come from
+// (HostedPlan), the storage defaults every account inherits, guests and
 // demo mode (SettingsGuests.jsx), the shared AI provider every account may
 // use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
 // the database check, whole-data-directory snapshots (SettingsBackups.jsx
@@ -15,11 +16,13 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
-import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, DatabaseIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ImportIcon, ServerIcon,
+  UsersIcon } from "../shared/ui/Icons";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
   const [signInAction, setSignInAction] = React.useState(null);
+  const [planSyncs, setPlanSyncs] = React.useState(0); // a Sync now reloads the storage rows the plan caps
   return (
     <>
       <PaneHead icon={ServerIcon} title={t("Server")} />
@@ -32,8 +35,9 @@ export function ServerSettings({ value }) {
       <Section title={t("Sign-in")} action={signInAction}>
         <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
       </Section>
+      <HostedPlan setStatus={value.setStatus} onSynced={() => { setPlanSyncs((n) => n + 1); value.refreshQuota?.(); }} />
       <Section title={t("Storage defaults")}>
-        <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
+        <ServerLimitRows key={planSyncs} setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
       </Section>
       <Section title={t("Guests")}>
         <GuestSettings setStatus={value.setStatus} />
@@ -147,8 +151,100 @@ function ServerDashboard() {
   </>;
 }
 
+const PLAN_STATUS = {
+  active: [t("active"), "ok"],
+  grace: [t("grace period"), "warn"],
+  read_only: [t("read-only"), "failed"],
+  stopped: [t("stopped"), "failed"],
+};
+const POLICY_NAMES = { refuse: t("linked accounts only"), claim: t("cloud accounts claim their usernames"),
+  provision: t("any cloud account"), invited: t("invited people only") };
+
+// Settings → Server → Plan, on a hosted container only (gamma/hosted.py,
+// the `hosted` block of /api/admin/settings): the account server's last
+// answer — plan and status, the accounts, storage and sign-in it allows —
+// and when it came. Read-only: the plan changes on Gamma Cloud's /plan page
+// (Manage plan); Sync now (POST /api/admin/hosted/sync) asks for the
+// answer again instead of waiting for the hourly sync.
+function HostedPlan({ setStatus, onSynced }) {
+  const [pane, setPane] = React.useState(null);
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    let active = true;
+    apiJson(`${API}/admin/settings`).then((v) => { if (active) setPane(v.hosted || null); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  if (!pane) return null;
+  async function sync() {
+    setBusy(true); setError("");
+    try {
+      const d = await apiJson(`${API}/admin/hosted/sync`, { method: "POST" });
+      setPane(d.hosted); // a failed sync shows as the pane's last_failure
+      if (d.ok) { setStatus(t("The plan was synced with Gamma Cloud.")); onSynced?.(); }
+    } catch (err) { setError(t("Could not sync: {message}", { message: err.message })); }
+    finally { setBusy(false); }
+  }
+  const plan = pane.limits;
+  const [statusLabel, tone] = PLAN_STATUS[plan?.status] || [plan?.status || "", ""];
+  const synced = plan?.synced_at ? t("last synced {time}", { time: fmtDate(plan.synced_at, { dateStyle: "medium", timeStyle: "short" }) })
+    : t("not synced yet");
+  const failed = pane.last_failure?.error;
+  return (
+    <Section title={t("Plan")}>
+      <Row icon={CloudIcon} label={t("Plan")}
+        hint={plan ? `${plan.plan} · ${synced}` : synced}
+        title={t("This server is hosted by Gamma Cloud: its plan sets the storage, the accounts and who may sign in. The limits are fetched every hour.")}>
+        <span className="setRowControls">
+          {plan ? <span className={`uiTag ${tone}`}>{statusLabel}</span> : null}
+          {pane.issuer ? (
+            <a className="uiBtn sm" href={`${pane.issuer}/plan`} target="_blank" rel="noopener">
+              <ExternalLinkIcon size={14} /> {t("Manage plan")}
+            </a>) : null}
+          <button className="uiBtn sm" disabled={busy} onClick={sync}>{busy ? t("Syncing…") : t("Sync now")}</button>
+        </span>
+      </Row>
+      {plan ? (
+        <Row icon={UsersIcon} label={t("Plan limits")}
+          hint={[
+            plan.max_accounts ? t("{n} of {max} accounts", { n: pane.accounts, max: plan.max_accounts })
+              : tn("{n} account", "{n} accounts", pane.accounts),
+            plan.quota_mb ? t("{n} MB per account", { n: plan.quota_mb }) : null,
+            plan.max_upload_mb ? t("{n} MB per file", { n: plan.max_upload_mb }) : null,
+            plan.policy ? t("sign-in: {policy}", { policy: POLICY_NAMES[plan.policy] || plan.policy }) : null,
+          ].filter(Boolean).join(" · ")}
+          title={t("The storage defaults below may be set lower than the plan's caps, never higher.")} />
+      ) : null}
+      {plan?.status === "grace" ? (
+        <p className="settingsPaneHint" role="status">
+          {plan.grace_until
+            ? t("Payment for this server failed: it becomes read-only on {date}", { date: fmtDate(plan.grace_until, { dateStyle: "long" }) })
+            : t("Payment for this server failed: it becomes read-only soon")}
+          {plan.message ? <><br />{plan.message}</> : null}
+        </p>
+      ) : plan?.read_only ? (
+        <p className="settingsPaneHint aiKeysError" role="alert">
+          {t("This server is read-only: people can sign in, read and export, but nothing can be changed.")}
+          {plan.message ? <><br />{plan.message}</> : null}
+        </p>
+      ) : null}
+      {failed ? <p className="settingsPaneHint aiKeysError" role="alert">{t("The last sync failed: {error}", { error: failed })}</p> : null}
+      {error && !failed ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
+    </Section>
+  );
+}
+
+// What a storage row says under its box: the plan's cap when it decides,
+// else the row's own hint and the cap it may not pass.
+function limitHint(saved, key, own) {
+  const cap = saved.plan_caps?.[key];
+  if (saved[`${key}_source`] === "plan") return t("The plan's cap of {n} MB; you can set a lower one", { n: saved[key] });
+  return cap ? t("{own} · the plan allows up to {n} MB", { own, n: cap }) : own;
+}
+
 // Server-wide default storage limits (users.db via /api/admin/settings).
-// Per-account overrides live in the Users pane.
+// Per-account overrides live in the Users pane. On a hosted container the
+// plan caps both (`plan_caps`): a lower value saves, a higher one is refused.
 // Each limit saves when its box commits (Enter / blur), like every other
 // setting; an invalid entry snaps back to the stored value.
 function ServerLimitRows({ setStatus, refreshQuota }) {
@@ -176,11 +272,13 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
   }
   return <>
     {saved ? <>
-      <Row icon={ImportIcon} label={t("Default max upload")} hint={t("Largest single file; Users can override per account")}>
+      <Row icon={ImportIcon} label={t("Default max upload")}
+        hint={limitHint(saved, "max_upload_mb", t("Largest single file; Users can override per account"))}>
         <UnitInput unit="MB" min={1} value={String(saved.max_upload_mb)}
           onCommit={(raw) => commit("max_upload_mb", raw, 1)} />
       </Row>
-      <Row icon={ServerIcon} label={t("Default quota")} hint={t("Personal uploads per account; 0 = unlimited")}>
+      <Row icon={ServerIcon} label={t("Default quota")}
+        hint={limitHint(saved, "quota_mb", t("Personal uploads per account; 0 = unlimited"))}>
         <UnitInput unit="MB" min={0} value={String(saved.quota_mb)}
           onCommit={(raw) => commit("quota_mb", raw, 0)} />
       </Row>

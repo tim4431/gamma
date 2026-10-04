@@ -1,5 +1,6 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
-the server settings, the audit log. Only an account with ``is_admin`` (set
+the server settings, the audit log, the fleet's hosts, hosted servers and
+jobs. Only an account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
 
@@ -8,7 +9,7 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import accounts, db, oidc, settings
+from .. import accounts, billing, config, db, fleet, hosted, oidc, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -105,6 +106,10 @@ def admin_delete(account_id: str, request: Request):
             raise HTTPException(400, "delete your own account from the account page")
         if not accounts.by_id(conn, account_id):
             raise HTTPException(404, "no such account")
+        conn.commit()
+    # a live subscription is cancelled at Stripe first; 502 (nothing deleted) if Stripe cannot be reached
+    billing.cancel_for_deletion(account_id, admin["id"])
+    with closing(db.connect()) as conn:
         accounts.delete(conn, account_id, actor=admin["id"])
         conn.commit()
     return {"ok": True}
@@ -247,3 +252,146 @@ def audit_log(request: Request, limit: int = 200):
         require_admin(conn, request)
         rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (max(1, min(limit, 1000)),)).fetchall()
         return {"audit": [dict(r) for r in rows]}
+
+
+# --- billing (docs/dev/billing.md) ----------------------------------------------
+# The Billing tab: the subscription copies, and a re-read from Stripe. The
+# plan select above stays the courtesy grant (accounts.set_plan).
+
+@router.get("/subscriptions")
+def list_subscriptions(request: Request, status: str = "", limit: int = 200):
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        rows = conn.execute(
+            "SELECT s.*, a.username, a.email, a.plan AS effective_plan FROM subscriptions s "
+            "LEFT JOIN accounts a ON a.id = s.account_id WHERE (? = '' OR s.status = ?) "
+            "ORDER BY s.updated_at DESC LIMIT ?", (status, status, max(1, min(limit, 1000)))).fetchall()
+        # ``test_mode``: a test key's customers live under /test/ in Stripe's dashboard.
+        return {"enabled": billing.enabled(), "test_mode": config.STRIPE_SECRET.startswith("sk_test_"),
+                "subscriptions": [dict(r) for r in rows]}
+
+
+@router.post("/subscriptions/{account_id}/refresh")
+def refresh_subscription(account_id: str, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        conn.commit()
+        if not accounts.subscription(conn, account_id):
+            raise HTTPException(404, "no subscription for that account")
+    if not billing.enabled():
+        raise Problem(503, "Billing is off.")
+    try:
+        billing.refresh(account_id)
+    except billing.BillingError as e:
+        raise Problem(502, f"Stripe did not answer: {e}") from e
+    with closing(db.connect()) as conn:
+        db.audit(conn, "billing.refresh", account_id, admin["id"])
+        conn.commit()
+        return {"subscription": dict(accounts.subscription(conn, account_id))}
+
+
+# --- hosted servers and the fleet (docs/dev/hosted.md) ------------------------
+# Hosts, hosted servers, their jobs and upgrade waves: the Servers tab.
+
+class HostBody(BaseModel):
+    name: str
+    address: str = ""
+
+
+class HostPatch(BaseModel):
+    name: str | None = None
+    accepting: bool | None = None
+
+
+class ProvisionBody(BaseModel):
+    account_id: str
+
+
+class UpgradeBody(BaseModel):
+    tag: str
+    wave_size: int = 1
+    server_ids: list[str] | None = None
+
+
+@router.get("/hosts")
+def list_hosts(request: Request):
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"hosts": fleet.hosts(conn)}
+
+
+@router.post("/hosts")
+def add_host(body: HostBody, request: Request):
+    """A new host; its agent token is in this answer only."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        host, token = fleet.add_host(conn, body.name, body.address, actor=admin["id"])
+        conn.commit()
+    return {"host": host, "token": token}
+
+
+@router.patch("/hosts/{host_id}")
+def patch_host(host_id: str, body: HostPatch, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        host = fleet.update_host(conn, host_id, name=body.name, accepting=body.accepting, actor=admin["id"])
+        conn.commit()
+    return {"host": host}
+
+
+@router.get("/servers")
+def list_servers(request: Request):
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"servers": hosted.servers(conn)}
+
+
+@router.post("/servers/provision")
+def provision_server(body: ProvisionBody, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        server = hosted.provision(conn, body.account_id, admin["id"])
+        conn.commit()
+    return {"server": server}
+
+
+@router.post("/servers/upgrade")
+def upgrade_servers(body: UpgradeBody, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        run = fleet.upgrade(conn, body.tag, body.wave_size, body.server_ids, actor=admin["id"])
+        conn.commit()
+    return run
+
+
+@router.post("/servers/{server_id}/{action}")
+def server_action(server_id: str, action: str, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        server = hosted.admin_action(conn, server_id, action, admin["id"])
+        conn.commit()
+    return {"server": server}
+
+
+@router.get("/jobs")
+def list_jobs(request: Request, state: str = "", limit: int = 100):
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"jobs": fleet.jobs(conn, state, limit)}
+
+
+@router.post("/jobs/{job_id}/{action}")
+def job_action(job_id: str, action: str, request: Request):
+    """``retry`` a failed or canceled job, or ``cancel`` a queued, held or
+    failed one (either lets a paused upgrade run go on)."""
+    if action not in ("retry", "cancel"):
+        raise HTTPException(404, "no such action")
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        job = (fleet.retry if action == "retry" else fleet.cancel)(conn, job_id, admin["id"])
+        conn.commit()
+    return {"job": job}

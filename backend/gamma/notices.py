@@ -32,9 +32,9 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (backup_schedule, cloud_sync, integrity, logbuf, server_settings, sync_engine, translate_engines,
-               version)
-from .db import NOTICES_SEEN_PREF_KEY, get_pref, update_pref
+from . import (backup_schedule, cloud_sync, hosted, integrity, logbuf, server_settings, sync_engine,
+               translate_engines, version)
+from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
 
 TONES = ("info", "warn", "error")
@@ -193,6 +193,31 @@ def cloud_sync_choice(user_id):
         return None
     return notice("cloud-sync-choice", "choose", "warn", "account",
                   "Your settings here and on Gamma Cloud differ: choose which to keep")
+
+
+@source()
+def hosted_plan(user_id):
+    """A hosted server's plan (gamma/hosted.py) in its grace period (warn,
+    admins: the server becomes read-only on ``grace_until``) or read-only
+    (error, everyone; an admin's points at the Server pane's Plan rows, a
+    member's at the Account pane). Fingerprint: the status and since when
+    it holds, so each episode is seen once."""
+    plan = hosted.limits()
+    if not plan or not (plan["read_only"] or plan["status"] == "grace"):
+        return None
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+    admin = bool(row and row[0])
+    mark = f"{plan['status']}:{plan['status_since']}"
+    if plan["read_only"]:
+        return notice("hosted", mark, "error", "server" if admin else "account",
+                      "This server is read-only: you can still read and export everything")
+    if not admin:
+        return None
+    if plan["grace_until"]:
+        return notice("hosted", mark, "warn", "server",
+                      "Payment for this server failed: it becomes read-only on {date}", date=plan["grace_until"][:10])
+    return notice("hosted", mark, "warn", "server", "Payment for this server failed: it becomes read-only soon")
 
 
 @source()

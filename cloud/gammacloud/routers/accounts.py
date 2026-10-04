@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import accounts, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions, settings
+from .. import accounts, billing, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions, settings
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -228,10 +228,15 @@ class DeleteBody(BaseModel):
 
 @router.post("/me/delete")
 def delete_me(body: DeleteBody, request: Request):
+    """A live Stripe subscription is cancelled first (``billing.cancel_for_deletion``);
+    if Stripe cannot be reached the deletion is refused with a 502."""
     with closing(db.connect()) as conn:
         account = portal_account(conn, request)
         if not accounts.confirm_ok(account, body.password):
             raise HTTPException(403, "The password is wrong.")
+        conn.commit()
+    billing.cancel_for_deletion(account["id"], account["id"])
+    with closing(db.connect()) as conn:
         accounts.delete(conn, account["id"])
         conn.commit()
     log.info("account %s deleted itself", account["username"])

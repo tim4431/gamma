@@ -1,0 +1,537 @@
+"""Hosted servers: one paid Gamma container per account at
+``<label>.<HOSTED_DOMAIN>`` (docs/dev/hosted.md).
+
+The row in ``hosted_servers`` follows the account's effective plan and its
+subscription (``plan_changed``, called by billing and the admin inside
+their transaction) and the clock (``tick``, hourly). ``state``:
+
+- ``provisioning``: the row exists, the container does not yet (no host had
+  room, or the ``create`` job has not finished);
+- ``running``: normal;
+- ``grace``: payment failed, still writable until ``grace_until``;
+- ``read_only``: the subscription lapsed or the plan stopped being hosted;
+  writes are refused, reads and exports work;
+- ``stopped``: READ_ONLY_DAYS after read-only, the container is stopped;
+- ``deleted``: DELETE_DAYS after read-only, container, data and bucket
+  prefix are removed; the row stays with ``deleted_at``;
+- ``suspended``: an admin's hold (read-only, the lifecycle leaves it alone
+  until an admin resumes it).
+
+``limits`` is the answer the container gets from ``POST /api/hosted/sync``
+(``limits_for``), recomputed on every pass so its dates and message are
+current.
+"""
+
+import hashlib
+import json
+import threading
+from datetime import timedelta
+from urllib.parse import urlsplit
+
+from . import config, db, fleet, mail, oidc
+from .accounts import Problem
+from .log import log
+
+READ_ONLY_STATES = ("read_only", "stopped", "suspended")
+LAPSED = ("canceled", "unpaid", "incomplete_expired")
+STATUS = {"provisioning": "active", "running": "active", "grace": "grace", "read_only": "read_only",
+          "suspended": "read_only", "stopped": "stopped", "deleted": "stopped"}
+DELETE_WARNING_DAYS = 7
+
+
+def _hosted(plan) -> bool:
+    return bool(config.PLAN_LIMITS.get(plan or "", {}).get("hosted"))
+
+
+def url_of(label: str) -> str:
+    return f"https://{label}.{config.HOSTED_DOMAIN}" if config.HOSTED_DOMAIN else ""
+
+
+def _day(ts: str) -> str:
+    d = db.parse(ts)
+    return f"{d.day} {d.strftime('%b')}"
+
+
+def _plus_days(ts: str, days: float) -> str:
+    t = db.parse(ts) + timedelta(days=days)
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _portal() -> str:
+    return urlsplit(config.PUBLIC_URL).netloc + "/plan"
+
+
+def _row(conn, server_id: str):
+    return conn.execute("SELECT * FROM hosted_servers WHERE id = ?", (server_id,)).fetchone()
+
+
+def _of_account(conn, account_id: str):
+    return conn.execute("SELECT * FROM hosted_servers WHERE account_id = ?", (account_id,)).fetchone()
+
+
+def _account(conn, account_id: str):
+    """The account, deleted or not (a deleted account's server lapses)."""
+    return conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+
+
+def _subscription(conn, account_id: str):
+    return conn.execute("SELECT * FROM subscriptions WHERE account_id = ?", (account_id,)).fetchone()
+
+
+def _host_name(conn, host_id: str) -> str:
+    host = conn.execute("SELECT name FROM hosts WHERE id = ?", (host_id,)).fetchone()
+    return host["name"] if host else ""
+
+
+# --- what the account and its subscription say --------------------------------
+
+def target(account, sub, previous_plan: str = "") -> tuple[str, str, str | None]:
+    """``(plan, status, grace_until)`` the server should have: status
+    ``active``, ``grace`` or ``read_only``. A courtesy grant (a hosted
+    ``granted_plan``) and an effective hosted plan with no subscription are
+    active and never lapse; otherwise the subscription decides. ``plan`` is
+    the effective plan while it is hosted, else the last hosted plan the
+    server ran (its limits while read-only)."""
+    effective = account["plan"] if account is not None and not account["deleted_at"] else "free"
+    if not _hosted(effective):
+        fallback = next((p for p in (previous_plan, sub["plan"] if sub else "") if _hosted(p)), "plus")
+        return fallback, "read_only", None
+    if account["granted_plan"] and _hosted(account["granted_plan"]):
+        return effective, "active", None
+    status = sub["status"] if sub else "none"
+    if status == "past_due":
+        until = _plus_days(sub["past_due_since"] or db.now(), config.GRACE_DAYS)
+        return effective, ("grace" if db.now() < until else "read_only"), until
+    if status in LAPSED or (sub is not None and sub["ended_at"]):
+        return effective, "read_only", None
+    return effective, "active", None
+
+
+def _message(state: str, row, grace_until: str | None) -> str:
+    if state == "grace" and grace_until:
+        return (f"Payment failed; this server becomes read-only on {_day(grace_until)} unless the card is fixed "
+                f"at {_portal()}.")
+    if state == "read_only":
+        stops = _plus_days(row["state_changed_at"], config.READ_ONLY_DAYS)
+        return (f"This server is read-only because its plan ended. Reads and exports still work; it stops on "
+                f"{_day(stops)}. Resume the plan at {_portal()}.")
+    if state == "stopped":
+        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
+        return f"This server is stopped and is deleted on {_day(gone)}. Resume the plan at {_portal()}."
+    if state == "suspended":
+        return "This server is suspended by Gamma Cloud. Reads and exports still work; writes are refused."
+    return ""
+
+
+def limits_for(row, plan: str, grace_until: str | None) -> dict:
+    """The sync answer for a server in its current state. A grace period
+    (``grace_until`` set) shows on a server still being provisioned too."""
+    p = config.PLAN_LIMITS[plan]
+    status = STATUS[row["state"]]
+    if grace_until and status == "active":
+        status = "grace"
+    return {"plan": plan, "status": status, "read_only": row["state"] in READ_ONLY_STATES,
+            "policy": p["policy"], "max_accounts": p["max_accounts"], "quota_mb": p["quota_mb"],
+            "max_upload_mb": p["max_upload_mb"],
+            "offsite": {"interval_s": p["offsite_interval_s"], "keep": p["offsite_keep"]},
+            "grace_until": grace_until if status == "grace" else None,
+            "message": _message("grace" if status == "grace" else row["state"], row, grace_until)}
+
+
+# --- mail ---------------------------------------------------------------------
+
+def _send(to: str, subject: str, text: str, html: str) -> None:
+    try:
+        mail.send(to, subject, text, html)
+    except mail.MailError as e:
+        log.warning("hosted-server mail to %s failed: %s", to, e)
+
+
+def _mail(conn, account_id: str, subject: str, paragraphs: list[str], button: tuple[str, str] | None = None) -> None:
+    """Lifecycle mail to the account's address. It may be called inside a
+    caller's write transaction, so SMTP goes out on a thread rather than
+    holding the lock."""
+    account = _account(conn, account_id)
+    if account is None or not account["email"]:
+        return
+    text, html = mail.compose(f"Hi {account['display_name'] or account['username']},", paragraphs, button)
+    if config.MAIL_BACKEND == "smtp":
+        threading.Thread(target=_send, args=(account["email"], subject, text, html), daemon=True).start()
+    else:
+        _send(account["email"], subject, text, html)
+
+
+def _plan_button() -> tuple[str, str]:
+    return ("Open your plan", config.PUBLIC_URL + "/plan")
+
+
+# --- state changes ------------------------------------------------------------
+
+def _set_state(conn, row, state: str, actor: str, why: str = "") -> None:
+    if state == row["state"]:
+        return
+    conn.execute("UPDATE hosted_servers SET state = ?, read_only = ?, state_changed_at = ? WHERE id = ?",
+                 (state, 1 if state in READ_ONLY_STATES else 0, db.now(), row["id"]))
+    db.audit(conn, "hosted.state", row["account_id"], actor,
+             f"{row['label']} {row['state']} -> {state}" + (f" ({why})" if why else ""))
+
+
+def _store_limits(conn, server_id: str, plan: str, grace_until: str | None) -> dict:
+    row = _row(conn, server_id)
+    limits = limits_for(row, plan, grace_until)
+    conn.execute("UPDATE hosted_servers SET limits = ? WHERE id = ?", (json.dumps(limits), server_id))
+    return limits
+
+
+def _created(conn, row) -> bool:
+    """Whether the server's container exists: its last create job is done."""
+    job = conn.execute("SELECT state FROM fleet_jobs WHERE server_id = ? AND kind = 'create' "
+                       "ORDER BY created_at DESC, rowid DESC LIMIT 1", (row["id"],)).fetchone()
+    return bool(job and job["state"] == "done")
+
+
+def _apply(conn, row, actor: str) -> dict:
+    """Move a live server to what its account says now and store its
+    limits; returns them."""
+    previous = fleet.json_dict(row["limits"]).get("plan", "")
+    plan, status, grace_until = target(_account(conn, row["account_id"]), _subscription(conn, row["account_id"]),
+                                       previous)
+    state = row["state"]
+    if state not in ("deleted", "suspended"):
+        # a server whose container was never made goes back to provisioning
+        live = "running" if _created(conn, row) else "provisioning"
+        new = state
+        if status == "active" and state in ("grace", "read_only", "stopped"):
+            new = live
+        elif status == "grace" and state in ("running", "read_only", "stopped"):
+            new = "grace" if live == "running" else live
+        elif status == "read_only" and state in ("provisioning", "running", "grace"):
+            new = "read_only"
+        if new != state:
+            if state == "stopped" and live == "running":
+                fleet.enqueue(conn, row["host_id"], row["id"], "start", {"label": row["label"]})
+            _set_state(conn, row, new, actor, status)
+            if new == "read_only":
+                stops = _plus_days(db.now(), config.READ_ONLY_DAYS)
+                _mail(conn, row["account_id"], "Your Gamma server is read-only", [
+                    f"Your plan ended, so {url_of(row['label']) or row['label']} is now read-only: you can still "
+                    "open everything and export it from Settings → Backups, but nothing new can be written.",
+                    f"It stops on {_day(stops)} and is deleted {config.DELETE_DAYS} days after today. Resuming "
+                    "the plan before then brings it back as it was."], _plan_button())
+    if previous and previous != plan and row["state"] != "deleted":
+        db.audit(conn, "hosted.limits", row["account_id"], actor, f"{row['label']} {previous} -> {plan}")
+    return _store_limits(conn, row["id"], plan, grace_until)
+
+
+def plan_changed(conn, account_id: str, actor: str = "system") -> None:
+    """Recompute the account's hosted server from its effective plan and
+    subscription, inside the caller's transaction: create one when the plan
+    became hosted (hosting must be on, ``HOSTED_DOMAIN``), resume, start
+    the grace period, turn it read-only, or relimit it."""
+    row = _of_account(conn, account_id)
+    if row is not None and row["state"] != "deleted":
+        _apply(conn, row, actor)
+        return
+    account = _account(conn, account_id)
+    _, status, _ = target(account, _subscription(conn, account_id))
+    if status == "read_only":                        # so also any plan that is not hosted
+        return
+    if not config.HOSTED_DOMAIN:
+        log.info("account %s is on a hosted plan but hosting is off (GAMMA_CLOUD_HOSTED_DOMAIN)", account_id)
+        return
+    if not account["email_verified_at"]:
+        # no server for an unconfirmed address; the verify path calls this again
+        log.info("account %s is on a hosted plan but its e-mail is not confirmed yet", account_id)
+        return
+    create(conn, account_id, actor)
+
+
+def _free_label(conn, account) -> str:
+    """The new server's label: the username, unless another account's
+    server row (in any state: a deleted one may still have its delete job
+    pending) holds it, then the username plus a few characters derived from
+    the account id. Another row is never relabelled: its container and data
+    directory are named after its own label."""
+    def taken(label):
+        return conn.execute("SELECT 1 FROM hosted_servers WHERE label = ? AND account_id != ?",
+                            (label, account["id"])).fetchone() is not None
+    label = account["username"]
+    digest = hashlib.sha256(account["id"].encode()).hexdigest()
+    n = 4
+    while taken(label):
+        label = f"{account['username'][:62 - n]}-{digest[:n]}"
+        n += 1
+    return label
+
+
+def create(conn, account_id: str, actor: str = "system") -> None:
+    """A new server row for the account (or a deleted one brought back) and
+    its placement."""
+    account = _account(conn, account_id)
+    if account is None or account["deleted_at"]:
+        raise Problem(404, "no such account")
+    if not config.HOSTED_DOMAIN:
+        raise Problem(400, "Hosting is off: set GAMMA_CLOUD_HOSTED_DOMAIN.")
+    row = _of_account(conn, account_id)
+    if row is not None and row["state"] != "deleted":
+        raise Problem(409, "This account already has a hosted server.")
+    if not account["email_verified_at"]:
+        raise Problem(409, "The account's e-mail address is not confirmed yet.")
+    label, ts = _free_label(conn, account), db.now()
+    if row is None:
+        server_id = "s_" + db.new_token(9)
+        conn.execute("INSERT INTO hosted_servers (id, account_id, label, image_tag, state, state_changed_at, "
+                     "created_at) VALUES (?, ?, ?, ?, 'provisioning', ?, ?)",
+                     (server_id, account_id, label, config.FLEET_IMAGE_TAG, ts, ts))
+    else:
+        server_id = row["id"]
+        conn.execute("UPDATE hosted_servers SET label = ?, host_id = '', client_id = '', image_tag = ?, "
+                     "state = 'provisioning', read_only = 0, report = '{}', reported_at = NULL, synced_at = NULL, "
+                     "state_changed_at = ?, deleted_at = NULL WHERE id = ?",
+                     (label, config.FLEET_IMAGE_TAG, ts, server_id))
+    db.audit(conn, "hosted.create", account_id, actor, f"{server_id} {label}")
+    _provision(conn, _row(conn, server_id))
+    _apply(conn, _row(conn, server_id), actor)
+
+
+def create_payload(conn, server_id: str) -> dict:
+    """The ``create`` job's payload, with a new client secret: the
+    container's OIDC client is made on first use and its secret rotated on
+    every later build (the payload is the only place the secret exists)."""
+    row = _row(conn, server_id)
+    account = _account(conn, row["account_id"])
+    plan = account["plan"] if _hosted(account["plan"]) else (fleet.json_dict(row["limits"]).get("plan") or "plus")
+    url = url_of(row["label"])
+    if row["client_id"] and oidc.get_client(conn, row["client_id"]):
+        client_id, secret = row["client_id"], oidc.rotate_secret(conn, row["client_id"], actor="system")
+    else:
+        client_id, secret = oidc.create_client(conn, name=f"Hosted: {row['label']}", kind="container",
+                                               redirect_uris=[url + "/api/auth/cloud/callback"],
+                                               server_id=row["id"], actor="system", owner=row["account_id"])
+        conn.execute("UPDATE hosted_servers SET client_id = ? WHERE id = ?", (client_id, row["id"]))
+    env = {"GAMMA_HOSTED": "1", "GAMMA_CLOUD_ISSUER": config.PUBLIC_URL, "GAMMA_CLOUD_CLIENT_ID": client_id,
+           "GAMMA_CLOUD_CLIENT_SECRET": secret, "GAMMA_CLOUD_POLICY": config.PLAN_LIMITS[plan]["policy"],
+           "GAMMA_CLOUD_ADMIN_SUBJECT": row["account_id"], "GAMMA_PUBLIC_URL": url}
+    return {"label": row["label"], "account_id": row["account_id"], "plan": plan,
+            "image": f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}", "env": env,
+            "data_dir": row["label"], "memory_mb": None, "cpus": None, "network": None, "public_url": url}
+
+
+def _provision(conn, row) -> None:
+    """Place a ``provisioning`` server with no host and enqueue its create
+    job. No host with room: the row waits (a note in its report) and the
+    hourly tick tries again."""
+    plan = fleet.json_dict(row["limits"]).get("plan") or _account(conn, row["account_id"])["plan"]
+    if not _hosted(plan):
+        plan = "plus"
+    host = fleet.place(conn, plan)
+    if host is None:
+        note = {**fleet.json_dict(row["report"]), "note": "waiting for a host with room"}
+        conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(note), row["id"]))
+        log.warning("no fleet host has room for %s (%s)", row["label"], plan)
+        return
+    conn.execute("UPDATE hosted_servers SET host_id = ?, report = '{}' WHERE id = ?", (host["id"], row["id"]))
+    fleet.enqueue(conn, host["id"], row["id"], "create", create_payload(conn, row["id"]))
+    db.audit(conn, "hosted.place", row["account_id"], "system", f"{row['label']} on {host['name']}")
+
+
+def _delete(conn, row, actor: str, why: str = "") -> None:
+    """The end: the container, its data and its bucket prefix go (a delete
+    job), the client is removed, the row stays as ``deleted``."""
+    fleet.enqueue(conn, row["host_id"], row["id"], "delete", {"label": row["label"], "account_id": row["account_id"]})
+    conn.execute("UPDATE fleet_jobs SET state = 'canceled', finished_at = ?, payload = "
+                 "CASE kind WHEN 'create' THEN '{}' ELSE payload END "
+                 "WHERE server_id = ? AND state IN ('queued', 'held') AND kind != 'delete'", (db.now(), row["id"]))
+    if row["client_id"]:
+        oidc.delete_client(conn, row["client_id"], actor=actor)
+    _set_state(conn, row, "deleted", actor, why)
+    conn.execute("UPDATE hosted_servers SET deleted_at = ? WHERE id = ?", (db.now(), row["id"]))
+
+
+def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None:
+    """What a finished job changes on its server (``fleet.complete``)."""
+    row = _row(conn, job["server_id"]) if job["server_id"] else None
+    if row is None:
+        return
+    error = str(result.get("error") or "")[:300] if not ok else ""
+    db.audit(conn, f"fleet.job_{'done' if ok else 'failed'}", row["account_id"], "agent",
+             f"{job['id']} {job['kind']} {row['label']}" + (f": {error}" if error else ""))
+    if job["kind"] == "create":
+        if ok and row["state"] == "provisioning":
+            _set_state(conn, row, "running", "agent", "created")
+            _apply(conn, _row(conn, row["id"]), "agent")
+            url = url_of(row["label"])
+            _mail(conn, row["account_id"], "Your Gamma is ready", [
+                f"Your Gamma server is up at {url}. Sign in there with this Gamma Cloud account; you are its admin.",
+                "The desktop app, the browser extension and your assistants can all connect to that address."],
+                ("Open your Gamma", url))
+        elif not ok:
+            report = {**fleet.json_dict(row["report"]), "note": f"create failed: {error}"}
+            conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(report), row["id"]))
+    elif job["kind"] == "upgrade" and ok and payload.get("tag"):
+        conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (payload["tag"], row["id"]))
+
+
+# --- the hourly pass ----------------------------------------------------------
+
+def tick(conn) -> None:
+    """Hosts gone silent, jobs that never finished, placement retries, the
+    lifecycle (grace ending, read-only → stopped → deleted, the warning a
+    week before), and the next upgrade waves. The caller commits."""
+    fleet.stale_hosts(conn)
+    fleet.fail_stuck(conn)
+    now = db.now()
+    for row in conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall():
+        # one server's failure must not stop the others' lifecycle
+        conn.execute("SAVEPOINT hosted_tick")
+        try:
+            _tick_one(conn, row, now)
+        except Exception as e:  # noqa: BLE001
+            conn.execute("ROLLBACK TO hosted_tick")
+            log.warning("hosted tick for %s failed: %s", row["label"], e)
+        conn.execute("RELEASE hosted_tick")
+    fleet.release_waves(conn)
+
+
+def _tick_one(conn, row, now: str) -> None:
+    if row["state"] == "provisioning" and not row["host_id"] and config.HOSTED_DOMAIN:
+        _provision(conn, row)
+    _apply(conn, _row(conn, row["id"]), "system")
+    row = _row(conn, row["id"])
+    if row["state"] == "read_only" and now >= _plus_days(row["state_changed_at"], config.READ_ONLY_DAYS):
+        fleet.enqueue(conn, row["host_id"], row["id"], "stop", {"label": row["label"]})
+        _set_state(conn, row, "stopped", "system", f"read-only for {config.READ_ONLY_DAYS} days")
+        row = _row(conn, row["id"])
+        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
+        _mail(conn, row["account_id"], "Your Gamma server is stopped", [
+            f"{url_of(row['label']) or row['label']} has been read-only for {config.READ_ONLY_DAYS} days and "
+            f"is now stopped. It is deleted with all its files on {_day(gone)}.",
+            "Resuming the plan before then starts it again as it was."], _plan_button())
+        _store_limits(conn, row["id"], fleet.json_dict(row["limits"]).get("plan") or "plus", None)
+    elif row["state"] == "stopped":
+        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
+        if now >= gone:
+            _delete(conn, row, "system", f"{config.DELETE_DAYS} days after the plan ended")
+        elif now >= _plus_days(gone, -DELETE_WARNING_DAYS) and not conn.execute(
+                "SELECT 1 FROM audit WHERE event = 'hosted.delete_warning' AND account_id = ? AND at >= ?",
+                (row["account_id"], row["state_changed_at"])).fetchone():
+            db.audit(conn, "hosted.delete_warning", row["account_id"], "system", row["label"])
+            _mail(conn, row["account_id"], "Your Gamma server will be deleted in a week", [
+                f"{url_of(row['label']) or row['label']} is deleted with all its files on {_day(gone)}.",
+                "To keep it, resume the plan before then; to keep only the files, resume it for a moment "
+                "and download a backup from Settings → Backups."], _plan_button())
+
+
+# --- admin actions ------------------------------------------------------------
+
+ACTIONS = ("restart", "stop", "start", "suspend", "resume", "delete")
+
+
+def admin_action(conn, server_id: str, action: str, actor: str) -> dict:
+    """``restart``/``stop``/``start`` act on the container only (the
+    lifecycle state stays); ``suspend`` holds the server read-only until
+    ``resume``; ``delete`` ends it now (a paying account gets a new one at
+    its next plan change)."""
+    if action not in ACTIONS:
+        raise Problem(400, "action must be " + ", ".join(ACTIONS))
+    row = _row(conn, server_id)
+    if row is None:
+        raise Problem(404, "no such server")
+    if row["state"] == "deleted":
+        raise Problem(409, "the server is deleted")
+    if action in ("restart", "stop", "start"):
+        if not row["host_id"]:
+            raise Problem(409, "the server has no host yet")
+        fleet.enqueue(conn, row["host_id"], row["id"], action, {"label": row["label"]})
+        db.audit(conn, f"hosted.{action}", row["account_id"], actor, row["label"])
+    elif action == "suspend":
+        _set_state(conn, row, "suspended", actor, "admin")
+        _apply(conn, _row(conn, server_id), actor)
+    elif action == "resume":
+        if row["state"] != "suspended":
+            raise Problem(409, "only a suspended server is resumed")
+        _set_state(conn, row, "running" if _created(conn, row) else "provisioning", actor, "admin")
+        _apply(conn, _row(conn, server_id), actor)
+    else:
+        _delete(conn, row, actor, "admin")
+    return admin_view(conn, _row(conn, server_id))
+
+
+def admin_view(conn, row) -> dict:
+    out = {k: row[k] for k in row.keys()}
+    out["read_only"] = bool(row["read_only"])
+    out["limits"], out["report"] = fleet.json_dict(row["limits"]), fleet.json_dict(row["report"])
+    out["url"] = url_of(row["label"])
+    account = _account(conn, row["account_id"])
+    out["username"] = account["username"] if account else ""
+    out["plan"] = account["plan"] if account else ""
+    out["host"] = _host_name(conn, row["host_id"])
+    out["jobs"] = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs WHERE server_id = ? GROUP BY state",
+                                    (row["id"],)).fetchall())
+    return out
+
+
+def servers(conn) -> list[dict]:
+    return [admin_view(conn, r) for r in conn.execute("SELECT * FROM hosted_servers ORDER BY created_at DESC").fetchall()]
+
+
+def provision(conn, account_id: str, actor: str) -> dict:
+    """Host an account by hand (an invited customer before billing): its
+    effective plan must be hosted."""
+    account = _account(conn, account_id)
+    if account is None or account["deleted_at"]:
+        raise Problem(404, "no such account")
+    if not _hosted(account["plan"]):
+        raise Problem(400, f"The account's plan ({account['plan']}) has no hosted server.")
+    create(conn, account_id, actor)
+    return admin_view(conn, _of_account(conn, account_id))
+
+
+def purge_account(conn, account_id: str, actor: str = "system") -> None:
+    """Before an account row is purged: a live server is deleted now (its
+    delete job still runs) and the row goes, since it references the
+    account. A soft-deleted account needs nothing: ``plan_changed`` reads a
+    deleted account as a lapse, so its server turns read-only and follows
+    the lifecycle, and a restore within the grace period resumes it."""
+    row = _of_account(conn, account_id)
+    if row is None:
+        return
+    if row["state"] != "deleted":
+        _delete(conn, row, actor, "account purged")
+    conn.execute("DELETE FROM hosted_servers WHERE account_id = ?", (account_id,))
+
+
+# --- the container's sync and the plan page -------------------------------------
+
+def _text(value, n: int) -> str:
+    return str(value or "")[:n]
+
+
+def sync(conn, server_id: str, body: dict) -> dict:
+    """A container's report in, its limits out."""
+    row = _row(conn, server_id)
+    schema = body.get("schema")
+    report = {"version": _text(body.get("version"), 80),
+              "schema": schema if isinstance(schema, int) and not isinstance(schema, bool) else None,
+              "accounts": fleet.nonneg(body.get("accounts")), "uploads_bytes": fleet.nonneg(body.get("uploads_bytes")),
+              "data_bytes": fleet.nonneg(body.get("data_bytes")), "public_url": _text(body.get("public_url"), 300)}
+    agent = fleet.json_dict(row["report"]).get("agent")
+    if agent:
+        report["agent"] = agent
+    ts = db.now()
+    conn.execute("UPDATE hosted_servers SET report = ?, reported_at = ?, synced_at = ? WHERE id = ?",
+                 (json.dumps(report), ts, ts, server_id))
+    if report["public_url"] and report["public_url"].rstrip("/") != url_of(row["label"]):
+        log.info("hosted server %s reports public URL %s", row["label"], report["public_url"])
+    return _apply(conn, _row(conn, server_id), "container")
+
+
+def status_for(conn, account_id: str) -> dict | None:
+    """The account's hosted server for the plan page, or None."""
+    row = _of_account(conn, account_id)
+    if row is None:
+        return None
+    return {"id": row["id"], "label": row["label"], "url": url_of(row["label"]), "state": row["state"],
+            "read_only": bool(row["read_only"]), "limits": fleet.json_dict(row["limits"]),
+            "report": fleet.json_dict(row["report"]), "reported_at": row["reported_at"], "synced_at": row["synced_at"],
+            "host": _host_name(conn, row["host_id"])}

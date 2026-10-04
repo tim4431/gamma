@@ -368,7 +368,7 @@ def test_upgrade_to_server_build(client):
         conn.execute("ALTER TABLE servers_linked DROP COLUMN schema")
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
-    assert steps_after(7) == ["server_build"]
+    assert steps_after(7)[0] == "server_build"  # later steps follow
     assert db.ensure_current() == steps_after(7)
     assert db.ensure_current() == []
     with closing(db.connect()) as conn:

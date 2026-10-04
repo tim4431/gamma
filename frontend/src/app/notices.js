@@ -28,6 +28,9 @@ export const NOTICE_MESSAGES = [
   T("Microsoft's free translation keeps failing — set up Google or Youdao"),
   T("Your storage is full ({used} of {quota} MB used)"),
   T("Your storage is nearly full ({used} of {quota} MB used)"),
+  T("This server is read-only: you can still read and export everything"),
+  T("Payment for this server failed: it becomes read-only on {date}"),
+  T("Payment for this server failed: it becomes read-only soon"),
 ];
 
 // A notice's sentence in the interface language; a message this build does

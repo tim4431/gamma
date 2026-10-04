@@ -9,7 +9,9 @@ NAS). The service itself is described in
 ```
 deploy/
   compose.yml          account, share + caddy (a VPS with a public address); caddy also on gamma-edge
-  Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / gamma-demo
+                       and gamma-fleet; the fleet agent behind the `fleet` profile
+  Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / gamma-demo /
+                       gamma-<label> (hosted servers)
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
   compose.build.yml    layered on compose.yml: build from ./src instead of pulling
   Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
@@ -33,7 +35,10 @@ own compose project in `/root/Container/gamma-demo/`
 project's Caddy only routes its name to it over the external network
 `gamma-edge`, which must exist before this file starts
 (`docker network create --subnet 10.202.0.0/24 gamma-edge`, once per host;
-the demo trusts that subnet's `X-Forwarded-For`).
+the demo trusts that subnet's `X-Forwarded-For`). The same goes for
+`gamma-fleet` (`--subnet 10.203.0.0/24`), the hosted servers' network
+("Hosted servers" below): create it before updating to a compose file
+that names it.
 
 The Gamma image believes `X-Forwarded-For` from loopback only
 (`FORWARDED_ALLOW_IPS`), so every proxied Gamma here names its proxy: the
@@ -67,6 +72,8 @@ proxy's rate limits. A host whose default network predates the pin needs
    chmod 600 .env
    # the network Caddy shares with the demo (demo/README.md), once per host
    docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge
+   # the network of the hosted servers ("Hosted servers" below), once per host
+   docker network inspect gamma-fleet >/dev/null 2>&1 || docker network create --subnet 10.203.0.0/24 gamma-fleet
    docker compose up -d
    ```
 
@@ -272,6 +279,72 @@ state (published pages and files) — back it up like `data/`.
 Caddyfile's `@demo` handle sends the name to `gamma-demo:9001`, and Caddy
 joins the external network `gamma-edge` where the demo answers under that
 alias. A stopped demo is a 502 for its name and nothing else here.
+
+## Billing
+
+Stripe checkout and subscriptions ([docs/dev/billing.md](../../docs/dev/billing.md))
+are configured in `.env`:
+
+- `GAMMA_CLOUD_STRIPE_SECRET`: the API secret key. Billing is off while it
+  is empty (no checkout; plans are only granted by an admin or an invite).
+- `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET`: the signing secret of the webhook
+  endpoint, which Stripe calls at `POST https://account.gammapdf.com/api/billing/webhook`.
+- `GAMMA_CLOUD_STRIPE_PRICE_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`,
+  `_PRO_YEAR`: the Stripe Price id behind each plan and interval.
+
+`docker compose up -d` after editing them (the env is read at start).
+
+## Hosted servers
+
+A Plus or Pro account gets a Gamma container of its own at
+`<username>.gammapdf.com`. The account server decides what should exist;
+a fleet agent on each host does the Docker work
+([docs/dev/hosted.md](../../docs/dev/hosted.md), the agent's own
+[README](../fleet/README.md)). Turning it on for this host:
+
+1. **The network.** `docker network create --subnet 10.203.0.0/24
+   gamma-fleet`, once per host, before this compose file starts (Caddy
+   joins it and refuses to start without it). Every hosted container joins
+   it as `gamma-<label>` and trusts that subnet's `X-Forwarded-For`.
+2. **The domain.** `GAMMA_CLOUD_HOSTED_DOMAIN=gammapdf.com` in `.env`. It
+   must be the zone the Caddyfile's wildcard site serves and the wildcard
+   DNS record covers (the share host's step 1 above already made both).
+   The account server builds each server's public URL, OIDC callback and
+   mail links as `https://<label>.<domain>`. Caddy routes every
+   `<label>.gammapdf.com` that is not `share`, `demo` or a `-pages` host to
+   `gamma-<label>:9001`. Empty means hosting is off: no server is created,
+   whatever the plan.
+3. **The host.** Admin → Servers → *Add host* (or `docker compose exec
+   account python manage.py add-host vps-1`) shows the agent's token once.
+   Put it into `.env` as `GAMMA_FLEET_HOST_TOKEN`, add
+   `COMPOSE_PROFILES=fleet`, and, for off-site copies, the
+   `GAMMA_FLEET_S3_*` bucket (each server copies under
+   `hosted/<account id>/`).
+4. **The agent image.** No workflow publishes it yet: on the host, from a
+   checkout, `docker build -t ghcr.io/tim4431/gamma-fleet:latest
+   cloud/fleet`.
+5. `docker compose up -d`, then `docker compose exec caddy caddy reload
+   --config /etc/caddy/Caddyfile`. Within five minutes the host shows on
+   the Servers tab with its memory and disk; until its first heartbeat it
+   takes no servers.
+6. **A first server by hand.** Give an account a Plus or Pro plan on the
+   Accounts tab (a courtesy grant), or *Provision* its account id on the
+   Servers tab. The agent pulls the image, starts `gamma-<username>` with
+   its data in `/srv/gamma/<username>/data`, waits for its health check,
+   and the account gets a "Your Gamma is ready" mail.
+
+A second host runs only the agent (`cloud/fleet/README.md` has the
+`docker run` line, with `GAMMA_FLEET_ACCOUNT_URL=https://account.gammapdf.com`).
+Caddy on this host cannot reach its containers, so a server placed there
+also needs a DNS record of its own pointing at that host and a proxy
+there; until that exists, close the second host for placement or keep to
+one host.
+
+The Servers tab is the operator's view of hosts, servers, upgrade waves
+and the job queue ([docs/dev/hosted.md](../../docs/dev/hosted.md)
+"Admin"). A host silent for 15 minutes shows *stale* and takes no new
+servers until it reports again. `manage.py hosts`, `servers`, `jobs`,
+`add-host` and `provision` do the same from the shell.
 
 ## Updating
 

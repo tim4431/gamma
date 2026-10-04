@@ -6,7 +6,9 @@
   the ``GAMMA_GUEST_SEED`` library (``guest_seeded``) and ``demo`` mode
   (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
   pattern (``GAMMA_PAGE_HOST``, "" = none), by which the app knows it was
-  opened on a page host (gamma/publish.py);
+  opened on a page host (gamma/publish.py) — and, for a hosted container
+  (gamma/hosted.py), ``read_only`` and ``hosted: {plan, status}`` (null
+  elsewhere, or before the first sync);
 - ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
   server (``link=1`` with a session attaches the identity to that account);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
@@ -34,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from .. import cloud_auth, cloud_sync, config, ratelimit, server_settings
+from .. import cloud_auth, cloud_sync, config, hosted, ratelimit, server_settings
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -48,10 +50,13 @@ router = APIRouter()
 def server_config():
     cfg = cloud_auth.settings()
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
+    plan = hosted.limits()
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
             "password_login": True, "registration": False, "guest": not cfg["share_host"],
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
-            "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern()}
+            "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),
+            "read_only": bool(plan and plan["read_only"]),
+            "hosted": {"plan": plan["plan"], "status": plan["status"]} if plan else None}
 
 
 @router.get("/api/auth/cloud/start")

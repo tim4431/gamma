@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, integrity, jobs, offsite, workspaces
+from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, hosted, integrity, jobs, offsite, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -42,6 +42,7 @@ from ..server_settings import (
     UPLOAD_MB_MIN,
     GUEST_TTL_MAX,
     GUEST_TTL_MIN,
+    check_within_plan,
     get_defaults,
     guest_settings,
     public_url_settings,
@@ -123,9 +124,11 @@ def get_settings(request: Request):
     """Server-wide default storage limits (per-user overrides live on the
     users list), the public URL, the cloud sign-in and the guest settings
     (lifetime, demo mode — each with its source) for the admin rows in the
-    Settings dialog."""
+    Settings dialog; on a hosted container ``hosted`` (``hosted.pane``: the
+    plan's limits, the Plan rows), else null."""
     require_admin(request)
     return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud(),
+            "hosted": hosted.pane(),
             "max_upload_mb_range": [UPLOAD_MB_MIN, UPLOAD_MB_MAX],
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
@@ -158,9 +161,9 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             validate_public_url(payload.public_url)
         # Validate the complete request before persisting any setting.
         if payload.max_upload_mb is not None:
-            validate_upload_mb(payload.max_upload_mb)
+            check_within_plan("max_upload_mb", validate_upload_mb(payload.max_upload_mb))
         if payload.quota_mb is not None:
-            validate_quota_mb(payload.quota_mb)
+            check_within_plan("quota_mb", validate_quota_mb(payload.quota_mb))
         if payload.guest_ttl_hours is not None:
             validate_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.public_url is not None:
@@ -180,7 +183,22 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud()}
+    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud(),
+            "hosted": hosted.pane()}
+
+
+# Sync def: one call to the account server.
+@router.post("/hosted/sync")
+def hosted_sync(request: Request):
+    """Settings → Server → Plan's Sync now: one sync of the plan's limits
+    (gamma/hosted.py) → ``{ok, hosted, ...the storage defaults}``; a failed
+    call is ``ok: false`` with ``hosted.last_failure`` saying why, the last
+    answer unchanged. 400 off a hosted container."""
+    require_admin(request)
+    if not hosted.enabled():
+        raise HTTPException(status_code=400, detail="This server is not a hosted Gamma server.")
+    ok = hosted.sync_now() is not None
+    return {"ok": ok, "hosted": hosted.pane(), **get_defaults()}
 
 
 def _cloud() -> dict:
@@ -497,6 +515,9 @@ def create_user(payload: UserCreateRequest, request: Request):
     with connect_users_db() as conn:
         if _get_user(conn, username):
             raise HTTPException(status_code=409, detail="user already exists")
+        full = hosted.account_cap(conn)
+        if full:
+            raise HTTPException(status_code=403, detail=full)
     try:
         create_account(username, password, is_admin=payload.is_admin)
     except sqlite3.IntegrityError:  # created by another request since the check
@@ -545,9 +566,13 @@ def update_user(username: str, payload: UserUpdateRequest, request: Request):
         try:
             if "max_upload_mb" in payload.model_fields_set:
                 value = None if payload.max_upload_mb is None else validate_upload_mb(payload.max_upload_mb)
+                if value is not None:
+                    check_within_plan("max_upload_mb", value)
                 conn.execute("UPDATE users SET max_upload_mb = ? WHERE id = ?", (value, row[0]))
             if "quota_mb" in payload.model_fields_set:
                 value = None if payload.quota_mb is None else validate_quota_mb(payload.quota_mb)
+                if value is not None:
+                    check_within_plan("quota_mb", value)
                 conn.execute("UPDATE users SET quota_mb = ? WHERE id = ?", (value, row[0]))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

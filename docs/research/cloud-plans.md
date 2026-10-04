@@ -414,6 +414,19 @@ state is not `deleted`, and a later `update` job can allow it.
 6. **Batch tooling** on the Admin page: waves, the Servers tab, capacity
    display, the stale-host alarm.
 
+**Status (October 2026).** Steps 1 to 6 are built on the `subscription`
+branch, with the mechanics in [dev/hosted.md](../dev/hosted.md),
+[dev/billing.md](../dev/billing.md) and the "Hosted containers" subsection
+of [dev/cloud_accounts.md](../dev/cloud_accounts.md). What differs from the
+text above: a hosted server needs a confirmed e-mail before it is created;
+a username rename is refused while a server exists; a label another
+account ever held is never reused; a `paused` subscription has its own
+page state; stale hosts are only flagged, never closed; deletion comes 60
+days after the stop; and the Caddy route by hostname label serves one host
+only. Not built: a second host's routing, snapshot jobs, Pro seats beyond
+ten, the Plus storage add-on, a published image for the fleet agent, the
+desktop launcher's first-run sign-in, and the terms and privacy text.
+
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or
 a merchant of record; whether Pro seats beyond ten are sold at launch or
 later; whether a Plus storage add-on ships with v1; and the retention

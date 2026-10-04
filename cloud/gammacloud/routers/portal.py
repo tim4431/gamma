@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import accounts, connect, db, identities, oidc, pages, providers, servers, sessions
+from .. import accounts, billing, connect, db, identities, oidc, pages, pages_billing, providers, servers, sessions
 from .external import sign_in_page
 
 router = APIRouter()
@@ -51,6 +51,23 @@ def devices(request: Request):
 @router.get("/settings", response_class=HTMLResponse)
 def settings(request: Request):
     return _app_page(request, lambda account, d: pages.settings_page(account, d["identities"], providers.enabled()))
+
+
+@router.get("/plan", response_class=HTMLResponse)
+def plan(request: Request, checkout: str = ""):
+    """The Plan page (``pages_billing``). ``?checkout=success`` is Stripe
+    sending the browser back from Checkout. Unlike ``_app_page`` it needs
+    only the account and ``billing.summary``; it renders the stored copy and
+    never calls Stripe (its script's ``GET /api/billing/me`` refreshes a
+    stale row)."""
+    with closing(db.connect()) as conn:
+        account = sessions.resolve(conn, request)
+        if not account:
+            return RedirectResponse("/login?" + urlencode({"next": request.url.path}), status_code=302)
+        conn.commit()  # the session touch; nothing below writes
+        html = pages_billing.plan_page(accounts.public(account, conn), billing.summary(conn, account["id"]),
+                                       checkout=checkout)
+    return HTMLResponse(html, headers=NO_STORE)
 
 
 @router.get("/admin", response_class=HTMLResponse)
