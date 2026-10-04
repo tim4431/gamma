@@ -8,6 +8,7 @@ The production research is in [demo-production.md](../../docs/research/demo-prod
 | This directory | Recorders, renderers, shared helpers and [shot recipes](WORKFLOW.md) |
 | `docs/assets/demos/` | Published WebP animations |
 | `docs/assets/screenshots/` | Documentation stills |
+| `extension/store/` | Chrome Web Store screenshots (`shoot-store.mjs`, [recipe](WORKFLOW.md#stills)) beside the brand build's promo images |
 | `artifacts/readme-media/` | Ignored workspace export, private build, frame captures, timing files, masters and QA frames |
 | `.claude/skills/readme-media/SKILL.md` | Agent entry point pointing here |
 

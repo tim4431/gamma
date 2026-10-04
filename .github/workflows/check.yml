@@ -134,4 +134,4 @@ jobs:
       # inside Chrome, so there is no useful `node --check` here.
       - run: |
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
-          cd extension && zip -qr ../gamma-connector-check.zip . -x "STORE.md" "README.md" "*.DS_Store" && unzip -l ../gamma-connector-check.zip | tail -1
+          cd extension && zip -qr ../gamma-connector-check.zip . -x "STORE.md" "README.md" "store/*" "*.DS_Store" && unzip -l ../gamma-connector-check.zip | tail -1

@@ -14,13 +14,24 @@ for `<all_urls>` extensions).
    the Google account (the dashboard requires it to publish).
 2. Take the zip from the newest release
    (<https://github.com/tim4431/Gamma/releases/latest>). Or build it
-   locally: `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md`.
+   locally: `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md "store/*"`.
 3. Dashboard → **New item** → upload the zip.
 4. **Store listing**: the copy below, category **Productivity**, language
-   English, and the required images: the 128×128 icon is in the zip, plus
-   a 440×280 small promo tile and at least one 1280×800 (or 640×400)
-   screenshot (the popup on an arXiv page, the popup on a PDF tab, the
-   options page).
+   English, and the images (all opaque PNGs, as the store requires):
+
+   | Field | File |
+   |---|---|
+   | Store icon, 128×128 | `assets/icons/icon128.png` |
+   | Screenshots, 1280×800 | `store/screenshot-1-paper.png`, `store/screenshot-2-library.png`, `store/screenshot-3-search.png` |
+   | Small promo tile, 440×280 | `store/promo-440x280.png` |
+   | Marquee, 1400×560 (optional) | `store/marquee-1400x560.png` |
+
+   The promo tile and marquee come from the brand build
+   (`tools/branding/store-layouts.mjs`, `node tools/branding/build.mjs`).
+   The screenshots are Gamma itself: the curated demo library on an
+   isolated server, shot by `node tools/readme-media/shoot-store.mjs`
+   (setup in [tools/readme-media/README.md](../tools/readme-media/README.md)).
+   `store/` stays out of the release zip.
 5. **Privacy**: single purpose and permission justifications (below);
    disclose *website content* and *authentication information*, certify
    "not sold, not used for unrelated purposes"; privacy policy
@@ -126,42 +137,39 @@ talks only to the server address you enter; nothing is sent anywhere else.
 
 ## Privacy tab
 
-**Single purpose:** Save web pages, papers and PDFs into the user's own
-Gamma server.
+Paste these into the dashboard's Privacy tab; each matches what the code
+does (`worker.js`, `publisherSessions.js`, `detect.js`).
+
+**Single purpose:** Save research papers, web pages and PDFs from the
+browser into the user's own self-hosted Gamma library.
 
 **Permission justifications**
 
 | Permission | Justification |
 |---|---|
-| `host_permissions: <all_urls>` | The user's Gamma server is self-hosted at an address only they know (LAN, Tailscale, or a personal domain), so it cannot be listed in the manifest; the same permission lets the content script detect papers on any site and lets the save flow fetch a paywalled PDF with the user's own browser session. Page data is only sent, to the user's server, when the user clicks Save. |
-| `storage` | Remembers the server address, the default folder/labels, and per-tab detection state. |
-| `contextMenus` | "Save link / page / selection to Gamma" items. |
-| `activeTab`, `tabs` | Read the current tab's URL/title for detection and the badge. |
-| `notifications` | Result of a context-menu or keyboard-shortcut save when no popup is open. |
-| Optional `cookies` | Requested only when the user clicks Connect / Refresh in the popup's publisher-session drawer. Reads applicable cookies for the selected publisher host and sends a snapshot to the displayed Gamma server/account for later PDF downloads. Once a host has been connected this way, the Connector re-sends that host's cookies when the user visits it and the server's copy is over an hour old (can be turned off in the options); hosts the user never connected are never read. Normal saves do not read or transfer cookie values. |
+| `activeTab` | When the user limits the extension's site access to "on click", activeTab lets a click on the toolbar button, the context menu or the keyboard shortcut read the current page so it can be saved to the user's Gamma server. |
+| `contextMenus` | Adds "Save link to Gamma", "Save page to Gamma" and "Clip selection to Gamma" to the right-click menu. |
+| `cookies` (optional) | Requested only when the user clicks Connect in the popup's publisher-session drawer. It reads the cookies of that one publisher host and sends them to the user's own Gamma server, which uses them to download PDFs the user has access to. After a host is connected, its cookies are re-sent when the user visits that host and the server's copy is more than an hour old; this can be turned off in the options. Hosts the user never connected are never read. |
+| `notifications` | Shows the result of a save started from the context menu or the keyboard shortcut, when no popup is open. |
+| `storage` | Stores the server address, the saving defaults (folder, labels) and per-tab detection state. |
+| `tabs` | Reads each tab's URL and title to detect papers and show the toolbar badge, and opens, focuses and closes tabs when the user's Gamma app asks the extension to fetch a PDF that the server could not download itself (a publisher sign-in or bot check), so the user's own browser session can download it. |
+| Host permission (`<all_urls>`) | The Gamma server is self-hosted at an address only the user knows (home network, VPN or personal domain), so it cannot be listed in the manifest. The content script detects papers (DOI, arXiv id, PDF link) on any site, and saving downloads the PDF with the user's own browser session, including on paywalled publisher sites the user can access. Page data goes only to the user's Gamma server, only when they save or when their Gamma app asks for a PDF. |
 
-**Data usage:** website content (page title, DOI/arXiv id, PDF URL, selected
-text, the PDF file when the user chooses to upload it) is transmitted only to
-the Gamma server the user configured, only on the user's explicit action, and
-is not sold, shared, or used for any other purpose. No analytics, no third
-parties. If the user explicitly connects a publisher session, authentication
-cookies for that publisher host are also transferred to their configured server
-over HTTPS (or localhost), encrypted there, and reused only for that account's
-PDF requests. The user can refresh or disconnect the session in the popup.
+**Remote code:** No, I am not using remote code. All code ships in the
+package.
 
-**Remote code:** none — all code ships in the package.
+**Data usage:** tick *Website content* (page title, URL, DOI/arXiv id,
+selected text, PDF files) and *Authentication information* (the cookies
+of publisher hosts the user connected), and certify all three statements.
+Everything goes only to the Gamma server the user configured: on a save,
+on a request from the user's own Gamma app, or, for a publisher the user
+connected by hand, on a visit to that site while the server's copy of its
+cookies is over an hour old. Nothing is sent to the developer or any third
+party. No analytics.
 
-## Privacy policy (host it and link it)
+## Privacy policy
 
-Gamma Connector stores your server address and preferences in your browser's
-extension storage. When you click Save or Clip, it sends the current page's
-title, identifiers (DOI / arXiv id), PDF link or PDF file, and any text you
-selected to the Gamma server address you configured, and nowhere else. It
-does not collect analytics, does not use third-party services, and does not
-transmit anything without your action. Removing the extension deletes its local
-settings. Publisher cookie snapshots explicitly connected to
-Gamma remain on that server until disconnected or expired; uninstalling the
-extension does not revoke them. Session cookies expire within 24 hours and
-persistent cookies within 30 days or their original expiry, whichever is sooner.
-Use Publisher sessions → Disconnect to remove a live server snapshot. Full server
-backups may retain encrypted older snapshots until those backups are removed.
+<https://gammapdf.com/privacy>, the site's copy of
+[PRIVACY.md](../PRIVACY.md); its *Browser extension* entry covers the
+Connector. Keep it in step with the Data usage answers above: reviewers
+compare the two with the code.
