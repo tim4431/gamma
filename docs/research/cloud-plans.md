@@ -420,8 +420,8 @@ state is not `deleted`, and a later `update` job can allow it.
 6. **Batch tooling** on the Admin page: waves, the Servers tab, capacity
    display, the stale-host alarm.
 
-**Status (October 2026).** Steps 1 to 6 are built on the `subscription`
-branch, with the mechanics in [dev/hosted.md](../dev/hosted.md),
+**Status (October 2026).** Steps 1 to 6 are built and merged, with the
+mechanics in [dev/hosted.md](../dev/hosted.md),
 [dev/billing.md](../dev/billing.md) and the "Hosted containers" subsection
 of [dev/cloud_accounts.md](../dev/cloud_accounts.md). What differs from the
 text above: a hosted server needs a confirmed e-mail before it is created;
@@ -429,8 +429,13 @@ a username rename is refused while a server exists; a label another
 account ever held is never reused; a `paused` subscription has its own
 page state; stale hosts are only flagged, never closed; deletion comes 60
 days after the stop; and the Caddy route by hostname label serves one host
-only. Not built: a second host's routing, snapshot jobs, Pro seats beyond
-ten, the Plus storage add-on, a published image for the fleet agent, the
+only. Later additions: a Lite plan ($2 a month, 1 GB); a memory and CPU
+size per plan, with placement by the memory committed to a host's servers
+plus a 1 GB reserve; resizes in place through Docker's update; `logs` and
+`rollback` jobs and orphan containers; the agent as a compose project of
+its own (`cloud/fleet/deploy/`), published by `fleet.yml`; and hosted
+containers with no seeded admin and no guests. Not built: a second host's
+routing, snapshot jobs, Pro seats beyond ten, the Plus storage add-on, the
 desktop launcher's first-run sign-in, and the terms and privacy text.
 
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or

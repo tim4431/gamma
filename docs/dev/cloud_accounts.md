@@ -975,7 +975,15 @@ A paid hosted container runs with `GAMMA_HOSTED=1` next to the cloud
 variables above. `GAMMA_CLOUD_CLIENT_ID` and `GAMMA_CLOUD_CLIENT_SECRET`
 must name the container's own confidential client: the sync
 authenticates with them, and without them it logs a warning and does
-nothing.
+nothing. Two first-run behaviours of the image are off there:
+
+- **No seeded admin.** With `GAMMA_HOSTED` and `GAMMA_CLOUD_ADMIN_SUBJECT`
+  set, `seed.ensure_admin_seed` creates no `admin` account. The owner
+  becomes admin at their first cloud sign-in as the admin subject; a
+  seeded login would belong to nobody and take one of the plan's accounts.
+- **No guests.** The account server starts every container with
+  `GAMMA_GUEST_MAX=0` ([guests.md](guests.md)), since a guest would not
+  count against the plan's accounts.
 
 **The sync.** At startup and then every hour (the app's `every()` loop,
 `hosted.tick`) the container posts its report to

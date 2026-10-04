@@ -190,6 +190,17 @@ def test_live_guest_cap(monkeypatch):
     assert _new_client().post("/api/login-guest").status_code == 200
 
 
+def test_guest_logins_off_hide_the_button(monkeypatch):
+    """GAMMA_GUEST_MAX=0 (every hosted container) refuses a guest login, and
+    server-config says so, so the login page shows no guest button."""
+    monkeypatch.setenv("GAMMA_GUEST_MAX", "0")
+    client = _new_client()
+    assert client.get("/api/server-config").json()["guest"] is False
+    assert client.post("/api/login-guest").status_code == 503
+    monkeypatch.delenv("GAMMA_GUEST_MAX")
+    assert client.get("/api/server-config").json()["guest"] is True
+
+
 def test_guest_logins_are_rate_limited_per_ip(monkeypatch):
     from gamma import guests, workspaces
     made = []
