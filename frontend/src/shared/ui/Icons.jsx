@@ -536,3 +536,58 @@ export const SigmaIcon = (p) => (
 export const DeleteLineIcon = (p) => (
   <Icon {...p}><path d="M3 6h18" /><path d="M3 12h10" /><path d="M3 18h18" /><path d="m17 10 4 4" /><path d="m21 10-4 4" /></Icon>
 );
+// The "/" menu's insertions (editor/SlashMenu.jsx): headings, a numbered
+// list, a quote, a callout, a divider, block math and code (the inline
+// glyph in a box), a diagram, a table, an image, the date, an embedded
+// block and a sheet to write on.
+export const Heading1Icon = (p) => (
+  <Icon {...p}><path d="M4 12h8" /><path d="M4 18V6" /><path d="M12 18V6" /><path d="m17 12 3-2v8" /></Icon>
+);
+export const Heading2Icon = (p) => (
+  <Icon {...p}><path d="M4 12h8" /><path d="M4 18V6" /><path d="M12 18V6" /><path d="M21 18h-4c0-4 4-3 4-6 0-1.5-2-2.5-4-1" /></Icon>
+);
+export const Heading3Icon = (p) => (
+  <Icon {...p}><path d="M4 12h8" /><path d="M4 18V6" /><path d="M12 18V6" /><path d="M17.5 10.5c1.7-1 3.5 0 3.5 1.5a2 2 0 0 1-2 2" /><path d="M17 17.5c2 1.5 4 .3 4-1.5a2 2 0 0 0-2-2" /></Icon>
+);
+export const ListOrderedIcon = (p) => (
+  <Icon {...p}><path d="M10 6h11" /><path d="M10 12h11" /><path d="M10 18h11" /><path d="M4 6h1v4" /><path d="M4 10h2" /><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" /></Icon>
+);
+// Quotation marks — a quote block (QuoteIcon is a cited passage).
+export const QuoteMarkIcon = (p) => (
+  <Icon {...p}><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /></Icon>
+);
+// A box with a "!" — a callout, written > [!note].
+export const CalloutIcon = (p) => (
+  <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 8v4" /><path d="M12 16h.01" /></Icon>
+);
+// A rule with the content above and below pushed apart.
+export const DividerIcon = (p) => (
+  <Icon {...p}><path d="M3 12h18" /><path d="m8 8 4-4 4 4" /><path d="m16 16-4 4-4-4" /></Icon>
+);
+export const SquareSigmaIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M16 8.9V7H8l4 5-4 5h8v-1.9" /></Icon>
+);
+export const SquareCodeIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="m10 9-3 3 3 3" /><path d="m14 15 3-3-3-3" /></Icon>
+);
+// Two boxes joined by an elbow — a flowchart.
+export const DiagramIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="8" height="8" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect x="13" y="13" width="8" height="8" rx="2" /></Icon>
+);
+export const TableIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M12 3v18" /></Icon>
+);
+export const ImageIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" /></Icon>
+);
+export const CalendarIcon = (p) => (
+  <Icon {...p}><path d="M8 2v4" /><path d="M16 2v4" /><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18" /></Icon>
+);
+// A block set into the lines of text — another block shown in place.
+export const EmbedIcon = (p) => (
+  <Icon {...p}><path d="M3 4h18" /><rect x="3" y="8" width="18" height="8" rx="2" /><path d="M7 12h10" /><path d="M3 20h12" /></Icon>
+);
+// A ring-bound notebook with a pen — a sheet of paper to write on by hand.
+export const NotebookPenIcon = (p) => (
+  <Icon {...p}><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" /><path d="M2 6h4" /><path d="M2 10h4" /><path d="M2 14h4" /><path d="M2 18h4" /><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" /></Icon>
+);

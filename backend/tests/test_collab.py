@@ -6,7 +6,7 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import account_of, guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
+from conftest import account_of, fresh_client, guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -274,9 +274,7 @@ def test_socket_hello_and_fanout(guest):
 def test_socket_link_visitor_joins_under_its_display_name(owner):
     page = make_page(owner, "Open socket page")
     token = _share(owner, page["id"], audience="anyone", role="edit")
-    from fastapi.testclient import TestClient
-    from gamma.app import app
-    anon = TestClient(app)
+    anon = fresh_client()  # on the owner's loop: a second loop's fan-out could hang the owner's reads
     with owner.websocket_connect(f"/api/ws/page/{page['id']}?client=ow") as o:
         recv_hello(o)
         with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=vis&share={token}&name=Otter%20the%20Bold") as v:

@@ -40,7 +40,7 @@ from fractional_indexing import generate_n_keys_between
 
 from .block_index import rebuild
 from .blocks_store import FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, ensure_reserved, touch_page
-from .db import BLOCK_FTS_SCHEMA, BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now
+from .db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now
 from .highlights import from_scaled
 from .note_markup import LEGACY_WIDTH_RE, obsidian_image_sizes
 from .storage import display_filename, pdf_url
@@ -240,15 +240,13 @@ def pages_db_chats(conn: sqlite3.Connection, data_db: Path) -> bool:
 
 
 def block_fts(conn: sqlite3.Connection) -> None:
-    """Give a pages.db its notes index (db.BLOCK_FTS_SCHEMA: the view, the
-    FTS5 table, the triggers) and build it from the block rows, in one
+    """Give a pages.db its notes index (the view, the FTS5 table, the
+    triggers) and build it from the block rows (``rebuild``), in one
     transaction committed here — migration step 28 and every restore: a
     backup may predate the index, or carry one built under other textnorm
     rules, and the triggers' deletes must find in it what the current rules
     make of each row."""
     with _transaction(conn):
-        for stmt in BLOCK_FTS_SCHEMA:
-            conn.execute(stmt)
         rebuild(conn)
 
 

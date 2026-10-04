@@ -1255,26 +1255,26 @@ function BlockRow({
     if (link?.kind === "block") {
       const blockId = link.blockId;
       return [
-        { name: "mention", glyph: "@", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
-        { name: "synced", glyph: "⧉", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "mention", icon: "link", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
+        { name: "synced", icon: "embed", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "citation") {
       return [
-        { name: "gamma", glyph: "❝", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "gamma", icon: "citation", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "page") {
       return [
-        { name: "gamma", glyph: "▤", label: T("Page link"), hint: T("card with the title") },
-        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
+        { name: "gamma", icon: "pageCard", label: T("Page link"), hint: T("card with the title") },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
     return [
-      { name: "url", glyph: "↗", label: "URL", hint: T("link chip") },
-      { name: "titled", glyph: "Aa", label: T("Titled link"), hint: T("fetch the page title") },
+      { name: "url", icon: "url", label: "URL", hint: T("link chip") },
+      { name: "titled", icon: "title", label: T("Titled link"), hint: T("fetch the page title") },
     ];
   }
 
@@ -1421,9 +1421,9 @@ function BlockRow({
           userEvent: "input",
         });
         const items = [
-          ...(tsvMd ? [{ name: "table", glyph: "▦", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
-          { name: "text", glyph: "¶", label: T("Text"), hint: T("keep in this block") },
-          { name: "blocks", glyph: "≡", label: T("Blocks"), hint: T("split into nested blocks") },
+          ...(tsvMd ? [{ name: "table", icon: "table", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
+          { name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") },
+          { name: "blocks", icon: "blocks", label: T("Blocks"), hint: T("split into nested blocks") },
         ];
         const anchor = ta.caretCoords(start);
         requestAnimationFrame(() => {
@@ -1884,7 +1884,7 @@ function BlockRow({
       {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} footer />
+          grouped={!slashMenu.query} commands />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />

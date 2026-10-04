@@ -185,7 +185,7 @@ def test_search_reindex_rebuilds_the_notes_index(owner):
     _drift_the_index(ws_db_path(ws, "pages.db"), "niDr", "a dingo pup")
     r = owner.post("/api/search-reindex")
     assert r.status_code == 200, r.text
-    with connect_pages_db(ws) as conn:  # the trigger is back (the schema statements) and the index matches
+    with connect_pages_db(ws) as conn:  # the trigger is back (rebuild puts the schema in place) and the index matches
         assert not notes_index_drift(conn)
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'block_fts_update'").fetchone()
     assert [h["block_id"] for h in _search(owner, "pup")["results"]] == ["niDr"]

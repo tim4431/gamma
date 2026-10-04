@@ -1,191 +1,60 @@
-// The "/" command menu in the block editor, Notion-style: typing "/" at the
-// start of a word opens a filterable list of insertions (link, equations,
-// headings, to-do, code, table, ...). Pure catalog + a presentational popup;
-// editor/BlockTree.jsx owns the trigger detection, keyboard handling and state.
+// The "/" command menu's popup in the block editor, Notion-style. The
+// catalog and its matching live in editor/slashCommands.js (pure,
+// re-exported here); editor/BlockTree.jsx owns the trigger detection,
+// keyboard handling and state.
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
-import { TEXT_COLORS, colorSpan } from "./mdMarks";
-import { makeBlockId } from "../shared/model/blockModel.js";
-import { t, T } from "../shared/i18n/i18n.js";
+import { SLASH_GROUPS } from "./slashCommands.js";
+import { t } from "../shared/i18n/i18n.js";
+import {
+  AlignLeftIcon, CalendarIcon, CalloutIcon, DiagramIcon, DividerIcon, EmbedIcon, FilePlusIcon, FileTextIcon,
+  GlobeIcon, Heading1Icon, Heading2Icon, Heading3Icon, HighlightIcon, ImageIcon, LinkIcon, ListIcon,
+  ListOrderedIcon, NotebookPenIcon, OutlineIcon, QuoteIcon, QuoteMarkIcon, SigmaIcon, SquareCheckIcon,
+  SquareCodeIcon, SquareSigmaIcon, TableIcon, TypeIcon,
+} from "../shared/ui/Icons";
 
-// Every command edits through ctx:
-//   { value, start, cursor, setText(newVal, selStart, selEnd),
-//     openRefPopup(), pickImage(), insertSheet(), newPage(id) }
-// start = index of the "/", cursor = caret (end of the typed query); commands
-// replace that range with their insertion. A command that `needs` one of
-// the editor's abilities is offered only where the editor has it
-// (filterSlashCommands' `can`).
+export { filterSlashCommands } from "./slashCommands.js";
 
-function replaceRange(ctx, text, caretRel, selLen = 0) {
-  const { value, start, cursor } = ctx;
-  const newVal = value.slice(0, start) + text + value.slice(cursor);
-  const caret = start + (caretRel != null ? caretRel : text.length);
-  ctx.setText(newVal, caret, caret + selLen);
-}
+// A row's icon by its item's `icon` key: the commands' (slashCommands.js)
+// and the "Paste as" chooser's (BlockTree.jsx pasteAsItems). An item
+// without one shows its text `glyph` instead (the colors' tinted "A").
+const MENU_ICONS = {
+  h1: Heading1Icon, h2: Heading2Icon, h3: Heading3Icon, todo: SquareCheckIcon, bullet: ListIcon,
+  number: ListOrderedIcon, quote: QuoteMarkIcon, callout: CalloutIcon, divider: DividerIcon,
+  math: SigmaIcon, equation: SquareSigmaIcon, page: FilePlusIcon, note: NotebookPenIcon, table: TableIcon,
+  code: SquareCodeIcon, mermaid: DiagramIcon, image: ImageIcon, date: CalendarIcon, link: LinkIcon,
+  embed: EmbedIcon, highlight: HighlightIcon,
+  url: GlobeIcon, citation: QuoteIcon, pageCard: FileTextIcon, title: TypeIcon, text: AlignLeftIcon,
+  blocks: OutlineIcon,
+};
 
-// Turn the current line into `prefix` + its text (swapping out an existing
-// markdown line prefix, so /h2 on a "# heading" re-levels instead of stacking).
-const LINE_PREFIX_RE = /^(#{1,6} |> |[-*+] \[[ xX]\] |[-*+] |\d+\. )/;
-function applyLinePrefix(ctx, prefix) {
-  const { value, start, cursor } = ctx;
-  let v = value.slice(0, start) + value.slice(cursor);
-  const lineStart = v.lastIndexOf("\n", start - 1) + 1;
-  const rest = v.slice(lineStart);
-  const m = rest.match(LINE_PREFIX_RE);
-  const stripped = m ? rest.slice(m[0].length) : rest;
-  v = v.slice(0, lineStart) + prefix + stripped;
-  const caret = Math.max(lineStart + prefix.length, start - (m ? m[0].length : 0) + prefix.length);
-  ctx.setText(v, caret, caret);
-}
-
-// Insertions that want their own line (divider, code block, table) prepend a
-// newline unless the "/" already sat at a line start.
-function blockInsert(ctx, body, caretRelInBody, selLen = 0) {
-  const atLineStart = ctx.start === 0 || ctx.value[ctx.start - 1] === "\n";
-  const lead = atLineStart ? "" : "\n";
-  replaceRange(ctx, lead + body, caretRelInBody != null ? lead.length + caretRelInBody : null, selLen);
-}
-
-const TABLE_MD = "| Column 1 | Column 2 |\n| --- | --- |\n|   |   |";
-const MERMAID_MD = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```";
-
-export const SLASH_COMMANDS = [
-  {
-    name: "link", label: T("Link to note"), glyph: "[[", hint: T("reference another block"),
-    keywords: ["ref", "page", "block", "mention"],
-    run: (ctx) => { replaceRange(ctx, "[["); ctx.openRefPopup(); },
-  },
-  {
-    name: "embed", label: T("Embed note"), glyph: "⧉", hint: T("show a block inline"),
-    keywords: ["transclude", "include", "block"],
-    run: (ctx) => { replaceRange(ctx, "![["); ctx.openRefPopup(); },
-  },
-  {
-    name: "highlight", label: T("Highlight text"), glyph: "==", hint: "==marked==",
-    keywords: ["mark", "yellow", "emphasize"],
-    run: (ctx) => replaceRange(ctx, "==x==", 2, 1),
-  },
-  {
-    name: "math", label: T("Inline equation"), glyph: "$x$", hint: T("LaTeX, rendered in place"),
-    keywords: ["equation", "latex", "tex"],
-    run: (ctx) => replaceRange(ctx, "$x$", 1, 1),
-  },
-  {
-    name: "equation", label: T("Equation block"), glyph: "$$", hint: T("display math"),
-    keywords: ["display", "math", "latex"],
-    run: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
-  },
-  { name: "h1", label: T("Heading 1"), glyph: "H1", keywords: ["heading", "title"], run: (ctx) => applyLinePrefix(ctx, "# ") },
-  { name: "h2", label: T("Heading 2"), glyph: "H2", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "## ") },
-  { name: "h3", label: T("Heading 3"), glyph: "H3", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "### ") },
-  {
-    name: "todo", label: T("To-do"), glyph: "☐", hint: T("checkbox item"),
-    keywords: ["task", "checkbox", "check"],
-    run: (ctx) => applyLinePrefix(ctx, "- [ ] "),
-  },
-  { name: "bullet", label: T("Bulleted list"), glyph: "•", keywords: ["list", "ul"], run: (ctx) => applyLinePrefix(ctx, "- ") },
-  { name: "number", label: T("Numbered list"), glyph: "1.", keywords: ["list", "ol", "ordered"], run: (ctx) => applyLinePrefix(ctx, "1. ") },
-  { name: "quote", label: T("Quote"), glyph: "❝", keywords: ["blockquote", "cite"], run: (ctx) => applyLinePrefix(ctx, "> ") },
-  {
-    name: "callout", label: T("Callout"), glyph: "[!]", hint: T("note · tip · warning · danger"),
-    keywords: ["admonition", "aside", "banner", "note", "tip", "warning"],
-    run: (ctx) => applyLinePrefix(ctx, "> [!note] "),
-  },
-  {
-    name: "code", label: T("Code block"), glyph: "</>", hint: T("fenced code"),
-    keywords: ["fence", "pre", "snippet"],
-    run: (ctx) => blockInsert(ctx, "```\n\n```", 4),
-  },
-  {
-    name: "mermaid", label: T("Mermaid diagram"), glyph: "◇", hint: T("flowchart or sequence diagram"),
-    keywords: ["diagram", "flowchart", "sequence", "chart"],
-    run: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
-  },
-  { name: "divider", label: T("Divider"), glyph: "—", keywords: ["hr", "rule", "separator", "line"], run: (ctx) => blockInsert(ctx, "---\n") },
-  {
-    name: "table", label: T("Table"), glyph: "▦", hint: T("2×2 markdown table"),
-    keywords: ["grid"],
-    run: (ctx) => blockInsert(ctx, TABLE_MD, 2, 8),
-  },
-  {
-    name: "image", label: T("Image"), glyph: "▣", hint: T("upload from disk"),
-    keywords: ["picture", "photo", "upload", "figure"],
-    run: (ctx) => { replaceRange(ctx, ""); ctx.pickImage(); },
-  },
-  // Notion's /page: a new page in the library, its [[link]] put where the
-  // command was typed (under an id minted here, which the page is then made
-  // under), and the page opened.
-  {
-    name: "page", label: T("New page"), glyph: "↗", hint: T("a new library page, linked here"),
-    keywords: ["subpage", "document", "create", "link"],
-    needs: "newPage",
-    run: (ctx) => { const id = makeBlockId(); replaceRange(ctx, `[[${id}]]`); ctx.newPage(id); },
-  },
-  {
-    name: "note", label: T("Handwritten note"), glyph: "▯", hint: T("a sheet of paper for handwriting"),
-    keywords: ["page", "paper", "sheet", "handwriting", "draw", "notebook", "ink", "pen"],
-    needs: "sheet",
-    run: (ctx) => { replaceRange(ctx, ""); ctx.insertSheet(); },
-  },
-  {
-    name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"],
-    run: (ctx) => replaceRange(ctx, new Date().toISOString().slice(0, 10)),
-  },
-  // Colored text / background tint, Notion's palette written as Obsidian-
-  // compatible inline HTML (mdMarks TEXT_COLORS): an empty span with the
-  // caret inside, like the `**|**` of Ctrl+B. `hidden` keeps the sixteen
-  // entries out of the bare "/" list — type a color or "color".
-  ...TEXT_COLORS.flatMap(({ name, color }) => [false, true].map((background) => ({
-    name: `${name}-${background ? "background" : "text"}`,
-    label: `${name[0].toUpperCase()}${name.slice(1)} ${background ? "background" : "text"}`,
-    glyph: "A", glyphStyle: background ? { background: `${color}55`, borderRadius: 3 } : { color },
-    keywords: ["color", "colour", background ? "highlight" : "font", name],
-    hidden: true,
-    run: (ctx) => {
-      const open = colorSpan(color, background);
-      replaceRange(ctx, `${open}</span>`, open.length);
-    },
-  }))),
-];
-
-// The bare "/" list comes in these groups, in this order; a typed query is
-// one ranked list instead (below). The colours belong to Style but stay
-// hidden until typed.
-const SLASH_GROUPS = [
-  { label: T("Text"), names: ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider"] },
-  { label: T("Math"), names: ["math", "equation"] },
-  { label: T("Insert"), names: ["page", "note", "table", "code", "mermaid", "image", "date"] },
-  { label: T("Link"), names: ["link", "embed"] },
-  { label: T("Style"), names: ["highlight"] },
-];
-const GROUP_OF = new Map(SLASH_GROUPS.flatMap((g) => g.names.map((n) => [n, g])));
-
-// `can`: the abilities this editor has ({newPage, sheet}); a command that
-// needs one it lacks is left out (a share's editor makes no library page).
-export function filterSlashCommands(query, can = {}) {
-  const q = (query || "").toLowerCase();
-  const offered = (c) => !c.needs || can[c.needs];
-  if (!q) return SLASH_GROUPS.flatMap((g) => g.names.map((n) => SLASH_COMMANDS.find((c) => c.name === n))).filter(offered);
-  const scored = [];
-  for (const c of SLASH_COMMANDS.filter(offered)) {
-    const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/), ...t(c.label).toLowerCase().split(/\s+/)];
-    // a command's own name first ("/note" is the sheet, not the link or the
-    // callout with "note" among their words), then any word starting with
-    // the query
-    const tier = c.name === q ? 0 : names.some((n) => n.startsWith(q)) ? 1
-      : names.some((n) => n.includes(q)) ? 2 : -1;
-    if (tier >= 0) scored.push([tier, scored.length, c]);
+// `text` with the letters at `at` (ascending indices) marked in search's
+// look (mark.searchMark), a run of neighbours one mark.
+function Matched({ text, at }) {
+  if (!at?.length) return text;
+  const parts = [];
+  let from = 0;
+  for (let k = 0; k < at.length;) {
+    let end = k;
+    while (end + 1 < at.length && at[end + 1] === at[end] + 1) end++;
+    if (at[k] > from) parts.push(text.slice(from, at[k]));
+    parts.push(<mark key={k} className="searchMark">{text.slice(at[k], at[end] + 1)}</mark>);
+    from = at[end] + 1;
+    k = end + 1;
   }
-  scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  return scored.map((x) => x[2]);
+  parts.push(text.slice(from));
+  return parts.map((p, i) => <React.Fragment key={i}>{p}</React.Fragment>);
 }
 
-// Caret-anchored command popup. Also serves the Notion-style "Paste as"
-// chooser after a URL paste (same look, plus a quiet `title` line) —
-// blockTree owns both triggers and passes the item lists. `grouped` puts
-// the SLASH_GROUPS titles over the bare "/" list; `footer` is the "/"
-// menu's key hint line.
-export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped, footer }) {
+// Caret-anchored command popup. A row: the item's icon, its label over a
+// one-line description, and for a command the name to type ("/note"), with
+// the letters the query matched marked where they matched — in the name or
+// in the label (slashCommands.js `match`). Also serves the Notion-style
+// "Paste as" chooser after a URL paste (same look, plus a quiet `title`
+// line) — blockTree owns both triggers and passes the item lists.
+// `commands` is the "/" menu: names and the key-hint footer; `grouped`
+// puts the SLASH_GROUPS titles over the bare "/" list.
+export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped, commands }) {
   const [listRef, style] = useCaretAnchored(anchor, false, [items]);
   useEffect(() => {
     listRef.current?.querySelector(".slashMenuItem.selected")
@@ -195,25 +64,31 @@ export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped
     <div ref={listRef} className="slashMenu" style={style}>
       {title ? <div className="slashMenuTitle">{title}</div> : null}
       {items.map((c, i) => {
-        const group = grouped ? GROUP_OF.get(c.name) : null;
+        const group = grouped && c.group !== items[i - 1]?.group ? SLASH_GROUPS[c.group] : null;
+        const Icon = MENU_ICONS[c.icon];
         return (
           <React.Fragment key={c.name}>
-            {group && group !== GROUP_OF.get(items[i - 1]?.name) ? <div className="slashMenuTitle">{t(group.label)}</div> : null}
+            {group ? <div className="slashMenuTitle">{t(group)}</div> : null}
             <button
               type="button"
               className={`slashMenuItem${i === selected ? " selected" : ""}`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => onPick(c)}
             >
-              <span className="slashMenuGlyph" style={c.glyphStyle}>{c.glyph}</span>
-              <span className="slashMenuLabel">{t(c.label)}</span>
-              {c.hint ? <span className="slashMenuHint">{t(c.hint)}</span> : null}
+              <span className="slashMenuIcon" style={c.glyphStyle}>{Icon ? <Icon size={16} /> : c.glyph}</span>
+              <span className="slashMenuText">
+                <span className="slashMenuHead">
+                  <span className="slashMenuLabel"><Matched text={t(c.label)} at={c.match?.label} /></span>
+                  {commands ? <span className="slashMenuName">/<Matched text={c.name} at={c.match?.name} /></span> : null}
+                </span>
+                {c.hint ? <span className="slashMenuHint">{t(c.hint)}</span> : null}
+              </span>
             </button>
           </React.Fragment>
         );
       })}
-      {footer ? (
-        <div className="slashMenuFooter">{t("↑↓ choose · Enter insert · type “red” for colors")}</div>
+      {commands ? (
+        <div className="slashMenuFooter">{t("↑↓ choose · Tab or Enter insert · type “red” for colors")}</div>
       ) : null}
     </div>
   );

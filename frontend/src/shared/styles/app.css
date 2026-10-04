@@ -5753,12 +5753,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   white-space: nowrap;
 }
 
-/* "/" command menu in the block editor (editor/SlashMenu.jsx). */
+/* "/" command menu in the block editor (editor/SlashMenu.jsx). One width
+   whatever the query, so the list does not jump as it filters. */
 .slashMenu {
   position: fixed;
   z-index: var(--z-refpopup);
-  min-width: 240px;
-  max-height: 360px;
+  box-sizing: border-box;
+  width: min(300px, var(--caret-max-width, calc(100vw - 16px)));
+  max-height: min(400px, var(--caret-max-height, calc(100vh - 16px)));
   overflow-y: auto;
   padding: 3px;
 }
@@ -5787,24 +5789,45 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .slashMenuItem:hover { background: var(--bg-hover); }
 .slashMenuItem.selected { background: var(--accent-bg); }
-.slashMenuGlyph {
-  min-width: 30px;
-  padding: 3px 2px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+/* A row: an icon tile, then the label (and a command's "/name" at the
+   right) over a one-line description. */
+.slashMenuIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  font-size: var(--fs-md);
+  font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
-.slashMenuLabel { font-size: var(--fs-sm); }
-.slashMenuHint {
+.slashMenuText { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 1px; }
+.slashMenuHead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.slashMenuLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+.slashMenuName {
   margin-left: auto;
-  padding-left: 8px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   color: var(--text-dim);
   white-space: nowrap;
+}
+.slashMenuHint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
 }
 
 /* --- confirm / link dialogs --- */

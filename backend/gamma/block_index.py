@@ -54,6 +54,14 @@ def search_blocks(conn: sqlite3.Connection, match: str, limit: int,
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
-    """Build the notes index again from the block rows (FTS5's ``rebuild``),
-    inside the caller's transaction, which the caller commits."""
+    """The notes index whole again, inside the caller's transaction, which
+    the caller commits: its view, table and triggers in place
+    (db.BLOCK_FTS_SCHEMA, each IF NOT EXISTS, so one that is gone comes
+    back — a connection applies them as it opens, a cached one never
+    again), then the contents built again from the block rows (FTS5's
+    ``rebuild``)."""
+    from .db import BLOCK_FTS_SCHEMA  # local: db imports the modules that import this one
+
+    for stmt in BLOCK_FTS_SCHEMA:
+        conn.execute(stmt)
     conn.execute("INSERT INTO block_fts (block_fts) VALUES ('rebuild')")
