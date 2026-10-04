@@ -2400,8 +2400,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The notes tree's row handlers of the last render, so the palette can
   // run a block command on the focused row without an open editor.
   const rowPropsRef = useRef(null);
-  // A block just moved by a keyboard command: the DOM move blurs its
-  // editor in some browsers, and that blur must not close it (onStartEdit).
+  // The open editor's row just moved in the DOM (keepEditorThrough): the
+  // move blurs its editor in some browsers, and that blur must not close
+  // it (onStartEdit).
   const keepEditRef = useRef(null);
   useEffect(() => {
     if (!openPopover) return;
@@ -3810,6 +3811,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
     }
   }, [blocks, view.editingId, readOnly]);
+  // A DOM move of the open editor's row (a move, an indent or outdent,
+  // another client's op) blurs or remounts its editor: onStartEdit ignores
+  // that one close (keepEditRef) and the effect above re-opens it, the
+  // selection back where it was.
+  function keepEditorThrough(id, caret, head) {
+    keepEditRef.current = { id, until: performance.now() + 500 };
+    pendingFocusRef.current = { id, caret, head, reopen: 2 };
+  }
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md): a chip on each such row (MergeResolver). Read on
@@ -4012,8 +4021,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const editing = view.editingId;
     if (editing && displacedRow(blocks, treeOps, editing, pageId)) {
       const c = caretRef.current?.id === editing ? caretRef.current : null;
-      keepEditRef.current = { id: editing, until: performance.now() + 500 };
-      pendingFocusRef.current = { id: editing, caret: c ? c.from : "end", head: c?.to, reopen: 2 };
+      keepEditorThrough(editing, c ? c.from : "end", c?.to);
     }
     const apply = () => setBlocks((prev) => {
       try {
@@ -6710,8 +6718,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       : applied ? `${redo ? t("Redone") : t("Undone")}: ${applied.description}.`
       : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
   }
-  // The strip's Undo / Redo for text boxes: a press there leaves an open
-  // editor focused, whose undo it then is, as Ctrl+Z in it would be.
+  // Undo / Redo by a press rather than Ctrl+Z: the strip's for text boxes,
+  // the editing bar's and the iPad keyboard's (rowProps.onUndo). A press
+  // leaves an open editor focused, whose undo it then is, as Ctrl+Z in it
+  // would be.
   function undoBlocks(redo) {
     reportUndo(blockHistory.undo(redo, !!document.activeElement?.closest?.(".cm-editor")), redo);
   }
@@ -8768,6 +8778,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <>{notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}{backlinksPanel}{notesTail}</>
             ) : (
               (() => {
+                // Indent and outdent re-parent the block, which remounts its
+                // row: an open editor stays open with its selection, as one
+                // does through a move (onMoveBlock).
+                const keepOpenEditor = (id) => {
+                  if (view.editingId !== id) return;
+                  const editor = blockRefs.current[id]?.current;
+                  keepEditorThrough(id, editor ? editor.selectionStart : "end", editor?.selectionEnd);
+                };
                 const rowProps = {
                   focusedId,
                   setFocusedId,
@@ -8800,6 +8818,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   },
                   registerRef,
                   readOnly,
+                  // The editing bar's Undo / Redo and the iPad keyboard's.
+                  onUndo: readOnly ? undefined : undoBlocks,
                   // Area-highlight cards show their crop, re-rendered from the
                   // loaded document each session (never stored, same as the
                   // chat attach); docNonce retries crops once the PDF is up,
@@ -8835,8 +8855,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;
                     else if (keepEditRef.current?.id === id && performance.now() < keepEditRef.current.until) {
-                      // The blur of a DOM move (onMoveBlock); the focus
-                      // effect puts the caret back.
+                      // The blur of a DOM move (keepEditorThrough); the
+                      // focus effect puts the caret back.
                       keepEditRef.current = null;
                       return;
                     } else if (collab.tooLong(id)) {
@@ -8879,13 +8899,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onIndent: (id) => {
                     if (readOnly) return;
                     const next = indentBlock(blocks, id);
+                    if (next === blocks) return;
+                    keepOpenEditor(id);
                     setBlocks(next);
                     setView((v) => revealBlock(next, v, id)); // its new parent may be folded
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
                     if (readOnly) return;
-                    setBlocks(outdentBlock(blocks, id));
+                    const next = outdentBlock(blocks, id);
+                    if (next === blocks) return;
+                    keepOpenEditor(id);
+                    setBlocks(next);
                     setFocusedId(id);
                   },
                   onToggle: (id) => {
@@ -8893,12 +8918,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setBlocks(next.blocks);
                     setView(next.view);
                   },
-                  // Delete the subtree (the handle menu) or, from the
-                  // keyboard's "delete line", the block alone with its
-                  // children lifted into its place, the caret moving to
-                  // the end of the block above (`focus`).
-                  onDelete: (id, { keepChildren = false, focus = null } = {}) => {
+                  // Delete the subtree (the handle menu, Backspace in an
+                  // empty block) or, from the keyboard's "delete line", the
+                  // block alone with its children lifted into its place;
+                  // `focusAbove` moves the caret to the end of the block
+                  // shown above.
+                  onDelete: (id, { keepChildren = false, focusAbove = false } = {}) => {
                     if (readOnly) return;
+                    const focus = focusAbove ? visibleNeighbor(blocks, id, -1, view)?.id : null;
                     let next = keepChildren ? removeBlockKeepChildren(blocks, id) : removeBlockTree(blocks, id);
                     if (focus && findBlock(next, focus)) {
                       startEditing(focus);
@@ -8928,8 +8955,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const next = moveSibling(blocks, id, dir);
                     if (next === blocks) return false;
                     const editor = blockRefs.current[id]?.current;
-                    keepEditRef.current = { id, until: performance.now() + 500 };
-                    pendingFocusRef.current = { id, caret: editor ? editor.selectionStart : "end", reopen: 2 };
+                    keepEditorThrough(id, editor ? editor.selectionStart : "end");
                     setBlocks(next);
                     setFocusedId(id);
                     return true;

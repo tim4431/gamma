@@ -89,7 +89,7 @@ These describe the implementation unless explicitly marked as plans.
 | Tours, anchors, triggers, and seeded welcome content | [Onboarding](onboarding.md) |
 | Browser connector | [Extension](extension.md) |
 | Electron shell, local servers, packaging, and QA | [Desktop](desktop.md) |
-| The native iPad app (offline replica, Pencil) and the home-screen web app | [iPad](ipad.md) |
+| The native iPad app (offline replica, Pencil), the home-screen web app, and the touch editing bar | [iPad](ipad.md) |
 | Gamma Cloud identity service and server sign-in | [Cloud accounts](cloud_accounts.md) |
 | Public website build and deployment | [Website](../../sites/README.md) |
 

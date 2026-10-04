@@ -599,7 +599,8 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in
-  Chromium). `--only ipad`.
+  Chromium), and a note editor's editing bar by tap (none with a mouse).
+  `--only ipad`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

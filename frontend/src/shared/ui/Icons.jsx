@@ -483,8 +483,9 @@ export const MoreIcon = (p) => (
 export const KeyboardIcon = (p) => (
   <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01" /><path d="M10 9h.01" /><path d="M14 9h.01" /><path d="M18 9h.01" /><path d="M6 13h.01" /><path d="M18 13h.01" /><path d="M9 13h6" /><path d="M8 16h8" /></Icon>
 );
-// Settings → Keyboard and the command palette: one glyph per command
-// (app/commandIcons.jsx) — text marks, outliner moves, the keys themselves.
+// Settings → Keyboard, the command palette and the editing bar: one glyph
+// per command (app/commandIcons.jsx) — text marks, outliner moves, the keys
+// themselves.
 export const BoldIcon = (p) => (
   <Icon {...p}><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8" /></Icon>
 );
@@ -522,6 +523,14 @@ export const SlashIcon = (p) => (
 // A block with a "+" above it — a new block before this one.
 export const InsertAboveIcon = (p) => (
   <Icon {...p}><rect x="3" y="13" width="18" height="8" rx="2" /><path d="M12 3v6" /><path d="M9 6h6" /></Icon>
+);
+// …and below it: a new block after this one.
+export const InsertBelowIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="8" rx="2" /><path d="M12 15v6" /><path d="M9 18h6" /></Icon>
+);
+// Inline math (the editing bar's $…$).
+export const SigmaIcon = (p) => (
+  <Icon {...p}><path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2" /></Icon>
 );
 // Three lines, the middle one crossed out — delete the caret's line.
 export const DeleteLineIcon = (p) => (

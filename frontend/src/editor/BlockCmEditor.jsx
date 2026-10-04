@@ -13,6 +13,7 @@ import {
 } from "@codemirror/view";
 import { standardKeymap } from "@codemirror/commands";
 import { findMathAtCursor, renderKatex } from "./LatexEditor";
+import { editBarSpace } from "./EditBar";
 import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput";
 import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
@@ -854,14 +855,14 @@ function keepUnderPointer(view, pos, y) {
 // `pinScroll`: opening scrolls nothing (keepUnderPointer), for an editor
 // drawn where its text was, in the same type (a text box's).
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
-  value, onChange, onSelect, onKeyDown, onBlur, onPaste,
+  value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo,
   placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
   onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
-  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onObjectDragOver, onObjectDrop };
+  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, onObjectDragOver, onObjectDrop };
   // What the decoration pass reads lazily (see buildInlineDecos).
   const decoCtx = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
   decoCtx.labels = refLabels;
@@ -919,7 +920,21 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           // closes the editing session. Content is safe either way: every
           // keystroke already went through onChange → debounced autosave.
           blur: () => { if (document.hasFocus()) cbRef.current.onBlur?.(); },
+          // The iPad keyboard's undo and redo keys (and three-finger
+          // swipes) arrive as these input types, not as Ctrl+Z: an editor
+          // given `onUndo` (a note row's) hands them to the page's block
+          // history, never the browser's contenteditable undo, which would
+          // edit CodeMirror's DOM behind its back.
+          beforeinput: (e) => {
+            if (e.inputType !== "historyUndo" && e.inputType !== "historyRedo") return false;
+            if (!cbRef.current.onUndo) return false;
+            e.preventDefault();
+            cbRef.current.onUndo(e.inputType === "historyRedo");
+            return true;
+          },
         })),
+        // The caret scrolls into view above the touch editing bar.
+        EditorView.scrollMargins.of(() => ({ bottom: editBarSpace() })),
         dollarPairing,
         dollarBackspace,
         mathBracketPairing,

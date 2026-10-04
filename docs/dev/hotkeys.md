@@ -3,7 +3,7 @@
 How a key becomes an action, where a shortcut is declared, how the account
 changes it, and what the command palette and the Settings pane read.
 
-## One catalog, three surfaces
+## One catalog, four surfaces
 
 A **command** is declared once, as an object in one of two catalogs:
 
@@ -35,18 +35,19 @@ answers to for this account (its first effective key, `""` when unbound):
 the home library's key hints (the page menu's Rename / Delete, the filter
 box) and the guide's `{key:…}` tokens (`guide/keys.js`) both read it.
 
-The three surfaces read that catalog and nothing else:
+The four surfaces read that catalog and nothing else:
 
 | Surface | Reads | Where |
 |---|---|---|
 | the key dispatchers | `keys`, `when`, `edits`, `run` | App's one window listener (app scope); a block row's `onKeyDown` (block scope) |
 | the command palette (Ctrl+Shift+P, or `>` in Ctrl+P) | `label`, `group`, the effective keys, `run` | [library/QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx), fed by App's `paletteCommands()` |
 | Settings → Keyboard | everything, plus `fixed` and the conflicts | [settings/SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx) |
+| the touch editing bar (block scope; its Undo / Redo call App's `undoBlocks`) | `label`, `when` (a button greys out), `run` | [editor/EditBar.jsx](../../frontend/src/editor/EditBar.jsx), given the row's `commandContext` ([ipad.md](ipad.md) "The editing bar") |
 
-So a key, a palette entry and the pane can never disagree, and the cheat
-sheet in [docs/user_guide.md](../user_guide.md) is checked against the
-catalog by `tests/commands.test.mjs`: a command with a default chord whose
-label is missing there fails the test.
+So a key, a palette entry, a bar button and the pane can never disagree.
+The cheat sheet in [docs/user_guide.md](../user_guide.md) is checked against
+the catalog by `tests/commands.test.mjs`: a command with a default chord
+whose label is missing there fails the test.
 
 ## Chords and dispatch
 
@@ -78,8 +79,10 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **↑ / ↓ at the editor's first / last visual line** (`atVerticalEdge`, by coordinates so wrapped lines count) → `onHop`: the neighbouring shown block (`visibleNeighbor`, collapsed subtrees skipped) opens its editor with the caret at its end / start. `pendingFocusRef` carries `{id, caret}` for that; a bare id still means "focus, caret where the editor puts it".
 - **Move block up / down** (unbound) → `onMoveBlock`: `moveSibling` swaps with the neighbour, same reference at the edge (the key then does nothing). Moving a focused DOM node blurs it in some browsers, and that blur would close the editor: `keepEditRef` tells `onStartEdit` to ignore one close for that block within 500 ms, and the focus request re-opens the editor (`reopen` tries) and restores the caret offset.
 - **Duplicate block above / below** (unbound) → `onDuplicate(id, {above})`, the handle menu's copy (fresh ids, highlight anchors stripped).
-- **Ctrl+Shift+K** — the caret's line of a multi-line block (a CodeMirror change); a one-line block goes as a whole through `onDelete(id, {keepChildren: true, focus: prev})`: `removeBlockKeepChildren` lifts its children into its place (indented lines under a deleted line stay), and the block above gets the caret at its end. The handle menu's Delete still removes the subtree.
-- **New block above**, **indent / outdent**, **collapse / expand** (unbound) → the existing `onEnterSibling(id, {above})`, indent / outdent (they work inside code fences and math, where Tab means something else), toggle collapse.
+- **Ctrl+Shift+K** — the caret's line of a multi-line block (a CodeMirror change); a one-line block goes as a whole through `onDelete(id, {keepChildren: true, focusAbove: true})`: `removeBlockKeepChildren` lifts its children into its place (indented lines under a deleted line stay), and the block above gets the caret at its end. The handle menu's Delete still removes the subtree.
+- **New block above / below**, **indent / outdent**, **collapse / expand** (unbound) → `onEnterSibling(id, {above})`, indent / outdent (they work inside code fences and math, where Tab means something else), toggle collapse. New block below is what the new-note Enter does. Indent and outdent re-parent the block, which remounts its row: an open editor stays open with its selection (App's `keepEditorThrough`, which a move and another client's op use too), for Tab as for the command.
+- **Where a block can go** is each command's `when`: move up and indent need a sibling above, move down one below, outdent a parent (`getParentInfo`). The palette leaves an inapplicable one out, and the editing bar greys its button.
+- **Insert…** (unbound, needs the editor) → a `/` after the caret, with a space after a word, so the slash menu opens as if typed (`runInsertSlash`); nothing inside math or a fence. **Inline equation** (unbound, formatting) → `$…$` around the selection, else `$x$` with the x selected (`runInsertMath`).
 - **Toggle to-do** (unbound) → `toggleTodoLine` (mdMarks.js): `- [ ]` ↔ `- [x]` on the caret's line, a line without a box gets one after its list marker. **Select block text** (unbound) selects it. The handle menu's add-to-chat, move-to-page and delete-subtree are palette entries too.
 - **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code.
 
@@ -97,7 +100,7 @@ A few keys belong to a widget while it is active. They are not commands, so the 
 
 The account preference `keybindings` (`PREFS` in [app/prefDefs.js](../../frontend/src/app/prefDefs.js), scope `account`, so it travels in the profile — [settings.md](settings.md)) is `{ command id → chord | null }`: a chord rebinds, `null` unbinds, an absent id keeps the default. The codec keeps only well-formed entries and does not check ids against the catalog, so an entry for a command that no longer exists is ignored rather than dropped.
 
-Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` in the settings kit, `KeyCaps` from [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), which the guide draws too). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red. The pane does not forbid it: a block chord shadowing an app chord can be intended. The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only. It leads with the Enter preference, "Enter makes" New note / New line (`enterNewNote`, an account preference, so the section carries its scope tag), and its Enter rows follow that choice. Each row carries its command's icon from [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), one map keyed by command id (and by the fixed rows' ids) that the palette reads too. A command missing there shows the generic command glyph.
+Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` in the settings kit, `KeyCaps` from [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), which the guide draws too). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red. The pane does not forbid it: a block chord shadowing an app chord can be intended. The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only. It leads with the Enter preference, "Enter makes" New note / New line (`enterNewNote`, an account preference, so the section carries its scope tag), and its Enter rows follow that choice. Each row carries its command's icon from [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), one map keyed by command id (and by the fixed rows' ids) that the palette and the editing bar read too. A command missing there shows the generic command glyph.
 
 Guide copy never types a chord: a tour or hint names the command as `{key:app.quickOpen}` and the guide shows its effective chord the same way, rebinding included ([onboarding.md](onboarding.md)).
 

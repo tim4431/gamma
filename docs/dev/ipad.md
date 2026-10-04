@@ -227,6 +227,11 @@ Raw touches carry everything `gamma-ink` stores.
   on a PDF page or a sheet nor makes them. A box shows as a note row with
   its text, which edits like any note. The browser redraws the box at the
   new text's size and stores that size at its next local edit of the box.
+- Shaping the notes. `NotesView` is a list of text fields: it edits a
+  note's text, adds one at the end and deletes one by a swipe. It cannot
+  indent, outdent, move, add a note after another or format, and the
+  replica's `edits.js` has no edits for those. The web app's editing bar
+  ([below](#the-editing-bar)) has no native counterpart.
 - A per-page choice of what to keep offline: every file comes over, like
   a desktop clone.
 - Sync in the background, and resolving a conflict from the app (the
@@ -333,11 +338,93 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   switches to the library's `--bg-surface` so the status bar continues it
   (`paintStatusBar` in App.jsx).
 
-Nothing else is tablet-specific: the viewport meta already disables
-browser zoom in favour of each viewer's own pinch-zoom (the PDF's and the
-notebook's — [notebooks.md](notebooks.md)), `touch-action:
-manipulation` removes double-tap zoom, and both layouts carry the touch
-rules the ink layer and the viewer already have.
+### The editing bar
+
+The notes take Tab, Shift+Enter and Ctrl chords for their structure and
+formatting. The iPad's on-screen keyboard has no Tab or Ctrl, and no
+dependable Shift+Return ([research/touch.md](../research/touch.md)). So
+while a note's editor is open on a touch screen, a bar sits on top of the
+keyboard (`editor/EditBar.jsx`):
+
+**Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
+block · Bold · Italic · Link · Inline equation · Undo · Redo … **Done**
+
+- **Every tool is a command.** All but Undo and Redo are block commands
+  ([hotkeys.md](hotkeys.md)), run with the context the row's keydown
+  dispatches with (`commandContext` in `BlockTree.jsx`). So a button does
+  what the same command does from a key or the palette.
+  - Three of them exist for the bar and have no default chord:
+    `block.insertMenu`, `block.newBelow` and `block.math` (each is
+    described in [hotkeys.md](hotkeys.md)).
+  - Undo and Redo are the page's block history (App's `undoBlocks`), as
+    Ctrl+Z.
+  - A button whose command's `when` fails is greyed out: Outdent at the
+    top level, Indent and Move up on a first child, Move down on a last.
+  - Done blurs the editor, which closes it and the keyboard.
+- **When it shows.** It shows when the primary pointer is coarse, or the
+  press that opened the editor was a finger (a touch laptop). Where the
+  primary pointer is fine, a mouse or trackpad press never brings it. It is
+  read once when the editor opens (`touchEditing`). A read-only page opens
+  no editor, so it has no bar.
+- **What it looks like.** The markup tool strip's surface and separators
+  (`.pdfInkBar`, `.pdfInkSep`), centred and floating 6 px above what it
+  sits on. Its `ctlBtn`s carry the strip's 16 px icons and are 36 px, the
+  ink menu's finger size.
+- **Where it sits.** It is `position: fixed`, its `top` set from the
+  visual viewport's bottom, the top of the keyboard (`measure`). iPadOS
+  does not shrink the layout viewport for its keyboard, and `top` is
+  measured in the layout viewport, as `visualViewport.offsetTop` is.
+  - iPadOS moves the visual viewport itself: the keyboard slides, and a
+    scroll pans the view under the keyboard. Safari draws that move at
+    once, but a script can only follow a frame later, so a bar chasing it
+    would shake. Instead the bar steps aside while its place keeps
+    changing (`.moving`: invisible, not pressable). It fades back in once
+    its place has been still for 150 ms (`useBarPlace`).
+  - Opening an editor counts as a move for 350 ms, the keyboard's rise, so
+    the bar appears with the keyboard rather than under it.
+  - The events do not always come at the end of a move, and none come when
+    the keyboard returns to an editor that kept the focus. So the
+    viewport's and the window's events, a focus change and a tap each
+    watch the place for a second, a frame at a time.
+  - It never sits lower than the top of the compact shell's bottom bar.
+    That bar must stay reachable when no keyboard is up: a new page opens
+    its first block's editor by itself, and a hardware keyboard raises
+    none.
+  - With neither a keyboard nor a bottom bar, it sits on the screen's
+    edge, clear of the home indicator (`.editBar.atEdge`).
+  - Its layer, `--z-editbar`, is over the compact shell's full-screen Notes
+    panel and under the editor's own popups.
+  - The room it takes at the visual viewport's bottom (`editBarSpace()`)
+    is the editor's bottom scroll margin, so the caret scrolls into view
+    above it. Caret-anchored popups (the slash menu, the math preview,
+    `useCaretAnchored`) leave that room free.
+  - On a narrow screen the tools scroll sideways and Done stays at the end.
+- **The keyboard stays up.** iPadOS keeps it while focus stays in the
+  editor, and raises it again only for a `focus()` made during a gesture.
+  - A press never takes focus: the bar cancels `pointerdown` and
+    `mousedown`, and its buttons have `tabIndex` −1.
+  - A command runs inside `flushSync`, so a row that re-renders, or
+    remounts, does so within the tap.
+  - Indent and outdent remount the row. App keeps its editor open through
+    that (`keepEditorThrough`, [hotkeys.md](hotkeys.md#the-block-commands-plumbing)),
+    and the bar puts the caret back in the same tap (`keepCaret`).
+  - A Backspace in an empty block moves on to the end of the block shown
+    above (`onDelete`'s `focusAbove`).
+- **The keyboard's own undo.** The iPad keyboard's undo and redo keys, and
+  the three-finger swipes, send `beforeinput` `historyUndo` /
+  `historyRedo`. A note row's `BlockCmEditor` hands them to the block
+  history (its `onUndo`), so the browser never undoes CodeMirror's DOM
+  there. An editor without `onUndo` (a text box's, an embed card's) leaves
+  them to the browser.
+
+Apart from the bar and the compact shell, the touch rules are the ones the
+ink layer and the viewers already carry. The viewport meta asks for no
+browser zoom, leaving pinch-zoom to each viewer (the PDF's and the
+notebook's, [notebooks.md](notebooks.md)). Safari tabs ignore it, so the
+compact layout also refuses Safari's gesture events (`App.jsx`). Whether a
+pinch outside the viewers zooms the app in landscape is a device check
+([research/touch.md](../research/touch.md)). `touch-action: manipulation`
+removes double-tap zoom.
 
 ### Not built (and why)
 
@@ -356,6 +443,11 @@ rules the ink layer and the viewer already have.
 
 - `backend/tests/test_static.py`: the manifest's media type and cache
   header.
+- `frontend/tests/editBar.test.mjs`: the Insert and Inline equation edits
+  (`slashInsertAt`, `mathInsertAt` in `editor/markCommands.js`; neither
+  applies inside math or a code fence), where Move up / down, Indent and
+  Outdent apply (their `when`), and the bar's three commands starting
+  unbound.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
   Chromium touch contexts:
   - Tablet-sized: the manifest parses with `standalone` display, and every
@@ -372,6 +464,29 @@ rules the ink layer and the viewer already have.
     page), the listing bar inside the screen, a long title wrapping with its
     chips under it, More's sheet opening Background tasks, and the Library
     tab going home.
+  - The editing bar, upright, by tap. A tap on a note opens it with the bar
+    floating centred above the bottom bar, its buttons 36 px wide, Outdent
+    greyed out at the top level.
+    - A stand-in visual viewport plays the keyboard. The bar lands on it
+      when its event comes before the move, stays on it when the view
+      scrolls, and finds it back on the next tap when it returns with no
+      event. Through a pan that goes on for 40 frames it never shows, and
+      it shows where the pan stops.
+    - Indent, Outdent and Move down change the saved tree, and after each
+      the same block's editor still has the focus.
+    - New block focuses a new empty block.
+    - Bold wraps the selection; Undo and Redo take it back and put it
+      back, and so do the keyboard's `historyUndo` / `historyRedo` input
+      events.
+    - Inline equation inserts `$x$`, its x typed over.
+    - Insert opens the slash menu, and a tapped item applies.
+    - Done closes the editor and the bar.
+    - A mouse context's editor has no bar.
   - Only the device can check the Add to Home Screen flow, the status-bar
-    paint and the home indicator.
+    paint and the home indicator. It is also needed for these editing-bar
+    behaviors:
+    - the bar riding on the on-screen keyboard (emulation has none)
+    - the keyboard staying up through every button, Indent and Outdent
+      included
+    - the keyboard's own undo key sending `historyUndo`
 - `node tools/branding/build.mjs --check` pins the icons to the mark.

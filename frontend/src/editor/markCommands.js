@@ -1,6 +1,7 @@
 // The formatting commands of the block editor (bold, italic, code, strike,
-// highlight, link) as functions of a CodeMirror view. Plain JS, no editor
-// imports: editor/blockCommands.js binds them to keys and node tests load
+// highlight, link, inline math) and the "/" that opens the insert menu, as
+// functions of a CodeMirror view. Plain JS, no editor imports:
+// editor/blockCommands.js makes them catalog commands and node tests load
 // the catalog. Toggle semantics live in mdMarks.toggleMark; inside math, a
 // code fence or inline code a formatting key is swallowed and does nothing —
 // letting it through would hand Ctrl+B to the browser (Firefox: bookmarks).
@@ -8,12 +9,52 @@ import { fenceInnerAt } from "./fences.js";
 import { insertLink, isUrl, scanMarks, toggleMark } from "./mdMarks.js";
 import { scanMathSpans } from "./mdScan.js";
 
+// Whether [from, to] is in a code fence or reaches inside a math span (a
+// caret: strictly between its delimiters), where marks, "/" and "$" mean
+// nothing.
+function inFenceOrMath(doc, from, to) {
+  return fenceInnerAt(doc, from) || fenceInnerAt(doc, to)
+    || scanMathSpans(doc).some((s) => s.from < to && from < s.to);
+}
+
 function markBlockedAt(doc, from, to, marker) {
-  if (fenceInnerAt(doc, from) || fenceInnerAt(doc, to)) return true;
-  if (scanMathSpans(doc).some((s) => s.from < to && from < s.to)) return true;
+  if (inFenceOrMath(doc, from, to)) return true;
   if (marker === "`") return false;
   return scanMarks(doc).some((s) => s.marker === "`" && s.from < from && to < s.to);
 }
+
+// The insert menu without typing (the touch editing bar, editor/EditBar.jsx):
+// a "/" after the selection, with a space before it when it would follow a
+// word, so the row's slash trigger opens the menu as if it had been typed.
+// Null inside math or a code fence, where "/" is no command.
+export function slashInsertAt(doc, from, to) {
+  if (inFenceOrMath(doc, to, to)) return null;
+  const insert = to > 0 && !/\s/.test(doc[to - 1]) ? " /" : "/";
+  return { changes: [{ from: to, to, insert }], selection: { anchor: to + insert.length } };
+}
+
+// Inline math without typing "$": the selection wrapped in $…$ with its
+// text still selected, or "$x$" with the x selected at the caret (as /math
+// inserts it). Null inside math or a fence, or across lines.
+export function mathInsertAt(doc, from, to) {
+  if (inFenceOrMath(doc, from, to)) return null;
+  if (from === to) return { changes: [{ from, to, insert: "$x$" }], selection: { anchor: from + 1, head: from + 2 } };
+  if (doc.slice(from, to).includes("\n")) return null;
+  return {
+    changes: [{ from, to: from, insert: "$" }, { from: to, to, insert: "$" }],
+    selection: { anchor: from + 1, head: to + 1 },
+  };
+}
+
+function runInsert(view, plan) {
+  const { from, to } = view.state.selection.main;
+  const r = plan(view.state.doc.toString(), from, to);
+  if (r) view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
+  return true;
+}
+
+export const runInsertSlash = (view) => runInsert(view, slashInsertAt);
+export const runInsertMath = (view) => runInsert(view, mathInsertAt);
 
 export function runToggleMark(view, marker) {
   const doc = view.state.doc.toString();

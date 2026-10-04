@@ -44,6 +44,7 @@
   --z-dock: 20;            /* controls floating over a pane: zoom column, page widget, dock close */
   --z-float: 30;           /* status pills and small popovers over those controls */
   --z-phone-overlay: 80;   /* the phone layout's full-screen panels */
+  --z-editbar: 90;         /* the touch editing bar over the keyboard, under the editor's popups */
   --z-dropdown: 100;       /* a suggestion list under its field */
   --z-overlay: 1000;       /* banners and hover previews over the app */
   --z-popover: 1100;       /* topbar popovers, drop indicators */
