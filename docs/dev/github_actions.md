@@ -1,6 +1,6 @@
 # GitHub Actions
 
-Seven workflows live in `.github/workflows/`. A merge to `main` publishes
+Eight workflows live in `.github/workflows/`. A merge to `main` publishes
 only the Docker image and, when the site or its inputs changed, the website. The desktop app, with the browser extension on the same
 release, is released by dispatching `desktop.yml` — the `release` skill
 does that — and nothing is bumped or tagged by hand: versions are computed
@@ -17,6 +17,7 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
+| `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
@@ -46,6 +47,7 @@ release skill ───▶ desktop.yml  meta: version = max(package.json, newest
   run)                  zip the extension, the same version pinned into its manifest
                         publish: Release v<version> (notes = commits since previous tag)
                         └─▶ dispatch docker.yml -f version   ─▶ ghcr :<version> :<major.minor>
+                        └─▶ dispatch chrome-store.yml -f tag ─▶ Chrome Web Store review (if CWS_* variables)
                         Windows leg: MSIX → msstore publish (if PARTNER_CENTER_* secrets)
 ```
 
@@ -128,8 +130,8 @@ The `extension` job copies `extension/` with the version written into
 `manifest.json` (a pre-release suffix such as `-rc1` goes to `version_name`,
 since Chrome's `version` takes only numbers), leaves out `STORE.md`,
 `README.md` and `.DS_Store`, and zips it as `gamma-connector-<version>.zip`.
-The Chrome Web Store upload stays manual
-([extension/STORE.md](../../extension/STORE.md)).
+After the release, the publish job dispatches `chrome-store.yml` with the
+tag, which submits that zip to the Chrome Web Store (below).
 
 The `publish` job merges the platform, plugin and extension artifacts,
 writes the notes — download table, per-platform install hints, **Changes:
@@ -150,6 +152,22 @@ release and, for a `-dev` build, its branch's head (`gamma/version.py`,
 No push trigger: the app bundles the backend and the frontend, so a path
 filter would release it on nearly every merge. It runs only when dispatched
 (`release` skill).
+
+## `chrome-store.yml`
+
+One Ubuntu job, dispatched by the desktop publish job with the new tag (a
+release made with `GITHUB_TOKEN` fires no `release` event) or by hand with
+any tag, blank meaning the latest release. It refuses a pre-release, since
+that zip carries the final version number and the store accepts each
+version once. It downloads `gamma-connector-*.zip` from the release, signs
+in with Workload Identity Federation (`google-github-actions/auth`, no
+stored key) as the service account linked to the publisher, and calls the
+Chrome Web Store API V2: `fetchStatus`, `upload`, polling until the upload
+is processed, then `publish`. It skips with a notice when an earlier
+version is still `PENDING_REVIEW` (it never cancels a review) or when the
+store already has that version. `publish=false` leaves the upload as a
+draft. Setup, including the store item that only the dashboard can create:
+[extension/STORE.md](../../extension/STORE.md).
 
 ## `check.yml`
 
@@ -250,6 +268,7 @@ gh workflow run desktop.yml --ref main                       # release (next ver
 gh workflow run desktop.yml --ref main -f publish=false      # build check only
 gh workflow run desktop.yml --ref main -f prerelease=true -f version=1.2.0-rc1
 gh workflow run docker.yml --ref v0.2.3 -f version=0.2.3     # re-tag an image
+gh workflow run chrome-store.yml --ref main                  # submit the latest release's Connector zip again
 gh workflow run docker.yml --ref dev                         # branch image :sha-<short> only (never :latest)
 gh workflow run site.yml --ref dev                           # check + deploy gammapdf.com — the `build-site` skill
 gh workflow run cloud.yml --ref dev                          # test + publish the account server — the `build-cloud` skill
@@ -279,6 +298,13 @@ shows which exist.
 
 Set them from a terminal with `gh secret set NAME` (prompts for the value);
 never paste secret values into chat or files.
+
+Repository variables (`gh variable list`, `gh variable set NAME --body …`)
+hold configuration that is not a credential:
+
+| Variable | Used by |
+|---|---|
+| `CWS_PUBLISHER_ID`, `CWS_ITEM_ID`, `CWS_SERVICE_ACCOUNT`, `CWS_WORKLOAD_IDENTITY_PROVIDER` | `chrome-store.yml` (and `desktop.yml`, which dispatches it only when `CWS_ITEM_ID` is set): the store item and the keyless Google sign-in ([extension/STORE.md](../../extension/STORE.md)) |
 
 ## Adding or changing a workflow
 

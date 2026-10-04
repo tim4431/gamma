@@ -41,7 +41,7 @@ export async function triggeredGuideScenarios(env) {
     await editRow(page, rowText);
     await page.keyboard.press("Enter");
     await page.keyboard.type("/table");
-    await page.locator(".slashMenu .slashMenuItem", { hasText: "2×2 markdown table" }).click();
+    await page.locator(".slashMenu .slashMenuItem", { hasText: "2×2 table" }).click();
     await until(async () => (await page.locator(".blockEditorCm .cm-content").textContent()).includes("|"), { what: "the table source is in the editor" });
     await closeEditor(page);
     await page.waitForSelector('[data-guide="notes.table"]');

@@ -44,7 +44,8 @@ its own: its zip rides on the same release with the same version.
    desktop publish job re-dispatches `docker.yml` with the version, so the
    image gets a matching `:<version>` tag on its own, and uploads the
    Gamma Connector zip and the Codex plugin zip, its setup scripts and
-   checksums onto the same release.
-
-Follow-ups to offer, not to run: the Chrome Web Store upload of a new
-extension zip is manual (`extension/STORE.md`).
+   checksums onto the same release. When the `CWS_*` repository variables
+   exist it also dispatches `chrome-store.yml`, which submits the Connector
+   zip to the Chrome Web Store (`gh run list --workflow chrome-store.yml
+   --limit 1` once the release is out; a notice says when an earlier
+   version is still in review and this one was skipped).

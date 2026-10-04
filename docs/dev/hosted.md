@@ -1,6 +1,6 @@
 # Hosted servers and the fleet
 
-A Plus or Pro account on Gamma Cloud gets a Gamma container of its own at
+A Lite, Plus or Pro account on Gamma Cloud gets a Gamma container of its own at
 `<username>.<GAMMA_CLOUD_HOSTED_DOMAIN>`. The account server
 ([cloud_accounts.md](cloud_accounts.md)) decides which containers should
 exist and what limits each one runs under. A small agent on every host

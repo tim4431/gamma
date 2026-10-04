@@ -1,35 +1,100 @@
 # Publishing to the Chrome Web Store
 
-Store publishing can't be automated from the repo: it needs a one-time
-developer registration (a Google account, a US$5 fee), a manual dashboard
-upload, and Google's review (usually 1–3 days, longer for `<all_urls>`
-extensions). Everything below is prepared so the dashboard visit is
-copy-paste.
+Each release's `gamma-connector-<version>.zip` (built by `desktop.yml`)
+goes to the store on its own through `.github/workflows/chrome-store.yml`
+(Chrome Web Store API V2). Two things stay manual and happen once: creating
+the store item, which the API cannot do, and letting GitHub Actions sign in
+as your publisher. Google reviews every version (usually 1–3 days, longer
+for `<all_urls>` extensions).
 
-## Steps
+## 1. Create the store item (once, by hand)
 
-1. Register at <https://chrome.google.com/webstore/devconsole> (pay the fee,
-   verify the account e-mail).
-2. Build the zip: run the `desktop` GitHub workflow (Actions tab → desktop
-   → Run workflow, or the `release` skill) — it attaches
-   `gamma-connector-X.Y.Z.zip` (X.Y.Z = the release's version, written into
-   the zipped manifest) to the GitHub Release next to the desktop
-   installers. Or locally:
-   `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md`.
+1. Register at <https://chrome.google.com/webstore/devconsole>: pay the
+   US$5 fee, verify the contact e-mail, and turn on 2-Step Verification on
+   the Google account (the dashboard requires it to publish).
+2. Take the zip from the newest release
+   (<https://github.com/tim4431/Gamma/releases/latest>). Or build it
+   locally: `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md`.
 3. Dashboard → **New item** → upload the zip.
-4. Fill in the listing (below), upload screenshots (1280×800 or 640×400:
-   the popup on an arXiv page, the popup on a PDF tab, the options page),
-   pick category **Productivity**, language English.
-5. **Privacy** tab: single purpose + permission justifications (below),
-   disclose *website content* and optional *authentication information*
-   → "not sold, not used for unrelated purposes". Link the privacy policy
-   (a page on your Gamma domain or the repo README section).
-6. Distribution: **Public**, or **Unlisted** if this stays a personal tool —
-   unlisted still gives an install link and auto-updates, without a
-   searchable listing.
-7. Submit for review. For every later upload use a newer release's zip:
-   the store refuses a re-used version, and each release's zip carries a
-   new one.
+4. **Store listing**: the copy below, category **Productivity**, language
+   English, and the required images: the 128×128 icon is in the zip, plus
+   a 440×280 small promo tile and at least one 1280×800 (or 640×400)
+   screenshot (the popup on an arXiv page, the popup on a PDF tab, the
+   options page).
+5. **Privacy**: single purpose and permission justifications (below);
+   disclose *website content* and *authentication information*, certify
+   "not sold, not used for unrelated purposes"; privacy policy
+   <https://gammapdf.com/privacy> ([PRIVACY.md](../PRIVACY.md)).
+6. **Distribution**: **Public**, or **Unlisted** for an install link and
+   auto-updates without a searchable listing. The API cannot change this
+   later; only the dashboard can.
+7. **Submit for review.** Note the item's 32-letter ID (on its dashboard
+   page and in the store URL) and the **Publisher ID** (the dashboard's
+   publisher settings / Account page).
+
+## 2. Let GitHub Actions publish (once)
+
+The workflow signs in without a stored key: GitHub's OIDC token is
+exchanged for an access token of a Google Cloud service account (Workload
+Identity Federation), and that service account is linked to the publisher.
+In [Google Cloud Shell](https://console.cloud.google.com/?cloudshell=true)
+(or any shell with `gcloud`), with a project ID of your choice:
+
+```bash
+PROJECT_ID=gamma-connector-publish        # new or existing project
+REPO=tim4431/Gamma                        # exactly as GitHub spells it
+gcloud projects create "$PROJECT_ID"      # skip for an existing project
+gcloud config set project "$PROJECT_ID"
+gcloud services enable chromewebstore.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
+gcloud iam service-accounts create cws-publisher --display-name="Gamma Connector publisher"
+gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions"
+gcloud iam workload-identity-pools providers create-oidc gamma \
+  --location=global --workload-identity-pool=github \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == '$REPO'"
+POOL=$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')
+gcloud iam service-accounts add-iam-policy-binding "cws-publisher@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/$POOL/attribute.repository/$REPO"
+gcloud iam workload-identity-pools providers describe gamma \
+  --location=global --workload-identity-pool=github --format='value(name)'   # → CWS_WORKLOAD_IDENTITY_PROVIDER
+```
+
+Then:
+
+1. Developer Dashboard → **Account** → **Service account**: add
+   `cws-publisher@<project>.iam.gserviceaccount.com` (one per publisher).
+2. Set the four repository variables. They are variables, not secrets, since none of them is a
+   credential:
+
+   ```bash
+   gh variable set CWS_PUBLISHER_ID --body "<publisher id>"
+   gh variable set CWS_ITEM_ID --body "<item id>"
+   gh variable set CWS_SERVICE_ACCOUNT --body "cws-publisher@<project>.iam.gserviceaccount.com"
+   gh variable set CWS_WORKLOAD_IDENTITY_PROVIDER --body "projects/<number>/locations/global/workloadIdentityPools/github/providers/gamma"
+   ```
+
+3. Check the sign-in: `gh workflow run chrome-store.yml --ref main -f publish=false`.
+   While the first version is in review this reads the item's status and
+   stops with "still in review", which proves the chain works. After that it
+   uploads a draft without submitting it.
+
+## 3. Every release
+
+`desktop.yml`'s publish job dispatches `chrome-store.yml` with the new tag
+(pre-releases excluded). It uploads the zip, waits for the store to
+process it, and submits it for review; the run's summary shows the
+resulting state (`PENDING_REVIEW`, usually). While an earlier version is
+still in review the store accepts no new package: the run skips with a
+notice and never cancels the review; the next release, or
+`gh workflow run chrome-store.yml --ref main` (latest release) once the
+review is over, carries the changes. Each release's zip has a new version,
+so the store never sees a re-used one.
+
+Store installs get a store-assigned extension ID, so a browser that had
+the unpacked Connector loaded keeps both until the unpacked one is
+removed; settings are per install (enter the server address again).
 
 ## Listing copy
 
@@ -72,7 +137,6 @@ Gamma server.
 | `storage` | Remembers the server address, the default folder/labels, and per-tab detection state. |
 | `contextMenus` | "Save link / page / selection to Gamma" items. |
 | `activeTab`, `tabs` | Read the current tab's URL/title for detection and the badge. |
-| `scripting` | Reserved for re-running detection on demand. |
 | `notifications` | Result of a context-menu or keyboard-shortcut save when no popup is open. |
 | Optional `cookies` | Requested only when the user clicks Connect / Refresh in the popup's publisher-session drawer. Reads applicable cookies for the selected publisher host and sends a snapshot to the displayed Gamma server/account for later PDF downloads. Once a host has been connected this way, the Connector re-sends that host's cookies when the user visits it and the server's copy is over an hour old (can be turned off in the options); hosts the user never connected are never read. Normal saves do not read or transfer cookie values. |
 

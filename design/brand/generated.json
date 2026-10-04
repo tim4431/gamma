@@ -27,7 +27,7 @@
     "tools/branding/mark.mjs": "058db1f84fb4faa93e179f6b565eeb015b0598efe8dbd861c9e946317ef961e3",
     "tools/branding/render.mjs": "6a1bf0808bd8aaba7f8446b9d843530e11b028693c1066ccacb5ff2bc813014b",
     "tools/branding/runtime.mjs": "7c1ba52f4b42922a9384e860132311affe5887370430399423311d8bca975836",
-    "tools/branding/store-layouts.mjs": "fe18376358075cd3ace68a155865c4b38ac20664b926c2491796169fbc4f3a23",
+    "tools/branding/store-layouts.mjs": "1d79a5f016547f19b18adfa7dd72132084207c4e6f13e3d34f2cb22c952a35b8",
     "tools/branding/svg-source.mjs": "5b4843f96d03859e4f79b7f1ad8489b9e0e89507ab4636fe25e9ce55aa9fc020",
     "tools/branding/test_branding.py": "6379bf01b46fa28a3af9f70ae08926775a019e2430a84f932403bcd530d344dd"
   },
@@ -814,6 +814,24 @@
         256
       ],
       "sha256": "d93fa9cc06cc8ac29c04115984147ab4ce2b731dfca532145fd1bd61e0b95f99"
+    },
+    "extension/store/promo-440x280.png": {
+      "source": "tools/branding/store-layouts.mjs",
+      "variant": "promo-440x280",
+      "size": [
+        440,
+        280
+      ],
+      "sha256": "2d45b7fe239690586898a23e18dbd29e7fe0fb737670749e6c90f3ab7ac1f168"
+    },
+    "extension/store/marquee-1400x560.png": {
+      "source": "tools/branding/store-layouts.mjs",
+      "variant": "marquee-1400x560",
+      "size": [
+        1400,
+        560
+      ],
+      "sha256": "3fc258bbae82c7eb02970be78f9797e845486f9e550cf4f640788bd4c582e952"
     },
     "docs/assets/branding/gamma-hero-light.png": {
       "source": "docs/assets/branding/gamma-hero-light.svg",

@@ -33,7 +33,7 @@ class CheckoutBody(BaseModel):
 
 @router.post("/checkout")
 def checkout(body: CheckoutBody, request: Request):
-    """``{price: plus_month | plus_year | pro_month | pro_year}`` → ``{url}``,
+    """``{price: lite_month | lite_year | plus_month | plus_year | pro_month | pro_year}`` → ``{url}``,
     the Checkout Session the browser goes to."""
     account = _signed_in(request)
     ratelimit.check(f"checkout:{account['id']}", 20, 3600)

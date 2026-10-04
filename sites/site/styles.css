@@ -287,7 +287,7 @@ li + li { margin-top: 8px; }
 .pricing { padding: 64px 0 96px; }
 .pricing__head { text-align: center; display: flex; flex-direction: column; align-items: center; margin-bottom: 44px; }
 .pricing__head h1 { font-size: clamp(32px, 4.6vw, 52px); letter-spacing: -0.03em; margin-bottom: 16px; }
-.plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
+.plans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; align-items: stretch; }
 .plan { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; display: flex; flex-direction: column; gap: 10px; }
 .plan--featured { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .plan__name { font-size: 20px; }
@@ -299,6 +299,7 @@ li + li { margin-top: 8px; }
 .pricing__notes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 56px; }
 .pricing__notes h3 { font-size: 16px; margin-bottom: 8px; }
 .pricing__notes p { color: var(--text-2); font-size: 14.5px; }
+@media (max-width: 1100px) { .plans { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 900px) { .plans { grid-template-columns: 1fr; } .pricing__notes { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .pricing__notes { grid-template-columns: 1fr; } }
 

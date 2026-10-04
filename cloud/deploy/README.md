@@ -289,8 +289,9 @@ are configured in `.env`:
   is empty (no checkout; plans are only granted by an admin or an invite).
 - `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET`: the signing secret of the webhook
   endpoint, which Stripe calls at `POST https://account.gammapdf.com/api/billing/webhook`.
-- `GAMMA_CLOUD_STRIPE_PRICE_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`,
-  `_PRO_YEAR`: the Stripe Price id behind each plan and interval.
+- `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`,
+  `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR`: the Stripe Price id behind each
+  plan and interval.
 
 `docker compose up -d` after editing them (the env is read at start).
 
