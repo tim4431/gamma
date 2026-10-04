@@ -207,8 +207,9 @@ class AgentLoop:
                     # Kept whole on the turn the next round replays; its
                     # text goes up for the reply to save and send back.
                     thinking = data
-                    if reasoning_text(data):
-                        yield ("reasoning", reasoning_text(data))
+                    said = reasoning_text(data)
+                    if said:
+                        yield ("reasoning", said)
                 elif kind == "usage":
                     if self.on_usage:
                         self.on_usage(data)

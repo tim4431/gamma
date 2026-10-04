@@ -311,7 +311,8 @@ AI:
 - **Connections**: the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
-  the named services, a custom endpoint and its API format), the key with the
+  the named services by vendor, a Plan menu for a vendor with several, or a
+  custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
   Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only

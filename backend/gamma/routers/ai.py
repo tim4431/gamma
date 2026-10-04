@@ -1727,7 +1727,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # What else the model takes: pictures (one that reads text only gets
     # none, nor a tool that answers with one) and how long a reply, its
     # thinking included.
-    pictures = ai_catalog.image_input(entry["provider"], conf, entry["model"])[0] is not False if conf else True
+    pictures = (ai_catalog.image_input(entry["provider"], conf, entry["model"])[0] is not False) if conf else True
     scope["pictures"] = pictures
     cap = ai_catalog.reply_cap(conf, entry["model"]) if conf else DEFAULT_MAX_TOKENS
 
@@ -1880,9 +1880,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     for kind, data in _sse_events(resp, _protocol(rt, entry)):
                         if kind == "text":
                             yield json.dumps({"delta": data}) + "\n"
-                        elif kind == "reasoning" and reasoning_text(data):
+                        elif kind == "reasoning":
                             # Saved with the reply and sent back on the next turn.
-                            yield json.dumps({"reasoning": reasoning_text(data)}) + "\n"
+                            said = reasoning_text(data)
+                            if said:
+                                yield json.dumps({"reasoning": said}) + "\n"
                         elif kind == "usage":
                             usage.append(data)
                         elif kind == "stop" and truncated_stop(data):

@@ -11,15 +11,16 @@ change nothing when absent:
 
 - ``group`` / ``plan``: the dialog's Service menu lists the groups, and a
   group of several presets gets a Plan menu of their ``plan`` labels. The
-  labels are a small fixed vocabulary the browser translates (``PLAN_LABELS``
-  in frontend/src/settings/providerEditor.js names them for the catalog).
+  labels are a small fixed vocabulary the browser translates
+  (``SERVICE_WORDING`` in frontend/src/settings/providerEditor.js names them
+  for the catalog), and so is ``note``.
 - ``note``: a sentence the dialog shows under the Plan menu.
 - ``catalog``: the models.dev provider key of the service, for model facts
   when its host names none (``Protocol.catalog_hints``).
 - ``cache_key``: the endpoint takes OpenAI's ``prompt_cache_key``.
 - ``max_tokens``: the chat's reply cap. Thinking counts toward it on these
-  services, so it is above the default; a model whose own output limit is
-  known lower gets that (``ai_catalog.output_limit``).
+  services, so it is above the default, bounded by the model's own output
+  limit (``ai_catalog.reply_cap``).
 """
 
 # The chat's reply cap where a service sets none, and the one a service
