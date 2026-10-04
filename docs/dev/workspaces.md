@@ -57,6 +57,12 @@ username". Such an invitation grants edit or view access, never ownership:
    deleted. If the person is already a member, the existing role stays.
    Rows for a workspace that is gone or no longer shared are dropped.
 
+Under the `invited` sign-in policy a pending row is also what admits a
+newcomer: a cloud account with no account here is provisioned only when an
+invitation to a shared workspace waits for its subject, and the claim then
+makes it a member ([cloud_accounts.md](cloud_accounts.md) "Which local
+account").
+
 Pending rows are keyed by subject, not by username, so a later rename on
 either side does not redirect an invitation. `GET /workspaces/{id}` lists
 pending rows after the members, tagged `pending: true` with their `subject`.

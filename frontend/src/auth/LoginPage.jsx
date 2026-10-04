@@ -106,6 +106,8 @@ function takeCloudError() {
 // `error`: a message, or {text, field: "password"} when the password was
 // refused — that field then takes the focus and a red border. `onBack`
 // returns to what the visitor was reading (a share view's own Sign in).
+// `readOnly`: a hosted server whose plan lapsed (server-config's
+// `read_only`): signing in still works, to read and export.
 export function LoginPage({
   username,
   password,
@@ -119,6 +121,7 @@ export function LoginPage({
   demo = false,
   guestSeeded = false,
   guestTtlHours,
+  readOnly = false,
   next = window.location.pathname + window.location.search,
   onBack,
 }) {
@@ -131,6 +134,9 @@ export function LoginPage({
   React.useEffect(() => { if (badPassword) passwordRef.current?.focus(); }, [error, badPassword]);
   const hours = Number(guestTtlHours) || 0;
   const signIn = <>
+    {readOnly ? (
+      <LoginError>{t("This server is read-only: you can sign in to read and export your data, but nothing can be changed.")}</LoginError>
+    ) : null}
     {cloudLogin?.enabled ? <>
       <a className="loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
         title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>

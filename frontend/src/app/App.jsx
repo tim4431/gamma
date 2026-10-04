@@ -7604,8 +7604,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onUsernameChange={setLoginUser}
         onPasswordChange={setLoginPass}
         onSubmit={doLogin}
-        onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
+        // a read-only hosted server makes no guest accounts (gamma/hosted.py)
+        onGuestLogin={serverConfig?.guest === false || serverConfig?.read_only ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
+        readOnly={!!serverConfig?.read_only}
         demo={!!serverConfig?.demo && serverConfig?.guest !== false}
         guestSeeded={!!serverConfig?.guest_seeded}
         guestTtlHours={serverConfig?.guest_ttl_hours}

@@ -605,6 +605,8 @@ workspaces only that account owned, each copied to `backups/deleted/`
 first — refused when a copy cannot be written; guest accounts too), `list-users`,
 `list-identities` / `link-identity` / `unlink-identity` (the Gamma Cloud
 identity of an account, [cloud_accounts.md](cloud_accounts.md)),
+`hosted-sync` (a hosted container's plan sync, run once and printed;
+[cloud_accounts.md](cloud_accounts.md) "Hosted containers"),
 `sweep-guests [--all]` (delete the expired guest accounts now; `--all`
 every guest), `setup` (idempotent: a personal workspace for every account +
 missing files; creates no guest). Workspaces: `list-workspaces`,

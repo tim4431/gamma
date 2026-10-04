@@ -11,7 +11,7 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_sync, config, db_maintenance, guests, jobs, migrations, offsite
+from . import backup_schedule, cloud_sync, config, db_maintenance, guests, hosted, jobs, migrations, offsite
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -186,6 +186,20 @@ def _startup_maintenance():
             log.error(f"[startup] workspace {ws_id} could not be opened, the others are served: {e}")
 
 
+async def read_only_gate(request: Request, call_next):
+    """A hosted server its plan made read-only (gamma/hosted.py): every
+    state-changing /api request but ``hosted.READ_ONLY_ALLOWED`` is refused
+    with 423 and the reason. Inside the session middleware, so the refusal
+    is logged like any answer. Collaboration needs nothing of its own: an
+    op batch is a POST, and the page socket carries only carets."""
+    if (hosted.enabled() and request.method in hosted.WRITE_METHODS and request.url.path.startswith("/api/")
+            and not hosted.allowed_when_read_only(request.url.path)):
+        refusal = hosted.read_only()  # from memory: tick loaded it at startup
+        if refusal:
+            return JSONResponse({"detail": refusal, "read_only": True}, status_code=423)
+    return await call_next(request)
+
+
 @asynccontextmanager
 async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
@@ -235,6 +249,7 @@ def create_app() -> FastAPI:
         # /mcp route from scope["state"]) — it must pass through here.
         async with mcp.lifespan(app) as state, backup_schedule.lifespan(), \
                 every(cloud_sync.CHECK_INTERVAL, cloud_sync.check_all, "cloud: the grant check failed"), \
+                every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
@@ -256,6 +271,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"error": "workspace_not_upgradable", "build": version.label(),
                              **migrations.guidance(exc)}, status_code=503, headers={"Retry-After": "60"})
 
+    app.middleware("http")(read_only_gate)  # added first: runs inside the session middleware
     app.middleware("http")(session_middleware)
     app.add_middleware(JsonGzip)  # outermost: compresses what the rest answered
 

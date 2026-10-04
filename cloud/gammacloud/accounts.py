@@ -9,13 +9,19 @@ Everything takes an open connection and commits nothing: the router owns
 the transaction so one request is one commit. The ``Problem`` exception
 carries the status and the message the API returns; the app's handler
 answers it.
+
+``accounts.plan`` is the effective plan every claim reads, and it is
+computed (``recompute_plan``): the higher of ``granted_plan`` (what an admin
+or an invite gave) and the plan the account's Stripe subscription pays for
+while it is live (``billed_plan``). docs/dev/billing.md has the rule.
 """
 
 import re
+from contextlib import closing
 
 import bcrypt
 
-from . import config, mail, settings
+from . import config, db, mail, settings
 from .db import after, audit, new_id, new_token, now, token_hash
 
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
@@ -194,21 +200,104 @@ def email_taken(conn, email: str, exclude_id: str = "") -> bool:
         (email, email_canon(email), exclude_id)).fetchone() is not None
 
 
-def public(account) -> dict:
-    """What the account owner (and ``/api/me``) sees."""
-    return {
+def public(account, conn=None) -> dict:
+    """What the account owner (and ``/api/me``) sees. ``plan_source`` says
+    where the effective plan comes from (``stripe`` / ``granted`` / ``free``);
+    ``renews_at`` and ``cancel_at`` are the paid period's end when the
+    subscription renews or ends then. A paid plan reads the subscription
+    row, through ``conn`` or a short connection of its own."""
+    out = {
         "id": account["id"], "username": account["username"], "email": account["email"],
         "email_verified": bool(account["email_verified_at"]), "display_name": account["display_name"],
-        "plan": account["plan"], "is_admin": bool(account["is_admin"]), "created_at": account["created_at"],
+        "plan": account["plan"], "granted_plan": account["granted_plan"], "plan_source": "free",
+        "renews_at": None, "cancel_at": None,
+        "is_admin": bool(account["is_admin"]), "created_at": account["created_at"],
         "has_password": bool(account["password_hash"]),
         "app_signed_in": bool(account["app_signed_in_at"]),
     }
+    if account["plan"] == "free":  # nothing pays for or grants more: the subscription adds nothing
+        return out
+    if conn is None:
+        with closing(db.connect()) as own:
+            sub = subscription(own, account["id"])
+    else:
+        sub = subscription(conn, account["id"])
+    out.update(plan_terms(account, sub))
+    return out
+
+
+# --- the effective plan -------------------------------------------------------
+
+# Stripe's subscription statuses that pay for the plan. ``past_due`` counts
+# too, but only through the grace period (``config.GRACE_DAYS``).
+LIVE_STATUSES = ("active", "trialing")
+
+
+def _rank(plan: str) -> int:
+    return config.PLAN_RANK.get(plan, 0)
+
+
+def subscription(conn, account_id: str):
+    """The account's ``subscriptions`` row, or None."""
+    return conn.execute("SELECT * FROM subscriptions WHERE account_id = ?", (account_id,)).fetchone()
+
+
+def in_grace(sub) -> bool:
+    """A failed payment still inside the grace period."""
+    return bool(sub and sub["status"] == "past_due" and sub["past_due_since"]
+                and sub["past_due_since"] > after(-config.GRACE_DAYS * 86400))
+
+
+def billed_plan(sub) -> str:
+    """The plan the subscription row pays for right now: its plan while the
+    status is live or a failed payment is in grace, else ``free``."""
+    if not sub or sub["plan"] not in config.PLANS:
+        return "free"
+    return sub["plan"] if sub["status"] in LIVE_STATUSES or in_grace(sub) else "free"
+
+
+def plan_terms(account, sub) -> dict:
+    """``plan_source``, ``renews_at`` and ``cancel_at`` for ``public``."""
+    billed = billed_plan(sub)
+    if billed != "free" and _rank(billed) >= _rank(account["granted_plan"]):
+        source = "stripe"
+    else:
+        source = "granted" if account["granted_plan"] != "free" else "free"
+    ends = billed != "free" and bool(sub["cancel_at_period_end"])
+    return {"plan_source": source,
+            "renews_at": sub["current_period_end"] if billed != "free" and not ends else None,
+            "cancel_at": sub["current_period_end"] if ends else None}
+
+
+def recompute_plan(conn, account_id: str, actor: str = "system", source: str = "", notify: bool = False) -> str:
+    """Set ``plan`` to the higher of the granted and the billed plan, and
+    return it. A change is audited with its ``source`` (``stripe`` /
+    ``admin`` / ``invite``). The hosted server hears of it
+    (``hosted.plan_changed``) when the plan changed, and always with
+    ``notify``: billing passes it after every subscription write, so a grace
+    period or a cancel reaches the server before the plan itself moves."""
+    from . import hosted  # imported here: hosted.py may import this module
+    account = conn.execute("SELECT plan, granted_plan FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if not account:
+        return "free"
+    billed = billed_plan(subscription(conn, account_id))
+    granted = account["granted_plan"] if account["granted_plan"] in config.PLANS else "free"
+    plan = billed if _rank(billed) > _rank(granted) else granted
+    changed = plan != account["plan"]
+    if changed:
+        conn.execute("UPDATE accounts SET plan = ? WHERE id = ?", (plan, account_id))
+        audit(conn, "account.plan", account_id, actor,
+              f"{account['plan']} -> {plan} source={source or 'system'} granted={granted} billed={billed}")
+    if changed or notify:
+        hosted.plan_changed(conn, account_id)
+    return plan
 
 
 # --- creation -----------------------------------------------------------------
 
 def take_invite(conn, code: str) -> str:
-    """Consume one use of an invite code; returns the plan it grants. In
+    """Consume one use of an invite code; returns the plan it grants
+    (``create`` stores it as the account's ``granted_plan``). In
     ``open`` mode a missing code is fine; in ``invite`` mode it is required;
     in ``closed`` mode registration is refused before this is reached."""
     code = (code or "").strip()
@@ -250,12 +339,16 @@ def create(conn, *, email: str, username: str, password: str | None, plan: str =
         raise Problem(400, "unknown plan")
     account_id = new_id()
     ts = now()
+    # The plan an invite (or the operator) gives is a grant; the effective
+    # plan follows from it.
     conn.execute(
         "INSERT INTO accounts (id, username, email, email_canon, email_verified_at, password_hash, display_name, "
-        "plan, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "plan, granted_plan, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'free', ?, ?)",
         (account_id, username, email, email_canon(email), ts if verified else None,
          hash_password(password) if password else None, display_name[:100], plan, ts))
     audit(conn, "account.create", account_id, actor or account_id, f"username={username} plan={plan}")
+    if plan != "free":
+        recompute_plan(conn, account_id, actor or account_id, "admin" if actor else "invite")
     return by_id(conn, account_id)
 
 
@@ -330,9 +423,17 @@ def email_changed_notice(account, new_email: str) -> tuple[str, str, str]:
 # --- changes ------------------------------------------------------------------
 
 def mark_verified(conn, account_id: str) -> None:
-    conn.execute("UPDATE accounts SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?",
-                 (now(), account_id))
+    """Every path that confirms an address comes here (the mail link, a
+    reset, a Google/GitHub sign-in on the address, the admin). The first
+    confirmation tells the hosted side (``hosted.plan_changed``): a hosted
+    server waits for a confirmed e-mail, so a paid plan granted at
+    registration (an invite) gets its server once the link is clicked."""
+    from . import hosted  # imported here: hosted.py imports this module
+    first = conn.execute("UPDATE accounts SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL",
+                         (now(), account_id)).rowcount
     audit(conn, "account.verify", account_id, account_id)
+    if first:
+        hosted.plan_changed(conn, account_id)
 
 
 def set_password(conn, account_id: str, password: str, actor: str = "") -> None:
@@ -355,8 +456,17 @@ def set_username(conn, account_id: str, username: str, actor: str = "") -> None:
     """Rename. The account id (the OIDC ``sub``) is what Gamma servers key
     on, so a rename changes nothing there until the next sign-in refreshes
     the claims; a deleted account's name stays taken through its grace
-    period like at registration."""
+    period like at registration. Refused while the account has a hosted
+    server that is not deleted: its hostname, public URL and redirect URI
+    were fixed from the username at provisioning (a rename job is later
+    work, docs/research/cloud-plans.md "Lifecycle")."""
     username = norm_username(username)
+    current = conn.execute("SELECT username FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if current and current["username"] == username:
+        return
+    if conn.execute("SELECT 1 FROM hosted_servers WHERE account_id = ? AND state != 'deleted' AND deleted_at IS NULL",
+                    (account_id,)).fetchone():
+        raise Problem(409, "Your hosted server is named after your username; contact support to rename.")
     if conn.execute("SELECT 1 FROM accounts WHERE username = ? AND id != ?", (username, account_id)).fetchone():
         raise Problem(409, "That username is taken.")
     conn.execute("UPDATE accounts SET username = ? WHERE id = ?", (username, account_id))
@@ -364,10 +474,14 @@ def set_username(conn, account_id: str, username: str, actor: str = "") -> None:
 
 
 def set_plan(conn, account_id: str, plan: str, actor: str) -> None:
+    """The courtesy grant (the Admin page's plan select, ``manage.py
+    set-plan``). A subscription above it keeps the higher plan, and the
+    grant outlives the subscription."""
     if plan not in config.PLANS:
         raise Problem(400, "unknown plan")
-    conn.execute("UPDATE accounts SET plan = ? WHERE id = ?", (plan, account_id))
-    audit(conn, "account.plan", account_id, actor, plan)
+    conn.execute("UPDATE accounts SET granted_plan = ? WHERE id = ?", (plan, account_id))
+    audit(conn, "account.grant", account_id, actor, plan)
+    recompute_plan(conn, account_id, actor, "admin")
 
 
 def set_admin(conn, account_id: str, is_admin: bool, actor: str) -> None:
@@ -421,9 +535,15 @@ def restore(conn, account_id: str, actor: str) -> None:
 
 def purge(conn, account_id: str, actor: str = "system") -> None:
     """Remove an account and every row that references it (the audit log
-    keeps its history); its username and e-mail are free again."""
-    for table in ("identities", "portal_sessions", "email_tokens", "grants", "access_tokens", "prefs",
-                  "servers_linked"):
+    keeps its history); its username and e-mail are free again. A live
+    hosted server is deleted first (``hosted.purge_account``). The
+    subscription copy goes too: only a deleted account is purged, and the
+    deletion already cancelled the subscription at Stripe
+    (``billing.cancel_for_deletion``); ``billing_events`` keeps the id."""
+    from . import hosted  # imported here: hosted.py imports this module
+    hosted.purge_account(conn, account_id, actor)
+    for table in ("subscriptions", "identities", "portal_sessions", "email_tokens", "grants", "access_tokens",
+                  "prefs", "servers_linked"):
         conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
     conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
     audit(conn, "account.purge", account_id, actor)
