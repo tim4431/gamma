@@ -25,11 +25,10 @@
 #            as well, where every hosted server answers as
 #            `gamma-<label>` (`docker network create --subnet
 #            10.203.0.0/24 gamma-fleet`, once per host, same rule).
-#   fleet    the fleet agent (cloud/fleet/): the Docker socket, the hosted
-#            servers' data under /srv/gamma, its host token from .env
-#            (GAMMA_FLEET_HOST_TOKEN). Off unless the `fleet` profile is
-#            on (COMPOSE_PROFILES=fleet in .env), so a deployment without
-#            hosting runs nothing with the socket.
+#
+# The fleet agent that starts those hosted servers is not a service here: it
+# is its own compose project, cloud/fleet/deploy/ (/root/Container/gamma-fleet/
+# on the VPS), which shares only the gamma-fleet network with this one.
 #
 # Variants layered with -f: compose.tunnel.yml replaces caddy with a
 # Cloudflare Tunnel (no open port; a NAS); compose.build.yml builds the
@@ -79,31 +78,6 @@ services:
       - account
       - share
 
-  fleet:
-    image: ghcr.io/tim4431/gamma-fleet:latest
-    restart: unless-stopped
-    profiles: [fleet]
-    environment:
-      GAMMA_FLEET_ACCOUNT_URL: http://account:9002
-      GAMMA_FLEET_HOST_TOKEN: ${GAMMA_FLEET_HOST_TOKEN:-}
-      GAMMA_FLEET_NETWORK: gamma-fleet
-      GAMMA_FLEET_DATA_ROOT: /srv/gamma
-      # the off-site bucket every hosted server copies to, under hosted/<account id>/
-      GAMMA_FLEET_S3_BUCKET: ${GAMMA_FLEET_S3_BUCKET:-}
-      GAMMA_FLEET_S3_ENDPOINT: ${GAMMA_FLEET_S3_ENDPOINT:-}
-      GAMMA_FLEET_S3_REGION: ${GAMMA_FLEET_S3_REGION:-}
-      GAMMA_FLEET_S3_ACCESS_KEY: ${GAMMA_FLEET_S3_ACCESS_KEY:-}
-      GAMMA_FLEET_S3_SECRET_KEY: ${GAMMA_FLEET_S3_SECRET_KEY:-}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      # the same path inside and out: the agent hands it to the daemon as a bind mount
-      - /srv/gamma:/srv/gamma
-    networks:
-      - default
-      - fleet
-    depends_on:
-      - account
-
 volumes:
   caddy-data:
   caddy-config:
@@ -122,7 +96,7 @@ networks:
   # The hosted servers' network, created by hand with a pinned subnet
   # (10.203.0.0/24) that each server trusts for X-Forwarded-For. External,
   # so a `docker compose down` here never tries to remove it from under
-  # the running servers.
+  # the running servers, which the fleet agent's own project starts on it.
   fleet:
     name: gamma-fleet
     external: true

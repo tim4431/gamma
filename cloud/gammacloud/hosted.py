@@ -19,7 +19,8 @@ their transaction) and the clock (``tick``, hourly). ``state``:
 
 ``limits`` is the answer the container gets from ``POST /api/hosted/sync``
 (``limits_for``), recomputed on every pass so its dates and message are
-current.
+current. Its ``memory_mb`` and ``cpus`` are the container's size: a pass
+that changes them recreates the container with the new size (``_resize``).
 """
 
 import hashlib
@@ -37,6 +38,7 @@ LAPSED = ("canceled", "unpaid", "incomplete_expired")
 STATUS = {"provisioning": "active", "running": "active", "grace": "grace", "read_only": "read_only",
           "suspended": "read_only", "stopped": "stopped", "deleted": "stopped"}
 DELETE_WARNING_DAYS = 7
+WAITING = "waiting for a host with room"   # the report note of a server no host has room for
 
 
 def _hosted(plan) -> bool:
@@ -132,7 +134,7 @@ def limits_for(row, plan: str, grace_until: str | None) -> dict:
         status = "grace"
     return {"plan": plan, "status": status, "read_only": row["state"] in READ_ONLY_STATES,
             "policy": p["policy"], "max_accounts": p["max_accounts"], "quota_mb": p["quota_mb"],
-            "max_upload_mb": p["max_upload_mb"],
+            "max_upload_mb": p["max_upload_mb"], "memory_mb": p["memory_mb"], "cpus": p["cpus"],
             "offsite": {"interval_s": p["offsite_interval_s"], "keep": p["offsite_keep"]},
             "grace_until": grace_until if status == "grace" else None,
             "message": _message("grace" if status == "grace" else row["state"], row, grace_until)}
@@ -192,8 +194,9 @@ def _created(conn, row) -> bool:
 
 def _apply(conn, row, actor: str) -> dict:
     """Move a live server to what its account says now and store its
-    limits; returns them."""
-    previous = fleet.json_dict(row["limits"]).get("plan", "")
+    limits; returns them. A plan with another size resizes the container."""
+    before = fleet.json_dict(row["limits"])
+    previous = before.get("plan", "")
     plan, status, grace_until = target(_account(conn, row["account_id"]), _subscription(conn, row["account_id"]),
                                        previous)
     state = row["state"]
@@ -220,7 +223,46 @@ def _apply(conn, row, actor: str) -> dict:
                     "the plan before then brings it back as it was."], _plan_button())
     if previous and previous != plan and row["state"] != "deleted":
         db.audit(conn, "hosted.limits", row["account_id"], actor, f"{row['label']} {previous} -> {plan}")
-    return _store_limits(conn, row["id"], plan, grace_until)
+    limits = _store_limits(conn, row["id"], plan, grace_until)
+    if before.get("memory_mb"):                   # a first store has nothing to move from: create sizes it
+        _resize_if_moved(conn, row["id"], fleet.size_of(before), actor)
+    return limits
+
+
+def _resize_if_moved(conn, server_id: str, was: tuple[int, float] | None, actor: str) -> None:
+    """Resize the server's container when its plan's size is not ``was``
+    (the size it was made or last sized with). ``None`` means unknown, a
+    create job whose payload was blanked: resize to be sure, which costs a
+    no-op update at most."""
+    row = _row(conn, server_id)
+    if row is None or row["state"] == "deleted":
+        return
+    size = fleet.size_of(fleet.json_dict(row["limits"]))
+    if was != size:
+        _resize(conn, row, size, actor)
+
+
+def _resize(conn, row, size: tuple[int, float], actor: str) -> None:
+    """Size the server's container to ``(memory_mb, cpus)``: an ``upgrade``
+    job that names no image, which the agent applies in place (Docker's
+    update: the same container and image, no restart, a stopped one stays
+    stopped); a queued one takes the new size rather than a second job. Before
+    the container exists, a queued create job takes it instead, and one
+    already running is resized when it is done (``job_finished``). A
+    server with no host is sized at placement."""
+    if not row["host_id"]:
+        return
+    fields = {"memory_mb": size[0], "cpus": size[1]}
+    kind = "upgrade" if _created(conn, row) else "create"
+    for job in conn.execute("SELECT id, payload FROM fleet_jobs WHERE server_id = ? AND kind = ? AND state = 'queued'",
+                            (row["id"], kind)).fetchall():
+        payload = fleet.json_dict(job["payload"])
+        if kind == "create" or not payload.get("image"):
+            conn.execute("UPDATE fleet_jobs SET payload = ? WHERE id = ?", (json.dumps({**payload, **fields}), job["id"]))
+            return
+    if kind == "upgrade":
+        fleet.enqueue(conn, row["host_id"], row["id"], "upgrade", {"label": row["label"], **fields})
+        db.audit(conn, "hosted.resize", row["account_id"], actor, f"{row['label']} {size[0]} MB, {size[1]:g} CPU")
 
 
 def plan_changed(conn, account_id: str, actor: str = "system") -> None:
@@ -294,13 +336,24 @@ def create(conn, account_id: str, actor: str = "system") -> None:
     _apply(conn, _row(conn, server_id), actor)
 
 
+def _plan_of(conn, row) -> str:
+    """The plan a server is placed and created for: the account's effective
+    plan while it is hosted, else the last one the server ran, else Plus."""
+    account = _account(conn, row["account_id"])
+    for plan in (account["plan"] if account else "", fleet.json_dict(row["limits"]).get("plan")):
+        if _hosted(plan):
+            return plan
+    return "plus"
+
+
 def create_payload(conn, server_id: str) -> dict:
     """The ``create`` job's payload, with a new client secret: the
     container's OIDC client is made on first use and its secret rotated on
-    every later build (the payload is the only place the secret exists)."""
+    every later build (the payload is the only place the secret exists).
+    The container is sized for its plan."""
     row = _row(conn, server_id)
-    account = _account(conn, row["account_id"])
-    plan = account["plan"] if _hosted(account["plan"]) else (fleet.json_dict(row["limits"]).get("plan") or "plus")
+    plan = _plan_of(conn, row)
+    p = config.PLAN_LIMITS[plan]
     url = url_of(row["label"])
     if row["client_id"] and oidc.get_client(conn, row["client_id"]):
         client_id, secret = row["client_id"], oidc.rotate_secret(conn, row["client_id"], actor="system")
@@ -310,29 +363,55 @@ def create_payload(conn, server_id: str) -> dict:
                                                server_id=row["id"], actor="system", owner=row["account_id"])
         conn.execute("UPDATE hosted_servers SET client_id = ? WHERE id = ?", (client_id, row["id"]))
     env = {"GAMMA_HOSTED": "1", "GAMMA_CLOUD_ISSUER": config.PUBLIC_URL, "GAMMA_CLOUD_CLIENT_ID": client_id,
-           "GAMMA_CLOUD_CLIENT_SECRET": secret, "GAMMA_CLOUD_POLICY": config.PLAN_LIMITS[plan]["policy"],
+           "GAMMA_CLOUD_CLIENT_SECRET": secret, "GAMMA_CLOUD_POLICY": p["policy"],
            "GAMMA_CLOUD_ADMIN_SUBJECT": row["account_id"], "GAMMA_PUBLIC_URL": url}
     return {"label": row["label"], "account_id": row["account_id"], "plan": plan,
             "image": f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}", "env": env,
-            "data_dir": row["label"], "memory_mb": None, "cpus": None, "network": None, "public_url": url}
+            "data_dir": row["label"], "memory_mb": p["memory_mb"], "cpus": p["cpus"], "network": None,
+            "public_url": url}
 
 
-def _provision(conn, row) -> None:
+def _provision(conn, row, quiet: bool = False) -> bool:
     """Place a ``provisioning`` server with no host and enqueue its create
-    job. No host with room: the row waits (a note in its report) and the
-    hourly tick tries again."""
-    plan = fleet.json_dict(row["limits"]).get("plan") or _account(conn, row["account_id"])["plan"]
-    if not _hosted(plan):
-        plan = "plus"
+    job; whether it was placed. No host with room: the row waits (a note
+    in its report), and the next heartbeat or the hourly tick tries again.
+    ``quiet`` (a heartbeat's retry) logs nothing for a server still
+    waiting, since that repeats every five minutes per host."""
+    plan = _plan_of(conn, row)
     host = fleet.place(conn, plan)
     if host is None:
-        note = {**fleet.json_dict(row["report"]), "note": "waiting for a host with room"}
-        conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(note), row["id"]))
-        log.warning("no fleet host has room for %s (%s)", row["label"], plan)
-        return
+        report = fleet.json_dict(row["report"])
+        if report.get("note") != WAITING:
+            conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?",
+                         (json.dumps({**report, "note": WAITING}), row["id"]))
+        if not quiet:
+            log.warning("no fleet host has room for %s (%s)", row["label"], plan)
+        return False
     conn.execute("UPDATE hosted_servers SET host_id = ?, report = '{}' WHERE id = ?", (host["id"], row["id"]))
     fleet.enqueue(conn, host["id"], row["id"], "create", create_payload(conn, row["id"]))
     db.audit(conn, "hosted.place", row["account_id"], "system", f"{row['label']} on {host['name']}")
+    return True
+
+
+def place_waiting(conn) -> int:
+    """Place every server still waiting for a host. A heartbeat calls it, so
+    a new host's first report, or room freed on one, takes the waiting
+    servers at once instead of at the next hourly tick. The caller commits."""
+    if not config.HOSTED_DOMAIN:
+        return 0
+    rows = conn.execute("SELECT * FROM hosted_servers WHERE state = 'provisioning' AND host_id = '' "
+                        "ORDER BY created_at").fetchall()
+    placed = 0
+    for row in rows:
+        # one server's failure must not fail the heartbeat that carries it
+        conn.execute("SAVEPOINT place_waiting")
+        try:
+            placed += _provision(conn, row, quiet=True)
+        except Exception as e:  # noqa: BLE001
+            conn.execute("ROLLBACK TO place_waiting")
+            log.warning("placing %s failed: %s", row["label"], e)
+        conn.execute("RELEASE place_waiting")
+    return placed
 
 
 def _delete(conn, row, actor: str, why: str = "") -> None:
@@ -348,16 +427,37 @@ def _delete(conn, row, actor: str, why: str = "") -> None:
     conn.execute("UPDATE hosted_servers SET deleted_at = ? WHERE id = ?", (db.now(), row["id"]))
 
 
+def _note(conn, row, note: str) -> None:
+    """Set (or with ``""`` clear) the admin's note in the server's report."""
+    report = fleet.json_dict(row["report"])
+    if note:
+        report["note"] = note
+    elif report.pop("note", None) is None:
+        return
+    conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(report), row["id"]))
+
+
+def _tag_of(image) -> str:
+    """The tag of a ``FLEET_IMAGE:<tag>`` image, else ``""``."""
+    prefix = config.FLEET_IMAGE + ":"
+    tag = image[len(prefix):] if isinstance(image, str) and image.startswith(prefix) else ""
+    return tag if fleet.TAG_RE.match(tag) else ""
+
+
 def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None:
-    """What a finished job changes on its server (``fleet.complete``)."""
+    """What a finished job changes on its server (``fleet.complete``,
+    ``fleet.fail_stuck``): a done create runs the server (and resizes it
+    when its plan's size moved meanwhile), a failed one leaves a note, a
+    done upgrade or rollback moves ``image_tag``."""
     row = _row(conn, job["server_id"]) if job["server_id"] else None
     if row is None:
         return
     error = str(result.get("error") or "")[:300] if not ok else ""
     db.audit(conn, f"fleet.job_{'done' if ok else 'failed'}", row["account_id"], "agent",
              f"{job['id']} {job['kind']} {row['label']}" + (f": {error}" if error else ""))
-    if job["kind"] == "create":
-        if ok and row["state"] == "provisioning":
+    if job["kind"] == "create" and ok:
+        _note(conn, row, "")
+        if row["state"] == "provisioning":
             _set_state(conn, row, "running", "agent", "created")
             _apply(conn, _row(conn, row["id"]), "agent")
             url = url_of(row["label"])
@@ -365,11 +465,13 @@ def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None
                 f"Your Gamma server is up at {url}. Sign in there with this Gamma Cloud account; you are its admin.",
                 "The desktop app, the browser extension and your assistants can all connect to that address."],
                 ("Open your Gamma", url))
-        elif not ok:
-            report = {**fleet.json_dict(row["report"]), "note": f"create failed: {error}"}
-            conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(report), row["id"]))
+        _resize_if_moved(conn, row["id"], fleet.size_of(payload) if payload.get("memory_mb") else None, "agent")
+    elif job["kind"] == "create":
+        _note(conn, row, f"create failed: {error}")
     elif job["kind"] == "upgrade" and ok and payload.get("tag"):
         conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (payload["tag"], row["id"]))
+    elif job["kind"] == "rollback" and ok and _tag_of(result.get("image")):
+        conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (_tag_of(result["image"]), row["id"]))
 
 
 # --- the hourly pass ----------------------------------------------------------
@@ -425,6 +527,24 @@ def _tick_one(conn, row, now: str) -> None:
 # --- admin actions ------------------------------------------------------------
 
 ACTIONS = ("restart", "stop", "start", "suspend", "resume", "delete")
+JOB_ACTIONS = ("logs", "rollback")             # answered with the job, not the server
+
+
+def _live(conn, server_id: str, need_host: bool = False):
+    row = _row(conn, server_id)
+    if row is None:
+        raise Problem(404, "no such server")
+    if row["state"] == "deleted":
+        raise Problem(409, "the server is deleted")
+    if need_host and not row["host_id"]:
+        raise Problem(409, "the server has no host yet")
+    return row
+
+
+def _container_job(conn, row, kind: str, actor: str) -> str:
+    job_id = fleet.enqueue(conn, row["host_id"], row["id"], kind, {"label": row["label"]})
+    db.audit(conn, f"hosted.{kind}", row["account_id"], actor, row["label"])
+    return job_id
 
 
 def admin_action(conn, server_id: str, action: str, actor: str) -> dict:
@@ -434,16 +554,9 @@ def admin_action(conn, server_id: str, action: str, actor: str) -> dict:
     its next plan change)."""
     if action not in ACTIONS:
         raise Problem(400, "action must be " + ", ".join(ACTIONS))
-    row = _row(conn, server_id)
-    if row is None:
-        raise Problem(404, "no such server")
-    if row["state"] == "deleted":
-        raise Problem(409, "the server is deleted")
+    row = _live(conn, server_id, need_host=action in ("restart", "stop", "start"))
     if action in ("restart", "stop", "start"):
-        if not row["host_id"]:
-            raise Problem(409, "the server has no host yet")
-        fleet.enqueue(conn, row["host_id"], row["id"], action, {"label": row["label"]})
-        db.audit(conn, f"hosted.{action}", row["account_id"], actor, row["label"])
+        _container_job(conn, row, action, actor)
     elif action == "suspend":
         _set_state(conn, row, "suspended", actor, "admin")
         _apply(conn, _row(conn, server_id), actor)
@@ -457,7 +570,17 @@ def admin_action(conn, server_id: str, action: str, actor: str) -> dict:
     return admin_view(conn, _row(conn, server_id))
 
 
+def admin_job(conn, server_id: str, kind: str, actor: str) -> dict:
+    """``logs`` (the container's last lines, in the job's result) or
+    ``rollback`` (back to the container a failed upgrade kept): the job."""
+    if kind not in JOB_ACTIONS:
+        raise Problem(400, "action must be " + ", ".join(JOB_ACTIONS))
+    return fleet.job(conn, _container_job(conn, _live(conn, server_id, need_host=True), kind, actor))
+
+
 def admin_view(conn, row) -> dict:
+    """A server as the admin sees it: the row, its size and image (and
+    whether that is the fleet's default), its account and host."""
     out = {k: row[k] for k in row.keys()}
     out["read_only"] = bool(row["read_only"])
     out["limits"], out["report"] = fleet.json_dict(row["limits"]), fleet.json_dict(row["report"])
@@ -465,6 +588,10 @@ def admin_view(conn, row) -> dict:
     account = _account(conn, row["account_id"])
     out["username"] = account["username"] if account else ""
     out["plan"] = account["plan"] if account else ""
+    out["memory_mb"], out["cpus"] = fleet.size_of(out["limits"])
+    out["quota_mb"] = out["limits"].get("quota_mb") or config.PLAN_LIMITS[_plan_of(conn, row)]["quota_mb"]
+    out["image"] = f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}"
+    out["outdated"] = row["state"] != "deleted" and out["image"] != fleet.default_image()
     out["host"] = _host_name(conn, row["host_id"])
     out["jobs"] = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs WHERE server_id = ? GROUP BY state",
                                     (row["id"],)).fetchall())
@@ -483,7 +610,11 @@ def provision(conn, account_id: str, actor: str) -> dict:
         raise Problem(404, "no such account")
     if not _hosted(account["plan"]):
         raise Problem(400, f"The account's plan ({account['plan']}) has no hosted server.")
-    create(conn, account_id, actor)
+    row = _of_account(conn, account_id)
+    if row is not None and row["state"] == "provisioning" and not row["host_id"]:
+        _provision(conn, row)                     # a server still waiting for a host: try placing it now
+    else:
+        create(conn, account_id, actor)
     return admin_view(conn, _of_account(conn, account_id))
 
 

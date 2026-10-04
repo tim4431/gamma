@@ -88,14 +88,16 @@ PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 # sign-in policy the container runs: ``refuse`` admits the owner only (the
 # admin subject bypasses it), ``invited`` admits only subjects holding a
 # pending invitation there. Off-site copies: interval and generations kept.
+# ``memory_mb`` and ``cpus`` size the container (its Docker memory limit and
+# CPU share); placement counts the memory against the host.
 PLAN_LIMITS = {
     "free": {"hosted": False},
     "lite": {"hosted": True, "quota_mb": 1024, "max_upload_mb": 50, "max_accounts": 1,
-             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 3},
+             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 3, "memory_mb": 512, "cpus": 1.0},
     "plus": {"hosted": True, "quota_mb": 6 * 1024, "max_upload_mb": 100, "max_accounts": 1,
-             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 7},
+             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 7, "memory_mb": 768, "cpus": 1.0},
     "pro": {"hosted": True, "quota_mb": 100 * 1024, "max_upload_mb": 250, "max_accounts": 10,
-            "policy": "invited", "offsite_interval_s": 3600, "offsite_keep": 30},
+            "policy": "invited", "offsite_interval_s": 3600, "offsite_keep": 30, "memory_mb": 1536, "cpus": 2.0},
 }
 # The paid-server lifecycle (days): payment failed -> read-only; cancelled ->
 # read-only -> stopped -> deleted.

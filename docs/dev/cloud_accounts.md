@@ -124,7 +124,7 @@ the signing keys and every token hash.
 | `audit` | every account-changing event |
 | `prefs` | the preference profile: (`account_id`, `key`) → `value` (JSON text) and `updated_at`, the version (step 4) |
 | `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5), `version` (the build label it last reported, `''` until it does) and `schema` (its data directory's schema version, NULL until it reports; step 8) |
-| `hosts`, `hosted_servers`, `fleet_jobs` | the fleet's hosts, the hosted servers and the agents' job queue (step 9; [hosted.md](hosted.md) "Tables") |
+| `hosts`, `hosted_servers`, `fleet_jobs` | the fleet's hosts, the hosted servers and the agents' job queue (step 9; `hosts.orphans`, step 10; [hosted.md](hosted.md) "Tables") |
 | `subscriptions`, `billing_events` | the account server's copy of each Stripe subscription, and the webhook events it has seen (step 9; [billing.md](billing.md)). `accounts.granted_plan` is the plan an admin or an invite gave; `accounts.plan` is the effective one |
 
 Every secret at rest is a SHA-256 of a long random token

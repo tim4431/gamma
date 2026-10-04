@@ -9,7 +9,7 @@ NAS). The service itself is described in
 ```
 deploy/
   compose.yml          account, share + caddy (a VPS with a public address); caddy also on gamma-edge
-                       and gamma-fleet; the fleet agent behind the `fleet` profile
+                       and gamma-fleet (the fleet agent is its own project, ../fleet/deploy/)
   Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / gamma-demo /
                        gamma-<label> (hosted servers)
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
@@ -38,7 +38,10 @@ project's Caddy only routes its name to it over the external network
 the demo trusts that subnet's `X-Forwarded-For`). The same goes for
 `gamma-fleet` (`--subnet 10.203.0.0/24`), the hosted servers' network
 ("Hosted servers" below): create it before updating to a compose file
-that names it.
+that names it. The fleet agent that starts those servers is a third
+project, `/root/Container/gamma-fleet/`
+([../fleet/deploy/README.md](../fleet/deploy/README.md), the
+`update-fleet` skill).
 
 The Gamma image believes `X-Forwarded-For` from loopback only
 (`FORWARDED_ALLOW_IPS`), so every proxied Gamma here names its proxy: the
@@ -297,11 +300,13 @@ are configured in `.env`:
 
 ## Hosted servers
 
-A Plus or Pro account gets a Gamma container of its own at
+A Lite, Plus or Pro account gets a Gamma container of its own at
 `<username>.gammapdf.com`. The account server decides what should exist;
 a fleet agent on each host does the Docker work
-([docs/dev/hosted.md](../../docs/dev/hosted.md), the agent's own
-[README](../fleet/README.md)). Turning it on for this host:
+([docs/dev/hosted.md](../../docs/dev/hosted.md)). The agent is a compose
+project of its own, deployed and updated as
+[cloud/fleet/deploy/README.md](../fleet/deploy/README.md) says. This
+project's side of it:
 
 1. **The network.** `docker network create --subnet 10.203.0.0/24
    gamma-fleet`, once per host, before this compose file starts (Caddy
@@ -315,39 +320,40 @@ a fleet agent on each host does the Docker work
    `<label>.gammapdf.com` that is not `share`, `demo` or a `-pages` host to
    `gamma-<label>:9001`. Empty means hosting is off: no server is created,
    whatever the plan.
-3. **The host.** Admin → Servers → *Add host* (or `docker compose exec
-   account python manage.py add-host vps-1`) shows the agent's token once.
-   Put it into `.env` as `GAMMA_FLEET_HOST_TOKEN`, add
-   `COMPOSE_PROFILES=fleet`, and, for off-site copies, the
-   `GAMMA_FLEET_S3_*` bucket (each server copies under
-   `hosted/<account id>/`).
-4. **The agent image.** `fleet.yml` publishes
-   `ghcr.io/tim4431/gamma-fleet:latest` on every push to `main` touching
-   `cloud/fleet/` (or `gh workflow run fleet.yml --ref <branch>`); the
-   compose file pulls it. Update it with `docker compose pull fleet &&
-   docker compose up -d`.
+3. **The image.** `GAMMA_CLOUD_FLEET_IMAGE` (`ghcr.io/tim4431/gamma`) and
+   `GAMMA_CLOUD_FLEET_IMAGE_TAG` (`latest`) are what a new server runs. The
+   Servers tab shows that default and marks a server on another tag
+   *outdated*.
+4. **Payment.** The Stripe variables ("Billing" above) let a checkout move
+   an account to a hosted plan, and so create its server. Without them a
+   plan comes only from an admin's grant or an invite.
 5. `docker compose up -d`, then `docker compose exec caddy caddy reload
-   --config /etc/caddy/Caddyfile`. Within five minutes the host shows on
-   the Servers tab with its memory and disk; until its first heartbeat it
-   takes no servers.
-6. **A first server by hand.** Give an account a Plus or Pro plan on the
-   Accounts tab (a courtesy grant), or *Provision* its account id on the
-   Servers tab. The agent pulls the image, starts `gamma-<username>` with
-   its data in `/srv/gamma/<username>/data`, waits for its health check,
-   and the account gets a "Your Gamma is ready" mail.
+   --config /etc/caddy/Caddyfile`.
+6. **The agent**, on this host: [cloud/fleet/deploy/README.md](../fleet/deploy/README.md)
+   (*Add host* on the Servers tab, its token into the agent's own `.env`,
+   `docker compose up -d` in its folder). Its first heartbeat shows the
+   host on the Servers tab with its memory and disk; until then it takes
+   no servers.
+7. **A first server by hand.** Give an account a Plus or Pro plan on the
+   Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
+   The agent pulls the image, starts `gamma-<username>` with its data in
+   `/srv/gamma/<username>/data`, waits for its health check, and the
+   account gets a "Your Gamma is ready" mail.
 
-A second host runs only the agent (`cloud/fleet/README.md` has the
-`docker run` line, with `GAMMA_FLEET_ACCOUNT_URL=https://account.gammapdf.com`).
-Caddy on this host cannot reach its containers, so a server placed there
-also needs a DNS record of its own pointing at that host and a proxy
-there; until that exists, close the second host for placement or keep to
-one host.
+Caddy reaches a server by its container name on `gamma-fleet`, which
+resolves only on this host. So the agent that runs the servers must run
+here, next to Caddy, until each server gets a DNS record of its own (the
+fleet README's "One host for now"). Keep any other host closed for
+placement until then.
 
-The Servers tab is the operator's view of hosts, servers, upgrade waves
-and the job queue ([docs/dev/hosted.md](../../docs/dev/hosted.md)
-"Admin"). A host silent for 15 minutes shows *stale* and takes no new
-servers until it reports again. `manage.py hosts`, `servers`, `jobs`,
-`add-host` and `provision` do the same from the shell.
+The Servers tab is the operator's view of the fleet
+([docs/dev/hosted.md](../../docs/dev/hosted.md) "Admin"). It shows each
+host's capacity, heartbeat and orphan containers, each server's state,
+version and data, the actions (logs, upgrade and rollback among them),
+upgrade runs and the job queue. A host silent for 15 minutes shows
+*stale* and takes no new servers until it reports again. `manage.py
+hosts`, `servers`, `jobs`, `add-host` and `provision` do the same from
+the shell.
 
 ## Updating
 

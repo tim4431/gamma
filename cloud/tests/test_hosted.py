@@ -127,7 +127,7 @@ def test_sync_needs_the_containers_own_client(client, hosting):
     r = client.post("/api/hosted/sync", json=REPORT, headers=basic(client_id, secret))
     assert r.status_code == 200, r.text
     assert r.json() == {"plan": "plus", "status": "active", "read_only": False, "policy": "refuse",
-                        "max_accounts": 1, "quota_mb": 6144, "max_upload_mb": 100,
+                        "max_accounts": 1, "quota_mb": 6144, "max_upload_mb": 100, "memory_mb": 768, "cpus": 1.0,
                         "offsite": {"interval_s": 86400, "keep": 7}, "grace_until": None, "message": ""}
     row = server(alice)
     assert json.loads(row["limits"]) == r.json()          # what is stored is exactly the answer
@@ -193,6 +193,7 @@ def test_a_plus_grant_creates_a_server_and_its_create_job(client, hosting):
     payload = json.loads(job["payload"])
     assert job["kind"] == "create" and job["state"] == "queued"
     assert payload["label"] == "alice" and payload["image"] == f"{config.FLEET_IMAGE}:{config.FLEET_IMAGE_TAG}"
+    assert (payload["memory_mb"], payload["cpus"]) == (768, 1.0)          # sized for the plan
     env = payload["env"]
     assert env["GAMMA_HOSTED"] == "1" and env["GAMMA_CLOUD_ISSUER"] == config.PUBLIC_URL
     assert env["GAMMA_CLOUD_ADMIN_SUBJECT"] == alice and env["GAMMA_CLOUD_POLICY"] == "refuse"
