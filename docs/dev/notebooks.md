@@ -231,7 +231,7 @@ No schema change: sheets are blocks and properties.
 - `editor/BlockTree.jsx` numbers the sheets in the notes (an untitled
   sheet reads "Page N"), draws a `NoteSheet` in a sheet's row when
   `inlineSheets`, keeps a press on it from opening the editor, and offers
-  "Add page below" in the handle menu. `editor/SlashMenu.jsx` has
+  "Add page below" in the handle menu. `editor/slashCommands.js` has
   `/note` (a command's own name ranks before words that mention it, so
   it comes before the callout and the links). `/page` is the new library
   page ([home_library.md](home_library.md)); "page" is among `/note`'s

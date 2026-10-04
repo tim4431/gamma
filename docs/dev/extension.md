@@ -511,10 +511,13 @@ signed in to the same server works the same way.
 
 ## Not done yet
 
-- Firefox build (`background.scripts` + `webextension-polyfill`), Web Store
-  listing (the release zip `gamma-connector-<version>.zip` is built by
+- Firefox build (`background.scripts` + `webextension-polyfill`). The
+  Chrome release zip `gamma-connector-<version>.zip` is built by
   `.github/workflows/desktop.yml` and attached to the desktop release with
-  that release's version written into its manifest; `manifest.json`'s own
-  version is not used for releases — [github_actions.md](github_actions.md)).
+  that release's version written into its manifest (`manifest.json`'s own
+  version is not used for releases); `chrome-store.yml` then submits it to
+  the Chrome Web Store once the store item exists
+  ([extension/STORE.md](../../extension/STORE.md),
+  [github_actions.md](github_actions.md)).
 - Detection is client-side only for the badge; `find_page` scans every root
   page per lookup (fine for personal libraries, index it if that changes).

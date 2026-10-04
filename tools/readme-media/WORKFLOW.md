@@ -67,6 +67,17 @@ library. Use its exported copy for recording, not synthetic replacement papers.
 and library search for documentation. Read each image back and check that the
 paper and highlights have painted, panels are useful, and no loading state remains.
 
+`shoot-store.mjs` makes the Chrome Web Store screenshots in
+`extension/store/` ([extension/STORE.md](../../extension/STORE.md)): the
+atom-arrays paper with a highlight, its comment and the paper's chat (the
+hero's saved exchange, no AI asked), the library home with the home chat
+closed, and the home search for "Steane", which hits both quantum papers and
+no label or folder name, so no filter suggestions cover the results. A 1280 ×
+800 window at 1× on an isolated server with the curated export, waiting until
+every PDF is indexed; saved as RGB PNGs, since the store refuses alpha.
+`--inspect` saves the views to `artifacts/readme-media/store/` without the
+highlight; `QUERY` overrides the search.
+
 `shoot-hero.mjs` makes the website's hero, `docs/assets/screenshots/hero-app.webp`:
 an isolated server with the curated export, the atom-arrays paper on Fig. 1 in a
 2× window, a sentence highlighted with a comment in its notes, and the paper's

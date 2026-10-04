@@ -20,7 +20,9 @@ The logo uses the same Inter/Segoe UI system font stack as the hero.
 `build.mjs` distributes canonical artwork, generates README scenes, renders
 Store art and hero PNGs, and records provenance. `store-layouts.mjs` owns
 Store dimensions and layouts while loading geometry from the canonical
-sources. The desktop's `npm run store-art` remains an alias for the unified
+sources: the Microsoft Store art in `desktop/assets/` and the Chrome Web
+Store promo tile and marquee in `extension/store/` (opaque, as that store
+requires). The desktop's `npm run store-art` remains an alias for the unified
 generation.
 
 An `outputs.json` entry of kind `crop` publishes a window onto a

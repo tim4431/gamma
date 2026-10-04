@@ -49,5 +49,7 @@ cd cloud/fleet
 python -m pytest -q
 ```
 
-No image is published by CI yet; build it from a checkout with
-`docker build -t ghcr.io/tim4431/gamma-fleet:latest cloud/fleet`.
+`.github/workflows/fleet.yml` publishes `ghcr.io/tim4431/gamma-fleet:latest`
+and `:sha-<short>` on every push to `main` that touches this folder, and on
+a manual dispatch from any branch (`gh workflow run fleet.yml --ref dev`).
+To build by hand instead: `docker build -t ghcr.io/tim4431/gamma-fleet:latest cloud/fleet`.

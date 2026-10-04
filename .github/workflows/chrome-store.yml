@@ -1,0 +1,139 @@
+# Chrome Web Store: uploads a release's gamma-connector-<version>.zip to the
+# Gamma Connector store item and submits it for review (Chrome Web Store API
+# V2). Overview: docs/dev/github_actions.md; one-time setup: extension/STORE.md.
+#
+# Trigger: desktop.yml's publish job dispatches it with the new tag once the
+# release is out (a release made with GITHUB_TOKEN fires no `release` event,
+# the same reason docker.yml is dispatched), when the CWS_ITEM_ID variable is
+# set. A manual dispatch re-runs it for any release (blank tag = the latest).
+# Pre-releases are refused: their zip carries the final version number
+# (1.2.0 for 1.2.0-rc1), and the store accepts each version only once.
+#
+# Auth: no stored key. The job signs in through Workload Identity Federation
+# (GitHub's OIDC token) as a service account linked to the publisher in the
+# Developer Dashboard. Repository variables, not secrets (none is a
+# credential): CWS_PUBLISHER_ID, CWS_ITEM_ID, CWS_WORKLOAD_IDENTITY_PROVIDER
+# (projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>),
+# CWS_SERVICE_ACCOUNT (<name>@<project>.iam.gserviceaccount.com).
+#
+# While an earlier version is still in review the store takes no new package:
+# the run skips with a notice and the next release, or a manual re-run once
+# the review is over, carries the changes. It never cancels a review.
+
+name: chrome-store
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose gamma-connector zip to upload (blank = the latest release)"
+        required: false
+        default: ""
+      publish:
+        description: "Submit for review after the upload (off = leave it as a draft)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: chrome-store
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # gh release download
+      id-token: write # Workload Identity Federation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ITEM: publishers/${{ vars.CWS_PUBLISHER_ID }}/items/${{ vars.CWS_ITEM_ID }}
+    steps:
+      - id: zip
+        name: Download the release's Connector zip
+        env:
+          IN_TAG: ${{ inputs.tag }}
+          CONFIGURED: ${{ vars.CWS_PUBLISHER_ID != '' && vars.CWS_ITEM_ID != '' && vars.CWS_WORKLOAD_IDENTITY_PROVIDER != '' && vars.CWS_SERVICE_ACCOUNT != '' }}
+        run: |
+          if [ "$CONFIGURED" != true ]; then
+            echo "::error::the CWS_* repository variables are not all set (extension/STORE.md)"
+            exit 1
+          fi
+          tag=${IN_TAG:-$(gh release view --repo "$REPO" --json tagName --jq .tagName)}
+          if [ "$(gh release view "$tag" --repo "$REPO" --json isPrerelease --jq .isPrerelease)" = true ]; then
+            echo "::error::$tag is a pre-release; the store gets releases only (it accepts each version once)"
+            exit 1
+          fi
+          if ! gh release download "$tag" --repo "$REPO" --pattern 'gamma-connector-*.zip'; then
+            echo "::error::release $tag has no gamma-connector-*.zip"
+            exit 1
+          fi
+          zip=$(ls gamma-connector-*.zip)
+          version=$(unzip -p "$zip" manifest.json | jq -r .version)
+          { echo "zip=$zip"; echo "version=$version"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
+          echo "::notice::$tag: $zip (manifest version $version)"
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.CWS_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.CWS_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+
+      - name: Upload and submit for review
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          ZIP: ${{ steps.zip.outputs.zip }}
+          VERSION: ${{ steps.zip.outputs.version }}
+          TAG: ${{ steps.zip.outputs.tag }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          # api <method> <path> [curl args]: prints the response; on an HTTP
+          # error, puts the response in the error annotation and fails.
+          api() {
+            local method=$1 path=$2 out; shift 2; out=$(mktemp)
+            if ! curl -sS --fail-with-body -o "$out" -X "$method" -H "Authorization: Bearer $TOKEN" "$@" \
+                "https://chromewebstore.googleapis.com/$path"; then
+              echo "::error::$method $path: $(jq -c . "$out" 2>/dev/null || cat "$out")" >&2
+              return 1
+            fi
+            cat "$out"
+          }
+          channel() { jq -r ".$1.distributionChannels[0].crxVersion // empty" <<<"$status"; }
+
+          status=$(api GET "v2/$ITEM:fetchStatus")
+          jq . <<<"$status"
+          if [ "$(jq -r '.submittedItemRevisionStatus.state // empty' <<<"$status")" = PENDING_REVIEW ]; then
+            echo "::notice::Version $(channel submittedItemRevisionStatus) is still in review, so $VERSION is not uploaded. The next release, or re-running this workflow once the review is over, carries it."
+            exit 0
+          fi
+          published=$(channel publishedItemRevisionStatus)
+          newest=$(printf '%s\n%s\n' "$published" "$VERSION" | sort -V | tail -1)
+          if [ -n "$published" ] && { [ "$published" = "$VERSION" ] || [ "$newest" != "$VERSION" ]; }; then
+            echo "::notice::The store already has $published; $VERSION is not newer, nothing to upload."
+            exit 0
+          fi
+
+          up=$(api POST "upload/v2/$ITEM:upload" -T "$ZIP")
+          jq . <<<"$up"
+          state=$(jq -r '.uploadState // empty' <<<"$up")
+          for _ in $(seq 30); do
+            case "$state" in IN_PROGRESS|UPLOAD_IN_PROGRESS) ;; *) break ;; esac
+            sleep 10
+            state=$(api GET "v2/$ITEM:fetchStatus" | jq -r '.lastAsyncUploadState // empty')
+          done
+          if [ "$state" != SUCCEEDED ]; then
+            echo "::error::upload of $ZIP ended as ${state:-unknown}"
+            exit 1
+          fi
+
+          if [ "$PUBLISH" = false ]; then
+            echo "::notice::Gamma Connector $VERSION uploaded as a draft; submit it in the Developer Dashboard or re-run with publish on."
+            exit 0
+          fi
+          pub=$(api POST "v2/$ITEM:publish" -H 'Content-Type: application/json' -d '{"publishType":"DEFAULT_PUBLISH"}')
+          jq . <<<"$pub"
+          echo "::notice::Gamma Connector $VERSION ($TAG) submitted: $(jq -r '.state // "unknown"' <<<"$pub")"
+          echo "Gamma Connector **$VERSION** ($TAG) submitted to the Chrome Web Store: \`$(jq -r '.state // "unknown"' <<<"$pub")\`" >> "$GITHUB_STEP_SUMMARY"

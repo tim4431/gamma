@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from gammacloud import accounts, billing, config, db, hosted
 
-PRICES = {"plus_month": ("plus", "month", "price_plus_m"), "plus_year": ("plus", "year", "price_plus_y"),
+PRICES = {"lite_month": ("lite", "month", "price_lite_m"), "lite_year": ("lite", "year", "price_lite_y"),
+          "plus_month": ("plus", "month", "price_plus_m"), "plus_year": ("plus", "year", "price_plus_y"),
           "pro_month": ("pro", "month", "price_pro_m"), "pro_year": ("pro", "year", "price_pro_y")}
 PERIOD_END = 1893456000  # 2030-01-01
 
@@ -376,7 +377,8 @@ def test_plan_page_states(client, stripe):
     alice = signed_up(client)
     page = client.get("/plan")
     assert page.status_code == 200
-    assert "Choose Plus" in page.text and "Choose Pro" in page.text and "$50" in page.text and "self-host" in page.text
+    assert "Choose Lite" in page.text and "Choose Plus" in page.text and "Choose Pro" in page.text
+    assert "$20" in page.text and "$50" in page.text and "1 GB" in page.text and "self-host" in page.text
     assert "alice.gammapdf.test" in page.text and "Your current plan" in page.text
     # a free account Stripe does not know: the parameter alone is not a checkout
     page = client.get("/plan?checkout=success").text

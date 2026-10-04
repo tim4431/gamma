@@ -311,7 +311,7 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.waitForSelector(".slashMenu");
     assertEq(await page.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "Handwritten note",
       "/note picks the sheet, not a command that merely mentions notes");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab"); // accepts like Enter, as the \command completion does
     await page.waitForSelector(".noteSheet .nbSheet", { timeout: 5000 });
     assertEq((await page.$$(".blockEditorCm")).length, 0, "the block is the page now; its editor closed");
     const sheet = await until(async () => (await noteTree()).children.find((c) => c.properties?.sheet), { what: "the page on the server" });

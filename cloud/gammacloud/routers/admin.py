@@ -267,7 +267,7 @@ def list_subscriptions(request: Request, status: str = "", limit: int = 200):
             "LEFT JOIN accounts a ON a.id = s.account_id WHERE (? = '' OR s.status = ?) "
             "ORDER BY s.updated_at DESC LIMIT ?", (status, status, max(1, min(limit, 1000)))).fetchall()
         # ``test_mode``: a test key's customers live under /test/ in Stripe's dashboard.
-        return {"enabled": billing.enabled(), "test_mode": config.STRIPE_SECRET.startswith("sk_test_"),
+        return {"enabled": billing.enabled(), "test_mode": "_test_" in config.STRIPE_SECRET,
                 "subscriptions": [dict(r) for r in rows]}
 
 

@@ -41,8 +41,8 @@ def _host(username: str) -> str:
 
 def plan_lines(plan: str, username: str) -> list[str]:
     """The six lines a card lists (HTML), from ``config.PLAN_LIMITS``."""
-    if plan == "plus":
-        lim = config.PLAN_LIMITS["plus"]
+    if plan in ("lite", "plus"):
+        lim = config.PLAN_LIMITS[plan]
         return [f"A hosted Gamma of your own at <b>{pages.esc(_host(username))}</b>",
                 "One account; share links (view or edit) still work for anyone",
                 f"{_size(lim['quota_mb'])} for uploads, {lim['max_upload_mb']} MB per file",
@@ -199,7 +199,7 @@ def _ended(sub: dict, summary: dict, hosted: dict | None) -> str:
                 + (f" on {pages._date(sub['ended_at'])}." if sub["ended_at"] else "."))
         price = f"{sub['plan']}_{sub['interval'] or 'month'}"
         action = (f"<button class='btn btn--primary btn--sm' data-resume='{pages.esc(price)}'>Resume</button>"
-                  if can_buy(summary) and sub["plan"] in ("plus", "pro") else "")
+                  if can_buy(summary) and config.PLAN_LIMITS.get(sub["plan"], {}).get("hosted") else "")
     rows = ""
     if sub["read_only_until"] and sub["status"] != "unpaid":
         left = _days_left(sub["read_only_until"])
@@ -219,7 +219,7 @@ def _ended(sub: dict, summary: dict, hosted: dict | None) -> str:
 # --- the page -----------------------------------------------------------------
 
 STYLE = """<style>
-.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:12px}
+.plans{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:12px}
 .plancard{padding:18px;display:flex;flex-direction:column;gap:8px}
 .plancard.cur{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .plancard h3{font-size:16px;display:flex;align-items:center;gap:8px}.plancard .price{font-size:26px;font-weight:600;letter-spacing:-.02em}
@@ -231,6 +231,7 @@ STYLE = """<style>
 .plans:not(.y) [data-y],.plans.y [data-m]{display:none}
 .notice.bad{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
 .gap{margin-top:12px}.kv+.actions{margin-top:16px}#bmsg{margin:0 0 12px}#bmsg:empty{display:none}
+@media(max-width:1100px){.plans{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:820px){.plans{grid-template-columns:1fr}}
 </style>"""
 
