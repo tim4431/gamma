@@ -5,7 +5,7 @@ import path from 'node:path';
 import { markSvg } from './mark.mjs';
 import { logoSvg } from './logo.mjs';
 const read = name => fs.readFileSync(path.join(ROOT, 'design/brand', name), 'utf8');
-const BG = JSON.parse(read('tokens.json')).colors.background;
+const { background: BG, accent: ACCENT, muted: MUTED } = JSON.parse(read('tokens.json')).colors;
 const MARK = `<g transform="translate(4 4)">${markSvg(64, { bare: true })}</g>`;
 function tileSvg(px) {
   return markSvg(px);
@@ -77,6 +77,37 @@ for (const px of [16, 20, 24, 30, 32, 36, 40, 48, 64, 256]) {
   APPX_JOBS.push([`Square44x44Logo.targetsize-${px}_altform-unplated.png`, px, px, tileSvg(px)]);
 }
 
+// Chrome Web Store promo images for the Gamma Connector. Opaque: the store
+// takes JPEG or 24-bit PNG without alpha. The bare mark, "Gamma Connector"
+// set like the logo's name (logo.svg), and the listing's one-line pitch.
+const TYPE = `font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"`;
+const markAt = (x, y, px) => markSvg(px, { bare: true }).replace('<svg ', `<svg x="${x}" y="${y}" `);
+const connectorName = (x, y, px, anchor) => `<text x="${x}" y="${y}" ${TYPE} font-size="${px}" font-weight="700" letter-spacing="${-0.027 * px}" fill="#f0ede6" text-anchor="${anchor}">Gamma<tspan font-weight="400" fill="${ACCENT}" dx="${0.23 * px}">Connector</tspan></text>`;
+const pitch = (x, y, px, anchor, text) => `<text x="${x}" y="${y}" ${TYPE} font-size="${px}" fill="${MUTED}" text-anchor="${anchor}">${text}</text>`;
+// 440 × 280 small promo tile: everything centred, the mark above the name.
+function promoTileSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
+    <rect width="440" height="280" fill="${BG}"/>
+    ${markAt(160, 26, 120)}
+    ${connectorName(220, 196, 42, 'middle')}
+    ${pitch(220, 238, 19, 'middle', 'Save papers to Gamma in one click')}
+  </svg>`;
+}
+// 1400 × 560 marquee: the mark on the left, the name and pitch beside it.
+function marqueeSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560">
+    <rect width="1400" height="560" fill="${BG}"/>
+    ${markAt(110, 110, 340)}
+    ${connectorName(500, 268, 96, 'start')}
+    ${pitch(504, 344, 38, 'start', 'Save papers and PDFs to your Gamma library')}
+    ${pitch(504, 394, 38, 'start', 'in one click.')}
+  </svg>`;
+}
+const CHROME_JOBS = [
+  ['promo-440x280.png', 440, 280, promoTileSvg(), false],
+  ['marquee-1400x560.png', 1400, 560, marqueeSvg(), false],
+];
+
 const JOBS = [
   ['poster-720x1080.png', 720, 1080, posterSvg(720, 1080), false],
   ['poster-1440x2160.png', 1440, 2160, posterSvg(1440, 2160), false],
@@ -88,4 +119,8 @@ const JOBS = [
 ];
 
 
-export const storeJobs = [...JOBS.map(j => ['desktop/assets/store/' + j[0], ...j.slice(1)]), ...APPX_JOBS.map(j => ['desktop/assets/appx/' + j[0], ...j.slice(1), true])];
+export const storeJobs = [
+  ...JOBS.map(j => ['desktop/assets/store/' + j[0], ...j.slice(1)]),
+  ...APPX_JOBS.map(j => ['desktop/assets/appx/' + j[0], ...j.slice(1), true]),
+  ...CHROME_JOBS.map(j => ['extension/store/' + j[0], ...j.slice(1)]),
+];

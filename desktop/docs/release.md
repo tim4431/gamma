@@ -55,8 +55,10 @@ Dispatch inputs: `version` override,
 publish job also dispatches `docker.yml` on the new tag so the server image
 gets a `<version>` tag, and the Windows job submits the MSIX to the
 Microsoft Store when the Partner Center secrets exist (below). The browser
-extension's `gamma-connector-<version>.zip` is built by the same run and
-attached to the same release. The older extension releases
+extension's `gamma-connector-<version>.zip` is built by the same run,
+attached to the same release, and then submitted to the Chrome Web Store
+by `chrome-store.yml` (dispatched by the publish job when the `CWS_*`
+variables exist). The older extension releases
 (`extension-v<version>`) were published with `make_latest: false` so the
 desktop release stays the repository's "latest", which the updater depends
 on. Everything side by side, with the version rule spelled out:

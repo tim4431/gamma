@@ -16,7 +16,8 @@
 # the Windows job submits the MSIX to the Microsoft Store when the Partner
 # Center secrets exist. The same release carries the Gamma Connector browser
 # extension (extension/, zipped with the release version) and the AI
-# assistant plugins.
+# assistant plugins; the publish job then dispatches chrome-store.yml, which
+# submits that zip to the Chrome Web Store, when the CWS_* variables exist.
 #
 # Every installer bundles the frozen backend (PyInstaller) + built frontend,
 # so a released app is fully self-contained — no Python or Node needed.
@@ -594,3 +595,12 @@ jobs:
           TAG: ${{ needs.meta.outputs.tag }}
           VERSION: ${{ needs.meta.outputs.version }}
         run: gh workflow run docker.yml --ref "$TAG" -f "version=$VERSION"
+      # The Connector zip goes to the Chrome Web Store the same way, once the
+      # store item exists (the CWS_* variables, extension/STORE.md); never a
+      # pre-release, whose zip carries the final version number.
+      - name: Submit the Gamma Connector to the Chrome Web Store
+        if: vars.CWS_ITEM_ID != '' && inputs.prerelease != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: gh workflow run chrome-store.yml --ref "$TAG" -f "tag=$TAG"
