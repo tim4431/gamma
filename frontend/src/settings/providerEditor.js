@@ -7,7 +7,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
-import { t } from "../shared/i18n/i18n.js";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // A provider's model list as stored: comma-separated names.
 export const modelList = (raw) => (raw || "").split(",").map((name) => name.trim()).filter(Boolean);
@@ -22,6 +22,28 @@ const SERVICE_TILES = {
   anthropic: { label: t("Anthropic"), hint: t("API key"), long: t("Claude models, with an API key") },
   openai: { label: t("OpenAI API"), hint: t("API key"), long: t("GPT models, with an API key") },
 };
+
+// The plan labels and notes of the server's named services
+// (gamma/ai_protocols/services.py), named here so the catalog has them; the
+// menus and hints translate them as they render.
+export const SERVICE_WORDING = [
+  T("API key"), T("API key (China)"), T("Coding plan subscription"), T("Coding plan subscription (China)"),
+  T("Alibaba's terms allow the Coding Plan only inside coding tools such as Qwen Code, and other use may get the plan suspended."),
+];
+
+// The named services by vendor, in the server's order: the Other tile's
+// Service menu lists the groups, and a group of several presets gets a Plan
+// menu of them.
+export function serviceGroups(services) {
+  const groups = [];
+  for (const service of services || []) {
+    const name = service.group || service.label;
+    const group = groups.find((item) => item.name === name);
+    if (group) group.services.push(service);
+    else groups.push({ name, services: [service] });
+  }
+  return groups;
+}
 
 export function aiServiceTiles(info, { long = false, only = null } = {}) {
   const protocols = [...(info?.protocols || [])]
@@ -39,7 +61,7 @@ export function aiServiceTiles(info, { long = false, only = null } = {}) {
   });
   const keyProtocol = (info?.protocols || []).find((p) => p.auth !== "oauth");
   if (keyProtocol && (!only || only(keyProtocol))) {
-    const names = (info?.services || []).map((s) => s.label).join(", ");
+    const names = serviceGroups(info?.services).map((group) => group.name).join(", ");
     tiles.push({
       value: "other",
       label: long ? t("Other service") : t("Other"),

@@ -2762,6 +2762,9 @@ for _old, _new in DEPRECATED_TOOLS.items():
     if _new in _BY_NAME:
         _BY_NAME[_old] = _BY_NAME[_new]
 MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
+# The tools whose answer is a picture: a model that reads text only gets
+# neither (routers/ai.py, _chat_tools).
+PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink"})
 
 
 def available(scope: dict) -> frozenset:

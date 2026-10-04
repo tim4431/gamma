@@ -2,7 +2,7 @@
 PDF too big for one request — a proxy in front of the server caps a
 request's body (Cloudflare at 100 MB on its Free and Pro plans) — comes as
 the parts the client cuts it into, one request each, appended to one file
-in the store's partial directory (``blobs.partial_dir``) and hashed as they
+in the store's partial directory (``storage.partial_dir``) and hashed as they
 land, and is stored whole at the end by a rename (``storage.store_pdf_path``),
 never a copy, so finishing takes no longer than a small upload does.
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import blobs, storage
+from . import storage
 from .server_settings import check_upload_allowed
 
 MB = 1024 * 1024
@@ -78,7 +78,7 @@ def start(ws: str, size: int, name: str = "") -> Session:
         if sum(1 for s in _sessions.values() if s.ws == ws) >= MAX_PER_WS:
             raise HTTPException(status_code=429,
                                 detail=f"{MAX_PER_WS} uploads in parts are in progress in this workspace already")
-        partial = blobs.partial_dir(ws)
+        partial = storage.partial_dir(ws)
         partial.mkdir(parents=True, exist_ok=True)
         token = secrets.token_urlsafe(24)
         path = partial / f"parts-{token}"

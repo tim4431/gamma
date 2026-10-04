@@ -25,7 +25,7 @@ with TestClient(app, base_url='http://localhost') as client:
     assert client.get('/.well-known/oauth-authorization-server').status_code == 200
     assert client.post('/mcp', json={}).status_code == 401
     assert not any(name == 'mcp' or name.startswith('mcp.') for name in sys.modules)
-    # the stored files stay local: boto3 is the S3 driver's alone (gamma/blobs.py)
+    # boto3 is imported only for the off-site copies' bucket (gamma/s3.py)
     assert not any(name in ('boto3', 'botocore') or name.startswith(('boto3.', 'botocore.')) for name in sys.modules)
 """
     result = subprocess.run(
@@ -35,20 +35,6 @@ with TestClient(app, base_url='http://localhost') as client:
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_startup_refuses_a_bucket_it_cannot_use(tmp_path):
-    """GAMMA_BLOBS=s3 without a bucket: the server does not start, and says
-    why, rather than failing the first upload (blobs.check)."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("GAMMA_S3_", "GAMMA_BLOB"))}
-    result = subprocess.run(
-        [sys.executable, "-c", "import gamma.app"],
-        cwd=Path(__file__).resolve().parents[1],
-        env={**env, "GAMMA_DATA_DIR": str(tmp_path), "GAMMA_BLOBS": "s3"},
-        capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode != 0
-    assert "GAMMA_S3_BUCKET" in result.stdout + result.stderr
 
 
 def test_concurrent_first_mcp_requests_and_lifespan_restart():
@@ -77,9 +63,9 @@ def test_concurrent_first_mcp_requests_and_lifespan_restart():
 def test_the_background_rounds_run_at_startup(monkeypatch):
     """The app lifespan runs the grant check, the guest sweeper, the trash
     sweeper, the leftover sweeps (snapshot temp files, deleted
-    workspaces' directories) and the databases' copies to the store once
-    at startup (then each at its interval)."""
-    from gamma import cloud_sync, db_copies, guests, trash, workspaces, ws_backup
+    workspaces' directories) and the off-site copies' round once at
+    startup (then each at its interval)."""
+    from gamma import cloud_sync, guests, offsite, trash, workspaces, ws_backup
     from gamma.app import app
 
     ran = []
@@ -88,13 +74,38 @@ def test_the_background_rounds_run_at_startup(monkeypatch):
     monkeypatch.setattr(trash, "sweep", lambda: ran.append("trash"))
     monkeypatch.setattr(ws_backup, "sweep_stale_temp", lambda: ran.append("backup temp"))
     monkeypatch.setattr(workspaces, "remove_leftovers", lambda: ran.append("leftovers"))
-    monkeypatch.setattr(db_copies, "tick", lambda: ran.append("db copies"))
+    monkeypatch.setattr(offsite, "tick", lambda: ran.append("offsite"))
     with TestClient(app):
         for _ in range(100):
             if len(ran) == 6:
                 break
             time.sleep(0.01)
-    assert sorted(ran) == ["backup temp", "db copies", "grant check", "guests", "leftovers", "trash"]
+    assert sorted(ran) == ["backup temp", "grant check", "guests", "leftovers", "offsite", "trash"]
+
+
+def test_every_asks_a_callable_for_each_pause():
+    """``every`` with a callable for its interval (the off-site copies'
+    ``offsite.wait_s``) asks it after each round, off the event loop."""
+    import asyncio
+    import threading
+
+    from gamma.app import every
+
+    ran, asked = [], []
+
+    def pause():
+        asked.append(threading.current_thread() is threading.main_thread())
+        return 0.01
+
+    async def main():
+        async with every(pause, lambda: ran.append(1), "[test] round failed"):
+            for _ in range(500):
+                if len(ran) >= 3:
+                    break
+                await asyncio.sleep(0.01)
+
+    asyncio.run(main())
+    assert len(ran) >= 3 and len(asked) >= 2 and not any(asked)
 
 
 def test_the_workspaces_behind_are_walked_in_the_background_not_at_startup(data_dir, monkeypatch):

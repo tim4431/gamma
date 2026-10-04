@@ -292,6 +292,7 @@ def blocked_chat(accounts, web, monkeypatch):
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *args: (0, ""))
+    monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *args: (None, ""))
 
     def chat(**body):
         r = alice.post("/api/ai/chat", json={"prompt": "Read it", "agent_scope": "folder",

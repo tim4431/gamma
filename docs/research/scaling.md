@@ -66,7 +66,7 @@ and a cluster needs a router that understands the workspace header.
 | Process roles | One uvicorn does everything | Same image, three roles: web workers, job workers, one scheduler per node |
 | Rooms, replay cache | Module dicts | Rooms unchanged under affinity; the replay answer moves into the op log |
 | Job queue | Threads in the web process | The `jobs` table claimed by worker processes |
-| Blobs | Local uploads directory | A storage seam: local driver by default, S3-compatible driver with presigned range reads and a bounded node cache |
+| Blobs | Local uploads directory | A storage seam with an S3-compatible driver, built and then dropped: the files stay local, a bucket holds their off-site copies (item 8) |
 | `users.db` | One file | Stays SQLite; replicated with LiteFS only when a second node exists |
 | Migrations | Startup pass over every workspace | Per workspace on first open after an upgrade; `users.db` steps readable one release back |
 | Backups | Zip snapshots on local disk | Litestream or scheduled backup-API copies to the bucket; the zip stays the export format |
@@ -131,18 +131,19 @@ planned, the item says so under *Built*.
    1.5 to 8 ms. Typing merges were never the problem. The ink merge stays
    under the lock: it writes the merged file there, which the purge
    guarantee depends on ([collab.md](../dev/collab.md) "same-block merge").
-8. **The blob seam** (`gamma/blobs.py`): a local driver and an S3 driver
-   under `storage.store_pdf` / `store_file` / `find_upload_file`; a lookup
-   returns a cached local path; the uploads route redirects to a presigned
-   URL under S3; upload GC deletes objects; backups and job artifacts go
+8. **The blob seam**: a local driver and an S3 driver under
+   `storage.store_pdf` / `store_file` / `find_upload_file`; a lookup
+   returns a cached local path; the uploads route sends a browser to the
+   bucket under S3; upload GC deletes objects; backups and job artifacts go
    through the seam. Local is the default and needs no configuration.
-   *Built:* `gamma/blobs.py` with `LocalBlobs` and `S3Blobs`, and boto3 as
-   an optional dependency (`requirements-s3.txt`, about 23 MB in the
-   image). Presigned redirects are on by default under S3, and a cached
-   total replaces the quota walk. The viewer's PDF fetches use same-origin
-   credentials, so the redirect works with a plain CORS rule. Job files and
-   backup zips stay on the node's disk ([debugging.md](../dev/debugging.md)
-   "Stored files in a bucket").
+   *Built* as a primary-store seam (a local and an S3 driver, a node cache,
+   boto3 as an optional dependency in `requirements-s3.txt`, about 23 MB in
+   the image), then removed the same day by product decision: the app
+   always runs on its local files, and a bucket is a backup target only.
+   The S3 client lives on in `gamma/s3.py` for the off-site copies, and
+   the store is plain functions in `gamma/storage.py`. A cached total
+   replaces the quota walk ([user_db.md](../dev/user_db.md) "Storage
+   limits").
 9. **Share tokens carry the workspace**: a minted token is
    `<workspace id>.<secret>`, so a router can place share traffic without
    a lookup; existing tokens are rewritten by a migration step and links
@@ -170,9 +171,9 @@ planned, the item says so under *Built*.
     each database through the blob seam, and a generated Litestream
     configuration for deployments that run it. The zip snapshot stays the
     user-facing export.
-    *Built:* `gamma/db_copies.py` with a change signal from file stats, 7
+    *Built:* scheduled copies with a change signal from file stats, 7
     generations kept, `manage.py db-copies --list/--restore` and
-    `manage.py litestream-config`. A round over 1,000 unchanged workspaces
+    `manage.py litestream-config`; they became the off-site copies (below). A round over 1,000 unchanged workspaces
     takes about 120 ms. Litestream itself was not run.
 13. *Cluster only:* `users.db` through LiteFS with write forwarding.
 14. *Cluster only:* a placement table overriding the hash, and a relocate
@@ -190,11 +191,18 @@ multiplexed socket per tab.
 Follow-ups built the same day, after the cleanup pass: the API refuses
 NaN and Infinity with a 400 before anything is written (`ops.storable`);
 the upload purge checks only the due names under the write lock
-(`blobs.stat`) instead of listing the workspace; a presigned redirect is
-cacheable for its validity and bucket objects carry an immutable
-`Cache-Control`; `manage.py uploads-push` moves an existing deployment's
-files into the bucket; the admin's Server pane shows the store and the
-last copy round as read-only rows (`GET /api/admin/server-info`).
+(`storage.stat`) instead of listing the workspace; the admin's Server
+pane shows the store and the last copy round as read-only rows (`GET
+/api/admin/server-info`).
+
+Then the bucket became a backup target only. The app always runs on its
+local files, and the bucket store of item 8 (the S3 driver, its
+redirects and node cache, the command that moved files into the bucket)
+was removed. Item 12's
+copies became the off-site copies (`gamma/offsite.py` over `gamma/s3.py`):
+they send the uploaded files too, an admin sets them in Settings → Backups
+or the environment does, and `manage.py offsite` restores them. The Server
+pane's two rows went with it ([debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)).
 
 What stays as it is: the block table and its hot columns, the per-page op
 log and `seq`, the external-content FTS5 index maintained by triggers, the

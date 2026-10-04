@@ -74,11 +74,10 @@ the frontend changes: editing a mirror is editing a workspace.
   also have arrived whole: a body shorter than the `Content-Length` the
   remote announced (the link dropped mid-file, where a streaming read just
   stops) is an error of the page, never bytes to store (`Remote.get_bytes`).
-  A remote whose files are in a bucket answers a file's GET with a
-  redirect to a presigned URL. The fetch follows it without the write token
-  or the workspace header (`sync_engine._OffOriginRedirect`): the URL is its
-  own authorization, and the bucket refuses a request that carries a
-  second one. What is stored goes through the store, written whole
+  A redirect is followed, but one to another origin goes without the
+  write token, the workspace header or a cookie
+  (`sync_engine._OffOriginRedirect`): they are for the remote alone. What
+  is stored goes through the store, written whole
   (`storage.put_upload`, [user_db.md](user_db.md) "Stored files"), and so
   do the presence checks, the missing-file sweep and a push's reads.
 - **Deletions**: pages through the tombstones (the change feed's `deleted`

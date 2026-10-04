@@ -28,7 +28,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, blobs
+from .. import ai_usage, storage
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
@@ -754,7 +754,7 @@ def metadata_status(request: Request):
                 index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     except sqlite3.OperationalError:
         pass  # index tables don't exist yet — search has never run
-    stored = {name for name, _, _ in blobs.list(ws)}  # one listing, not a lookup per paper
+    stored = {name for name, _, _ in storage.list(ws)}  # one listing, not a lookup per paper
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")

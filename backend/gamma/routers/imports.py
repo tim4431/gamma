@@ -24,7 +24,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs
 from ..auth import actor_of, require_user_id, require_ws
-from ..db import connect_pages_db, page_now, safe_doc_id
+from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
                             last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
                             touch_page, write_lock)
@@ -37,8 +37,7 @@ from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_pos
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (UploadDir, display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file,
-                       store_pdf)
+from ..storage import display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -752,7 +751,7 @@ def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
 
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
-    ``pdf_path`` is the stored file (a local path or a ``StoredFile``)."""
+    ``pdf_path`` is the stored file's path."""
     from PyPDF2 import PdfReader, PdfWriter
 
     reader = PdfReader(os.fspath(pdf_path))
@@ -809,7 +808,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     then optionally strip the originals from the file. ``found`` counts the
     annotations that make blocks, replies included. Shared by the per-paper
     endpoint below and the Zotero library import. ``pdf_path``: the stored
-    file, a local path (``storage.find_upload_file``) or a ``StoredFile``."""
+    file's path (``storage.find_upload_file``)."""
     from PyPDF2 import PdfReader
     reader = PdfReader(os.fspath(pdf_path))
     found = _extract_pdf_annotations(reader)
@@ -1189,7 +1188,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
         plan = _zotero_plan(zf)
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        uploads = UploadDir(ws)
+        uploads = ws_uploads_dir(ws)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
                   "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}

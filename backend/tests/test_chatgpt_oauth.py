@@ -467,6 +467,7 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     catalog = {
         "openai": {"models": {model["model"]: {
             "id": model["model"], "limit": {"context": 400_000}, "reasoning": True,
+            "modalities": {"input": ["text", "image"]},
             "reasoning_options": [{"type": "effort", "values": ["none", "low", "medium", "high"]}]}}},
         "gateway": {"models": {f"openai/{model['model']}": {
             "limit": {"context": 128_000}, "reasoning": True,
@@ -480,12 +481,15 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     monkeypatch.setattr(ai_catalog, "urlopen", fake_urlopen)
     ask = lambda: erin.get("/api/ai/model-info", params={"model": model["id"]}).json()
 
-    # The provider's own listing says it; asked once, then cached.
+    # The provider's own listing says it; asked once, then cached. It says
+    # nothing of pictures, so that fact comes from models.dev.
     assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider",
                      "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider",
-                     "speeds": ["fast"], "speeds_source": "provider"}
+                     "speeds": ["fast"], "speeds_source": "provider",
+                     "images": True, "images_source": "models.dev"}
     assert ask()["context_window"] == 272_000
-    assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
+    listings = [url for url in calls if "models.dev" not in url]
+    assert len(listings) == 1 and "/models?client_version=9.9.9" in listings[0]
 
     # A listing without sizes or levels: models.dev, the vendor behind the
     # protocol winning over a gateway that only takes a token budget.
@@ -493,7 +497,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     ai_catalog._listings.clear()
     assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev",
                      "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev",
-                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol",
+                     "images": True, "images_source": "models.dev"}
 
     # Nobody knows it: null, never a guess.
     catalog = {"openai": {"models": {}}}
@@ -501,7 +506,8 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     ai_catalog._models_dev.update(index=None, until=0.0)
     assert ask() == {"model": model["model"], "context_window": None, "source": "",
                      "efforts": None, "efforts_source": "",
-                     "speeds": ["flex", "fast"], "speeds_source": "protocol"}
+                     "speeds": ["flex", "fast"], "speeds_source": "protocol",
+                     "images": None, "images_source": ""}
 
 
 def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
@@ -712,3 +718,33 @@ def test_the_redirect_is_caught_on_this_machine(monkeypatch):
     while co._server is not None and time.time() < deadline:
         time.sleep(0.05)
     assert co._server is None
+
+
+def test_a_named_service_reads_its_own_model_facts(monkeypatch):
+    """dashscope.aliyuncs.com names no models.dev provider; the preset does.
+    Its window, picture input and output limit then come from that listing,
+    and the reply cap is the preset's, bounded by the model's own limit."""
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
+    other = {"limit": {"context": 262_144, "output": 8_192}, "modalities": {"input": ["text", "image"]}}
+    catalog = {
+        "alibaba-cn": {"models": {
+            "qwen3.7-max": {"limit": {"context": 1_000_000, "output": 65_536}, "modalities": {"input": ["text"]}},
+            "qwen-small": {"limit": {"context": 131_072, "output": 16_384}}}},
+        "a": {"models": {"qwen3.7-max": other}},
+        "b": {"models": {"qwen3.7-max": other}},
+    }
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
+        catalog if "models.dev" in req.full_url else {"data": []}))
+    qwen = {"protocol": "openai", "api_key": "k", "name": "Qwen (China)",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"}
+    assert ai_catalog._catalog_window("qwen3.7-max", qwen) == 1_000_000
+    assert ai_catalog.image_input("p", qwen, "qwen3.7-max") == (False, "models.dev")
+    assert ai_catalog.reply_cap(qwen, "qwen3.7-max") == 32_768
+    assert ai_catalog.reply_cap(qwen, "qwen-small") == 16_384
+    assert ai_catalog.reply_cap(qwen, "nobody-knows") == 8_192
+    # Elsewhere the providers' majority answers, and the cap stays the default.
+    custom = {**qwen, "base_url": "https://example.org/v1"}
+    assert ai_catalog._catalog_window("qwen3.7-max", custom) == 262_144
+    assert ai_catalog.image_input("p", custom, "qwen3.7-max") == (True, "models.dev")
+    assert ai_catalog.reply_cap(custom, "qwen3.7-max") == 8_192

@@ -205,10 +205,10 @@ damage is recorded. A damaged copy raises the admins' `db-damage` notice.
 Per-workspace backups — the snapshots users keep on the server from
 Settings → Backups and the `/api/export` zips — are `gamma/ws_backup.py`
 ([workspaces.md](workspaces.md) "Export and backups"), a different, smaller thing.
-With the stored files in a bucket, each database is also copied there every
-hour it changed, and those copies come back with `manage.py db-copies
---restore` instead (`gamma/db_copies.py`,
-[debugging.md](debugging.md#database-copies-in-the-bucket)).
+With off-site copies on, each database is also copied to a bucket every
+interval it changed, with the uploaded files, and those copies come back
+with `manage.py offsite --restore` instead (`gamma/offsite.py`,
+[debugging.md](debugging.md#off-site-copies-in-a-bucket)).
 
 ## Running it
 

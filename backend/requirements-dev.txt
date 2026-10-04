@@ -3,4 +3,4 @@ pytest
 pytest-xdist   # python -m pytest tests -n auto --dist loadfile
 httpx
 -r requirements-s3.txt
-moto[s3]       # an in-process S3 for tests/test_blobs.py (skipped without it)
+moto[s3]       # an in-process S3 for tests/test_offsite.py (skipped without it)

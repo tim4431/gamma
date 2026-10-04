@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, blobs, chatgpt_oauth, cloud_auth, config, db_copies, integrity, jobs, workspaces
+from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, integrity, jobs, offsite, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -98,30 +98,15 @@ def _check_password(password: str) -> str:
     return password
 
 
-def _storage() -> dict:
-    """Where the stored files live (gamma/blobs.py), read-only: ``kind``
-    (local or s3), ``where`` (the uploads directories on this disk, or the
-    bucket and prefix), ``presign`` (a browser is sent to the bucket) and,
-    with a bucket, ``cache`` (the node's copies: bytes held and the cap)."""
-    store = blobs.driver()
-    where = str((config.DATA_DIR / store.where).absolute()) if store.kind == "local" else store.where
-    info = {"kind": store.kind, "where": where, "presign": bool(getattr(store, "presign", False))}
-    if store.kind == "s3":
-        info["cache"] = {"bytes": store.cache_used, "cap": store.cache_bytes}  # the driver's own running total
-    return info
-
-
 @router.get("/server-info")
 def server_info(request: Request, refresh: bool = False):
     """The Settings → Server dashboard: build, uptime, log counts by level,
     the latest GitHub release, for a ``-dev`` build its branch's newest
     build, and whether either is newer (``update``, ``update_available``:
-    True/False, or None for an unversioned build); the stored files'
-    ``storage`` and the databases' copies (``db_copies``), set by the
-    environment and shown as they are. ``refresh=1`` bypasses the cache.
-    Sync on purpose: the update check is a network call."""
+    True/False, or None for an unversioned build). ``refresh=1`` bypasses
+    the cache. Sync on purpose: the update check is a network call."""
     require_admin(request)
-    return {**version.server_info(refresh=refresh), "storage": _storage(), "db_copies": db_copies.status()}
+    return version.server_info(refresh=refresh)
 
 
 @router.get("/logs")
@@ -342,6 +327,72 @@ def list_workspaces(request: Request):
     directories under workspaces/ that no row names (leftovers to inspect)."""
     require_admin(request)
     return {"workspaces": workspaces.all_workspaces(), "orphans": workspaces.orphan_dirs()}
+
+
+# --- off-site copies (gamma/offsite.py) --------------------------------------
+# Settings → Backups → Off-site copies. The secret key is write-only: a GET
+# says whether one is set, a PUT or a test without it keeps the saved one.
+# While GAMMA_S3_BUCKET is set the environment decides (``from_env``): a PUT
+# is refused with 409 and a test checks the environment's bucket.
+
+class OffsiteSettingsRequest(BaseModel):
+    enabled: bool | None = None
+    bucket: str | None = None
+    endpoint: str | None = None
+    region: str | None = None
+    access_key: str | None = None
+    secret_key: str | None = None   # only when changing it: absent or "" keeps the saved one
+    prefix: str | None = None
+    interval_s: int | None = None   # seconds between rounds, at least 60
+    keep: int | None = None         # copies kept per database, at least 1
+
+
+def _offsite_view() -> dict:
+    conf = offsite.settings()
+    return {"settings": offsite.public(conf), "from_env": conf["from_env"], "status": offsite.status(conf)}
+
+
+@router.get("/offsite")
+def get_offsite(request: Request):
+    """``{settings: {enabled, bucket, endpoint, region, access_key,
+    secret_set, prefix, interval_s, keep}, from_env, status}`` —
+    ``status`` is ``offsite.status``."""
+    require_admin(request)
+    return _offsite_view()
+
+
+@router.put("/offsite")
+def update_offsite(payload: OffsiteSettingsRequest, request: Request):
+    """Save the fields sent (a field left out stays as it is); the GET's
+    answer. 400 with the reason when one is wrong, 409 while the
+    environment sets the bucket."""
+    require_admin(request)
+    try:
+        offsite.save(payload.model_dump(exclude_none=True))
+    except offsite.FromEnvError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _offsite_view()
+
+
+# Sync def: one listing of the bucket, a network round trip.
+@router.post("/offsite/test")
+def test_offsite(request: Request, payload: OffsiteSettingsRequest | None = None):
+    """One listing of the bucket, tried once, with the saved settings or
+    the unsaved ones sent laid over them: ``{ok, message}``, 200 either
+    way."""
+    require_admin(request)
+    return offsite.test(payload.model_dump(exclude_none=True) if payload else None)
+
+
+@router.post("/offsite/run")
+def run_offsite(request: Request):
+    """Copy now: ``{started: true}``, or ``{started: false, message}`` with
+    the copies off or a round running. The pane follows the round through
+    the GET's ``status.running``."""
+    require_admin(request)
+    return offsite.run_now()
 
 
 # --- server backups (gamma/backups.py) ---------------------------------------

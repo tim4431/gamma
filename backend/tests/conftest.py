@@ -32,7 +32,7 @@ S3_TEST_BUCKET = "gamma-test"
 @pytest.fixture
 def s3_bucket():
     """moto's in-process S3 with one empty bucket, ``S3_TEST_BUCKET``, for the
-    S3 driver's tests (gamma/blobs.py, gamma/db_copies.py): the raw boto3
+    S3 tests (gamma/s3.py, gamma/offsite.py): the raw boto3
     client, live for the test. Skipped where moto is not installed."""
     moto = pytest.importorskip("moto")
     with moto.mock_aws():

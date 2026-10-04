@@ -205,7 +205,18 @@ const knobsLabel = (speed) => (speed
 // read from the provider's own model listing, else the public models.dev
 // catalog. Null while unknown, and so is any field no source knows —
 // nothing is guessed from the name.
-const modelInfos = new Map(); // model id -> Promise<{context_window, efforts, speeds} | null>
+const modelInfos = new Map(); // model id -> Promise<{context_window, efforts, speeds, images} | null>
+// A reply's thinking, round by round ({"reasoning"} lines: {wire field:
+// text}). It is kept with the reply and sent back with it on later turns,
+// where a thinking model wants it (DeepSeek refuses tools without it).
+function addReasoning(kept, round) {
+  const out = { ...(kept || {}) };
+  for (const [field, text] of Object.entries(round || {})) {
+    if (typeof text === "string" && text) out[field] = out[field] ? `${out[field]}\n\n${text}` : text;
+  }
+  return out;
+}
+
 function useModelInfo(modelId) {
   const [known, setKnown] = useState({ id: "", info: null });
   useEffect(() => {
@@ -995,8 +1006,9 @@ export default function ChatDock({
       // each turn — never the pictures, reports and counts saved with
       // them, nor the texts kept for reverting a change (failed replies
       // aren't answers).
-      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
-        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}) })),
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning }) => ({
+        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
+        ...(reasoning ? { reasoning } : {}) })),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
       selections: pdfSelections,
@@ -1135,6 +1147,7 @@ export default function ChatDock({
     const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let truncated = false; // {"truncated": true} — the reply hit the output limit
+    let reasoning = null; // {"reasoning"} lines — the model's thinking, sent back on later turns
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const replyId = makeId(); // every version of this reply, partial or final, is one message
     const aiMsg = (extra = {}) => ({
@@ -1148,6 +1161,7 @@ export default function ChatDock({
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...(trimmed ? { trimmed } : {}),
       ...(truncated ? { truncated: true } : {}),
+      ...(reasoning ? { reasoning } : {}),
       ...extra,
     });
     try {
@@ -1203,6 +1217,8 @@ export default function ChatDock({
             trimmed = ev.trimmed;
           } else if (ev.truncated) {
             truncated = true;
+          } else if (ev.reasoning) {
+            reasoning = addReasoning(reasoning, ev.reasoning);
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
@@ -2085,7 +2101,7 @@ export default function ChatDock({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,application/pdf"
+            accept={modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf"}
             style={{ display: "none" }}
             onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
           />

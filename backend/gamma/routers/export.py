@@ -31,7 +31,7 @@ from ..blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES, assert_block_in_scope, block_to_dict,
     fetch_subtree, filing, folder_path, folder_paths, folder_subtree_ids, label_names, page_root_id, pages_in_folder,
     tree_rows)
-from ..db import connect_pages_db
+from ..db import connect_pages_db, ws_uploads_dir
 from ..db import (
     PAGES_SCHEMA,
     copy_chats,
@@ -55,7 +55,7 @@ from ..markdown_export import (
 )
 from ..logbuf import log
 from ..highlights import is_highlight
-from ..storage import UploadDir, attachment_disposition, upload_refs
+from ..storage import attachment_disposition, upload_refs
 from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
 from ..pdf_document import render_document
@@ -76,10 +76,8 @@ router = APIRouter(prefix="/api", tags=["export"])
 def _write_zip(dest, entries, assets, uploads_dir, files=(), blobs=(), progress=jobs.no_progress) -> None:
     """entries: list of (arcname, text). assets: set of upload filenames, written
     once under assets/ (deduped by content-addressed name). files: (arcname,
-    path) pairs — a disk path, or a stored file (``uploads_dir / name``, a
-    ``storage.StoredFile``, read only now); blobs: (arcname, bytes) pairs.
-    ``uploads_dir`` is the workspace's ``storage.UploadDir``. ``progress``
-    hears the files packed so far (the phase "packing")."""
+    disk path) pairs; blobs: (arcname, bytes) pairs. ``progress`` hears the
+    files packed so far (the phase "packing")."""
     stored = [(f"assets/{name}", uploads_dir / name) for name in sorted(assets)] + list(files)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
         for arcname, text in entries:
@@ -119,8 +117,7 @@ def _graph_page_parts(page, uploads_dir, include_pdf):
         entries.append((f"pages/hls__{stem}.md", render_hls_md(stem, highlights)))
         entries.append((f"assets/{stem}.edn", render_edn(highlights)))
         files.append((f"assets/{stem}.pdf", pdf_path))
-        # pdfium opens a file on disk: the stored PDF's local copy (fetched now from a bucket)
-        blobs.extend(render_area_images(os.fspath(pdf_path), stem, highlights))
+        blobs.extend(render_area_images(pdf_path, stem, highlights))
     return entries, files, blobs, assets
 
 
@@ -271,7 +268,7 @@ class _Builder:
         self.ws = ws
         self.base = base
         self.opts = opts
-        self.uploads_dir = UploadDir(ws)  # stored files, read when packed (gamma/blobs.py)
+        self.uploads_dir = ws_uploads_dir(ws)
         self.entries, self.assets = [], set()
         self.files, self.blobs = [], []
         self.walked, self.skipped = 0, []  # pages the driver fed in; {title, reason} left out
@@ -970,7 +967,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         # A page without a PDF exports its sheets of paper: one PDF page
         # each, the paper painted, the text boxes typeset and the
         # handwriting drawn on it (gamma/notebook.py).
-        uploads = UploadDir(ws)
+        uploads = ws_uploads_dir(ws)
         sheets, drawn = [], 0
         for sheet in page_sheets:
             boxes = notebook.sheet_text_boxes(sheet["blocks"])
@@ -984,7 +981,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
     try:
-        pdf_path = UploadDir(ws) / f"{safe_doc_id(doc_id)}.pdf"
+        pdf_path = ws_uploads_dir(ws) / f"{safe_doc_id(doc_id)}.pdf"
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid document id")
     if not pdf_path.is_file():
@@ -1004,7 +1001,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
             with connect_pages_db(ws) as conn:
                 pdf_bytes, written = annotate_pdf(
                     pdf_bytes, marks if highlights else [], author=author,
-                    ink=_collect_ink(blocks, UploadDir(ws)) if highlights else (),
+                    ink=_collect_ink(blocks, ws_uploads_dir(ws)) if highlights else (),
                     text_boxes=boxes, replaced=replaced, resolve_ref=_block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
@@ -1014,7 +1011,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         # Still positioned from the highlight rects, annotation layer or not.
         try:
             pdf_bytes, drawn = render_notes(pdf_bytes, marks,
-                                            uploads_dir=UploadDir(ws))
+                                            uploads_dir=ws_uploads_dir(ws))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 

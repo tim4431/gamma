@@ -11,9 +11,9 @@ default. Quota 0 means unlimited.
 
 What a workspace's uploads are checked against (`workspace_quota`):
   - a PERSONAL workspace: its account's limits, and the account's usage is
-    the stored files of all its personal workspaces together (``blobs.usage``:
-    their uploads/, or their objects in a bucket) — nothing anyone puts into
-    a shared workspace counts against a person;
+    the stored files of all its personal workspaces together
+    (``storage.usage``: their uploads/) — nothing anyone puts into a shared
+    workspace counts against a person;
   - a SHARED workspace: the server-wide per-file cap and the workspace's own
     `workspaces.quota_mb` (NULL = unlimited), which admins set.
 The databases are not metered.
@@ -25,8 +25,9 @@ derived from it ([mcp.md](../../docs/dev/mcp.md)), and the guest settings
 overriding it; `demo_mode`, `GAMMA_DEMO` overriding it —
 docs/dev/guests.md). Other modules keep their
 server-wide values in the same KV through ``_get_raw``/``_set_raw``: the
-cloud sign-in (`cloud_*`, gamma/cloud_auth.py) and the shared AI providers
-(`ai_providers`, gamma/ai_settings.py).
+cloud sign-in (`cloud_*`, gamma/cloud_auth.py), the shared AI providers
+(`ai_providers`, gamma/ai_settings.py) and the off-site copies (`offsite`,
+gamma/offsite.py, which reads it on a connection of its own).
 """
 
 import re
@@ -35,7 +36,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from . import blobs, config
+from . import config
 from .config import MAX_UPLOAD_BYTES
 from .db import account_name, connect_users_db, page_now
 
@@ -257,9 +258,11 @@ def user_limits(user_id: str) -> dict:
 
 
 def workspace_bytes(ws: str) -> int:
-    """Upload bytes stored in one workspace."""
+    """Upload bytes stored in one workspace (``storage.usage``, cached)."""
+    from . import storage  # local: storage imports this module
+
     try:
-        return blobs.usage(ws)
+        return storage.usage(ws)
     except ValueError:
         return 0
 

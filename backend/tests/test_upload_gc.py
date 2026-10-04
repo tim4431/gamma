@@ -270,6 +270,39 @@ def test_purge_refuses_too_many_files_at_once(ann, monkeypatch):
     assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
 
 
+def test_the_purge_dates_each_due_file_and_lists_nothing_under_the_write_lock(gc, monkeypatch):
+    """Under the write lock the purge dates each due file on its own
+    (``storage.stat``), never by listing the workspace while writers wait,
+    and asks no more once a refusal is certain."""
+    make_user("gc_dated", "pw")
+    c, ws = login("gc_dated", "pw"), workspace_of("gc_dated")
+    page = _page(c, "dated")
+    _ops(c, page, [{"op": "insert", "id": "gcD", "parent": page, "content": "x"}])
+    names = sorted(_image(c, f"dated-{i}")[1] for i in range(5))
+    for name in names:
+        _age(ws, name, 31)
+    stored = len(storage.list(ws))
+    lists, stats = [], []
+    real_list, real_stat, real_purge = storage.list, storage.stat, upload_gc._purge
+    monkeypatch.setattr(storage, "list", lambda w: lists.append(w) or real_list(w))
+    monkeypatch.setattr(storage, "stat", lambda w, n: stats.append(n) or real_stat(w, n))
+
+    def purge(*args):  # everything _purge does, it does under the write lock
+        lists.clear()
+        stats.clear()
+        return real_purge(*args)
+
+    monkeypatch.setattr(upload_gc, "_purge", purge)
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 2)
+    out = upload_gc.reconcile(ws)
+    assert out["purged"] == [] and out["blocked"].startswith(f"5 of its {stored} files at once")
+    assert lists == [] and len(stats) == 3  # past the cap at the third: the last two never asked
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 100)
+    assert upload_gc.reconcile(ws)["purged"] == names
+    assert lists == [] and sorted(stats) == names
+    assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
+
+
 def test_purge_blocker_rules():
     class Conn:
         """A pages.db answering the blocker's questions as told."""

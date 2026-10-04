@@ -806,3 +806,19 @@ def test_both_sides_drawing_in_one_group_keep_every_stroke():
     # settled: the next round moves nothing
     status = _sync(local)
     assert status["pages_pulled"] == 0 and status["pages_pushed"] == 0
+
+
+def test_a_redirect_off_the_remote_drops_its_credentials():
+    """A file's GET redirected to another origin goes there without the
+    write token, the workspace header or a cookie; one on the remote's own
+    origin keeps them."""
+    import urllib.request
+
+    handler = sync_engine._OffOriginRedirect()
+    req = urllib.request.Request("https://gamma.example/api/uploads/a.pdf", headers={
+        "Authorization": "Bearer secret", "X-Gamma-Workspace": "w1", "Accept": "application/json"})
+    there = handler.redirect_request(req, None, 302, "Found", {}, "https://files.example/a.pdf")
+    assert not there.has_header("Authorization") and not there.has_header("X-gamma-workspace")
+    assert there.has_header("Accept")
+    here = handler.redirect_request(req, None, 302, "Found", {}, "https://gamma.example/api/uploads/b.pdf")
+    assert here.get_header("Authorization") == "Bearer secret"

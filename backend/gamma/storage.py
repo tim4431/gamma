@@ -1,19 +1,36 @@
-"""Uploaded-file helpers: media types, content-hash storage (atomic,
-verified writes), lookup, and the one grammar of a reference to a stored
-file. Where the files live (the workspace's uploads directory or a bucket)
-is gamma/blobs.py, which every read and write here goes through; what
-becomes of a file nothing references any more is gamma/upload_gc.py."""
+"""Uploaded files: media types, content-hash storage (atomic, verified
+writes), lookup, the one grammar of a reference to a stored file, and the
+store itself: each workspace's ``uploads/`` directory (``db.ws_uploads_dir``),
+one file per name. What becomes of a file nothing references any more is
+gamma/upload_gc.py; the off-site copies of the files are gamma/offsite.py.
 
-import errno
+The store's calls, at the end of the module, each name a workspace and a
+file name (checked by ``check_name``; what a name says about its bytes is
+``matches_name``, at the callers): ``put``, ``exists``, ``size``, ``stat``
+(``(size, mtime)``), ``open_path``, ``delete``, ``delete_workspace``,
+``list`` (``(name, size, mtime)``), ``touch`` (the upload GC's re-date),
+``usage`` (bytes stored, cached), ``partial_dir`` (where a file is
+assembled before it is stored), ``put_path`` (a file assembled there,
+stored by a rename) and ``sweep_partial`` (dead temp files). Every read
+and write of a stored file goes through them.
+
+Docs: docs/dev/user_db.md "Stored files".
+"""
+
 import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
+import threading
+import time
 import urllib.parse
 from pathlib import Path
+from stat import S_ISREG  # not ``import stat``: the module's own stat() would shadow it
 
-from . import blobs, pdf_meta
+from . import pdf_meta
+from .db import ws_uploads_dir
 from .logbuf import log
 from .server_settings import check_upload_allowed
 
@@ -200,8 +217,7 @@ def write_atomic(path: Path, data: bytes) -> None:
     renamed over the name. Whatever stops a write half way (a full disk, a
     killed process) leaves nothing under the name — never a truncated file
     that the next upload of the same bytes would take for stored. Every
-    writer of a stored file goes through here: the local driver's ``put``
-    and the S3 driver's cached copies (gamma/blobs.py)."""
+    writer of a stored file goes through here (``put``)."""
     partial = path.parent / ".partial"
     partial.mkdir(parents=True, exist_ok=True)
     tmp = partial / secrets.token_hex(8)
@@ -263,40 +279,40 @@ def _cut_short(ws: str, filename: str, size: int, head) -> bool:
     are the beginning of the real ones."""
     if not filename.endswith(".pdf"):
         return True
-    path = blobs.open_path(ws, filename)
+    path = open_path(ws, filename)
     stored = path.read_bytes() if path else b""  # gone meanwhile: written again
     return len(stored) < size and head(len(stored)) == stored
 
 
-def _store_with(ws: str, filename: str, size: int, head, put) -> bool:
-    """Store the workspace's upload ``filename`` (``size`` bytes, their
-    first ``n`` read by ``head(n)``, written by ``put()``) unless it is
+def _store_with(ws: str, filename: str, nbytes: int, head, write) -> bool:
+    """Store the workspace's upload ``filename`` (``nbytes`` bytes, their
+    first ``n`` read by ``head(n)``, written by ``write()``) unless it is
     stored already; returns whether it was. A stored copy is re-dated
-    (``blobs.touch``): the upload→reference window gets its grace again and
-    an unreferenced file's retention starts over (gamma/upload_gc.py). A
-    copy an earlier, non-atomic write left short is rewritten. The storage
+    (``touch``): the upload→reference window gets its grace again and an
+    unreferenced file's retention starts over (gamma/upload_gc.py). A copy
+    an earlier, non-atomic write left short is rewritten. The storage
     limits gate new bytes only (check_upload_allowed raises 413/507 past
     them)."""
-    stored = blobs.size(ws, filename)
-    if stored is not None and stored != size and _cut_short(ws, filename, size, head):
-        log.warning(f"[uploads] {filename} in workspace {ws} held {stored} of {size} bytes — rewritten")
-        put()
+    stored = size(ws, filename)
+    if stored is not None and stored != nbytes and _cut_short(ws, filename, nbytes, head):
+        log.warning(f"[uploads] {filename} in workspace {ws} held {stored} of {nbytes} bytes — rewritten")
+        write()
         return True
     if stored is not None:
         from . import upload_gc  # local: upload_gc imports this module
 
         with upload_gc.guard(ws):  # never between the purge's check and its delete
-            if blobs.touch(ws, filename):
+            if touch(ws, filename):
                 return True
             # purged a moment ago (gamma/upload_gc.py): store it again
-    check_upload_allowed(ws, size)
-    put()
+    check_upload_allowed(ws, nbytes)
+    write()
     return False
 
 
 def _store(ws: str, filename: str, data: bytes) -> bool:
     """``_store_with`` for bytes in memory."""
-    return _store_with(ws, filename, len(data), lambda n: data[:n], lambda: blobs.put(ws, filename, data))
+    return _store_with(ws, filename, len(data), lambda n: data[:n], lambda: put(ws, filename, data))
 
 
 def _head_of(path: Path, n: int) -> bytes:
@@ -305,12 +321,12 @@ def _head_of(path: Path, n: int) -> bytes:
 
 
 def _store_path(ws: str, filename: str, path: Path, size: int) -> bool:
-    """``_store_with`` for a complete file in ``blobs.partial_dir(ws)``,
-    stored by ``blobs.put_path`` (a rename, locally) and consumed whatever
-    the outcome: a dedup hit or a failed put removes it."""
+    """``_store_with`` for a complete file in ``partial_dir(ws)``, stored by
+    ``put_path`` (a rename) and consumed whatever the outcome: a dedup hit
+    or a failed put removes it."""
     try:
         return _store_with(ws, filename, size, lambda n: _head_of(path, n),
-                           lambda: blobs.put_path(ws, filename, path))
+                           lambda: put_path(ws, filename, path))
     finally:
         path.unlink(missing_ok=True)
 
@@ -322,7 +338,7 @@ def put_upload(ws: str, name: str, data: bytes) -> None:
     proxy's cache and a clip (``can_store``), a mirror's pull
     (``matches_name``), a restore, a PDF stripped of its annotations, the
     AI chat's re-download."""
-    blobs.put(ws, name, data)
+    put(ws, name, data)
 
 
 def pdf_url(doc_id: str) -> str:
@@ -345,7 +361,7 @@ def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
 
 def store_pdf_path(ws: str, path: Path, size: int, doc_id: str) -> tuple[str, bool]:
     """:func:`store_pdf` for a PDF assembled on disk — an upload in parts
-    (gamma/upload_parts.py): ``path``, in ``blobs.partial_dir(ws)``, holds
+    (gamma/upload_parts.py): ``path``, in ``partial_dir(ws)``, holds
     ``size`` bytes whose content digest is ``doc_id`` (the caller hashed
     them as they arrived and checked the PDF header), so storing it is a
     rename, never a copy. ``path`` is consumed either way."""
@@ -363,11 +379,8 @@ def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:
-    """A local file holding the workspace's stored file ``filename``, or
-    None (no such file, or a name that cannot be one). Under the local
-    driver it is the file in the uploads directory; under S3 the node's
-    cached copy, which this call may download from the bucket first
-    (gamma/blobs.py ``open_path``), so read it soon.
+    """The workspace's stored file ``filename``, its path in the uploads
+    directory, or None (no such file, or a name that cannot be one).
 
     Deliberately scoped to the single named workspace — the caller resolves
     which (the session's workspace or a validated share's). No cross-workspace
@@ -376,56 +389,190 @@ def find_upload_file(filename: str, ws: str) -> Path | None:
     if not ws:
         return None
     try:
-        return blobs.open_path(ws, filename)
+        return open_path(ws, filename)
     except ValueError:
         return None
 
 
-class StoredFile(os.PathLike):
-    """One of a workspace's stored files by name, looked up when it is used:
-    what ``UploadDir(ws) / name`` gives the code written against a directory
-    of files (the exporters, the PDF writers, ``ink.read_upload``).
-    ``is_file()`` / ``exists()`` ask the store; ``read_bytes()``, ``stat()``
-    and ``os.fspath()`` read the local copy ``find_upload_file`` gives
-    (FileNotFoundError when there is none). Making one reads nothing, so an
-    export that lists its files first fetches each only as it packs it."""
+# --- the store: the workspace's uploads/ directory -----------------------------------
 
-    def __init__(self, ws: str, name: str):
-        self.ws, self.name = ws, name
+USAGE_TTL_S = 60  # a workspace's stored bytes are listed again after this long
 
-    def exists(self) -> bool:
+_usage_lock = threading.Lock()
+_usage: dict = {}  # ws -> [monotonic expiry, the uploads directory's mtime_ns, bytes]
+
+
+def check_name(name: str) -> str:
+    """``name`` when it can name a stored file: one path segment, at most
+    255 characters, not a dot file (``.partial/`` lives beside the files).
+    ValueError otherwise."""
+    if (not isinstance(name, str) or not name or len(name) > 255 or name.startswith(".")
+            or any(c in name for c in "/\\\0")):
+        raise ValueError(f"unsafe stored file name: {name!r}")
+    return name
+
+
+def _path(ws: str, name: str) -> Path:
+    return ws_uploads_dir(ws) / check_name(name)
+
+
+def _stamp(ws: str) -> int | None:
+    try:
+        return ws_uploads_dir(ws).stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+def _adjust(ws: str, before: int | None, delta: int) -> None:
+    """After a call here changed the uploads directory, which was dated
+    ``before``: the cached usage follows, dated by the directory as it is
+    now; one the directory changed under since is dropped."""
+    with _usage_lock:
+        hit = _usage.get(ws)
+        if hit and hit[1] == before:
+            hit[1], hit[2] = _stamp(ws), hit[2] + delta
+        elif hit:
+            del _usage[ws]
+
+
+def _files(folder: Path):
+    """``(name, stat)`` of each regular file in ``folder``, none when it is
+    missing; the dot files (``.partial/``) are left out."""
+    if not folder.is_dir():
+        return
+    for f in folder.iterdir():
+        if f.name.startswith("."):
+            continue
         try:
-            return blobs.exists(self.ws, self.name)
-        except ValueError:
-            return False
-
-    is_file = exists
-
-    def _local(self) -> Path:
-        path = find_upload_file(self.name, self.ws)
-        if path is None:
-            raise FileNotFoundError(errno.ENOENT, "no such stored file", self.name)
-        return path
-
-    def __fspath__(self) -> str:
-        return str(self._local())
-
-    def stat(self):
-        return self._local().stat()
-
-    def read_bytes(self) -> bytes:
-        return self._local().read_bytes()
-
-    def __repr__(self) -> str:
-        return f"StoredFile({self.ws!r}, {self.name!r})"
+            st = f.stat()
+        except OSError:
+            continue
+        if S_ISREG(st.st_mode):
+            yield f.name, st
 
 
-class UploadDir:
-    """A workspace's stored files where code expects a directory of them:
-    ``UploadDir(ws) / name`` is a :class:`StoredFile`."""
+def put(ws: str, name: str, data: bytes) -> None:
+    """Store ``data`` as ``name``, whole (``write_atomic``): an existing
+    file of the name is replaced at once, never left half written."""
+    stamp, before = _stamp(ws), size(ws, name) or 0
+    write_atomic(_path(ws, name), data)
+    _adjust(ws, stamp, len(data) - before)
 
-    def __init__(self, ws: str):
-        self.ws = ws
 
-    def __truediv__(self, name: str) -> StoredFile:
-        return StoredFile(self.ws, name)
+def exists(ws: str, name: str) -> bool:
+    return _path(ws, name).is_file()
+
+
+def size(ws: str, name: str) -> int | None:
+    """The stored file's bytes, None when there is none."""
+    try:
+        st = _path(ws, name).stat()
+    except FileNotFoundError:
+        return None
+    return st.st_size if S_ISREG(st.st_mode) else None
+
+
+def stat(ws: str, name: str) -> tuple[int, float] | None:
+    """``(size, mtime)`` of the stored file, None when there is none: the
+    purge's last look at one due file's date (gamma/upload_gc.py)."""
+    try:
+        st = _path(ws, name).stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_size, st.st_mtime) if S_ISREG(st.st_mode) else None
+
+
+def open_path(ws: str, name: str) -> Path | None:
+    """The stored file's path, None when there is none."""
+    path = _path(ws, name)
+    return path if path.is_file() else None
+
+
+def delete(ws: str, name: str) -> None:
+    """Remove the stored file; one already gone is no error."""
+    stamp, before = _stamp(ws), size(ws, name)
+    try:
+        _path(ws, name).unlink()
+    except FileNotFoundError:
+        return
+    _adjust(ws, stamp, -(before or 0))
+
+
+def delete_workspace(ws: str) -> None:
+    """Remove every stored file of the workspace (it is being deleted)."""
+    shutil.rmtree(ws_uploads_dir(ws), ignore_errors=True)
+    with _usage_lock:
+        _usage.pop(ws, None)
+
+
+def touch(ws: str, name: str) -> bool:
+    """Date the stored file now (the upload GC's clocks start over);
+    False when there is no such file."""
+    try:
+        os.utime(_path(ws, name))
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def usage(ws: str) -> int:
+    """Bytes the workspace's stored files take. Every quota check reads it
+    (``server_settings``), an ink merge's under the workspace's write lock,
+    so it must not walk a directory that grows with the library on every
+    stored write: the directory is listed once and the total kept for
+    USAGE_TTL_S while the directory's mtime stays what it was, and the
+    calls here that write or delete adjust it. A file added or removed by
+    anything else (a restore of a server backup, an admin's copy) moves
+    the mtime and is counted at the next read, or after USAGE_TTL_S when
+    it landed within the clock tick of one of those writes."""
+    stamp = _stamp(ws)
+    with _usage_lock:
+        hit = _usage.get(ws)
+        if hit and hit[0] > time.monotonic() and hit[1] == stamp:
+            return hit[2]
+    total = sum(nbytes for _, nbytes, _ in list(ws))
+    with _usage_lock:
+        _usage[ws] = [time.monotonic() + USAGE_TTL_S, stamp, total]
+    return total
+
+
+def partial_dir(ws: str) -> Path:
+    """The uploads directory's ``.partial/``, where a write in progress
+    lives (``write_atomic``) and an upload in parts is assembled
+    (gamma/upload_parts.py) so that ``put_path`` is a rename. Made by the
+    caller; what is left there goes with ``sweep_partial``."""
+    return ws_uploads_dir(ws) / ".partial"
+
+
+def put_path(ws: str, name: str, path: Path) -> None:
+    """Store the complete file ``path``, lying in ``partial_dir(ws)``, as
+    ``name``, consuming it: renamed into place (``place_file``). An
+    existing file of the name is replaced whole, like ``put``'s."""
+    path = Path(path)
+    stamp, before = _stamp(ws), size(ws, name) or 0
+    nbytes = path.stat().st_size
+    place_file(path, _path(ws, name))
+    _adjust(ws, stamp, nbytes - before)
+
+
+def sweep_partial(ws: str, max_age_s: float) -> int:
+    """Remove the workspace's temp files older than ``max_age_s`` (a write
+    a killed process left, an upload in parts that never finished); how
+    many went."""
+    partial = partial_dir(ws)
+    if not partial.is_dir():
+        return 0
+    cutoff, removed = time.time() - max_age_s, 0
+    for f in partial.iterdir():
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def list(ws: str):  # noqa: A001 — last in the module: it shadows the builtin below it
+    """``(name, size, mtime)`` of each of the workspace's stored files."""
+    return [(name, st.st_size, st.st_mtime) for name, st in _files(ws_uploads_dir(ws))]

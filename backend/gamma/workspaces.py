@@ -48,7 +48,7 @@ import sqlite3
 import time
 import urllib.parse
 
-from . import blobs, collab, jobs
+from . import collab, jobs, storage
 from .config import WORKSPACES_DIR
 from .db import (account_name, close_workspace_connections, connect_users_db, delete_shares, delete_workspace_prefs,
                  page_now, safe_ws_id, ws_dir)
@@ -767,9 +767,9 @@ def _unheld(ws: str, fn, *args):
 
 
 def remove_files(ws: str) -> str:
-    """Remove the workspace directory, its stored files (``blobs.delete_workspace``:
-    a bucket's objects are not in the directory) and its stored backups;
-    returns "" or a warning. The directory is first renamed to ``.deleting-<id>-…``
+    """Remove the workspace directory, its stored files
+    (``storage.delete_workspace``, which drops their cached usage too) and
+    its stored backups; returns "" or a warning. The directory is first renamed to ``.deleting-<id>-…``
     (atomic: from then on nothing finds the workspace, and a background
     pass about to open one of its databases finds no directory instead of
     creating a fresh file in a half-removed one), then removed. What a file
@@ -782,10 +782,7 @@ def remove_files(ws: str) -> str:
         path = ws_dir(ws)
     except ValueError:
         return ""
-    try:
-        blobs.delete_workspace(ws)
-    except OSError as e:  # a bucket out of reach: its objects outlive the workspace
-        log.warning(f"[workspaces] the stored files of workspace {ws} could not be removed: {e}")
+    storage.delete_workspace(ws)
     if not path.exists():
         return ""
     doomed = path.with_name(f"{LEFTOVER_PREFIX}{path.name}-{secrets.token_hex(3)}")
@@ -940,7 +937,7 @@ def all_workspaces() -> list[dict]:
     for r in rows:
         info = _info(r)
         out.append({**info, "personal": owners.get(info["id"], "") if info["kind"] == "personal" else "",
-                    "default": info["id"] in defaults, "used_bytes": blobs.usage(info["id"]),
+                    "default": info["id"] in defaults, "used_bytes": storage.usage(info["id"]),
                     "members": members(info["id"])})
     return out
 

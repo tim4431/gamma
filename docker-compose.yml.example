@@ -23,31 +23,31 @@ services:
       # proxy needs no compression of its own for the app's files: Gamma
       # sends the Brotli or gzip copies its build made.
       # FORWARDED_ALLOW_IPS: 10.203.0.0/24
-      # Uploaded files in an S3-compatible bucket (AWS S3, Cloudflare R2,
-      # MinIO) instead of the data volume; the bucket needs a CORS rule for
-      # this server's origin. Variables and CORS: docs/dev/debugging.md
-      # "Stored files in a bucket".
-      # GAMMA_BLOBS: s3
-      # GAMMA_S3_BUCKET: gamma-files
-      # GAMMA_S3_ENDPOINT: https://<account>.r2.cloudflarestorage.com
+      # Off-site copies: the databases and the uploaded files copied to an
+      # S3-compatible bucket (AWS S3, Cloudflare R2, MinIO) every hour, the
+      # newest seven copies of each database kept; Gamma keeps running on
+      # the data volume. An admin can set this in Settings -> Backups
+      # instead; with GAMMA_S3_BUCKET set, these variables decide and the
+      # pane shows them read-only. The bucket needs no CORS rule.
+      # `manage.py offsite` lists and restores the copies
+      # (docs/dev/debugging.md "Off-site copies in a bucket").
+      # GAMMA_S3_BUCKET: gamma-backups
+      # GAMMA_S3_ENDPOINT: https://<account>.r2.cloudflarestorage.com   # unset for AWS
       # GAMMA_S3_REGION: auto
       # GAMMA_S3_ACCESS_KEY: ...
       # GAMMA_S3_SECRET_KEY: ...
-      # GAMMA_BLOB_CACHE_BYTES: "2147483648"   # the node's copies of bucket files
-      # With the bucket, the databases are copied there every hour they
-      # changed, the newest seven of each kept; `manage.py db-copies` lists
-      # and restores them (docs/dev/debugging.md "Database copies in the
-      # bucket"):
-      # GAMMA_DB_COPIES: "1"                   # the default with GAMMA_BLOBS=s3; "0" turns them off
-      # GAMMA_DB_COPIES_INTERVAL: "3600"       # seconds
-      # GAMMA_DB_COPIES_KEEP: "7"
+      # GAMMA_S3_PREFIX: gamma                 # optional: one prefix per server sharing the bucket
+      # GAMMA_OFFSITE: "1"                     # the default with a bucket; "0" turns the copies off
+      # GAMMA_OFFSITE_INTERVAL: "3600"         # seconds, at least 60
+      # GAMMA_OFFSITE_KEEP: "7"
     restart: unless-stopped
 
   # Litestream, for when seconds of loss matter: it streams every database
-  # to the bucket as it changes (the copies above are the simpler default).
-  # Write its configuration first, and again, followed by `docker compose
-  # restart litestream`, whenever a workspace is added or deleted, since
-  # Litestream does not watch it:
+  # to the off-site bucket as it changes (the copies above are the simpler
+  # default, and the only ones of the uploaded files). Write its
+  # configuration first, and again, followed by `docker compose restart
+  # litestream`, whenever a workspace is added or deleted, since Litestream
+  # does not watch it:
   #   docker exec gamma python manage.py litestream-config --out /data/litestream.yml
   # docs/dev/debugging.md "Litestream".
   # litestream:

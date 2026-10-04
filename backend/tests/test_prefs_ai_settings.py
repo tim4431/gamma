@@ -233,6 +233,26 @@ def test_second_provider_adds_its_models(alice):
     assert body["ok"] is False and body["kind"] == "no_model" and "no model" in body["error"]
 
 
+def test_the_other_services_are_presets_grouped_by_vendor(alice):
+    # Every preset is the openai protocol at its vendor's endpoint, grouped
+    # for the dialog's Service menu, with a plan label and a key page.
+    services = alice.get("/api/ai/settings").json()["services"]
+    assert list(dict.fromkeys(s["group"] for s in services)) == ["DeepSeek", "Kimi", "Qwen", "GLM", "OpenRouter"]
+    for s in services:
+        assert s["protocol"] == "openai" and s["plan"]
+        assert s["base_url"].startswith("https://") and s["key_url"].startswith("https://")
+    by_id = {s["id"]: s for s in services}
+    assert by_id["glm"]["base_url"] == "https://api.z.ai/api/paas/v4"
+    assert by_id["qwen-coding"]["note"] and "note" not in by_id["kimi-code"]
+    # An entry made from one is recognised again by its endpoint.
+    r = alice.post("/api/ai/providers", json={
+        "protocol": "openai", "api_key": "sk-kimi-code-test-1234",
+        "base_url": "https://api.kimi.com/coding/v1/", "models": "kimi-for-coding"})
+    assert r.status_code == 200, r.text
+    entry = next(p for p in r.json()["providers"] if p["base_url"] == "https://api.kimi.com/coding/v1")
+    assert entry["label"] == "Kimi Code"
+
+
 def test_deepseek_service_preset(alice, monkeypatch):
     # DeepSeek is offered as a named service: the openai protocol at its
     # endpoint. Such an entry is labelled DeepSeek, and its live model list is

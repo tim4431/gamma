@@ -60,7 +60,9 @@ OpenAI-compatible gateway" promises more than this delivers.
    turn) has nowhere to keep it. DeepSeek V4 thinks by default. When the
    request carries `tools`, DeepSeek requires every earlier assistant
    turn's `reasoning_content` back and answers 400 without it. Kimi's
-   thinking models have the same rule. Assistant tools are on by default
+   docs ask for the same replay but call a missing `reasoning_content`
+   lost reasoning context, not an error (see the recheck below).
+   Assistant tools are on by default
    and reading tools are Allow, so with the shipped DeepSeek preset the
    round after the first tool call fails. Chats that never call a tool
    are unaffected. The Anthropic wire has the same blind spot: it
@@ -123,3 +125,136 @@ Sources: [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_
 [Model Studio deep thinking](https://www.alibabacloud.com/help/en/model-studio/deep-thinking),
 [Z.ai quick start](https://docs.z.ai/guides/overview/quick-start),
 [MiniMax OpenAI API](https://platform.minimax.io/docs/api-reference/text-openai-api).
+
+## Recheck, 3 October 2026
+
+Re-read against the code after the data-model refactor (commit
+`066707b9`) and against the vendors' docs the same day. All six gaps
+stand: nothing reads `reasoning_content`, `thinking_delta` or a `<think>`
+block, the path builders still append `/v1/...`, and `ai_catalog` still
+reads only windows and efforts from models.dev. What changed is on the
+vendors' side.
+
+**DeepSeek.** The current models are `deepseek-v4-pro` (text only) and
+`deepseek-flash` / `deepseek-v4-flash` (takes images), both 1M context,
+384K output. `reasoning_effort` takes `none`, `low`, `high`, `max`; left
+unset, `max_tokens` defaults to 64K in thinking mode, so Gamma's 8192 is
+far below what the vendor expects. The tools-plus-`reasoning_content` 400
+is confirmed in the thinking-mode guide. The Anthropic endpoint
+(`/anthropic`) takes images and tools but not `document` parts (Gamma's
+native-PDF attempt then falls back to text, which is one wasted upload per
+chat) and not `cache_control` (Gamma already sends none off anthropic.com).
+It maps Claude model names onto its own. `GET /models` exists on the
+OpenAI endpoint.
+
+**Kimi.** The docs moved to platform.kimi.ai; the hosts are
+`api.moonshot.ai` (global) and `api.moonshot.cn` (China, a separate
+account). `kimi-k3` (1M context, images) always thinks and takes
+`reasoning_effort` `low` / `high` / `max`; `kimi-k2.6` takes `thinking:
+{type, keep}`; `kimi-k2.7-code` errors on `thinking: disabled`. Gap 1 is
+softer here than the note said: omitting `reasoning_content` "may lose
+reasoning context", no 400. `max_tokens` is marked deprecated in favour of
+`max_completion_tokens` but still accepted; the thinking guide asks for at
+least 16000. Kimi takes OpenAI's `prompt_cache_key` and
+`prompt_cache_options`, and reports `cached_tokens` and
+`cache_write_tokens` — Gamma sends its cache key only to api.openai.com,
+so this is a cheap win. `GET /v1/models` exists.
+
+**Qwen (Model Studio).** Endpoints are moving to workspace-specific hosts
+(`https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`,
+`.ap-southeast-1.` for Singapore); the plain dashscope hosts still work but
+are called deprecated. Thinking is on by default for Qwen3.5 and later;
+`enable_thinking` toggles it, `thinking_budget` caps it, and `qwen3.8-*`
+also take `reasoning_effort` (`low` / `medium` / `xhigh` per models.dev).
+`preserve_thinking` defaults to on for `qwen3.8-max` / `-flash` and then
+wants the full `reasoning_content` back, so gap 1 reaches Qwen too. Tools
+stream fine (`tool_stream` is only for complex argument schemas). The
+Anthropic endpoint (`/apps/anthropic`) takes `cache_control`, `thinking`
+with a budget, images, `output_config.effort`, and also serves
+`deepseek-v4-*`, `kimi-k3`, `glm-5.3` and `MiniMax-M2.5` on one key — but
+has no `/v1/models` (the FAQ says 404), so on Gamma's `anthropic` wire the
+connect form cannot list models or ping the key; models must be typed in.
+Images: `qwen3.8-max`, `qwen3.7-plus`, `qwen3-vl-plus`; `qwen3.7-max` is
+text only. No model listing is documented for compatible-mode either.
+
+**GLM.** Z.ai's OpenAI base is `https://api.z.ai/api/paas/v4` (coding
+plan: `/api/coding/paas/v4`; a Responses API at `/api/v1`), China's
+`https://open.bigmodel.cn/api/paas/v4` — both still unreachable on the
+`openai` wire (gap 2). The Anthropic endpoints `https://api.z.ai/api/anthropic`
+and `https://open.bigmodel.cn/api/anthropic` are documented and are the
+way in today. `glm-5.3` (1M context, 128K output, text only) can no longer
+turn thinking off: `thinking.type` must be `enabled` and `reasoning_effort`
+(`low` / `high` / `max`) is the only dial; `glm-5.3-flash` / `-flashx` take
+images, video and PDF. `clear_thinking` decides whether earlier
+`reasoning_content` is kept; no 400 is documented. Z.ai also has
+`tool_stream`, built-in `web_search` and `retrieval` tools, and reports
+`prompt_tokens_details.cached_tokens` (Gamma reads it). `GET /models`
+exists on `paas/v4`.
+
+**models.dev.** Its entries now carry `modalities.input` for all four
+vendors, including `pdf` for `glm-5.3-flash` and `qwen3.8-max`, so gap 5's
+"new model fact" is available without a vendor table. Two host-hint
+misses: `ai_catalog.catalog_hints` derives names from the base URL's host,
+and `dashscope.aliyuncs.com` / `open.bigmodel.cn` / `api.moonshot.cn` match
+none of models.dev's `alibaba`, `zhipuai`, `moonshotai` keys, so those
+entries fall to the majority vote across providers (which happens to give
+1M for the current flagships). `api.deepseek.com`, `api.moonshot.ai` and
+`api.z.ai` match.
+
+**Effort levels.** The chat's `effortFor` maps Gamma's `none … max` onto
+whatever a model lists, so DeepSeek's and Kimi K3's `low / high / max` and
+Qwen3.8's `low / medium / xhigh` work without code; `none` goes out as
+`reasoning_effort: none` on the OpenAI wire, which DeepSeek accepts and the
+others don't list.
+
+Recheck sources: [DeepSeek chat completion](https://api-docs.deepseek.com/api/create-chat-completion),
+[DeepSeek Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api),
+[DeepSeek models and pricing](https://api-docs.deepseek.com/quick_start/pricing),
+[Kimi chat API](https://platform.kimi.ai/docs/api/chat),
+[Kimi API overview](https://platform.kimi.ai/docs/api/overview),
+[Model Studio OpenAI-compatible chat](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions),
+[Model Studio Anthropic-compatible Messages](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages),
+[Z.ai chat completion](https://docs.z.ai/api-reference/llm/chat-completion),
+[Z.ai GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3),
+[Zhipu Claude-compatible API](https://docs.bigmodel.cn/cn/guide/develop/claude/introduction),
+[models.dev](https://models.dev/api.json).
+
+## What landed, 3 October 2026
+
+The services above are presets under the connect dialog's Other tile
+(`ai_protocols/services.py`; the mechanics are in [ai.md](../dev/ai.md)
+"Other services"). Gaps 1, 2 and 5 are closed on the `openai` wire, gap 6 in part:
+
+1. Thinking is kept and echoed back, within a reply and across messages.
+2. A base URL that ends in a version keeps it; GLM, the coding plans and a
+   pasted `/v1` work. Presets cover Kimi, Qwen, GLM and OpenRouter, each
+   with its China endpoint and coding subscription where the vendor sells
+   one. DeepSeek sells no subscription.
+5. Pictures are left out for models that read text only.
+6. The reply cap is 32,768 for these presets, bounded by the model's own
+   output limit. The vendor thinking switches are still not sent; effort
+   goes out as `reasoning_effort`, which all four accept on their current
+   models.
+
+Kimi's preset also sends `prompt_cache_key`.
+
+Still open:
+
+- Gap 3: `<think>` blocks inside `content` (local servers without a
+  reasoning parser) still show as text.
+- Gap 4: Qwen3 open-weight models on Model Studio still refuse the
+  non-streamed callers (Test, metadata, citations).
+- The Anthropic wire still drops thinking blocks, and the vendors' Anthropic
+  endpoints have no presets.
+- The chat does not show the thinking text, only keeps it.
+
+Unverified without vendor keys:
+
+- That DeepSeek accepts an empty `reasoning_content` on assistant turns
+  that kept none, and refuses nothing on the first request after a chat
+  whose earlier replies came from another provider (they carry none at all).
+- That Kimi Code admits Gamma's client. Its terms forbid a forged
+  User-Agent, and Gamma sends its real one (Python's default), so a gate
+  on known coding tools would refuse it with a 403.
+- What the coding-plan listings return, and OpenRouter's handling of
+  `stream_options` and of `reasoning` echoed on assistant turns.

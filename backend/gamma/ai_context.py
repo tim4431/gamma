@@ -8,6 +8,7 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
+from .ai_protocols.base import reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
                            page_attachment, page_for_doc, page_root_id)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
@@ -491,6 +492,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
             total += estimate_tokens(content)
         if message.get("tool_calls"):
             total += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
+        for text in reasoning_text(message.get("reasoning")).values():
+            total += estimate_tokens(text)
         total += _IMAGE_TOKENS * len(message.get("images") or ())
     return total + _IMAGE_TOKENS * len(images or ())
 
@@ -511,7 +514,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
     front of the question itself, so the document ``context`` — glued to
     the oldest user turn — reads the same on every turn of a conversation.
     ``drop_turns`` leaves out that many of the oldest history items (a
-    conversation the model's window can't hold any more).
+    conversation the model's window can't hold any more). A saved reply's
+    ``reasoning`` (the thinking its wire reported) rides on its first
+    replayed assistant turn, for the wire that echoes it back.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -526,16 +531,19 @@ def build_messages(payload, context: str, with_tools: bool = False,
     for i, history_item in enumerate(history):
         role = "assistant" if history_item.get("role") == "ai" else "user"
         content = history_item.get("text", "")
+        thinking = reasoning_text(history_item.get("reasoning")) if role == "assistant" else {}
         if with_tools:
             actions = _replayable(history_item)
             if actions:
                 # Calls first, then their results, then the reply prose — the
                 # order the turn actually happened in. Synthetic call ids only
-                # need to pair within this one request.
+                # need to pair within this one request. The thinking led to
+                # the calls, so it rides on them.
                 messages.append({"role": "assistant", "content": "", "tool_calls": [
                     {"id": f"call_h{i}_{j}", "name": canonical_tool(a["tool"]),
                      "arguments": a.get("args") or {}}
-                    for j, a in enumerate(actions)]})
+                    for j, a in enumerate(actions)], **({"reasoning": thinking} if thinking else {})})
+                thinking = {}
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
@@ -550,7 +558,7 @@ def build_messages(payload, context: str, with_tools: bool = False,
         if role == "user" and context and not context_used:
             content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
             context_used = True
-        messages.append({"role": role, "content": content})
+        messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {})})
     content = final_prompt(payload, located)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
     if message_context:

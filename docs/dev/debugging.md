@@ -30,7 +30,7 @@ First run: the app seeds an `admin` account with a random password printed
 once to the console (only while zero non-guest accounts exist). User CRUD
 also via `python manage.py` (create-user, set-password, set-admin,
 rename-user, delete-user, list-users, list-workspaces, set-member,
-sweep-guests, migrate, backups, db-copies, litestream-config).
+sweep-guests, migrate, backups, offsite, litestream-config).
 
 Docker:
 
@@ -53,155 +53,124 @@ with the ngx_brotli module). It then also owns the backend's other static
 rules: `index.html` for any path that is no file, `/assets/*` cached
 `public, max-age=31536000, immutable`, everything else `no-cache`.
 
-### Stored files in a bucket
+### Off-site copies in a bucket
 
-By default a workspace's files are kept in its `uploads/` and nothing needs
-setting. `GAMMA_BLOBS=s3` keeps them in an S3-compatible bucket instead
-(AWS S3, Cloudflare R2, MinIO; `gamma/blobs.py`, [user_db.md](user_db.md)
-"Stored files"). It needs boto3: the Docker image installs
-`requirements-s3.txt` beside `requirements.txt` (about 23 MB, most of it
-botocore's service models), and a checkout runs `pip install -r
-requirements-s3.txt`. The variables, read at startup:
+Gamma always works on the files in its data directory. An S3-compatible
+bucket (AWS S3, Cloudflare R2, MinIO, Backblaze B2) can hold copies of the
+databases and the uploaded files, so a lost disk costs at most one interval
+of work (`gamma/offsite.py`, `gamma/s3.py`). The bucket is a backup target
+only: nothing reads from it except a restore. It needs boto3: the Docker
+image installs `requirements-s3.txt` beside `requirements.txt` (about
+23 MB, most of it botocore's service models), and a checkout runs `pip
+install -r requirements-s3.txt`. The desktop app does not include it.
 
-- `GAMMA_S3_BUCKET` (required), `GAMMA_S3_ENDPOINT` (unset for AWS; R2's
-  `https://<account>.r2.cloudflarestorage.com`, MinIO's address; a bucket
-  behind its own endpoint is addressed by path), `GAMMA_S3_REGION` (R2:
-  `auto`), `GAMMA_S3_ACCESS_KEY` and `GAMMA_S3_SECRET_KEY` (both unset:
-  boto3's own chain, the `AWS_*` variables or an instance role),
-  `GAMMA_S3_PREFIX` (put before every key, for a bucket several servers
-  share: `<prefix>/uploads/<workspace>/<name>`). The key must be allowed to
-  list, read, write and delete under the prefix.
-- `GAMMA_BLOB_CACHE_DIR` (default `<data dir>/cache/uploads`) and
-  `GAMMA_BLOB_CACHE_BYTES` (default 2147483648): the node's copies of the
-  files it reads itself (the manifest walk, text extraction, exports,
-  backups), the ones used longest ago evicted past the cap.
-- `GAMMA_S3_PRESIGN` (default on): the uploads route answers a browser with
-  a 302 to a presigned URL, so the bucket serves the bytes; `0` streams
-  them through the node from its cache instead, and the bucket needs no
-  CORS. The URL is valid 5 minutes and the browser keeps the redirect for
-  4 (`Cache-Control: private, max-age=240`). Each object is stored with its
-  media type and `Cache-Control: private, max-age=31536000, immutable` (a
-  name is its content's hash), so an image shown again within those 4
-  minutes costs the node and the bucket no request.
+**What is copied.** A round runs at startup and then once per interval:
 
-A server that cannot use the bucket (no bucket of that name, no
-credentials, a key refused, an endpoint out of reach, a cache directory it
-cannot create) logs the reason and does not start. The check is one
-listing of the bucket, made at startup before the data directory is
-upgraded (`blobs.check`, from `app.create_app`). The job artifacts
-(`jobs/`) and the backup zips stay on the node's disk.
+- users.db and each workspace's pages.db and data.db that changed since its
+  last copy, to `<prefix>dbcopies/users/<stamp>.db` and
+  `<prefix>dbcopies/<workspace>/<stamp>-pages.db` / `-data.db`. `<stamp>`
+  is the round's UTC time, such as `20261003T140000Z`, and is the same for
+  every copy the round takes. The newest copies of each database are kept
+  (7 by default).
+- Each uploaded file the bucket does not hold yet, to
+  `<prefix>uploads/<workspace>/<name>`. A name is the file's content hash,
+  so a file is sent once and has one copy.
 
-An existing data directory's files are moved into the bucket by `manage.py
-uploads-push`, run with the `GAMMA_BLOBS=s3` and `GAMMA_S3_*` variables the
-server will have. It walks each workspace's `workspaces/<id>/uploads/` and
-puts every file the bucket lacks at `<prefix>/uploads/<id>/<name>`
-(streamed, in parts past 8 MB, with the media type and Cache-Control an
-upload gets), printing a count per workspace; `--check` only counts what
-is missing. Names are content hashes, so a run that stopped half way is
-run again and puts only the rest. It reads no database, so it works on a
-data directory of any version, while the server still serves the local
-files. Run it once with the server up, then stop the server, run it again
-for what was uploaded meanwhile, and start the server on the bucket. The
-local files stay where they are: delete `workspaces/<id>/uploads/` once the
-server works from the bucket. In Docker, with the variables in the
-compose file:
+**Settings.** Admins set the copies in Settings → Backups → Off-site copies
+([settings.md](settings.md)): on or off, the bucket, the endpoint (empty
+for AWS; R2's `https://<account>.r2.cloudflarestorage.com`, MinIO's
+address; a bucket behind its own endpoint is addressed by path), the region
+(R2: `auto`), the access key and secret key (both empty: boto3's own chain,
+the `AWS_*` variables or an instance role), the prefix (put before every
+key, for a bucket several servers share), the interval (default 3600 s, at
+least 60) and the copies kept per database. Test lists the bucket once with
+the form's values, saved or not. Copy now starts a round at once. It is the
+server's own round, not a background job ([tasks.md](tasks.md)), and the
+section's status line follows it: the last round, what it copied, what
+failed and why, and the next round. The settings are stored in users.db
+under the `settings` key `offsite`, the secret key encrypted with the data
+directory's key like the shared AI provider keys. A round reads them as it
+starts, and the pause after a round is read as the round ends. So a change
+applies from the next round, and a new interval from the pause after it.
 
-```bash
-docker compose run --rm --no-deps --entrypoint python gamma manage.py uploads-push --check
-docker compose run --rm --no-deps --entrypoint python gamma manage.py uploads-push
-```
+**From the environment.** When `GAMMA_S3_BUCKET` is set, every setting
+comes from the environment and the pane shows them read-only:
+`GAMMA_S3_BUCKET`, `GAMMA_S3_ENDPOINT`, `GAMMA_S3_REGION`,
+`GAMMA_S3_ACCESS_KEY`, `GAMMA_S3_SECRET_KEY`, `GAMMA_S3_PREFIX`,
+`GAMMA_OFFSITE` (on unless `0`), `GAMMA_OFFSITE_INTERVAL` (seconds, default
+3600, at least 60) and `GAMMA_OFFSITE_KEEP` (default 7).
+`docker-compose.yml.example` has the block.
 
-With presigning on, the browser follows the redirect to the bucket's
-origin. The redirected request keeps the `X-Gamma-Workspace` header that
-the client's fetch wrapper adds, so the browser sends a preflight first,
-and pdf.js reads the range headers. The bucket's CORS rule:
+**The bucket.** Only the server talks to it, so it needs no CORS rule and
+no public access. The key must be allowed to list, read, write and delete
+under the prefix (pruning deletes). Two servers that share a bucket need a
+prefix each.
 
-```json
-[{
-  "AllowedOrigins": ["https://gamma.example.org"],
-  "AllowedMethods": ["GET", "HEAD"],
-  "AllowedHeaders": ["*"],
-  "ExposeHeaders": ["Content-Range", "Accept-Ranges", "Content-Length", "ETag"],
-  "MaxAgeSeconds": 3600
-}]
-```
+**A round in detail.**
 
-`AllowedOrigins` may be `*` or the app's own origins. The viewer's PDF
-reads (the whole-file fetch, the HEAD, pdf.js's range requests, the proxy
-probe) use same-origin credentials. The session cookie still reaches the
-server, and the redirected request reaches the bucket without credentials,
-which a plain CORS answer allows: nothing requires
-`Access-Control-Allow-Credentials`. `GAMMA_S3_PRESIGN=0` keeps the bytes
-on the server's path for a store whose CORS cannot be set.
-
-#### Database copies in the bucket
-
-With a bucket, the databases are copied there too, so a lost disk costs at
-most one interval of work. `gamma/db_copies.py` runs a round from the
-app's `every()` loop at startup and then at each interval. The round copies
-users.db and each workspace's pages.db and data.db through the store's
-object calls (`blobs.put_object`, `get_object`, `list_objects`,
-`delete_object`), which keep whole files in a namespace of their own
-beside `uploads/`. The variables (the interval is read at startup, the
-others at each round):
-
-- `GAMMA_DB_COPIES`: on by default with `GAMMA_BLOBS=s3`, off with the files
-  local. Turned on with the local store, the copies go to
-  `<data dir>/dbcopies/` on the same disk. That is for trying the feature
-  out and for tests, not a backup.
-- `GAMMA_DB_COPIES_INTERVAL`: seconds between rounds (default 3600, at
-  least 60). `GAMMA_DB_COPIES_KEEP`: copies kept per database (default 7).
-
-The keys are `<prefix>dbcopies/users/<stamp>.db` and
-`<prefix>dbcopies/<workspace>/<stamp>-pages.db` / `-data.db`. `<stamp>` is
-the round's UTC time, such as `20261003T140000Z`, and is the same for every
-copy the round takes.
-
-- **A copy.** Each database is copied with the SQLite backup API into
-  `backups/.dbcopies/`, which is consistent while the server writes. The
-  copy is quick-checked, uploaded (boto3 sends it in parts past 8 MB) and
-  then deleted. A copy that fails its check is not uploaded: the log gets a
-  warning, the admins get the `db-damage` notice, and the next round tries
-  again. A failed upload is logged and the round goes on with the other
-  databases.
+- **A database copy.** Each database is copied with the SQLite backup API
+  into `backups/.dbcopies/`, which is consistent while the server writes.
+  The copy is quick-checked, uploaded (boto3 sends it in parts past 8 MB)
+  and then deleted. A copy that fails its check is not uploaded: the log
+  gets a warning, the admins get the `db-damage` notice, and the next round
+  tries again.
 - **Only what changed.** The round compares the mtime and size of each
-  file and of its WAL with what they were at its last copy, which
+  database file and of its WAL with what they were at its last copy, which
   `backups/dbcopies.json` records. That is two stats per database, without
   opening it. Before a copy, a WAL with frames in it is checkpointed and
   truncated if nothing holds it (the maintenance tick's checkpoint, which
-  never waits). The server folding the WAL into the file later, as its last
-  connection closes, then does not count as a change. users.db changes
-  with every sign-in, so it is copied in most rounds. Measured 2026-10 on
-  Windows: with 1,000 empty workspaces (2,001 databases), a round that finds
-  nothing changed takes about 120 ms. The first round, which copies all of
-  them to the local store, takes about 25 s.
-- **The log.** A round writes one `[dbcopies]` line when it copied or
-  failed something, as a warning when something failed.
-- **Pruning.** After a round copies a database, the copies past the newest
-  `GAMMA_DB_COPIES_KEEP` are removed. A data directory never removes copies
-  older than its own first round. So a server started on an empty volume (a
-  lost disk, restarted before anyone restored it) copies its fresh users.db
-  without pushing out the copies of the lost one. A restore makes the older
-  copies the directory's own, and pruning goes on as usual.
-- **What the copies leave out.** The copies of a deleted workspace stay in
-  the bucket; remove `dbcopies/<id>/` by hand or with a lifecycle rule. The
-  stored files are in the bucket already. `publisher-sessions.key` in the
-  data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied. It
-  encrypts the saved AI keys, the Gamma Cloud grants, the mirrors' tokens
-  and the publisher sessions in users.db, so keep it somewhere else, or a
-  restored server cannot read those. Two servers that share a bucket need a
-  `GAMMA_S3_PREFIX` each.
+  never waits), so the server folding the WAL in later does not count as a
+  change. users.db changes with every sign-in, so it is copied in most
+  rounds. Measured 2026-10 on Windows: with 1,000 empty workspaces (2,001
+  databases), a round that finds nothing changed takes about 120 ms.
+- **Uploads.** The state file also records the mtime of each workspace's
+  `uploads/` directory, which changes when a file is added or removed.
+  Only a workspace whose directory changed, and every workspace in the
+  first round, has its objects listed (one listing, not a request per
+  file). Each local file the bucket lacks, or holds at another size, is
+  then streamed up. The directory's mtime is recorded only when all of
+  them went up, so a file that failed is tried again next round. The
+  databases go first, so every file a database copy names is in the
+  bucket once the same round's uploads are done.
+- **Failures and the log.** A copy or an upload that fails is logged and
+  the round goes on with the others. A round writes one `[offsite]` line
+  when it copied or failed something, as a warning when something failed.
+  Settings that name no bucket that can work (boto3 missing, half a key
+  pair) stop the round before it starts, with the reason in the status.
+- **Pruning.** After a round copies a database, its copies past the number
+  kept are removed. A data directory never removes copies older than its
+  own first round. So a server started on an empty volume (a lost disk,
+  restarted before anyone restored it) copies its fresh users.db without
+  pushing out the copies of the lost one. A restore makes the older copies
+  the directory's own, and pruning goes on as usual.
+- **What stays in the bucket.** A file deleted from a workspace, and the
+  copies and files of a deleted workspace, stay in the bucket. Remove
+  `dbcopies/<id>/` and `uploads/<id>/` by hand or with a lifecycle rule.
+- **What is not copied.** The job artifacts, the server snapshots and the
+  workspace snapshot zips stay on the node's disk. `publisher-sessions.key`
+  in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
+  It encrypts the saved AI keys, the Gamma Cloud grants, the mirrors'
+  tokens, the publisher sessions and the off-site secret key in users.db,
+  so keep it somewhere else, or a restored server cannot read those (the
+  secret key can be typed in again).
 
-**Restore**, with the server stopped. `manage.py db-copies --list` shows
-each database's copies (how many, the newest), and `--list <workspace>` or
-`--list users` lists every copy of one. Then run `manage.py db-copies
---restore <workspace|users|all> [--at <stamp>]`. `all` restores users.db
+**Restore**, with the server stopped. The command uses the bucket the
+settings name. After a lost disk the saved settings went with users.db, so
+give the bucket in the `GAMMA_S3_*` variables for the command; the restored
+users.db brings the saved settings back for the server. `manage.py offsite
+--list` shows each database's copies (how many, the newest), and `--list
+<workspace>` or `--list users` lists every copy of one, with how many of a
+workspace's files the bucket holds. Then run `manage.py offsite --restore
+<workspace|users|all> [--at <stamp>] [--uploads]`. `all` restores users.db
 and every workspace the bucket holds copies of, which is the way back
 after a lost disk. Each database gets its newest copy, or with `--at` its
 newest copy from that round or earlier. Because a database is copied
 whenever it changes, that is what it held at that round. A workspace's
 data.db without such a copy is left as it is, since everything in it is
-rebuilt. The command refuses, changing nothing, in these cases:
+rebuilt. `--uploads` also downloads each restored workspace's files that
+its `uploads/` lacks, before any database is replaced; the files already
+there stay as they are. The command refuses, changing nothing, in these
+cases:
 
 - users.db or a database it would replace is open, which an exclusive open
   detects: a running server holds the files it used lately.
@@ -216,12 +185,17 @@ Then each database in place is moved aside with its WAL, as
 `<name>.pre-restore-<time>`, and the copy takes its name. A restored
 pages.db's unreferenced-file clocks start over, as with a server backup.
 Start the server; it migrates a copy older than this Gamma. Delete the
-`.pre-restore-` files once the restored server works. In Docker:
+`.pre-restore-` files once the restored server works. `offsite` and
+`litestream-config` run before the schema check, on a data directory of
+any version or none. In Docker (leave `$S3` out when the compose file
+sets the `GAMMA_S3_*` variables):
 
 ```bash
 docker compose stop gamma
-docker compose run --rm --no-deps --entrypoint python gamma manage.py db-copies --list users
-docker compose run --rm --no-deps --entrypoint python gamma manage.py db-copies --restore all
+S3="-e GAMMA_S3_BUCKET=gamma-backups -e GAMMA_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+    -e GAMMA_S3_REGION=auto -e GAMMA_S3_ACCESS_KEY=... -e GAMMA_S3_SECRET_KEY=..."
+docker compose run --rm --no-deps --entrypoint python $S3 gamma manage.py offsite --list users
+docker compose run --rm --no-deps --entrypoint python $S3 gamma manage.py offsite --restore all --uploads
 docker compose start gamma
 ```
 
@@ -232,24 +206,27 @@ thing: whole-directory snapshots on the node's own disk.
 #### Litestream
 
 Litestream streams each database's WAL to a bucket within seconds of a
-write. The scheduled copies above are the simpler default; choose
-Litestream when seconds of loss matter. It runs beside Gamma, not in the
-image. `manage.py litestream-config [--out <path>]` writes a
-`litestream.yml` (Litestream 0.5 or later, one `replica` per database) for
-the bucket the `GAMMA_S3_*` variables name. It has an entry for users.db
-and for each workspace's pages.db and data.db that exist, replicated to
-`<prefix>litestream/users.db` and `<prefix>litestream/<workspace>/<name>`.
-The keys are not written into the file: it names `${GAMMA_S3_ACCESS_KEY}`
-and `${GAMMA_S3_SECRET_KEY}`, which Litestream expands from its own
-environment. Write the file inside the container, so its paths are the
-container's:
+write. The off-site rounds above are the simpler default; choose
+Litestream when seconds of loss matter. It copies no uploaded files, so
+keep the rounds on for those. It runs beside Gamma, not in the image.
+`manage.py litestream-config [--out <path>]` writes a `litestream.yml`
+(Litestream 0.5 or later, one `replica` per database) for the off-site
+bucket, whether it was saved in the pane or set by the environment. It has
+an entry for users.db and for each workspace's pages.db and data.db that
+exist, replicated to `<prefix>litestream/users.db` and
+`<prefix>litestream/<workspace>/<name>`. The keys are never written into
+the file: with an access key it names `${GAMMA_S3_ACCESS_KEY}` and
+`${GAMMA_S3_SECRET_KEY}`, which Litestream expands from its own
+environment. Give the Litestream container those two variables even when
+the bucket was set in the pane. Write the file inside the container, so
+its paths are the container's:
 
 ```bash
 docker exec gamma python manage.py litestream-config --out /data/litestream.yml
 ```
 
 Run Litestream as a sidecar on the same volume, at the same path, with
-the same keys (docker-compose.yml.example has the service, commented
+the same keys (`docker-compose.yml.example` has the service, commented
 out):
 
 ```yaml
@@ -272,9 +249,8 @@ replicated until then. Litestream 0.5 can also follow a directory itself
 restore, stop Gamma and Litestream, move the database and its `-wal` and
 `-shm` aside (Litestream does not write over an existing file), and run
 `docker compose run --rm litestream restore -config /data/litestream.yml
-/data/workspaces/<id>/pages.db` for each file. The copies and Litestream can
-run together, under `dbcopies/` and `litestream/`; `GAMMA_DB_COPIES=0` turns
-the copies off.
+/data/workspaces/<id>/pages.db` for each file. The rounds and Litestream
+can run together, under `dbcopies/` and `litestream/`.
 
 ## Tests
 

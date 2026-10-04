@@ -1,6 +1,6 @@
 # The Gamma Cloud account server
 
-The one new service in the Gamma Cloud plan ([todos/gamma-cloud-plan.md](../../todos/gamma-cloud-plan.md)):
+The one new service in the Gamma Cloud plan ([research/cloud-plans.md](../research/cloud-plans.md)):
 a small web service at `account.gammapdf.com` that owns who a person is,
 signs them in to any Gamma server through OpenID Connect, and (later)
 their plan, billing and hosted container. It holds no pages, files or

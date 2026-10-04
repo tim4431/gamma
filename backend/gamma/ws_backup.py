@@ -4,8 +4,7 @@ it the server keeps.
 The zip is what ``GET /api/export`` downloads and ``POST /api/import-data``
 restores: consistent copies of ``pages.db`` and ``data.db`` (taken with the
 SQLite backup API, so safe while the app serves), every stored file
-(``uploads/``, read through gamma/blobs.py wherever the files live) when
-asked, and a ``manifest.json``. ``write_zip`` writes one,
+(``uploads/``) when asked, and a ``manifest.json``. ``write_zip`` writes one,
 ``restore_zip`` applies one (replace or merge) — the two halves of every
 backup path in the app, so a stored snapshot, a downloaded export and a
 page export all restore the same way. Every database copy is quick-checked
@@ -47,7 +46,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import blobs, config, integrity, jobs, pdf_index, upload_gc
+from . import config, integrity, jobs, pdf_index, storage, upload_gc
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
@@ -104,7 +103,7 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     progress = progress or jobs.no_progress
     root = ws_dir(ws)
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
-    estimate = blobs.usage(ws) if uploads else 0
+    estimate = storage.usage(ws) if uploads else 0
     done, total = 0, sum(_size(f) for f in db_files) + estimate
     progress(done=done, total=total, unit="bytes")
     info = workspaces.get(ws) or {}
@@ -126,11 +125,11 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
             done += _size(src)
             progress(done=done, total=total, unit="bytes")
         if uploads:
-            listed = sorted(blobs.list(ws))
+            listed = sorted(storage.list(ws))
             total = done + sum(size for _, size, _ in listed)
             for name, size, _ in listed:
                 try:
-                    path = blobs.open_path(ws, name)  # a bucket's: the node's copy, fetched now
+                    path = storage.open_path(ws, name)
                     if path is None:
                         raise FileNotFoundError(name)
                     z.write(path, f"uploads/{name}")
@@ -298,13 +297,11 @@ def _copy_uploads(ws: str, tdir: Path, upload_names: list[str], progress=jobs.no
     """The backup's files the workspace lacks, each stored whole
     (``storage.put_upload``): a restore cut short never leaves a
     truncated file under a content-hash name."""
-    from .storage import put_upload
-
     added = 0
     for n, base in enumerate(upload_names):
         progress(phase="copying", done=n, total=len(upload_names), unit="files")
-        if not blobs.exists(ws, base):
-            put_upload(ws, base, (tdir / "uploads" / base).read_bytes())
+        if not storage.exists(ws, base):
+            storage.put_upload(ws, base, (tdir / "uploads" / base).read_bytes())
             added += 1
     return added
 
@@ -482,7 +479,7 @@ def _review_import(ws, tdir, upload_names):
     folders and labels it needs (with the folders above them)."""
     from .sync_tree import upload_refs
 
-    available = set(upload_names) | {name for name, _, _ in blobs.list(ws)}
+    available = set(upload_names) | {name for name, _, _ in storage.list(ws)}
     conversations = "SELECT 'chats', bucket, bucket, messages FROM chats UNION ALL " \
                     "SELECT 'chat_history', id, bucket, messages FROM chat_history"
     with closing(sqlite3.connect(str(ws_dir(ws) / "pages.db"))) as live:

@@ -15,7 +15,7 @@ import { ModelPicker } from "./ModelPicker";
 import { UsageChart } from "./UsageChart.jsx";
 import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { aiServiceTiles, modelList, onThisMachine, signInAddress, useProviderEditor } from "./providerEditor.js";
+import { aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
@@ -333,7 +333,8 @@ function ChatGPTSignIn({ form, setForm, busy, start, connect }) {
 
 // The connect dialog, for the account's list and Settings →
 // Server's shared one alike: 1 a service tile (Other opens the named
-// services, a custom endpoint and its API format); 2 the API key — the
+// services by vendor, then that vendor's plan when it has several, or a
+// custom endpoint and its API format); 2 the API key — the
 // provider's own placeholder and "Get a key at …" link (key_placeholder /
 // key_url from the adapter or the service preset), checked live by the
 // debounced model fetch — or the ChatGPT sign-in; 3 the models, the live
@@ -381,6 +382,11 @@ function ProviderForm({ value, onCancel }) {
   const offered = (protocolId) => !aiKeysForm.id || isOauthProto(protocolId) === oauth;
   const tiles = aiServiceTiles(aiKeysInfo, { only: (item) => offered(item.id) });
   const tile = aiKeysInfo.protocols.some((item) => item.id === service) ? service : "other";
+  // The Other tile's two menus: the vendor, then its plan (API key, China
+  // endpoint, coding subscription) when it offers several.
+  const groups = serviceGroups(services.filter((item) => offered(item.protocol)));
+  const group = groups.find((item) => item.services.some((s) => s.id === service));
+  const note = preset?.note ? t(preset.note) : null;
   const choose = (next) => {
     setService(next);
     const named = services.find((item) => item.id === next);
@@ -417,12 +423,20 @@ function ProviderForm({ value, onCancel }) {
     <div className="settingsForm">
       <Step n={1} title={t("Choose a service")}>
         <IconChoices label={t("AI service")} value={tile} onChange={pickTile} options={tiles} />
-        {tile === "other" ? <Field label={t("Service")}>
-          <MenuSelect block label={t("Service")} value={service} onChange={choose}
+        {tile === "other" ? <Field label={t("Service")} hint={group?.services.length > 1 ? null : note}>
+          <MenuSelect block label={t("Service")} value={group?.name || "custom"}
+            onChange={(name) => {
+              const next = groups.find((item) => item.name === name);
+              choose(!next ? "custom" : next === group ? service : next.services[0].id);
+            }}
             options={[
-              ...services.filter((item) => offered(item.protocol)).map((item) => [item.id, item.label]),
+              ...groups.map((item) => [item.name, item.name]),
               ...(offered("openai") ? [["custom", t("Custom endpoint")]] : []),
             ]} />
+        </Field> : null}
+        {tile === "other" && group?.services.length > 1 ? <Field label={t("Plan")} hint={note}>
+          <MenuSelect block label={t("Plan")} value={service} onChange={choose}
+            options={group.services.map((item) => [item.id, item.plan || item.label])} />
         </Field> : null}
         {service === "custom" ? <Field label={t("API format")} hint={t("Use the format supported by your service")}>
           <MenuSelect block label={t("API protocol")} value={aiKeysForm.protocol}

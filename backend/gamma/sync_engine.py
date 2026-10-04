@@ -72,7 +72,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import blobs, config, ops, pdf_meta, textmerge, workspaces
+from . import config, ops, pdf_meta, storage, textmerge, workspaces
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
 from .auth import MIRROR_ACTOR
@@ -119,10 +119,10 @@ class PageDeferred(Exception):
 
 class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
     """urllib's redirects, except that one leaving the remote's origin goes
-    without its credentials: a remote whose files are in a bucket answers a
-    file's GET with a presigned URL (gamma/blobs.py), which is its own
-    authorization — the bucket refuses a request that carries a second one,
-    and the write token is nothing for it to see."""
+    without its credentials: the mirror's write token, its workspace header
+    and any cookie are for the remote alone, so a redirect to another origin
+    (a proxy in front of the remote, a file host, anything) never carries
+    them there."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -857,7 +857,7 @@ def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
 
 def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
     for name in sorted(names):
-        if not UPLOAD_NAME_RE.match(name) or blobs.exists(ws, name):
+        if not UPLOAD_NAME_RE.match(name) or storage.exists(ws, name):
             continue
         prog = report.get("progress")
         try:
@@ -882,7 +882,7 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks reference (content, props, a
     page's ``doc_id``) that it does not store (one listing of its files,
-    ``blobs.list``); only those of ``pages`` (page ids) when given."""
+    ``storage.list``); only those of ``pages`` (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
             rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
@@ -894,13 +894,13 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
             blocks.append({"content": content or "", "props": json.loads(props or "{}")})
         except ValueError:
             blocks.append({"content": content or "", "props": {}})
-    stored = {name for name, _, _ in blobs.list(ws)}
+    stored = {name for name, _, _ in storage.list(ws)}
     return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
 def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
     for name in sorted(names):
-        if not UPLOAD_NAME_RE.match(name) or not blobs.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
+        if not UPLOAD_NAME_RE.match(name) or not storage.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
             continue
         path = find_upload_file(name, ws)
         if path is None:

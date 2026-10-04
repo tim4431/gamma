@@ -68,8 +68,11 @@ All state is SQLite + files on disk under a data directory (env
     edits of one list never undo each other;
   - `settings` — admin-tunable server settings (KV), including the
     admin-confirmed `public_url`, the shared AI provider entries
-    (`ai_providers`, keys encrypted, [ai.md](ai.md)) and the `cloud_*`
-    keys of the cloud sign-in (below);
+    (`ai_providers`, keys encrypted, [ai.md](ai.md)), the `cloud_*`
+    keys of the cloud sign-in (below) and the off-site copies (`offsite`:
+    `{enabled, bucket, endpoint, region, access_key, secret_key, prefix,
+    interval_s, keep}` as JSON, the secret key encrypted like the AI keys;
+    [debugging.md](debugging.md#off-site-copies-in-a-bucket));
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
@@ -88,8 +91,7 @@ All state is SQLite + files on disk under a data directory (env
 - `jobs/` — the files background jobs produce (`<id>/artifact`, downloaded
   through `/api/jobs/{id}/download`) and the uploads they read
   (`incoming/`). Swept with their rows; not metered against any quota and
-  not part of server snapshots. They stay on the node's disk when the
-  stored files are in a bucket too ("Stored files" below).
+  not part of server snapshots.
 - `workspaces/<id>/pages.db` — the core data model: the `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
@@ -228,11 +230,7 @@ All state is SQLite + files on disk under a data directory (env
   (`/api/upload-file`), filenames are content sha256[:24] + extension (dedup;
   a PDF the proxy or a clip cached is named by its URL's hash instead), and
   `.partial/`, where a write in progress lives until it is complete
-  ("Stored files" below). Empty when the files are kept in a bucket
-  (`GAMMA_BLOBS=s3`).
-- `cache/uploads/<id>/` — with the files in a bucket, the node's copies of
-  the ones it read lately (`GAMMA_BLOB_CACHE_DIR`), downloads in progress
-  under `.partial/`. Derived: deleting it costs only downloads.
+  ("Stored files" below).
 - `backups/<time>-<label>/` — snapshots of the whole data directory's
   databases (and, on request, the uploads): the migration runner's `v<N>`
   ones (`users.db`, the workspaces' databases when a step walks them all,
@@ -253,14 +251,15 @@ All state is SQLite + files on disk under a data directory (env
 - `backups/integrity.json` — the latest failed integrity check per database
   file (`gamma/integrity.py`), what the admins' `db-damage` notice reads;
   `backups/tasks/` holds the backup tasks.
-- `backups/dbcopies.json` — with the databases copied to the bucket
-  (`GAMMA_DB_COPIES`, `gamma/db_copies.py`): the mtime and size of each
-  database and its WAL at its last copy, and this directory's first round.
-  Losing it costs one round that copies everything again.
-  `backups/.dbcopies/` holds a round's copies on their way up. The copies
-  live in the store: `<prefix>dbcopies/` in the bucket, or `dbcopies/` in
-  the data directory with the local store
-  ([debugging.md](debugging.md#database-copies-in-the-bucket)).
+- `backups/dbcopies.json` — the off-site copies' state
+  (`gamma/offsite.py`): the bucket it is about, the mtime and size of each
+  database and its WAL at its last copy, the mtime of each workspace's
+  `uploads/` when its files last all went up, this directory's first round
+  and how the last round went. Losing it costs one round that copies every
+  database again and lists every workspace's files in the bucket.
+  `backups/.dbcopies/` holds a round's database copies on their way up. The
+  copies live in the bucket, under `<prefix>dbcopies/` and
+  `<prefix>uploads/` ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
 
 **The notes index.** `block_fts` in pages.db is an FTS5 table with
 external content: its content is the view `block_fts_src(rowid, block_id,
@@ -408,67 +407,42 @@ cached, so a later one tries again.
 
 ## Stored files
 
-`gamma/storage.py` writes them, `gamma/upload_gc.py` keeps track of the ones
-nothing uses, and `gamma/blobs.py` is where they live.
+`gamma/storage.py` writes and keeps them, and `gamma/upload_gc.py` keeps
+track of the ones nothing uses.
 
-- **The store.** One interface with two drivers, chosen at startup from
-  `GAMMA_BLOBS`. `local`, the default, needs no setting and keeps each
-  workspace's files in its `uploads/` as described below. `s3` keeps them
-  in an S3-compatible bucket (AWS, Cloudflare R2, MinIO), one object per
-  file under `<GAMMA_S3_PREFIX>uploads/<workspace>/<name>`, through boto3.
-  Only that driver imports boto3 (`requirements-s3.txt`; the Docker image
-  has it, the desktop app does not). The calls are `put`, `exists`, `size`,
-  `stat` (size and mtime of one file), `open_path`, `delete`, `delete_workspace`, `list` (name, size, mtime),
-  `touch`, `usage`, `url`, `partial_dir` / `put_path` (a file assembled on
-  the node's disk, stored by a rename) and `sweep_partial`, and every read
-  and write of a stored file goes through them. The writers are
-  `storage.store_pdf` / `store_file` (hashed names, dedup, quota),
-  `storage.store_pdf_path` (the same for an upload in parts, below) and
-  `storage.put_upload` (bytes under a name chosen elsewhere: the proxy's
-  cache, a clip, a mirror's pull, a restore, a stripped PDF, the AI chat's
-  re-download).
-  `storage.find_upload_file` gives a file on disk to read. The presence
-  checks, the GC's listing and purge, the quota, the backup zips, a
-  workspace's deletion and the uploads route's redirect call `blobs`
-  directly. `db.ws_uploads_dir` is the local driver's alone. Setup:
-  [debugging.md](debugging.md#stored-files-in-a-bucket).
-- **A file on disk.** pdfium, the zip writers and the PDF exporters read a
-  local file. `find_upload_file` gives the stored file itself under the
-  local driver and the node's cached copy under S3, downloading it first on
-  a miss, so the call may take a download's time. The cache
-  (`GAMMA_BLOB_CACHE_DIR`, default `<data dir>/cache/uploads`) is kept
-  under `GAMMA_BLOB_CACHE_BYTES` (default 2 GiB) by evicting the copies
-  used longest ago (each use renews a copy's mtime, which orders the cache
-  after a restart); a put leaves its bytes there, since a PDF is read again
-  at once for its manifest. One process uses a cache directory. Code
-  written against a directory of files (the exporters, `ink.read_upload`,
-  the PDF writers) gets `storage.UploadDir(ws)`, whose `/ name` is a
-  `StoredFile` read only when used, so an export that lists its files first
-  and packs them later never holds a copy the cache has evicted since.
-- **What is stored is asked of the store.** `exists` and `size` under S3
-  are a HEAD of the object, never a look at the cache (which may outlive a
-  bucket it was filled from); what this process put, fetched or saw there
-  is remembered for ten minutes, and every delete goes through the driver.
-  A dedup hit is safe either way: its re-date (`touch`) is a call to the
-  bucket, and an object gone from it is stored again.
-- **Written whole.** Every writer above goes through the store's `put`,
-  and the local driver's `put` through `storage.write_atomic`. The bytes go
-  to a temp file in `uploads/.partial/`, are
-  flushed to disk and renamed over the name. A write cut short (a full
-  disk, a killed process) leaves nothing under the name, never a truncated
-  file that a later upload of the same bytes would take for stored. An S3
-  object is written whole by the bucket; the node's copy of it goes through
-  `write_atomic` like a local file.
+- **The store.** A workspace's files live in its `uploads/`, one file per
+  name, on the data directory's disk. The store's calls in `storage.py`
+  are `put`, `exists`, `size`, `stat` (size and mtime of one file),
+  `open_path`, `delete`, `delete_workspace`, `list` (name, size, mtime),
+  `touch`, `usage`, `partial_dir` / `put_path` (a file assembled in
+  `.partial/`, stored by a rename) and `sweep_partial`; `check_name`
+  refuses a name that is not one path segment. Every read and write of a
+  stored file goes through them. The writers are `storage.store_pdf` /
+  `store_file` (hashed names, dedup, quota), `storage.store_pdf_path` (the
+  same for an upload in parts, below) and `storage.put_upload` (bytes under
+  a name chosen elsewhere: the proxy's cache, a clip, a mirror's pull, a
+  restore, a stripped PDF, the AI chat's re-download).
+  `storage.find_upload_file` gives a stored file's path to read (pdfium,
+  the zip writers, the PDF exporters); code written against a directory of
+  files (the exporters, `ink.read_upload`, the PDF writers) gets
+  `db.ws_uploads_dir(ws)`. The presence checks, the GC's listing and
+  purge, the quota, the backup zips and a workspace's deletion call the
+  store directly. A bucket only ever holds the files' off-site copies
+  ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
+- **Written whole.** Every writer above goes through `put`, and `put`
+  through `storage.write_atomic`. The bytes go to a temp file in
+  `uploads/.partial/`, are flushed to disk and renamed over the name. A
+  write cut short (a full disk, a killed process) leaves nothing under the
+  name, never a truncated file that a later upload of the same bytes would
+  take for stored.
 - **In parts.** A PDF past 32 MiB comes in parts (`gamma/upload_parts.py`,
   `POST /api/uploads/parts`, [api.md](api.md)): a proxy in front of the
   server caps a request's body (Cloudflare at 100 MB), and a part stays
   well under that. The parts are appended, one request each and in order,
-  to a file in the store's partial directory (`blobs.partial_dir`:
-  `uploads/.partial/`, or the cache's under S3) and hashed as they land;
-  finishing checks the PDF header and stores the file under its digest by
-  a rename (`storage.store_pdf_path` → `blobs.put_path`; under S3 boto3
-  streams it to the bucket and the file becomes the node's cached copy),
-  so the last request is as quick as a small upload's. The size and quota
+  to a file in `uploads/.partial/` (`storage.partial_dir`) and hashed as
+  they land; finishing checks the PDF header and stores the file under its
+  digest by a rename (`storage.store_pdf_path` → `storage.put_path`), so
+  the last request is as quick as a small upload's. The size and quota
   checks run when the upload is opened, before a byte travels; a dedup hit
   at the end adds nothing, like a re-upload. The sessions live in the
   process (one per token, bound to the workspace, at most 8 open per
@@ -494,15 +468,14 @@ nothing uses, and `gamma/blobs.py` is where they live.
   `<doc_id>.pdf`). A mirror's file transfer and a page export's file list
   read references through it too.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
-  file goes, the file stays in the store and is still served. Its name is
+  file goes, the file stays on disk and is served as before. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
   later batch, a block moved to another page, an AI edit or a re-attached
   PDF brings a reference back. The writer then clears the record in its own
   transaction (`upload_gc.claim`: the op batches, `PUT
   /blocks/{id}/children`, `blocks_store.create_page`). An upload of the same
-  bytes re-dates the file (`blobs.touch`: `os.utime`, or the object copied
-  onto itself with new metadata), which restarts both the upload grace
-  and the 30 days. It does so under the workspace's `upload_gc.guard`, the
+  bytes re-dates the file (`storage.touch`: `os.utime`), which restarts
+  both the upload grace and the 30 days. It does so under the workspace's `upload_gc.guard`, the
   lock the purge holds from its check to its delete, so a re-upload lands
   either before the check (the file stays) or after the delete (the bytes
   are written again). Until it is purged, an unreferenced file counts against
@@ -514,38 +487,32 @@ nothing uses, and `gamma/blobs.py` is where they live.
   request. A batch that drops nothing (typing in a block that keeps its
   image, a folder change on a PDF page) costs nothing.
 - **The full pass.** `upload_gc.reconcile` is one scan of the blocks that
-  mention an upload, diffed against the store's listing (`blobs.list`: the
-  directory, or the bucket under the workspace's prefix). It runs for every
+  mention an upload, diffed against the directory's listing
+  (`storage.list`). It runs for every
   workspace a minute after startup and every six hours, and catches what
   writers outside the op path (imports, a restore, a mirror) left behind. It
   records unreferenced files older than the 15-minute upload grace (an
   upload is stored before the block that names it). It clears the records
   of files that are referenced again or gone, removes day-old temp files
-  from `.partial/` (the cache's, under S3; an upload in parts that never
-  finished among them), and purges. A workspace whose
+  from `.partial/` (an upload in parts that never finished among them),
+  and purges. A workspace whose
   pages.db cannot be opened is logged as an error and the pass goes on to
   the next.
 - **The purge.** A file whose record and mtime are both more than 30 days
-  old is deleted through the store (an object and the node's copy of it).
-  The references are read again under the workspace's write lock first, so
-  no batch can add one meanwhile, and each due file's date with them, one
-  file at a time (`blobs.stat`: a HEAD under S3, never a listing of the
-  workspace while writers wait; once the purge is sure to be refused it
-  asks no more). The purge refuses (a
+  old is deleted (`storage.delete`). The references are read again under
+  the workspace's write lock first, so no batch can add one meanwhile, and
+  each due file's date with them, one file at a time (`storage.stat`,
+  never a listing of the workspace while writers wait; once the purge is
+  sure to be refused it asks no more). The purge refuses (a
   warning in the server log, nothing deleted) when the pages.db looks wrong:
   no root row, no pages, a failing `PRAGMA quick_check`, or more files at
   once than one purge may take (over 100, or over 10 and a fifth of the
   workspace's files). A restore starts the restored records' 30 days over
   (`upload_gc.restart_clocks`), so it never makes a file due at once.
-- **Elsewhere.** A workspace's deletion removes its objects with its
-  directory (`workspaces.remove_files`, `blobs.delete_workspace`; a bucket
-  out of reach then leaves them, with a warning in the log). A backup zip
-  reads the files through the store, and a restore puts the ones the
-  workspace lacks. The job artifacts (`jobs/`), the workspace snapshots
-  (`backups/workspaces/`, `backups/deleted/`) and the server snapshots stay
-  on the node's disk whatever the store. A server snapshot's "uploads"
-  copies only the `uploads/` directories, so with a bucket it copies no
-  files: the bucket is the store of record.
+- **Elsewhere.** A workspace's deletion removes its files with its
+  directory (`workspaces.remove_files`, `storage.delete_workspace`). A
+  backup zip reads the files through the store, and a restore puts the ones
+  the workspace lacks.
 
 ## Schema versions
 
@@ -647,14 +614,12 @@ missing files; creates no guest). Workspaces: `list-workspaces`,
 (`--status`, `--dry-run`; `--global-only` runs the users.db steps and leaves
 each workspace's own to the server), `backups` (list, naming automatic and damaged
 ones; `--create [--uploads]`, `--delete`, `--restore`, `--prune` — the
-automatic pre-upgrade snapshots only), `db-copies` (`--list [ws|users]`,
-`--restore <ws|users|all> [--at <stamp>]`: the database copies in the
-bucket, [debugging.md](debugging.md) "Database copies in the bucket"),
-`litestream-config [--out <path>]` and `uploads-push [--check]` (put the
-files of every workspace's local `uploads/` that the bucket lacks into it,
-the local files left in place; [debugging.md](debugging.md) "Stored files
-in a bucket"). Every command but `migrate`, `backups`, `db-copies`,
-`litestream-config` and `uploads-push` refuses an outdated data directory.
+automatic pre-upgrade snapshots only), `offsite` (`--list [ws|users]`,
+`--restore <ws|users|all> [--at <stamp>] [--uploads]`: the off-site copies
+in the bucket, [debugging.md](debugging.md) "Off-site copies in a bucket")
+and `litestream-config [--out <path>]`. Every command but `migrate`,
+`backups`, `offsite` and `litestream-config` refuses an outdated data
+directory.
 
 `rename-user` changes the account's username and nothing else that names
 it: every row, file and op log names the id. The one convention that
@@ -700,7 +665,7 @@ total quota (`quota_mb`, 0 = unlimited); server-wide defaults in the users.db
 `settings` KV, per-user overrides as nullable `users` columns (NULL = inherit,
 explicit JSON null clears). An account's limits apply to uploads into its
 PERSONAL workspaces, and its usage is their stored files together
-(`blobs.usage`) — nothing anyone uploads into a shared workspace counts
+(`storage.usage`) — nothing anyone uploads into a shared workspace counts
 against a person. A
 shared workspace is checked against the server-wide per-file cap and its
 own `workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
@@ -709,10 +674,10 @@ that applies. `check_upload_allowed(ws, n)` hard-gates `/api/uploads`, `/api/upl
 `/api/upload-file` and the imports (413 over per-file, 507 over quota;
 already-stored hashes always pass — dedup adds no bytes); `can_store`
 soft-gates best-effort caches (proxy `save=1`, ai_context re-download).
-A check reads the usage without walking the files. `blobs.usage` lists a
-workspace once, keeps the total for a minute and adjusts it on the
-driver's own puts and deletes. The local driver also lists again once the
-directory's mtime moved (a file added or removed by anything else). The
+A check reads the usage without walking the files. `storage.usage` lists
+a workspace's `uploads/` once, keeps the total for a minute, adjusts it on
+the store's own writes and deletes, and lists again once the directory's
+mtime moved (a file added or removed by anything else). The
 check runs on every stored write, an ink merge's under the workspace's
 write lock: with 2,000 files it takes 0.12 ms, where two walks of the
 directory took 48 ms (Windows, measured 2026-10).
@@ -746,18 +711,10 @@ pane still hears of a newer release and of logged errors: both are notices
 (`gamma/notices.py`, `GET /api/notices`), the red dot on the account
 button that leads to this pane — [settings.md](settings.md) "Notices".
 
-Under the Updates row come two read-only rows and a line saying the
-server's environment sets them (`GAMMA_BLOBS`, `GAMMA_DB_COPIES`; there is nothing to change
-in the pane). **Stored files** names the store ([Stored files](#stored-files)):
-"local" and the uploads directories' path, or the bucket and prefix,
-whether browsers are redirected to it (`GAMMA_S3_PRESIGN`) and how much of
-the node's cache is used of its cap. **Database copies** is "off", or the
-interval, how many copies of each database are kept, and the newest round
-this process finished, with how many databases it copied and how many
-failed ([debugging.md](debugging.md#database-copies-in-the-bucket)). The
-state file records what each copy saw, not how a round went, so the round
-is kept in memory (`db_copies.status`). It reads no database, and after a
-restart the startup round fills it in again.
+The off-site copies are set and followed in Settings → Backups, not here
+(`/api/admin/offsite`, [debugging.md](debugging.md#off-site-copies-in-a-bucket)).
+Their status (`offsite.status`) reads no database: the last round is kept
+in memory and in the state file, so a restart still shows it.
 
 **Databases** (`POST /api/admin/check-databases`, `gamma/integrity.py`):
 "Check now" runs SQLite's `PRAGMA quick_check` on `users.db` and on every

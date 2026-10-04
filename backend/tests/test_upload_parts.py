@@ -9,7 +9,7 @@ import io
 import pytest
 
 from conftest import login, make_user, workspace_of
-from gamma import blobs, storage, upload_parts
+from gamma import storage, upload_parts
 
 PDF = b"%PDF-1.4\n" + bytes(range(256)) * 1500 + b"\n%%EOF\n"  # 384 KB
 MB = 1024 * 1024
@@ -35,7 +35,7 @@ def _finish(c, token):
 
 
 def _partial(ws):
-    folder = blobs.partial_dir(ws)
+    folder = storage.partial_dir(ws)
     return sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
 
 
@@ -113,7 +113,7 @@ def test_what_is_no_pdf_is_refused_at_the_end_and_leaves_nothing(cam):
     r = _finish(c, token)
     assert r.status_code == 400 and "PDF" in r.json()["detail"]
     assert _partial(ws) == [] and _finish(c, token).status_code == 404
-    assert not blobs.exists(ws, f"{storage.content_digest(data)}.pdf")
+    assert not storage.exists(ws, f"{storage.content_digest(data)}.pdf")
 
 
 def test_more_than_announced_or_than_a_part_may_hold_is_refused(cam, monkeypatch):
