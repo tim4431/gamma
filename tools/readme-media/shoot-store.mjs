@@ -99,8 +99,13 @@ try {
     await page.locator('.blockEditorCm .cm-content').waitFor();
     await page.keyboard.type(COMMENT, { delay: 10 });
     await page.keyboard.press('Escape');
-    const notes = (await account.api(`/api/blocks/${CURATED.atoms}/subtree`)).block.children || [];
-    if (!notes.some(x => x.properties?.quote?.includes(HIGHLIGHT) && x.content.includes('Bell-state fidelity holds'))) throw new Error('The highlight and its comment were not saved');
+    // The comment is saved shortly after the editor closes.
+    for (let i = 0; ; i++) {
+      const notes = (await account.api(`/api/blocks/${CURATED.atoms}/subtree`)).block.children || [];
+      if (notes.some(x => x.properties?.quote?.includes(HIGHLIGHT) && x.content.includes('Bell-state fidelity holds'))) break;
+      if (i === 20) throw new Error('The highlight and its comment were not saved');
+      await page.waitForTimeout(500);
+    }
   }
   // Nothing focused or hovered: no editor chrome, no cursor chip in the chat.
   await page.evaluate(() => document.activeElement?.blur());

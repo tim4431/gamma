@@ -1,6 +1,6 @@
 # Gamma privacy policy
 
-_Last updated: 2026-09-16._
+_Last updated: 2026-10-04._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
@@ -72,9 +72,27 @@ needs them. What is sent is limited to what the feature requires:
 - **Update checks** (desktop app, non-Store installs): the app asks GitHub
   Releases for the latest version. The Microsoft Store edition never does
   this; the Store delivers updates.
-- **Browser extension**: the Gamma Connector talks only to the Gamma
-  server you configured, sending the address of the page or PDF you chose
-  to save.
+- **Browser extension (Gamma Connector)**: it keeps your server address
+  and preferences in the browser's extension storage and talks only to the
+  Gamma server you configured, never to us. It sends that server:
+  - when you save or clip, the page's title and address, its identifiers
+    (DOI, arXiv id), the PDF link or the PDF file, and any text you
+    selected;
+  - when your Gamma app asks it to fetch a PDF the server could not
+    download (a publisher sign-in or bot check), the PDF from the page it
+    opens for that in a browser tab;
+  - for a publisher site you connect in its popup (optional), that site's
+    cookies, so the server can download PDFs you have access to. While the
+    site is connected, the cookies are sent again when you visit it and the
+    server's copy is more than an hour old; this can be turned off in the
+    extension's options. The server stores them encrypted, for your account
+    only: session cookies for at most 24 hours, others for at most 30 days
+    or until they expire. Disconnecting removes them from the server;
+    uninstalling the extension does not, and full server backups keep older
+    encrypted copies until those backups are deleted.
+
+  Paper detection runs inside your browser: apart from the above, the
+  pages you visit are not reported anywhere.
 
 Each of these services receives your IP address as part of the request,
 as any web request does. Gamma adds no identifiers of its own.

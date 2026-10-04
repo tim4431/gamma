@@ -405,7 +405,7 @@ jobs:
   # The Gamma Connector zip carries the release version in its manifest
   # (the checkout's manifest stays untouched). Chrome's `version` takes only
   # dot-separated numbers, so a pre-release suffix goes to `version_name`.
-  # Listing docs and .DS_Store stay out.
+  # The store listing (docs, store/ images) and .DS_Store stay out.
   extension:
     needs: meta
     runs-on: ubuntu-latest
@@ -421,7 +421,7 @@ jobs:
           jq --arg v "${VERSION%%-*}" --arg n "$VERSION" \
             '.version = $v | if $n != $v then .version_name = $n else . end' \
             extension/manifest.json > /tmp/ext/manifest.json
-          rm -f /tmp/ext/STORE.md /tmp/ext/README.md
+          rm -rf /tmp/ext/STORE.md /tmp/ext/README.md /tmp/ext/store
           find /tmp/ext -name .DS_Store -delete
           (cd /tmp/ext && zip -r "$GITHUB_WORKSPACE/gamma-connector-$VERSION.zip" .)
           unzip -l "gamma-connector-$VERSION.zip"
