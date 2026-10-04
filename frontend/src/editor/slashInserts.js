@@ -1,7 +1,8 @@
 // What the "/" menu's insertions do to a note's text, by command name:
-// editor/SlashMenu.jsx lists them with their labels, and the iPad app's
-// editing bar runs the same ones (ipad/core/entry.js `insert`). Pure: no
-// editor, no DOM.
+// editor/slashCommands.js lists them with their labels, and the iPad app's
+// editing bar runs the same ones (ipad/core/entry.js `insert`). Pure, with
+// no imports: the iPad's JavaScriptCore loads it without the catalog's
+// i18n (and the React that brings).
 //
 // Each takes the menu's ctx, { value, start, cursor, setText(newVal,
 // selStart, selEnd) }: start is the index of the "/", cursor the caret (the
@@ -37,6 +38,13 @@ function blockInsert(ctx, body, caretRelInBody, selLen = 0) {
   replaceRange(ctx, lead + body, caretRelInBody != null ? lead.length + caretRelInBody : null, selLen);
 }
 
+// The local calendar day (toISOString would give UTC's, a day off in the
+// evening west of Greenwich).
+function today() {
+  const d = new Date(), pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 const TABLE_MD = "| Column 1 | Column 2 |\n| --- | --- |\n|   |   |";
 const MERMAID_MD = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```";
 
@@ -58,5 +66,5 @@ export const TEXT_INSERTS = {
   mermaid: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
   divider: (ctx) => blockInsert(ctx, "---\n"),
   table: (ctx) => blockInsert(ctx, TABLE_MD, 2, 8),
-  date: (ctx) => replaceRange(ctx, new Date().toISOString().slice(0, 10)),
+  date: (ctx) => replaceRange(ctx, today()),
 };

@@ -46,19 +46,20 @@ newest `v*` tag with the patch number + 1, unless `desktop/package.json`'s
 major release. The number is pinned into the app on each runner
 (`npm version`, no git tag), so About, the update feed and the MSIX carry
 it while the repo file stays a floor. Release notes give each download
-(platform installers, Docker image, AI plugins) a shields.io button, keep
-the first-launch and update instructions in a collapsed section, and list
-the commit subjects since the previous tag (trailing punctuation trimmed,
-repeats dropped). `extension.yml` writes its notes the same way.
+(platform installers, Docker image, AI plugins, browser extension) a
+shields.io button, keep the first-launch and update instructions in a
+collapsed section, and list the commit subjects since the previous tag
+(trailing punctuation trimmed, repeats dropped).
 Dispatch inputs: `version` override,
 `prerelease`, and `publish=false` for build-only artifacts (14 days). The
 publish job also dispatches `docker.yml` on the new tag so the server image
 gets a `<version>` tag, and the Windows job submits the MSIX to the
 Microsoft Store when the Partner Center secrets exist (below). The browser
-extension (`extension.yml`, releases tagged `extension-v<version>`,
-published with `make_latest: false` so the desktop release stays the
-repository's "latest" — the updater depends on that) is a separate
-workflow; everything side by side, with the version rule spelled out:
+extension's `gamma-connector-<version>.zip` is built by the same run and
+attached to the same release. The older extension releases
+(`extension-v<version>`) were published with `make_latest: false` so the
+desktop release stays the repository's "latest", which the updater depends
+on. Everything side by side, with the version rule spelled out:
 [docs/dev/github_actions.md](../../docs/dev/github_actions.md).
 
 ## Code signing (optional, secret-gated)

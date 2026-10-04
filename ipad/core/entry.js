@@ -122,7 +122,8 @@ function planned(text, plan) {
   return { text: out, anchor: plan.selection.anchor, head: plan.selection.head ?? plan.selection.anchor };
 }
 
-// The "/" menu's text insertion `name` at the caret.
+// The "/" menu's text insertion `name` at the caret (slashInserts.js: the
+// catalog itself, slashCommands.js, would bring i18n and React along).
 function inserted(name, text, at) {
   const run = TEXT_INSERTS[name];
   if (!run) return null;

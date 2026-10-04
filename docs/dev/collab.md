@@ -746,8 +746,10 @@ state in App instead of the tree.
 ## Testing
 
 - `backend/tests/test_collab.py`: op semantics, scoping, the log and
-  catch-up, the socket (TestClient `websocket_connect`; sockets need a
-  context-managed client), AI-tool and cross-page fan-out. Every socket
+  catch-up, the socket (TestClient `websocket_connect`; every socket of a
+  test must live on one event loop, so clients come from `conftest.py` —
+  `login()`, `fresh_client()` — which share the session client's portal,
+  never from a bare `TestClient(app)`), AI-tool and cross-page fan-out. Every socket
   test opens its own page, and sequence numbers are asserted relative to
   the hello's (or the previous ack's) — never as absolute counts — so a
   step added to one test never renumbers the others.

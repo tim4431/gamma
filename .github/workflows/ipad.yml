@@ -15,7 +15,8 @@ on:
       - "frontend/src/replica/**"
       - "frontend/src/shared/model/blockModel.js"
       - "frontend/src/shared/model/blockOps.js"
-      # the note editor's text commands the editing bar runs (ipad/core/entry.js)
+      # the note editor's text commands the editing bar runs (ipad/core/entry.js;
+      # not slashCommands.js, which the bundle leaves out)
       - "frontend/src/editor/markCommands.js"
       - "frontend/src/editor/slashInserts.js"
       - "frontend/src/editor/mdMarks.js"

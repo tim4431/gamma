@@ -40,6 +40,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # the suite takes ~3; pytest.ini ends a single hung test at 300 s
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

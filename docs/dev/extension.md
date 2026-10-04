@@ -512,10 +512,9 @@ signed in to the same server works the same way.
 ## Not done yet
 
 - Firefox build (`background.scripts` + `webextension-polyfill`), Web Store
-  listing (the release zip is built and published by
-  `.github/workflows/extension.yml` on every push to main touching
-  `extension/`, as `extension-v<version>` with the version computed from
-  the tags; `manifest.json`'s version is only the floor for minor/major
-  bumps — [github_actions.md](github_actions.md)).
+  listing (the release zip `gamma-connector-<version>.zip` is built by
+  `.github/workflows/desktop.yml` and attached to the desktop release with
+  that release's version written into its manifest; `manifest.json`'s own
+  version is not used for releases — [github_actions.md](github_actions.md)).
 - Detection is client-side only for the badge; `find_page` scans every root
   page per lookup (fine for personal libraries, index it if that changes).

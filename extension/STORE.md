@@ -10,9 +10,10 @@ copy-paste.
 
 1. Register at <https://chrome.google.com/webstore/devconsole> (pay the fee,
    verify the account e-mail).
-2. Build the zip: run the `release` GitHub workflow (Actions tab → release
-   → Run workflow) — it attaches `gamma-connector-X.Y.Z.zip` (X.Y.Z =
-   `manifest.json`'s `version`) to the GitHub Release next to the desktop
+2. Build the zip: run the `desktop` GitHub workflow (Actions tab → desktop
+   → Run workflow, or the `release` skill) — it attaches
+   `gamma-connector-X.Y.Z.zip` (X.Y.Z = the release's version, written into
+   the zipped manifest) to the GitHub Release next to the desktop
    installers. Or locally:
    `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md`.
 3. Dashboard → **New item** → upload the zip.
@@ -26,8 +27,9 @@ copy-paste.
 6. Distribution: **Public**, or **Unlisted** if this stays a personal tool —
    unlisted still gives an install link and auto-updates, without a
    searchable listing.
-7. Submit for review. Bump `version` in `manifest.json` for every later
-   upload (the store refuses a re-used version).
+7. Submit for review. For every later upload use a newer release's zip:
+   the store refuses a re-used version, and each release's zip carries a
+   new one.
 
 ## Listing copy
 

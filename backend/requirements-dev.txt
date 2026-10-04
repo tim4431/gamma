@@ -1,6 +1,7 @@
 # Development / test dependencies (production deps live in requirements.txt)
 pytest
 pytest-xdist   # python -m pytest tests -n auto --dist loadfile
+pytest-timeout # a test that never ends fails with every thread's stack (pytest.ini)
 httpx
 -r requirements-s3.txt
 moto[s3]       # an in-process S3 for tests/test_offsite.py (skipped without it)
