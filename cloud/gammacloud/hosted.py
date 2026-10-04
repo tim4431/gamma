@@ -362,9 +362,12 @@ def create_payload(conn, server_id: str) -> dict:
                                                redirect_uris=[url + "/api/auth/cloud/callback"],
                                                server_id=row["id"], actor="system", owner=row["account_id"])
         conn.execute("UPDATE hosted_servers SET client_id = ? WHERE id = ?", (client_id, row["id"]))
+    # GAMMA_GUEST_MAX=0: no guest logins on a customer's server. A guest
+    # account would not count against the plan's accounts, and would spend
+    # the customer's memory and disk; the public demo is where guests live.
     env = {"GAMMA_HOSTED": "1", "GAMMA_CLOUD_ISSUER": config.PUBLIC_URL, "GAMMA_CLOUD_CLIENT_ID": client_id,
            "GAMMA_CLOUD_CLIENT_SECRET": secret, "GAMMA_CLOUD_POLICY": p["policy"],
-           "GAMMA_CLOUD_ADMIN_SUBJECT": row["account_id"], "GAMMA_PUBLIC_URL": url}
+           "GAMMA_CLOUD_ADMIN_SUBJECT": row["account_id"], "GAMMA_PUBLIC_URL": url, "GAMMA_GUEST_MAX": "0"}
     return {"label": row["label"], "account_id": row["account_id"], "plan": plan,
             "image": f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}", "env": env,
             "data_dir": row["label"], "memory_mb": p["memory_mb"], "cpus": p["cpus"], "network": None,

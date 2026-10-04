@@ -197,6 +197,7 @@ def test_a_plus_grant_creates_a_server_and_its_create_job(client, hosting):
     env = payload["env"]
     assert env["GAMMA_HOSTED"] == "1" and env["GAMMA_CLOUD_ISSUER"] == config.PUBLIC_URL
     assert env["GAMMA_CLOUD_ADMIN_SUBJECT"] == alice and env["GAMMA_CLOUD_POLICY"] == "refuse"
+    assert env["GAMMA_GUEST_MAX"] == "0"                                    # no guests on a paid server
     assert env["GAMMA_PUBLIC_URL"] == f"https://alice.{DOMAIN}"
     with closing(db.connect()) as conn:
         c = conn.execute("SELECT * FROM oauth_clients WHERE client_id = ?", (row["client_id"],)).fetchone()
