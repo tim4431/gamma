@@ -3,8 +3,9 @@
 Survey from 2026-10-04. A page zoomed past roughly 200 to 300% looks soft on
 a high-DPI screen. This note records why, what pdf.js's own viewer does about
 it, what each option costs on Gamma's code as measured, and the design that
-follows. Nothing here is built yet; the mechanics, once built, belong in
-[dev/pdf_loading.md](../dev/pdf_loading.md#high-zoom-and-touch-scrolling).
+follows. The design was built on 2026-10-05; the mechanics are in
+[dev/pdf_loading.md](../dev/pdf_loading.md#high-zoom-and-touch-scrolling),
+and the differences from this note are listed at its end.
 
 ## Why a zoomed page is soft
 
@@ -223,6 +224,28 @@ canvas pixels inside the budget, the detail canvas following a scroll, both
 canvases released for distant pages, and the existing paper-colour check in a
 sepia theme (it would catch a doubled blend). That scenario selects the page
 bitmap as `[data-page] > canvas` and needs the new wrapper.
+
+## As built
+
+Built as recommended, with these differences:
+
+- The margin of the render window is at most half the viewport's size on each
+  side, not all of it, and it respects the 4096 pixel edge limit as well as
+  the area budget. A tall phone viewport otherwise got a detail canvas softer
+  than the screen.
+- A detail canvas is redrawn a little before the view reaches its edge (when
+  a quarter of the margin is left), not when the view has already left it.
+- A slice drawn for an earlier view is kept until it stops covering the view
+  or its page leaves the window, so the total is about one budget and not a
+  hard one.
+- The text layer is not only left alone on a zoom: once the zoom settles its
+  spans are re-measured with pdf.js's `TextLayer.update`, which keeps the
+  alignment a rebuild gave. `PdfCitationOverlay` needed no change; its marks
+  are percentages of the page box.
+- The raster is a controller in the style of `installViewerZoom`
+  (`installPageRaster`), not a React hook.
+- `cropPage` passes its canvas through the canvas limits, which the highlight
+  capture did not do before.
 
 ## Not measured, and what stays open
 

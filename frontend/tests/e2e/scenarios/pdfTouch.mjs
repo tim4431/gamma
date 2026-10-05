@@ -2,8 +2,11 @@ import { waitForPdf } from "./pdf.mjs";
 
 export async function pdfTouchScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, pageId;
-  const bitmap = (pn) => page.locator(`[data-page="${pn}"] > canvas`).first();
-  const painted = async (pn) => bitmap(pn).evaluate((canvas) => {
+  // A page's bitmaps (pdf/pageRaster.js): the base over the whole page and,
+  // past the zoom where the canvas cap bites, the detail over the part in view.
+  const CAP = 8 * 1024 * 1024; // shared/lib/canvasSize.js
+  const bitmap = (pn, which = "base") => page.locator(`[data-page="${pn}"] > .pdfPageCanvas > ${which === "detail" ? ".pdfDetailCanvas" : "canvas:first-child"}`);
+  const painted = async (pn, which) => bitmap(pn, which).evaluate((canvas) => {
     if (!canvas.width || !canvas.height) return false;
     const sample = document.createElement("canvas"); sample.width = sample.height = 128;
     const c = sample.getContext("2d"); c.drawImage(canvas, 0, 0, 128, 128);
@@ -13,6 +16,34 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     sample.width = sample.height = 0;
     return dark > 80;
   });
+  // One page's two canvases, and whether the detail's box on screen covers
+  // the part of the page inside the viewer's viewport (2 px slack).
+  const raster = (pn) => page.locator(`[data-page="${pn}"]`).evaluate((wrap) => {
+    const [base, detail] = wrap.querySelector(".pdfPageCanvas").children;
+    const viewer = wrap.closest(".pdfViewer");
+    const p = wrap.getBoundingClientRect(), s = viewer.getBoundingClientRect(), d = detail.getBoundingClientRect();
+    const vl = s.left + viewer.clientLeft, vt = s.top + viewer.clientTop;
+    const seen = { left: Math.max(p.left, vl), top: Math.max(p.top, vt), right: Math.min(p.right, vl + viewer.clientWidth), bottom: Math.min(p.bottom, vt + viewer.clientHeight) };
+    return {
+      box: [p.width, p.height], base: [base.width, base.height], baseRatio: base.width / p.width,
+      detail: [detail.width, detail.height], shown: getComputedStyle(detail).display !== "none",
+      detailRatio: d.width ? detail.width / d.width : 0, at: `${detail.style.left} ${detail.style.top}`,
+      covers: d.left <= seen.left + 2 && d.top <= seen.top + 2 && d.right >= seen.right - 2 && d.bottom >= seen.bottom - 2,
+    };
+  });
+  // Every page: its backing pixels, and how far (CSS px, vertically) it lies
+  // outside the viewer's viewport.
+  const holdings = () => page.locator(".pdfPageWrap").evaluateAll((wraps) => wraps.map((wrap) => {
+    const [base, detail] = wrap.querySelector(".pdfPageCanvas").children;
+    const viewer = wrap.closest(".pdfViewer");
+    const p = wrap.getBoundingClientRect(), top = viewer.getBoundingClientRect().top + viewer.clientTop;
+    return {
+      page: +wrap.dataset.page, gap: Math.max(top - p.bottom, p.top - (top + viewer.clientHeight), 0), view: viewer.clientHeight,
+      canvases: [[base.width, base.height], [detail.width, detail.height]], shown: getComputedStyle(detail).display !== "none",
+    };
+  }));
+  const pixels = ([w, h]) => w * h;
+  const withinCap = (hs) => hs.every((h) => h.canvases.every(([w, ht]) => w * ht <= CAP && Math.max(w, ht) <= 4096));
   await step("pdf touch: 400% paints within iPad canvas limits and releases distant pages", async () => {
     const pdf = makePdf(Array.from({ length: 8 }, (_, p) => Array.from({ length: 24 }, (_, n) => `Page ${p + 1}, line ${n + 1}: high zoom reading`)));
     const up = await alice.upload("/api/uploads", pdf, "high-zoom.pdf", "application/pdf");
@@ -37,20 +68,92 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await waitForPdf(page);
     for (let i = 0; i < 18; i++) await page.getByRole("button", { name: "Zoom in", exact: true }).click();
     await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 2448) < 1);
+    // Pages 3 to 8 have no text yet. Their empty layers are scaled like the
+    // built ones and must not reach past the page box into the scroll area.
+    assert(await page.locator(".pdfPageWrap").evaluateAll((wraps) => wraps.every((w) => {
+      const t = w.querySelector(".textLayer").getBoundingClientRect(), b = w.getBoundingClientRect();
+      return t.right <= b.right + 1 && t.bottom <= b.bottom + 1;
+    })), "every text layer, built or not, stays inside its page box");
     await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
     await until(() => painted(1), { what: "400% bitmap contains PDF text" });
-    const dimensions = await bitmap(1).evaluate((c) => [c.width, c.height]);
-    assert(dimensions[0] * dimensions[1] <= 8 * 1024 * 1024 && Math.max(...dimensions) <= 4096, "bounded backing size");
+    // Past the cap: the base is a quarter-size preview and a detail canvas at
+    // the screen's own resolution covers the part of the page in view.
+    await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "detail canvas covers the view with PDF text" });
+    let r = await raster(1);
+    assert(r.shown && r.detailRatio >= 1.95, `detail is sharp at DPR 2: ${r.detail} for ${r.detailRatio.toFixed(3)} px/px`);
+    assert(pixels(r.base) <= CAP / 4 * 1.01, `base is a preview in detail mode: ${r.base}`);
+    assert(withinCap(await holdings()), "bounded backing size");
     assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    const note = `base ${r.base.join("x")}, detail ${r.detail.join("x")}`;
+    // Scrolled on by more than a viewport within the page, the detail follows.
+    const before = r.at;
+    await page.locator(".pdfViewer").evaluate((el) => el.scrollBy(el.clientWidth * 1.2, el.clientHeight * 1.5));
+    await until(async () => { const r = await raster(1); return r.shown && r.covers && r.at !== before; }, { what: "detail canvas follows the scroll" });
+    await until(() => painted(1, "detail"), { what: "the moved detail canvas contains PDF text" });
+    assert((await raster(1)).detailRatio >= 1.95, "the moved detail is still sharp");
+    let from = 1;
     for (const pn of [4, 8, 1]) {
       await page.locator(`[data-page="${pn}"]`).evaluate((el) => {
         const viewer = el.closest(".pdfViewer");
         viewer.scrollTop += el.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
       });
       await until(() => painted(pn), { what: `page ${pn} paints after navigation` });
-      await until(async () => page.locator(".pdfPageWrap > canvas:not(.inkCanvas)").evaluateAll((cs) => cs.filter((c) => c.width > 0).length <= 3), { what: "offscreen canvases released" });
+      await until(async () => (await raster(pn)).covers && painted(pn, "detail"), { what: `page ${pn} gets a detail canvas` });
+      // Counted in pages holding pixels: the page in view has two canvases.
+      // Past the 900 px look-ahead a page holds none; outside the viewport
+      // grown by half its size, no detail.
+      await until(async () => {
+        const hs = await holdings();
+        return hs.filter((h) => h.canvases.some((c) => pixels(c) > 0)).length <= 3
+          && hs.every((h) => h.gap <= 1000 || h.canvases.every((c) => pixels(c) === 0))
+          && hs.every((h) => h.gap <= h.view / 2 + 4 || (pixels(h.canvases[1]) === 0 && !h.shown));
+      }, { what: "offscreen canvases released" });
+      const was = await raster(from);
+      assert([...was.base, ...was.detail].every((v) => v === 0), `page ${from} released both canvases: ${was.base}, ${was.detail}`);
+      assert(withinCap(await holdings()), "bounded backing size after navigation");
+      from = pn;
     }
+    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
     if (flags.keep) await page.screenshot({ path: `${server.dir}/pdf-touch-400.png` });
+    assertNoProblems(page);
+    return note;
+  });
+
+  await step("pdf touch: below the cap one supersampled canvas; the text layer and its selection survive a zoom", async () => {
+    // 200% is the last step before the cap bites at DPR 2 (Letter at 220% would
+    // need a smaller ratio than 2 backing px per CSS px).
+    for (let i = 0; i < 10; i++) await page.getByRole("button", { name: "Zoom out", exact: true }).click();
+    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 1224) < 1, { what: "200%" });
+    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
+    await until(async () => { const r = await raster(1); return !r.shown && pixels(r.detail) === 0 && r.baseRatio >= 1.99; }, { what: "detail released, base supersampled" });
+    assert(await painted(1), "the base alone shows the page");
+    assert(withinCap(await holdings()), "bounded backing size");
+    // Into detail mode and back: the spans are re-measured, not rebuilt.
+    const span = page.locator('[data-page="1"] .textLayer span').filter({ hasText: "line 2:" }).first();
+    const selected = await span.evaluate((el) => {
+      el.zoomMark = "kept"; el.dataset.zoomMark = "kept";
+      getSelection().selectAllChildren(el);
+      return getSelection().toString();
+    });
+    assert(selected.includes("line 2:"), `selected ${selected}`);
+    const base = (await raster(1)).base.join("x");
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 1346.4) < 1, { what: "220%" });
+    await until(async () => { const r = await raster(1); return r.shown && r.covers && r.base.join("x") !== base; }, { what: "220% redrawn in detail mode" });
+    await sleep(300); // past the text layer's own settle
+    const kept = await page.evaluate(() => {
+      const el = document.querySelector('[data-page="1"] [data-zoom-mark="kept"]');
+      const sel = getSelection();
+      return { mark: el?.zoomMark, attached: !!el?.isConnected, text: sel.toString(), inside: !!el && sel.rangeCount > 0 && el.contains(sel.anchorNode) };
+    });
+    assert(kept.attached && kept.mark === "kept", "the same span element survives the zoom");
+    assert(kept.text === selected && kept.inside, `the selection survives the zoom: ${JSON.stringify(kept.text)}`);
+    await page.evaluate(() => getSelection().removeAllRanges());
+    // Back to 400% at the top of page 1 for the steps after this one.
+    for (let i = 0; i < 9; i++) await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 2448) < 1);
+    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
+    await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "400% detail again" });
     assertNoProblems(page);
   });
 
@@ -240,18 +343,23 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   });
   await step("pdf touch: paper color survives large zoom cycles and live ink keeps its own theme", async () => {
     // Decode the screenshot in the browser to check the composited output,
-    // rather than only checking CSS declarations or the raw white bitmap.
-    const paperPixel = async () => {
+    // rather than only checking CSS declarations or the raw white bitmap:
+    // the average or the darkest pixel of a clip at dx, dy in page 1's box.
+    const screenPixel = async (dx, dy, width, height, darkest) => {
       const rect = await page.locator('[data-page="1"]').boundingBox();
-      const x = Math.round(rect.x + 20), y = Math.round(rect.y + 150);
-      const png = await page.screenshot({ clip: { x, y, width: 2, height: 2 } });
-      return page.evaluate(async (data) => {
+      const png = await page.screenshot({ clip: { x: Math.round(rect.x + dx), y: Math.round(rect.y + dy), width, height } });
+      return page.evaluate(async ([data, darkest]) => {
         const img = new Image(); img.src = `data:image/png;base64,${data}`; await img.decode();
-        const c = document.createElement("canvas"); c.width = c.height = 1;
-        const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, 1, 1);
-        return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
-      }, png.toString("base64"));
+        const c = document.createElement("canvas");
+        c.width = darkest ? img.width : 1; c.height = darkest ? img.height : 1;
+        const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, c.width, c.height);
+        const px = ctx.getImageData(0, 0, c.width, c.height).data;
+        let best = 0;
+        for (let i = 4; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] < px[best] + px[best + 1] + px[best + 2]) best = i;
+        return Array.from(px.slice(best, best + 3));
+      }, [png.toString("base64"), darkest]);
     };
+    const paperPixel = () => screenPixel(20, 150, 2, 2, false);
     // One light theme and the flipped dark page: the two ways paper is composited.
     for (const [theme, flip, expected] of [["sepia", false, [253, 246, 227]], ["dark", true, [15, 15, 15]]]) {
       await page.evaluate(([theme, flip]) => {
@@ -263,6 +371,28 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
         for (let i = 0; i < 12; i++) await page.getByRole("button", { name: `Zoom ${direction}`, exact: true }).click();
         await page.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 0));
         await until(() => painted(1));
+        // Sampled once the zoom has settled. Zoomed in, past the cap, the
+        // point lies under the detail canvas: the two canvases are composited
+        // into the paper once, not blended twice.
+        if (direction === "in") {
+          await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "settled in detail mode" });
+          assert(await bitmap(1, "detail").evaluate((c) => {
+            const p = c.closest(".pdfPageWrap").getBoundingClientRect(), d = c.getBoundingClientRect();
+            return d.left <= p.left + 20 && d.right >= p.left + 22 && d.top <= p.top + 150 && d.bottom >= p.top + 152;
+          }), "the sample lies under the detail canvas");
+          // White multiplied onto paper is paper however often it is blended,
+          // so the paper alone cannot tell; the ink can. Black text under the
+          // multiply at opacity 0.82 is 0.18 × paper once, ~0.03 × paper if
+          // the base and the detail were each blended. The clip is the first
+          // line's glyphs (72 pt in, baseline 72 pt down) at this zoom.
+          if (!flip) {
+            const k = (await page.locator('[data-page="1"]').boundingBox()).width / 612;
+            const ink = await screenPixel(72 * k, 56 * k, Math.round(Math.min(300, 150 * k)), Math.round(18 * k), true), want = expected.map((v) => v * 0.18);
+            assert(ink.every((v, i) => Math.abs(v - want[i]) <= 4), `${theme}: ink ${ink} is blended once (${want.map(Math.round)})`);
+          }
+        } else {
+          await until(async () => { const r = await raster(1); return !r.shown && r.baseRatio >= 1.99; }, { what: "settled on one supersampled canvas" });
+        }
         const rgb = await paperPixel();
         assert(rgb.every((v, i) => Math.abs(v - expected[i]) <= 2), `${theme}, zoom ${direction}: paper ${rgb} matches ${expected}`);
       }

@@ -5122,6 +5122,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   transform-origin: 0 0;
 }
 
+/* The page's bitmaps (pdf/pageRaster.js): a canvas over the whole page and,
+   at high zoom, a second one over the part in view, which the raster places
+   and shows. The theme treatments further down (blend, opacity, invert) sit
+   on this wrapper, not on the canvases: it composites the two first, so
+   where they overlap the page is not blended twice. */
+.pdfPageCanvas { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.pdfPageCanvas > canvas { display: block; width: 100%; height: 100%; }
+.pdfPageCanvas > .pdfDetailCanvas { position: absolute; display: none; }
+
 /* Ctrl held: dragging draws a rectangle, so cue it over everything on the page. */
 /* Flip page colors (Settings → Reading → PDF viewer): display-only night
    rendering. The canvas is inverted (hue-rotate keeps colors' hue, so figures
