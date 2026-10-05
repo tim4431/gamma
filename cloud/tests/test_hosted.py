@@ -116,7 +116,7 @@ def basic(client_id, secret):
 
 
 REPORT = {"version": "1.2.3", "schema": 41, "accounts": 1, "uploads_bytes": 5 << 20, "data_bytes": 9 << 20,
-          "public_url": f"https://alice.{DOMAIN}"}
+          "public_url": f"https://alice-user.{DOMAIN}"}
 
 
 def subjects(subject):
@@ -214,10 +214,10 @@ def test_a_plus_grant_creates_a_server_and_its_create_job(client, hosting):
     assert env["GAMMA_HOSTED"] == "1" and env["GAMMA_CLOUD_ISSUER"] == config.PUBLIC_URL
     assert env["GAMMA_CLOUD_ADMIN_SUBJECT"] == alice and env["GAMMA_CLOUD_POLICY"] == "refuse"
     assert env["GAMMA_GUEST_MAX"] == "0"                                    # no guests on a paid server
-    assert env["GAMMA_PUBLIC_URL"] == f"https://alice.{DOMAIN}"
+    assert env["GAMMA_PUBLIC_URL"] == f"https://alice-user.{DOMAIN}"
     with closing(db.connect()) as conn:
         c = conn.execute("SELECT * FROM oauth_clients WHERE client_id = ?", (row["client_id"],)).fetchone()
-    assert c["kind"] == "container" and json.loads(c["redirect_uris"]) == [f"https://alice.{DOMAIN}/api/auth/cloud/callback"]
+    assert c["kind"] == "container" and json.loads(c["redirect_uris"]) == [f"https://alice-user.{DOMAIN}/api/auth/cloud/callback"]
     assert c["secret_hash"] == db.token_hash(env["GAMMA_CLOUD_CLIENT_SECRET"])
     set_plan(alice, "plus")                                # again: nothing new
     assert len(jobs_of(alice)) == 1
@@ -344,7 +344,7 @@ def test_me_lists_the_hosted_server_until_it_is_deleted(client, hosting):
     verify(client)
     assert client.get("/api/me").json()["servers"] == []
     set_plan(account["id"], "plus", granted="plus")
-    url = f"https://alice.{DOMAIN}"
+    url = f"https://alice-user.{DOMAIN}"
     [s] = client.get("/api/me").json()["servers"]
     assert s["url"] == url and s["kind"] == "hosted" and s["hosted"] is True and s["name"] == servers.HOSTED_NAME
     assert s["local"] is False and s["version"] == "" and s["schema"] is None
@@ -401,7 +401,7 @@ def test_a_taken_label_is_never_reused(client, hosting):
     assert old["label"] == "alice" and new["label"].startswith("alice-") and new["label"] != "alice"
     payload = json.loads(next(j for j in jobs_of(newcomer) if j["kind"] == "create")["payload"])
     assert payload["label"] == payload["data_dir"] == new["label"]
-    assert payload["env"]["GAMMA_PUBLIC_URL"] == f"https://{new['label']}.{DOMAIN}"
+    assert payload["env"]["GAMMA_PUBLIC_URL"] == f"https://{new['label']}-user.{DOMAIN}"
     # a deleted row (its delete job may still be pending) keeps its label too
     with closing(db.connect()) as conn:
         hosted.admin_action(conn, old["id"], "delete", "test")
@@ -461,7 +461,7 @@ def test_status_for_and_the_status_endpoint(client, hosting):
     assert set(d) == {"id", "label", "url", "state", "read_only", "limits", "report", "reported_at", "synced_at",
                       "stops_at", "deletes_at", "host"}
     assert d["stops_at"] is None and d["deletes_at"] is None        # only a lapsed server has them
-    assert d["url"] == f"https://alice.{DOMAIN}" and d["state"] == "provisioning" and d["host"] == "vps-1"
+    assert d["url"] == f"https://alice-user.{DOMAIN}" and d["state"] == "provisioning" and d["host"] == "vps-1"
     assert d["limits"]["plan"] == "pro" and d["read_only"] is False
 
 

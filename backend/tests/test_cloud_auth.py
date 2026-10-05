@@ -228,9 +228,13 @@ def error_of(r):
     return parse_qs(urlsplit(r.headers["location"]).query).get("cloud_error", [""])[0]
 
 
-def test_server_config_and_start(cloud):
+def test_server_config_and_start(cloud, monkeypatch):
     c = browser()
-    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER}
+    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False}
+    # a share host's people all come from Gamma Cloud: its login page leads with that button
+    monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
+    assert c.get("/api/server-config").json()["cloud"]["lead"] is True
+    monkeypatch.delenv("GAMMA_CLOUD_SHARE_HOST")
     auth = start(c, next="/?page=abc")
     assert auth["client_id"] == "gamma-desktop" and auth["code_challenge_method"] == "S256"
     assert auth["redirect_uri"] == "http://testserver/api/auth/cloud/callback"
@@ -415,7 +419,7 @@ def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
         admin = login("ca_conn", "pw-ca_conn-123")
         # the desktop client cannot sign in at a public address: no cloud button, no link, a readable refusal
         assert cloud_auth.needs_connect()
-        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": ""}
+        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False}
         assert admin.get("/api/admin/settings").json()["cloud"]["needs_connect"] is True
         assert admin.get("/api/auth/cloud/status").json()["connected"] is False
         r = browser().get("/api/auth/cloud/start", follow_redirects=False)

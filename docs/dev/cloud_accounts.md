@@ -60,7 +60,9 @@ every variable), fixed for the life of the container:
 - the Google and GitHub OAuth clients — a provider is off until both its
   id and secret are set; setup in the deploy README;
 - the free share host's address (`GAMMA_CLOUD_SHARE_HOST_URL`, empty = none),
-  which Gamma servers read to know where pages are published (below).
+  which Gamma servers read to know where pages are published (below), and
+  the same server's address for people (`GAMMA_CLOUD_APP_URL`, default the
+  share host's), the entrance ("The entrance").
 
 **`cloud.db`** (`cloud/gammacloud/settings.py`), the sign-up gate. An admin
 edits it on the Admin page's Settings tab and a change takes effect at once:
@@ -170,7 +172,9 @@ and dark, in the quiet bordered look of a workspace tool: the **auth**
 shell (a centred card: sign in, register, verify, reset, the authorize
 page) and the **app** shell (a sidebar and a content column):
 
-- **Overview** (`/`): a greeting with username, plan and admin tags.
+- **Overview** (`/`): a greeting with username, plan and admin tags, and
+  *Open Gamma* (`/open`, "The entrance") while the account has a Gamma to
+  open.
   A *Get started* checklist (account created, e-mail confirmed, signed in
   from a Gamma app — `app_signed_in_at`, so signing everything out does not
   undo it) with a progress bar, hidden once all three are done. Then
@@ -505,7 +509,57 @@ Devices. A signed-out person signs in on the page
 (`POST /authorize/login`, which also sets the portal cookie so the next
 server is one click); an unverified person sees the verify notice. Nothing
 is granted per scope: every client is first party, and the card only says
-who asks and what it gets.
+who asks and what it gets. Gamma Cloud's own servers do not show it
+("The entrance" below).
+
+### The entrance
+
+`entrance.py`, with the authorize step in `routers/oidc.py` and `/open` in
+`routers/portal.py`. People start at one address, the shared server's
+(`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). Most live there. A Pro account
+has a server of its own, and anyone may be a member of somebody else's. No
+server sits behind another's address: a Gamma server is one hostname (its
+API is rooted at `/`, its session cookie has one name, its tokens and share
+links carry no server), and separate hostnames are what keeps one
+customer's server from reading another's session in the browser. So the
+entrance routes instead, and the account server does it, at the moment
+the shared server asks it to sign someone in.
+
+`entrance.destinations(conn, account_id)` lists the Gamma Cloud servers an
+account has a library on, the one to open first at the head:
+
+| kind | which | when |
+|---|---|---|
+| `own` | the account's hosted server | while it answers (`running`, `grace`, `read_only`, `suspended`) |
+| `shared` | the shared server | the account has no server of its own, or has signed in on the shared server as well (the library it had before Pro) |
+| `team` | another person's hosted server | the account has signed in there (it is on its server list) |
+
+Servers people run themselves are never listed. `entrance.decide` is what
+a signed-in, verified account gets at the authorize step:
+
+| the client asking | answer |
+|---|---|
+| the shared server, one destination and it is the shared server | the code, with no page in between |
+| the shared server, one destination and it is the account's own server | a redirect to that server's cloud sign-in (`<server>/api/auth/cloud/start?next=/`); the pending request is dropped |
+| the shared server, several destinations | the chooser (`pages.where_page`, "Where to?"): a row per server; the shared server's row finishes the pending request (`POST /authorize/continue`), the others start a sign-in there |
+| a hosted server, and the account owns it or holds a live grant for it | the code, with no page in between |
+| anything else: the desktop app, a server a person connected, a first visit to another person's hosted server | the confirm card |
+
+The card is kept wherever the address asking is not Gamma Cloud's to vouch
+for: a sign-in hands that server the person's username and e-mail. A
+person who signs in on the authorize page (the password form, Google or
+GitHub) has confirmed by doing so, and `entrance.after_sign_in` applies the
+forward and the chooser to them and finishes otherwise.
+
+`GET /open` is the portal's *Open Gamma* (a button on the Overview while
+the account has a destination): one destination redirects to that server's
+cloud sign-in, several show the chooser, none goes to the Overview. Signed
+out goes to `/login?next=/open`.
+
+`entrance.shared_home(account_id)` is the one place that says which shared
+server an account lives on. It answers `config.APP_URL` for everyone; a
+second shared server would be told apart there, with a column to hold the
+answer.
 
 **Tokens.** `POST /token` with `authorization_code` checks the code's
 client, redirect URI, expiry and PKCE verifier; a replayed code revokes
@@ -593,7 +647,8 @@ Clients tab and can delete it there.
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
-`clients`, `delete-client`, `rotate-key`, `settings`, billing's
+`client-redirect` (one more redirect URI for a client, for a server with a
+second address), `clients`, `delete-client`, `rotate-key`, `settings`, billing's
 `subscriptions` and `billing-sync` ([billing.md](billing.md)), and the
 fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
 ([hosted.md](hosted.md) "Admin"). Every command but `setup` and
@@ -716,7 +771,10 @@ below). Under the
 `provision` policy the pane also offers *Accept published pages*
 (`cloud_share_host`, env `GAMMA_CLOUD_SHARE_HOST=1`), which makes the server
 the share host (below).
-`GET /api/server-config` tells the login page whether to show the button.
+`GET /api/server-config` tells the login page whether to show the button,
+and with `cloud.lead` to lead with it: on a hosted container and on a share
+host, whose people all come from Gamma Cloud, the page is that one button
+and the password form folds behind *Admin sign-in*.
 
 A server whose confirmed public URL is not a loopback one cannot sign in
 as the desktop client (`cloud_auth.needs_connect`). Until it has a client
@@ -928,6 +986,16 @@ before the account server is asked. The publishing side is
 
 Two more settings shape what a share host serves, both environment only
 ([mirror.md](mirror.md) "Publishing" has the mechanics).
+
+**Its two addresses.** People reach the share host at
+`GAMMA_CLOUD_APP_URL` (`app.gammapdf.com`), which is also its
+`GAMMA_PUBLIC_URL` and so its sign-in callback. Gamma servers publish to
+`GAMMA_CLOUD_SHARE_HOST_URL` (`share.gammapdf.com`), the name it had
+first: a server that has published keeps that address in its mirror and
+refuses to publish to another (`publish._check_mirror`), so the
+publishing address does not move. Both names reach the same container, and
+its OIDC client lists both callbacks (`manage.py client-redirect` adds
+one).
 
 **Plans on the share host.** The share host is also where a Lite or Plus
 library lives: the person signs in there like anyone else and is an

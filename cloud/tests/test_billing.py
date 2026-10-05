@@ -103,7 +103,7 @@ def stripe(monkeypatch):
     monkeypatch.setattr(config, "STRIPE_SECRET", "sk_test_x")
     monkeypatch.setattr(config, "STRIPE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setattr(config, "HOSTED_DOMAIN", "gammapdf.test")
-    monkeypatch.setattr(config, "SHARE_HOST_URL", "https://share.gammapdf.test")
+    monkeypatch.setattr(config, "APP_URL", "https://share.gammapdf.test")
     monkeypatch.setattr(config, "STRIPE_PRICES", PRICES)
     monkeypatch.setattr(hosted, "plan_changed", lambda conn, account_id: fake.plan_changed.append(account_id))
     monkeypatch.setattr(hosted, "status_for", lambda conn, account_id: fake.hosted.get(account_id))
@@ -501,7 +501,7 @@ def test_plan_page_states(client, stripe):
     assert page.status_code == 200
     assert "Choose Lite" in page.text and "Choose Plus" in page.text and "Choose Pro" in page.text
     assert "$20" in page.text and "$50" in page.text and "1 GB" in page.text and "self-host" in page.text
-    assert "alice.gammapdf.test" in page.text and "Your current plan" in page.text
+    assert "alice-user.gammapdf.test" in page.text and "Your current plan" in page.text
     # a free account Stripe does not know: the parameter alone is not a checkout
     page = client.get("/plan?checkout=success").text
     assert "Setting up your server" not in page and "If you have just paid" in page and "Choose Plus" in page
@@ -546,7 +546,7 @@ def test_plan_page_for_a_library_on_the_shared_server(client, stripe, monkeypatc
     alice = signed_up(client)
     page = client.get("/plan").text
     assert "Your library on Gamma Cloud, always on at <b>share.gammapdf.test</b>" in page
-    assert "A Gamma server of your own at <b>alice.gammapdf.test</b>" in page
+    assert "A Gamma server of your own at <b>alice-user.gammapdf.test</b>" in page
     completed(client, stripe, alice["id"])
     page = client.get("/plan?checkout=success").text
     assert "Setting up your server" not in page and "Thank you" in page and "<h2>Your server" not in page
@@ -588,7 +588,7 @@ def test_resume_only_when_checkout_accepts(client, stripe, monkeypatch):
     alice = signed_up(client)
     completed(client, stripe, alice["id"], sub(status="canceled"))
     assert "data-resume='plus_month'" in client.get("/plan").text
-    monkeypatch.setattr(config, "SHARE_HOST_URL", "")  # no shared server, so Plus is not sold: no Resume either
+    monkeypatch.setattr(config, "APP_URL", "")  # no shared server, so Plus is not sold: no Resume either
     page = client.get("/plan").text
     assert "data-resume=" not in page and "Not available yet" in page
 

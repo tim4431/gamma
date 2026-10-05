@@ -486,6 +486,24 @@ report usage and be told each account's state. The claim does the limits
 with machinery that existed; the endpoint is the way to per-account usage
 on the Plan page and to a retention rule for lapsed plans.
 
+**One entrance (October 2026).** People are told one address,
+`app.gammapdf.com`, which is the shared server. Putting every server
+behind that hostname was weighed and rejected: a Gamma server assumes it
+is one hostname (the API at `/`, one session cookie name, tokens and share
+links that name no server), so a path or a cookie per server would rework
+the app, the desktop client, the extension and the assistants' sign-in;
+and one hostname for every customer's container gives up the isolation
+the browser provides between hostnames, which is most of what a container
+per customer is for. So the account server routes at sign-in instead
+([dev/cloud_accounts.md](../dev/cloud_accounts.md) "The entrance"): a Pro
+owner is sent on to their own server, a person with several libraries
+chooses, and everyone else stays. Hosted servers took the name
+`<username>-user.gammapdf.com`, so that no username can shadow a service
+name; a separate domain for them would add cookie isolation from the
+account server and remains open. Not built: routing to a second fleet
+host, and a second shared server (`entrance.shared_home` is where an
+account would be told apart).
+
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or
 a merchant of record; whether Pro seats beyond ten are sold at launch or
 later; whether a Plus storage add-on ships with v1; and the retention

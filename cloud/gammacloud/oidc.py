@@ -159,11 +159,7 @@ def create_client(conn, *, name: str, kind: str, redirect_uris: list[str], serve
     if not redirect_uris:
         raise accounts.Problem(400, "a redirect URI is required")
     for uri in redirect_uris:
-        url = urlsplit(uri)
-        if url.scheme != "https" and not (url.scheme == "http" and url.hostname in LOOPBACK_HOSTS):
-            raise accounts.Problem(400, f"redirect URI must be https: {uri}")
-        if url.fragment or url.username or url.password:
-            raise accounts.Problem(400, f"bad redirect URI: {uri}")
+        _check_redirect(uri)
     client_id = "gc_" + new_token(12)
     secret = new_token(32)
     conn.execute("INSERT INTO oauth_clients (client_id, secret_hash, kind, name, redirect_uris, server_id, created_at, "
@@ -171,6 +167,30 @@ def create_client(conn, *, name: str, kind: str, redirect_uris: list[str], serve
                  (client_id, token_hash(secret), kind, name[:100], json.dumps(redirect_uris), server_id, now(), owner))
     audit(conn, "client.create", owner, actor, f"{client_id} {kind} {name}")
     return client_id, secret
+
+
+def _check_redirect(uri: str) -> None:
+    url = urlsplit(uri)
+    if url.scheme != "https" and not (url.scheme == "http" and url.hostname in LOOPBACK_HOSTS):
+        raise accounts.Problem(400, f"redirect URI must be https: {uri}")
+    if url.fragment or url.username or url.password:
+        raise accounts.Problem(400, f"bad redirect URI: {uri}")
+
+
+def add_redirect(conn, client_id: str, uri: str, actor: str = "") -> list[str]:
+    """One more redirect URI for a confidential client: a server that
+    answers at a second address (the shared server's new name beside its
+    old one). Returns the client's URIs."""
+    client = conn.execute("SELECT redirect_uris FROM oauth_clients WHERE client_id = ?", (client_id,)).fetchone()
+    if not client:
+        raise accounts.Problem(404, "no such client")
+    _check_redirect(uri)
+    uris = json.loads(client["redirect_uris"])
+    if uri not in uris:
+        uris.append(uri)
+        conn.execute("UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = ?", (json.dumps(uris), client_id))
+        audit(conn, "client.redirect", "", actor, f"{client_id} + {uri}")
+    return uris
 
 
 def rotate_secret(conn, client_id: str, actor: str = "") -> str:
@@ -276,6 +296,11 @@ def pending(conn, request_id: str):
     if not client:
         return None
     return {**dict(row), "client": client}
+
+
+def drop(conn, req: dict) -> None:
+    """Forget a pending request that will not be finished."""
+    conn.execute("DELETE FROM oauth_requests WHERE id = ?", (req["id"],))
 
 
 def finish(conn, req: dict, account) -> str:
