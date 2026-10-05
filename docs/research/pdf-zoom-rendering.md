@@ -258,8 +258,12 @@ Built as recommended, with these differences:
 - **A render queue.** Visible pages render concurrently, as today. If
   profiling shows dropped frames with a heavy figure in view, the renders
   can be serialized with the viewport's page first.
-- **The zoom limit.** With the detail canvas the raster no longer cares how
-  far the zoom goes, so `ZOOM_MAX` (4) can rise. Scroll height for long
-  documents at the new limit should be checked against browser limits first.
+- **The zoom limit** was raised from 400% to 800% once the detail canvas was
+  in: at 800% the canvases measured the same size as at 400% (a 2.1 MP base
+  and a 4.7 MP detail canvas at 1024 x 768, DPR 2). Two things were not
+  checked. Browsers cap how tall a scroller's content can be, and a document
+  of a few thousand pages at 800% may reach that. The live-ink canvas still
+  covers the whole page, so a stroke being drawn at 800% is soft until the
+  pen lifts and it becomes SVG.
 - **pdf.js 6.x.** Worth its own look: the operation filter, and the page
   that rendered slower.

@@ -166,7 +166,9 @@ and measurements behind it are in
   the cap leaves it at the screen's pixel ratio or better (`basePlan`).
 - **Detail mode past that.** For A4 the cap leaves about 4.09 / zoom backing
   pixels per CSS pixel, so on a DPR 2 screen detail mode starts near 205% and
-  on a DPR 1 screen it never does under the 400% limit. The whole-page canvas
+  on a DPR 1 screen just past 400%. The zoom limit is 800%
+  (`shared/model/zoom.js`); the detail canvas costs the same there as at
+  400%, since it is sized by the viewport. The whole-page canvas
   (the base) drops to half its capped linear resolution and becomes a
   preview. A second canvas (the detail) covers the page's part of one render
   window, at the device pixel ratio.
@@ -226,7 +228,7 @@ wheel input, a zoom change or teardown drops the pending alignment. Writing
 offsets mid-gesture fights WebKit's native scroll animation
 ([WebKit issue](https://bugs.webkit.org/show_bug.cgi?id=255193)).
 
-`tests/e2e/scenarios/pdfTouch.mjs` covers 400% rendering at DPR 2 under an
+`tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
 emulated canvas allocation limit: a detail canvas at 2 backing pixels per
 CSS pixel over the part in view, every canvas inside the limits, the detail
 canvas following a scroll, both canvases released for distant pages, one
