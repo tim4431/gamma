@@ -703,6 +703,34 @@ without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
+### The composer
+
+The composer is one rounded box: the context chips on top, the message at
+full width, then a toolbar of [+], the Full PDF switch, the model chip, the
+mic, and Send (or Stop while this bucket's reply streams). The box's
+buttons never take the focus (the form cancels a button's `mousedown`), so
+a press keeps an on-screen keyboard up.
+
+- **Return** is decided in `chat/enterKey.js` (`tests/enterKey.test.mjs`).
+  With a keyboard, Enter sends and Shift+Enter breaks the line. While
+  `touchTyping()` holds ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger))
+  Return is the only line break there is, so it breaks the line and Send
+  sends. Ctrl/⌘+Enter sends on either, for a tablet with a keyboard on it.
+  `sendsOnEnter` serves the composer and an edit-and-resend.
+- **Input methods.** An Enter that confirms a word an input method is still
+  composing (Chinese, Japanese, Korean; `isComposing` or key code 229)
+  belongs to it: `composing(e)` keeps it from sending, committing or
+  closing in the composer, an edit, the history's rename and a hand-off
+  card's note.
+- **Searches that raise no keyboard.** The history popover's search and the
+  page picker's take the focus on open only where typing is not on an
+  on-screen keyboard (`autoFocus={!touchTyping()}`).
+- **Message tools.** A message's Copy and Edit, and a code block's Copy, come
+  up with the message where a pointer hovers (taking no press while hidden)
+  and are always there where none does.
+- The draft and App's last ask survive the dock remounting
+  ([chat_history.md](chat_history.md)).
+
 ### Mentioning library papers
 
 `chat/PaperMentionInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits

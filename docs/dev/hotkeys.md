@@ -3,7 +3,7 @@
 How a key becomes an action, where a shortcut is declared, how the account
 changes it, and what the command palette and the Settings pane read.
 
-## One catalog, four surfaces
+## One catalog, five surfaces
 
 A **command** is declared once, as an object in one of two catalogs:
 
@@ -35,16 +35,18 @@ answers to for this account (its first effective key, `""` when unbound):
 the home library's key hints (the page menu's Rename / Delete, the filter
 box) and the guide's `{key:…}` tokens (`guide/keys.js`) both read it.
 
-The four surfaces read that catalog and nothing else:
+The five surfaces read that catalog and nothing else:
 
 | Surface | Reads | Where |
 |---|---|---|
 | the key dispatchers | `keys`, `when`, `edits`, `run` | App's one window listener (app scope); a block row's `onKeyDown` (block scope) |
 | the command palette (Ctrl+Shift+P, or `>` in Ctrl+P) | `label`, `group`, the effective keys, `run` | [library/QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx), fed by App's `paletteCommands()` |
 | Settings → Keyboard | everything, plus `fixed` and the conflicts | [settings/SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx) |
-| the touch editing bar (block scope; its Undo / Redo call App's `undoBlocks`) | `label`, `when` (a button greys out), `run` | [editor/EditBar.jsx](../../frontend/src/editor/EditBar.jsx), given the row's `commandContext` ([ipad.md](ipad.md) "The editing bar") |
+| the touch editing bar (block scope; its Undo / Redo call App's `undoBlocks`) | `label`, `when` (a button greys out, or a transient one hides), `run` | [editor/EditBar.jsx](../../frontend/src/editor/EditBar.jsx), given the row's `commandContext` ([ipad.md](ipad.md) "The editing bar") |
+| a menu row (app scope: the View menu's Undo, Redo, Go to page, Command palette) | `label`, the effective keys, `when` (the row greys out), `run` | [app/CommandMenuItem.jsx](../../frontend/src/app/CommandMenuItem.jsx), given App's `appCmdRef` context ([ui-design.md](ui-design.md#menus-and-submenus)) |
 
-So a key, a palette entry, a bar button and the pane can never disagree.
+So a key, a palette entry, a bar button, a menu row and the pane can never
+disagree.
 The cheat sheet in [docs/user_guide.md](../user_guide.md) is checked against
 the catalog by `tests/commands.test.mjs`: a command with a default chord
 whose label is missing there fails the test.
@@ -82,9 +84,9 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **Ctrl+Shift+K** — the caret's line of a multi-line block (a CodeMirror change); a one-line block goes as a whole through `onDelete(id, {keepChildren: true, focusAbove: true})`: `removeBlockKeepChildren` lifts its children into its place (indented lines under a deleted line stay), and the block above gets the caret at its end. The handle menu's Delete still removes the subtree.
 - **New block above / below**, **indent / outdent**, **collapse / expand** (unbound) → `onEnterSibling(id, {above})`, indent / outdent (they work inside code fences and math, where Tab means something else), toggle collapse. New block below is what the new-note Enter does. Indent and outdent re-parent the block, which remounts its row: an open editor stays open with its selection (App's `keepEditorThrough`, which a move and another client's op use too), for Tab as for the command.
 - **Where a block can go** is each command's `when`: move up and indent need a sibling above, move down one below, outdent a parent (`getParentInfo`). The palette leaves an inapplicable one out, and the editing bar greys its button.
-- **Insert…** (unbound, needs the editor) → a `/` after the caret, with a space after a word, so the slash menu opens as if typed (`runInsertSlash`); nothing inside math or a fence. **Inline equation** (unbound, formatting) → `$…$` around the selection, else `$x$` with the x selected (`runInsertMath`).
+- **Insert…** (unbound, needs the editor) → a `/` after the caret, with a space after a word, so the slash menu opens as if typed (`runInsertSlash`); nothing inside math or a fence. **Inline equation** (unbound, formatting) → `$…$` around the selection, else `$x$` with the x selected (`runInsertMath`). **Next math argument** (`block.nextSlot`, unbound, formatting) → what Tab does in a math snippet (`mathTabJump` in `latexCompletion.js`: the next `{}` slot, past a `\right` delimiter, then out of the span; [latex_editing.md](latex_editing.md)), for an on-screen keyboard without Tab; its `when` holds only while there is somewhere to go, never for a `$` in a code fence.
 - **Toggle to-do** (unbound) → `toggleTodoLine` (mdMarks.js): `- [ ]` ↔ `- [x]` on the caret's line, a line without a box gets one after its list marker. **Select block text** (unbound) selects it. The handle menu's add-to-chat, move-to-page and delete-subtree are palette entries too.
-- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code. Their plans of the text alone (`markPlan`, `linkPlan`, `mathInsertAt`) are also what the iPad app's editing bar applies ([ipad.md](ipad.md#editing-the-notes)).
+- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code. A system keyboard's or Format menu's `beforeinput` `formatBold`, `formatItalic` and `formatStrikeThrough` (the iPad keyboard's B and I) run `block.bold`, `block.italic` and `block.strike` in every `BlockCmEditor`. Their plans of the text alone (`markPlan`, `linkPlan`, `mathInsertAt`) are also what the iPad app's editing bar applies ([ipad.md](ipad.md#editing-the-notes)).
 
 From the palette a block command runs on the **focused row** with `editor: null` (opening the palette closes any editor); `needsEditor` commands are left out there.
 

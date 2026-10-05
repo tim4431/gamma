@@ -2,11 +2,12 @@
 // `[name](/api/uploads/<hash>.<ext>)`, what a dropped or pasted file becomes.
 // Files are content, any type, any number per page (docs/dev/block_centric.md,
 // "Files and documents"). Every chip looks the same. A PDF or markdown file
-// can become a page: "Add to library" in the right-click menu — a PDF through
-// `POST /blocks/by-doc/<hash>` (the page CARRIES the file: viewer,
-// highlights, metadata; nothing is uploaded twice), a markdown file through
-// `POST /pages/from-file` (a note page imported from it — a copy, the file
-// stays). Once the page exists the chip shows an "open page" button.
+// can become a page: "Add to library" in its menu (a right-click or a held
+// finger) — a PDF through `POST /blocks/by-doc/<hash>` (the page CARRIES
+// the file: viewer, highlights, metadata; nothing is uploaded twice), a
+// markdown file through `POST /pages/from-file` (a note page imported from
+// it — a copy, the file stays). Once the page exists the chip shows an
+// "open page" button.
 //
 // The chip renders inside markdown, so it is inline: it must sit in a
 // sentence ("see [data.csv](…) for the raw numbers") as well as alone on a
@@ -15,6 +16,7 @@
 import React, { createContext, useContext, useEffect, useReducer, useState } from "react";
 import { DownloadIcon, ExternalLinkIcon, FileIcon, PaperIcon, PlusIcon } from "../shared/ui/Icons";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
+import { menuPress } from "../shared/ui/press.js";
 import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
 import { t } from "../shared/i18n/i18n.js";
@@ -168,7 +170,8 @@ const stop = (e) => e.stopPropagation();
 // Every file looks the same: icon, name, a download arrow. A PDF or a
 // markdown file that already has a page additionally shows a small "open
 // page" button before the arrow; making that page ("Add to library") lives
-// in the right-click menu, so a chip never advertises it inline.
+// in the chip's menu (a right-click or a held finger), so a chip never
+// advertises it inline.
 const PAGEABLE = /^(pdf|md|markdown)$/;
 
 export function FileChip({ href, text }) {
@@ -205,7 +208,7 @@ export function FileChip({ href, text }) {
       title={t("{ext} — {name}", { ext: fileKindLabel(ext), name: name })}
       onMouseDown={stop}
       onClick={stop}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
+      {...menuPress((e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); })}
     >
       <a className="fileChipMain" href={url} target="_blank" rel="noreferrer">
         <span className={`fileChipIcon fileChipIcon-${isPdf ? "pdf" : "file"}`}>

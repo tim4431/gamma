@@ -68,6 +68,17 @@ export function folderSubtree(tree, id) {
   if (tree.folders.has(id)) add(id);
   return ids;
 }
+// The folders of `order` (every folder by default) the `moving` folders can
+// be put into: none of them, nor one below them.
+export const folderTargets = (tree, moving, order = [...tree.folders.keys()]) =>
+  order.filter((id) => !moving.some((m) => inFolder(tree, id, m)));
+// The sibling a folder steps past to go one place up (step -1) or down (+1)
+// in its folder's order; "" when it is already first or last.
+export function folderNeighbour(tree, id, step) {
+  const siblings = childFolders(tree, tree.folders.get(id)?.parent);
+  const at = siblings.indexOf(id);
+  return at < 0 ? "" : siblings[at + step] || "";
+}
 
 // A page's filing (`properties.folders` / `labels`) as the ids a block of
 // the tree has: an id whose block is gone, or not synced here yet, names

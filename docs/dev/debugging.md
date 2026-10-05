@@ -594,6 +594,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   block in the bundled stylesheet (`display-mode` cannot be emulated in
   Chromium), and a note editor's editing bar by tap (none with a mouse).
   `--only ipad`.
+- `touch.mjs`: one behaviour for mouse and finger
+  ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in
+  desktop and touch contexts — a window's fold, unfold and drag, a held
+  finger and the "⋯" for every menu, Select mode, the folder menu's moves,
+  the View menu's command rows, the pill's Undo, a notebook's place across
+  its views and tabs, the viewer's touch tools, the editing bar's marks,
+  and the chat's composer and history rows. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

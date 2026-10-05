@@ -19,7 +19,12 @@ folder and of every folder below it into the library chat's history
 findable. ChatDock's `chatKey` is the open page's id, else the open
 folder's id, else `home`. A bucket switch empties the composer at once and
 then reads the stored conversation; a draft typed while that read is in
-flight stays (opening a history entry still empties it).
+flight stays (opening a history entry still empties it). A remount of the
+dock in the same bucket (an iPad turning, the dock closed and opened
+again) brings the draft back, and an ask from App (a handwriting block's
+"Transcribe with AI") is sent once however often the dock mounts: both
+live in ChatDock's module-level `kept`, since one dock is mounted at a
+time.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -96,14 +101,18 @@ active conversation) and `/api/chat-history` (the archive).
   one too, as for New chat), the entry becomes the active row and leaves
   history, and the answer carries the new version. A conversation is always
   in exactly one place.
-  - Rename: inline `aiKeyInput`. The active chat's title goes through
+  - Each row's menu (its "⋯", a right-click or a held finger) has Rename,
+    and on an archived row Select and Delete.
+  - Rename: inline `aiKeyInput`; Enter (not one that confirms an input
+    method's word) or a blur saves, Escape cancels. The active chat's title goes through
     `PUT /chats/{key}` `{title}`, which leaves the messages and the version
     as they are; an entry's through `PUT /chat-history/{id}`. The autosave
     never sends a title, so it can't roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
-  - Several at once: each archived row carries a tick box (on hover, and on
-    every row while anything is ticked). The bar under the list says how
+  - Several at once: the menu's Select ticks a row, and while anything is
+    ticked every archived row shows its tick box and a click on a row
+    ticks it instead of opening it. The bar under the list says how
     many, offers **Select all** (the rows the search leaves listed) and
     **Clear**, and its **Delete** confirms once and sends them in one call
     (`POST /chat-history/delete` `{ids}`). The ticks belong to the open

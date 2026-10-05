@@ -67,6 +67,7 @@ const COMMAND_ICONS = {
   "block.highlight": HighlightIcon,
   "block.link": LinkIcon,
   "block.math": SigmaIcon,
+  "block.nextSlot": ChevronRightIcon,
   "block.addToChat": MessageSquareIcon,
   "block.moveToPage": ExportIcon,
   "block.delete": Trash2Icon,

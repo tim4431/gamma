@@ -188,8 +188,9 @@ label (a label is a block, carried or not), in a folder the labels its
 pages carry. `labelMeta`, the label twin of `folderMeta`, gives each a count
 and its latest modified/added/viewed time, so labels sort by the same
 clock. Click selects, double-click opens (on
-touch a tap opens, as for pages and folders: `isTap` in App.jsx), a paper
-dropped on one gets that label, right-click is the existing label
+touch a tap opens, as for pages and folders: `isTap` in App.jsx, which
+asks `lastPointer()`), a paper dropped on one gets that label, and its menu
+(right-click, a held finger or the row's "⋯") is the existing label
 rename/delete menu. Opening a label KEEPS the folder scope (`?folder=<id>`
 and `?label=<id>` can both be in the URL — `homeUrlFor`), so a label opened inside
 a folder reads as "this folder, narrowed to that label"; its browse bar is the
@@ -227,8 +228,9 @@ search with the query filled in (SearchPanel's `initialQuery`, App's
 
 The list view is a table. Every row ends in the same trailing columns
 (`rowColumns` in App.jsx): the kind ("PDF", "Page", or a folder's or label's
-page count), the date the active sort uses, and the pin slot, kept empty on
-rows without a pin. The date is `formatShortDate` from libraryUtils.js
+page count), the date the active sort uses, the pin slot, kept empty on
+rows without a pin, and the row's "⋯" (`MenuButton`), its slot kept on a
+row without a menu ("No label"). The date is `formatShortDate` from libraryUtils.js
 ("Today, 9:41", "Yesterday", "Sep 12", else the year), with the full date in
 its title. It reads the same clock as a card's `cardTime`. A thin header
 (`.fileListHead`, not a `.fileRow`) names the columns, and its date column
@@ -246,7 +248,17 @@ into its own name input in place (Enter or blur commits, Escape cancels); it
 is hidden while the folder is filtered to files-only, to labels, or inside a
 label view. Committing inserts the folder block, last among its siblings:
 an empty folder is real, shared and synced like any; a name a sibling has
-already makes nothing. The toolbar is filter box → sort → kind → list/grid.
+already makes nothing. The toolbar is filter box → sort → kind → list/grid
+→ Select.
+
+**Selecting.** A click selects, Ctrl/⌘+click toggles one item and
+Shift+click extends a range; a finger's tap opens instead, as in a phone's
+file manager (`isTap`). **Select** in the toolbar is the way to pick
+several without a Ctrl key: in Select mode (`selecting`) every click or tap
+toggles, a picked row's glyph and a picked card's corner show a check
+(`SelectCheck`), and the toolbar shows "n selected", a "⋯" that opens the
+menu a right-click on the selection would, and Done. Clearing the
+selection, Escape included, ends the mode.
 
 **/page** in a block's editor makes a page too, as in Notion (App's
 `createLinkedPage`). The block's text gets the `[[id]]` link at once, under
@@ -310,7 +322,16 @@ same card; only the grid stretches it to fill the row, and the recents strip
 
 The chips (`CardLabels`, also reused by the list rows) are display-only and
 gated by the Folders and Labels switches of Settings → Appearance → Library
-(`gamma-home-file-labels`: off/labels/folders/both).
+(`gamma-home-file-labels`: off/labels/folders/both); a label chip's menu
+opens on a right-click or a held finger.
+
+A card takes its menu as `onMenu`: a right-click or a held finger
+(`menuPress`), or the "⋯" in the cover's top-left corner
+(`.pageCardMenu`; the pin and the recents × keep the top-right,
+`.pageCardCorner`). Where a pointer
+hovers, the "⋯", the × and an unpinned pin show with the card; where none
+does the "⋯" and the × are always there and an unpinned pin is not (Pin
+is in the menu). A list row's pin follows the same rule.
 
 ## Pinned
 
@@ -349,13 +370,15 @@ shared workspace keeps its captures in that cache and pushes nothing
 Settings → Appearance → Library (`gamma-recent-thumbs`) swaps covers to the
 plain glyph and stops capturing.
 
-Each recents card's hover × removes the entry (and its snapshot) account-wide;
+Each recents card's × (on hover, always where nothing hovers) removes the entry (and its snapshot) account-wide;
 the strip has no arrow chrome — a vertical mouse wheel pans it sideways (native
 non-passive listener in `CardCarousel`), touch swipes natively.
 
 ## The context menu
 
-The home right-click menu (page/folder/label) is built from the `shared/ui/Menus.jsx`
+The home context menu (page/folder/label) opens on a right-click, a held
+finger or the item's "⋯" ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)).
+It is built from the `shared/ui/Menus.jsx`
 primitives, in groups split by dividers (`menuGroups`). Every page card
 surface opens the SAME page menu, the Recently-viewed strip and the pinned
 strip included:
@@ -371,8 +394,16 @@ strip included:
   `makeLabel`).
 - Share…, Export… and Ask AI act on the page itself, so they open it first
   and run once it is on screen (`openPageThen`).
-- A folder: Open | New page here · New subfolder | Rename · Pin · Share… ·
-  Export… | Delete.
+- A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
+  Move down | Rename · Pin · Share… · Export… | Delete.
+- The folder's Move to ▸ lists the top level ("All files") and every
+  folder the acted-on folders can go into: none of them, nor one below
+  them (`folderTargets` in `library/libraryUtils.js`), checked where they
+  already are; a pick is `moveFolders`, as a drop on the folder is. Move
+  up and Move down show in the custom order only, for one folder, and
+  step it past its neighbour among its siblings (`folderNeighbour`,
+  `placeFolders`), greyed at either end. Moving and ordering folders is
+  then possible without a drag.
 
 The "Move to folder" flyout lists every folder by its path, ordered by
 the *active home sort* (`folderMenuIds`, via the library-wide `folderMeta`

@@ -25,6 +25,7 @@ import {
   NEEDS_YOU, SETTLED, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState,
   openRoute, pollDelay, replyHandoffs, wallHeadline, watchNote,
 } from "./fetchHandoff.js";
+import { composing } from "./enterKey.js";
 
 const requestUrl = (id) => `${API}/ai/handoffs/${encodeURIComponent(id)}`;
 // The desktop app opens links in the system browser, where a Connector may be.
@@ -230,6 +231,7 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
             placeholder={t("What should the assistant do instead? (optional)")}
             onChange={(e) => setInstead(e.target.value)}
             onKeyDown={(e) => {
+              if (composing(e)) return;
               if (e.key === "Enter") { e.preventDefault(); dismiss(instead.trim()); }
               if (e.key === "Escape") { e.preventDefault(); setSkipping(false); }
             }} />

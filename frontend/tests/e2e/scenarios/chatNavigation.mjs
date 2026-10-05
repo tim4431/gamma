@@ -1167,9 +1167,10 @@ export async function chatNavigationScenarios(env) {
       const bulk = page.locator(".chatHistBulk");
       assertEq(await bulk.count(), 0, "no bar until something is ticked");
       const tick = (text) => page.locator(".chatHistRow", { hasText: text }).locator(".chatHistPick");
-      // The box comes up on hover; from the first tick on, every row has one.
-      await page.locator(".chatHistRow", { hasText: "Alpha talk" }).hover();
-      await tick("Alpha talk").check();
+      // A row's menu starts the picking; from the first tick on, every row has a box.
+      await page.locator(".chatHistRow", { hasText: "Alpha talk" }).locator(".rowMenuBtn").click();
+      await page.locator(".ctxMenuItem", { hasText: "Select" }).click();
+      assert(await tick("Alpha talk").isChecked(), "Select ticks the row");
       await tick("Beta talk").check();
       assert((await bulk.innerText()).includes("2 selected"), "the bar counts the ticks");
       // A search that hides a ticked row drops its tick, so Delete never

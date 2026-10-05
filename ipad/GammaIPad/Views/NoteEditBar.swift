@@ -4,8 +4,8 @@ import UIKit
 /// The editing bar (docs/dev/ipad.md "Editing the notes"): the web app's
 /// touch strip (frontend/src/editor/EditBar.jsx) over the keyboard while a
 /// note is edited — the insert menu, outdent and indent, moving the note, a
-/// new note after it, bold, italic, link, inline math, undo and redo, and
-/// Done. NotesView runs each command; the rules are the core's.
+/// new note after it, bold, italic, inline code, strikethrough, link, inline
+/// math, undo and redo, and Done. NotesView runs each command; the rules are the core's.
 struct NoteEditBar: View {
     enum Command {
         /// A "/" menu insertion by name (editor/slashInserts.js).
@@ -13,7 +13,7 @@ struct NoteEditBar: View {
         /// A page to write on, after the note.
         case addPage
         case outdent, indent, moveUp, moveDown, newBelow
-        /// bold, italic, link or math (ipad/core/entry.js `format`).
+        /// bold, italic, code, strike, link or math (ipad/core/entry.js `format`).
         case format(String)
         case undo, redo, done
     }
@@ -50,6 +50,8 @@ struct NoteEditBar: View {
             Divider().frame(height: 22)
             button("bold", "Bold", .format("bold"))
             button("italic", "Italic", .format("italic"))
+            button("chevron.left.forwardslash.chevron.right", "Inline code", .format("code"))
+            button("strikethrough", "Strikethrough", .format("strike"))
             button("link", "Link", .format("link"))
             button("sum", "Inline equation", .format("math"))
             Divider().frame(height: 22)

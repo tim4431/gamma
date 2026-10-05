@@ -1,8 +1,9 @@
 // The editing bar (docs/dev/ipad.md "The editing bar"): on a touch screen,
 // while a note's editor is open, a strip pinned above the on-screen keyboard
 // with what a hardware keyboard does by keys — the insert menu, outdent and
-// indent, moving the block, a new block, bold, italic, link, inline math,
-// undo and redo, and Done. Each tool is a catalog command (app/commands.js).
+// indent, moving the block, a new block, bold, italic, inline code,
+// strikethrough, link, inline math, Tab's hop in a math snippet, undo and
+// redo, and Done. Each tool is a catalog command (app/commands.js).
 // A block command runs with the context the row's keydown dispatches with,
 // so a button, a key and the palette never disagree. Undo and redo run the
 // page's block history (App's undoBlocks).
@@ -19,24 +20,20 @@ import { commandById } from "../app/commands.js";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { t } from "../shared/i18n/i18n.js";
 import { CheckIcon } from "../shared/ui/Icons";
+import { touchTyping } from "../shared/lib/pointer.js";
 
 // The bar's groups. `keep`: the caret stays in this block's editor, put back
 // after a remount; a new block and undo move it themselves.
 const GROUPS = [
   [["block.insertMenu", true]],
   [["block.outdent", true], ["block.indent", true], ["block.moveUp", true], ["block.moveDown", true], ["block.newBelow", false]],
-  [["block.bold", true], ["block.italic", true], ["block.link", true], ["block.math", true]],
+  [["block.bold", true], ["block.italic", true], ["block.code", true], ["block.strike", true], ["block.link", true],
+    ["block.math", true], ["block.nextSlot", true]],
   [["app.undo", false], ["app.redo", false]],
 ];
 
-// A touch screen's editor: the primary pointer is coarse (a tablet, a
-// phone), or the press that opened it was a finger (a touch laptop, whose
-// primary pointer is its trackpad).
-let lastPointer = "";
-window.addEventListener("pointerdown", (e) => { lastPointer = e.pointerType; }, { capture: true, passive: true });
-function touchEditing() {
-  return !!window.matchMedia?.("(pointer: coarse)").matches || lastPointer === "touch";
-}
+// Tools that show only while their command applies; the others grey out.
+const TRANSIENT = new Set(["block.nextSlot"]);
 
 // The room the bar takes at the bottom of the visual viewport while it
 // shows, else 0: the editor's scroll margin keeps the caret above it, and
@@ -136,7 +133,7 @@ const hold = (e) => e.preventDefault();
 // `context()`: the row's command context, built fresh for each press;
 // `onUndo(redo)`: the page's block history.
 export default function EditBar({ context, onUndo }) {
-  const [shown] = useState(touchEditing);
+  const [shown] = useState(touchTyping);
   const ref = useRef(null);
   const place = useBarPlace(ref);
   if (!shown) return null;
@@ -171,10 +168,12 @@ export default function EditBar({ context, onUndo }) {
           <React.Fragment key={i}>
             {i ? <span className="pdfInkSep" /> : null}
             {group.map(([id, keep]) => {
+              const on = enabled(id);
+              if (!on && TRANSIENT.has(id)) return null;
               const Icon = commandIcon({ id });
               return (
                 <button key={id} type="button" tabIndex={-1} className="ctlBtn"
-                  data-command={id} title={label(id)} aria-label={label(id)} disabled={!enabled(id)}
+                  data-command={id} title={label(id)} aria-label={label(id)} disabled={!on}
                   onClick={() => press(id, keep)}>
                   <Icon size={16} />
                 </button>

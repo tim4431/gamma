@@ -34,14 +34,17 @@ import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines } from "../transfers/FileChip";
 import { uploadPdf } from "../shared/lib/uploadParts";
-import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, ViewToggle } from "../library/FileBrowser";
+import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
-import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
+import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
+import { menuPress } from "../shared/ui/press.js";
+import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
+import { pickFiles } from "../shared/lib/pickFiles.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
@@ -86,7 +89,8 @@ import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } fr
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
-import { commandChord } from "./commands.js";
+import { commandById, commandChord } from "./commands.js";
+import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
@@ -102,7 +106,7 @@ import { PageToolsContext, useStableActions } from "../markup/PageTools";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
-import { NotebookViewer, PaperMenu } from "../notebook/NotebookViewer";
+import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
   blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, isSheet, newSheet, normalizePaper, sheetAfterPlan, sheetOfBlock,
@@ -138,7 +142,9 @@ import {
   folderPath,
   folderPositions,
   folderEntries,
+  folderNeighbour,
   folderSubtree,
+  folderTargets,
   inFolder,
   labelName,
   libraryTree,
@@ -333,6 +339,11 @@ const SNAP_QUALITY = 0.55;
 // snapshot cache prunes to the same count. The server-side snapshot store
 // keeps a few spares above this (PAGE_SNAPS_CAP = 30 in gamma/db.py).
 const RECENTS_CAP = 24;
+// How far past its 5 px a splitter takes a press, each side, for a mouse
+// and a finger alike. The library's default for a finger (15 px) reached
+// over half a window header, grip and close button included; 6 keeps the
+// splitter grabbable and leaves the header its own.
+const SASH_MARGINS = { coarse: 6, fine: 6 };
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
@@ -739,12 +750,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function importWorkspace(wsId, mode = "replace") {
     const target = wsId && wsId !== getCurrentWorkspace() ? wsId : null;
     const who = (target ? workspaces.find((w) => w.id === target)?.name : workspace?.name) || t("this workspace");
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.accept = ".zip,application/zip";
-    inp.onchange = () => {
-      const f = inp.files?.[0];
-      if (!f) return;
+    pickFiles({ accept: ".zip,application/zip" }, ([f]) => {
       setConfirmBox(mode === "merge" ? {
         title: T("Merge backup"),
         message: (
@@ -765,8 +771,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         danger: true,
         onConfirm: () => runBackupImport(f, mode, target),
       });
-    };
-    inp.click();
+    });
   }
 
   // A guest account has no password, so logging out deletes it and its
@@ -1033,6 +1038,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [selectedPages, setSelectedPages] = useState(() => new Set());
   const [selectedFolders, setSelectedFolders] = useState(() => new Set());
   const [selectedLabels, setSelectedLabels] = useState(() => new Set());
+  // Select mode (the list bar's Select): a click or a tap toggles, as Ctrl
+  // does — the way to pick several where there is no Ctrl.
+  const [selecting, setSelecting] = useState(false);
   const lastPageClickRef = useRef(null); // anchor for shift-range selection
   const [homeMenu, setHomeMenu] = useState(null); // {kind: "page" | "folder" | "label", id, name?, x, y}
   // The page menu's "New label…" name while it is typed (null: not typing).
@@ -1041,19 +1049,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [folderRenaming, setFolderRenaming] = useState(null); // {id, draft}
   const [labelRenaming, setLabelRenaming] = useState(null); // {id, draft}
 
-  function clearSelection() { setSelectedPages(new Set()); setSelectedFolders(new Set()); setSelectedLabels(new Set()); }
+  // Ending the selection ends Select mode with it.
+  function clearSelection() { setSelectedPages(new Set()); setSelectedFolders(new Set()); setSelectedLabels(new Set()); setSelecting(false); }
 
-  // Touch has no dependable double-click (mobile browsers eat the second tap
-  // for zoom), so there a tap OPENS, as in a phone's file manager. The last
-  // pointerdown's type tells
-  // a tap from a mouse click — `click` itself does not say so everywhere.
-  const lastPointerTypeRef = useRef("mouse");
-  useEffect(() => {
-    const note = (e) => { lastPointerTypeRef.current = e.pointerType; };
-    window.addEventListener("pointerdown", note, true);
-    return () => window.removeEventListener("pointerdown", note, true);
-  }, []);
-  const isTap = (e) => !!e && !e.ctrlKey && !e.metaKey && !e.shiftKey && lastPointerTypeRef.current !== "mouse";
+  // A click that toggles one item: Ctrl/Cmd, or any click in Select mode.
+  const toggles = (e) => selecting || !!e && (e.ctrlKey || e.metaKey);
+  // A finger's tap OPENS, as in a phone's file manager, and a mouse click
+  // selects: so one tap opens on touch, where a double tap is not dependable.
+  const isTap = (e) => !!e && !toggles(e) && !e.shiftKey && lastPointer() !== "mouse";
 
   // Modern file-manager semantics: plain click SELECTS, double-click opens
   // (a tap opens, see isTap). Ctrl/Cmd toggles a single item; Shift extends a
@@ -1064,7 +1067,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (isTap(e)) { if (homeEditingId !== id) openPage(id); return; }
     setSelectedFolders(new Set());
     setSelectedLabels(new Set());
-    if (e && (e.ctrlKey || e.metaKey)) {
+    if (toggles(e)) {
       setSelectedPages((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id); else next.add(id);
@@ -1121,7 +1124,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const setOwn = kind === "folder" ? setSelectedFolders : setSelectedLabels;
     setSelectedPages(new Set());
     (kind === "folder" ? setSelectedLabels : setSelectedFolders)(new Set());
-    if (e && (e.ctrlKey || e.metaKey)) {
+    if (toggles(e)) {
       setOwn((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id); else next.add(id);
@@ -1595,6 +1598,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     e.stopPropagation();
     setHomeMenu({ kind, id, x: e.clientX, y: e.clientY });
   };
+  // Select mode's "⋯": the menu a right-click on the selection opens.
+  const selectionCount = selectedPages.size + selectedFolders.size + selectedLabels.size;
+  function openSelectionMenu(e) {
+    const [page] = selectedPages, [folder] = selectedFolders, [label] = selectedLabels;
+    if (page) openPageMenu(page)(e);
+    else if (folder) openTagMenu("folder", folder)(e);
+    else if (label) openTagMenu("label", label)(e);
+  }
   const [pdfPageNumber, setPdfPageNumber] = useState(() => loadSession().pdfPageNumber || 1);
   const [pdfEffScale, setPdfEffScale] = useState(1); // actual render scale (incl. fit-width)
   // Browser fullscreen (whole app, like F11). webkit-prefixed fallbacks are
@@ -1758,13 +1769,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [pillChannels]);
   // Status messages: logged (Settings → Diagnostics), mirrored into the
   // optional debug status bar, and posted to the pill. Messages ending in
-  // "…"/"..." are in-progress; anything else is final.
-  const setStatus = useCallback((msg) => {
+  // "…"/"..." are in-progress; anything else is final. An `action`
+  // ({label, run}) puts its button on the pill, which stays to be pressed.
+  const setStatus = useCallback((msg, action) => {
     const text = String(msg);
     setStatusRaw(text);
     logSys(text);
     const ongoing = /(\.\.\.|…)\s*$/.test(text);
-    postPill("status", { msg: text, spinner: ongoing, final: !ongoing });
+    if (action) postPill("status", { msg: text, action }, { after: [8000, null] });
+    else postPill("status", { msg: text, spinner: ongoing, final: !ongoing });
   }, [postPill, logSys]);
   const [loading, setLoading] = useState(false);
   // Window layout: ordered window ids per dock slot. Sizes are handled by
@@ -3118,8 +3131,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const transTaskRef = useRef(null); // background-tasks row for the running job
-  const transLongRef = useRef(0); // long-press timer (touch): opens the menu like right-click does
-  const transLongFiredRef = useRef(false); // swallow the click that follows a fired long-press
   function openTransMenu(el) {
     const r = el.getBoundingClientRect();
     setTransMenu({ x: r.right + 8, y: r.top - 4 });
@@ -3482,11 +3493,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // so it always replaces; and an emptied selection is left alone rather
     // than cleared, since a tap into the chat is indistinguishable from a tap
     // that dismissed the selection — and that tap must keep it.
-    let touchSeen = false;
     let selTimer = null;
-    function onTouchStart() { touchSeen = true; }
     function onSelectionChange() {
-      if (!touchSeen) return;
+      if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
       selTimer = setTimeout(() => {
         const sel = window.getSelection();
@@ -3499,12 +3508,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }, 350);
     }
     document.addEventListener("mouseup", onMouseUp);
-    document.addEventListener("touchstart", onTouchStart, { passive: true });
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       clearTimeout(selTimer);
       document.removeEventListener("mouseup", onMouseUp);
-      document.removeEventListener("touchstart", onTouchStart);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, []);
@@ -3589,6 +3596,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
 
   const [notesVisible, setNotesVisible] = useState(true);
+  // A closed window forgets its fold: shown again, from wherever, it comes
+  // back whole rather than as a bare header bar.
+  useEffect(() => {
+    setCollapsedWins((prev) => ((chatHidden && prev.chat) || (!notesVisible && prev.notes)
+      ? { ...prev, chat: prev.chat && !chatHidden, notes: prev.notes && notesVisible } : prev));
+  }, [chatHidden, notesVisible]);
   // Phone layout: which overlay panel covers the center ('notes' | 'chat' |
   // null = the main view). Reset on navigation so a new page opens on its content.
   const isPhone = useIsPhone();
@@ -3600,13 +3613,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // on a phone that only reads.
   const phoneSeen = useRef({});
   if (isPhone && phonePanel) phoneSeen.current[phonePanel] = true;
-  // Phone: kill the browser's own zoom. The viewport meta covers Android and
-  // `touch-action: manipulation` (on html, for all layouts) the double-tap, but iOS
-  // Safari honours neither — only refusing its gesture events stops a pinch
-  // from scaling the whole app until the toolbars sit off-screen. The PDF's
-  // own pinch-zoom is unaffected: it runs off touchstart/touchmove.
+  // A touch screen, in any layout: kill the browser's own zoom. The viewport
+  // meta covers Android and `touch-action: manipulation` (on html) the
+  // double-tap, but iOS Safari honours neither — only refusing its gesture
+  // events stops a pinch outside the viewers from scaling the whole app
+  // until the toolbars sit off-screen. The viewers' own pinch-zoom is
+  // unaffected: it runs off touchstart/touchmove.
   useEffect(() => {
-    if (!isPhone) return;
+    if (!touchScreen()) return undefined;
     const block = (e) => e.preventDefault();
     for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
       document.addEventListener(ev, block, { passive: false });
@@ -3616,7 +3630,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         document.removeEventListener(ev, block);
       }
     };
-  }, [isPhone]);
+  }, []);
   // What the startup bundle leaves out (docs/dev/frontend-refactor.md, "Lazy
   // boundaries"), fetched before it is needed. A desktop shows the chat dock
   // from the start: its module goes out with the session check. The PDF
@@ -3632,9 +3646,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!homeLoaded) return undefined;
     return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); }, 1500);
   }, [homeLoaded]);
-  // Phone: drag-on-PDF mode — text selection (default) or rectangle drawing.
-  // Desktop expresses this by holding Ctrl; a phone has no Ctrl, so it gets a
-  // sticky toggle button in the viewer's zoom column instead.
+  // What a drag on the PDF does — text selection (default) or rectangle
+  // drawing. A mouse holds Ctrl; a finger has no Ctrl, so a touch screen gets
+  // a sticky toggle button in the viewer's zoom column instead.
   const [areaSelectMode, setAreaSelectMode] = useState(false);
   // Handwriting (docs/dev/handwriting.md): the tool strip — open, the armed
   // tool (a preset id from inkTools, "eraser", "select", "text" for text
@@ -5248,8 +5262,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       // Zoom travels with the page too. Applied before the PDF mounts, so a
       // numeric zoom is already in effect when the scroll restore runs — its
-      // scale ratio is then exactly 1 and the position lands exactly.
+      // scale ratio is then exactly 1 and the position lands exactly. A
+      // notebook without a zoom of its own fits its sheets, never taking on
+      // the zoom the last PDF was read at.
       if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
+      else if (!attachment && sheetsOf(childBlocks).length) setPdfScale("page-width");
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
       setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
@@ -5288,7 +5305,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { pdfEffScaleRef.current = pdfEffScale; }, [pdfEffScale]);
 
   // Exact per-page reading positions so switching tabs returns to where you
-  // were, not just to the same page. blockId -> {top, scale}.
+  // were, not just to the same page. blockId -> {top, scale}, or for a page
+  // with sheets {place} (notebook/sheetPlace.js), whichever view shows them.
   const tabScrollRef = useRef({});
   // Per-page window layout (dock slots, collapsed bars, hidden windows, and
   // panel size ratios) — captured when leaving a page, restored on reopen.
@@ -5313,14 +5331,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     nbViewRef.current = new Set(Array.isArray(ids) ? ids : []);
     setNbViewPages(nbViewRef.current);
   }, [authUser?.user, wsId, shareMode]);
-  function setNotebookView(pageId, on) {
-    if (!pageId || nbViewRef.current.has(pageId) === on) return;
+  // A switch shows the view (no compact-shell panel stays over it), and the
+  // view it shows opens at the sheet the other one was at, or at `place`.
+  function setNotebookView(pageId, on, place) {
+    if (!pageId) return;
+    setPhonePanel(null);
+    if (nbViewRef.current.has(pageId) === on) return;
+    const at = pageId === focusedBlockId && (place || readSheetPlace());
+    if (at) tabScrollRef.current[pageId] = { place: at };
     const next = new Set(nbViewRef.current);
     if (on) next.add(pageId); else next.delete(pageId);
     while (next.size > 200) next.delete(next.values().next().value);
     nbViewRef.current = next;
     setNbViewPages(next);
     try { if (prefsUserRef.current) localStorage.setItem(`gamma-notebook-view:${prefsUserRef.current}`, JSON.stringify([...next])); } catch {}
+  }
+  // The reader's place on the open page's sheets, off whichever view shows
+  // them: the notebook view, else the notes.
+  function readSheetPlace() {
+    const el = viewerWrapRef.current?.querySelector(".nbViewer") || document.querySelector(".sidebar .blockList");
+    return el ? readPlace(el) : null;
   }
   const restoreTokenRef = useRef(0);   // bumped on navigation — kills in-flight restore loops
   const restoringForRef = useRef(null); // block whose restore hasn't landed yet
@@ -5354,6 +5384,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         recordNotePos(focusedBlockId, topId);
       }
+    }
+    // A page's sheets keep their place, on whichever view shows them.
+    if (focusedBlockId && hasSheets) {
+      const place = readSheetPlace();
+      if (place) tabScrollRef.current[focusedBlockId] = { place };
     }
     // Only record a position when the viewer is actually showing THIS page's
     // document: mid-load the scroller still holds the previous document (or a
@@ -5557,7 +5592,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const startX = e.clientX;
     const startY = e.clientY;
     const pointerId = e.pointerId;
-    let dragging = false;
+    let zone = null; // where it would land, once the press has moved far enough to be a drag
     try { target.setPointerCapture(pointerId); } catch (_) {}
 
     function zoneFor(ev) {
@@ -5567,16 +5602,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const side = ev.clientX < window.innerWidth / 2 ? "left" : "right";
       return { side, index: ev.clientY < window.innerHeight * 0.35 ? 0 : 99 };
     }
+    // The preview (an App render) changes only when the zone does.
     function onMove(ev) {
-      if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
-      dragging = true;
-      setDockPreview(dockPreviewRect(winId, zoneFor(ev)));
+      if (!zone && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
+      const next = zoneFor(ev);
+      if (zone && next.side === zone.side && next.index === zone.index) return;
+      zone = next;
+      setDockPreview(dockPreviewRect(winId, zone));
     }
+    // A cancelled press (the system took the touch) moves nothing. A drop's
+    // click is no press on the header, which would open a folded window.
     function onUp(ev) {
-      if (dragging) {
-        const zone = zoneFor(ev);
+      if (zone && ev.type === "pointerup") {
         moveWindow(winId, zone.side, zone.index);
-        if (ev.type !== "pointercancel") guideEvents.emit("window.moved", { id: winId, side: zone.side });
+        guideEvents.emit("window.moved", { id: winId, side: zone.side });
+        const swallow = (c) => c.stopPropagation();
+        window.addEventListener("click", swallow, true);
+        setTimeout(() => window.removeEventListener("click", swallow, true));
       }
       setDockPreview(null);
       try { target.releasePointerCapture(pointerId); } catch (_) {}
@@ -5939,23 +5981,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     if (["zotero", "markdown", "gamma"].includes(o.source)) {
-      const inp = document.createElement("input");
-      inp.type = "file";
-      inp.accept = o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip";
-      inp.onchange = () => {
-        const file = inp.files?.[0];
-        if (file) setImportReview({ source: o.source, file, strip: o.strip,
-          folder: homeMode && folderFilter ? folderFilter : "" });
-      };
-      inp.click();
+      pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
+        ([file]) => setImportReview({ source: o.source, file, strip: o.strip,
+          folder: homeMode && folderFilter ? folderFilter : "" }));
       return;
     }
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.multiple = true;
-    inp.accept = ".pdf,.edn,.md";
-    inp.onchange = () => { if (inp.files?.length) importLogseq(inp.files); };
-    inp.click();
+    pickFiles({ accept: ".pdf,.edn,.md", multiple: true }, importLogseq);
   }
 
   // Text pasted into the "+" box, reduced to what was meant: a link copied
@@ -6368,7 +6399,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showOnPage(id) {
     const b = findBlock(blocksRef.current, id);
     if (!b) return;
-    const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
+    setPhonePanel(null); // the compact shell: the page, not a panel over it
+    const tb =isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
     const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
     const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);
@@ -6401,6 +6433,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function showInNotes(id) {
     scrollToBlock(id);
     reveal(id);
+    // The compact shell brings the notes over the page: their panel, or a
+    // page with sheets switches to its notes view.
+    if (isPhone && !centerNotes) {
+      if (hasSheets) setNotebookView(focusedBlockId, false);
+      else { setNotesVisible(true); setPhonePanel("notes"); }
+    }
   }
 
   // --- Sheets (docs/dev/notebooks.md) ---------------------------------------------
@@ -6625,6 +6663,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // A highlight's id is its block's.
   function jumpToHighlightId(id, additive) {
+    setPhonePanel(null); // the compact shell: the PDF, not a panel over it
     if (pdfHidden) {
       pendingJumpRef.current = id;
       setPdfHidden(false);
@@ -6674,6 +6713,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The viewer is hidden: a PDF closed (never the notebook view's sheets).
   const viewerHidden = !notebook && pdfHidden;
   useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
+  // The notes view opens at the reader's place on the sheets (tabScrollRef;
+  // the notebook view takes it as `place`), unless a jump to a block is on its
+  // way there. Read before that jump's effect spends it, applied once the
+  // sheets among the notes have measured their size.
+  useLayoutEffect(() => {
+    const place = !notebook && hasSheets && !pendingBlockScrollRef.current && tabScrollRef.current[focusedBlockId]?.place;
+    if (!place) return undefined;
+    const raf = requestAnimationFrame(() => {
+      const list = document.querySelector(".sidebar .blockList");
+      if (list) showPlace(list, place);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [notebook, focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
   const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
   nbSheetsRef.current = nbSheets;
@@ -6684,6 +6736,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pageActions = useStableActions({
     onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
+    onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
+      { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
   });
   const pageTools = useMemo(() => ({
     readOnly,
@@ -6724,6 +6778,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // would be.
   function undoBlocks(redo) {
     reportUndo(blockHistory.undo(redo, !!document.activeElement?.closest?.(".cm-editor")), redo);
+  }
+  // A change the pill offers to take back: its Undo runs the app.undo
+  // command, so the message names no key.
+  function undoableStatus(msg) {
+    setStatus(msg, { label: t("Undo"), run: () => { postPill("status", null); commandById("app.undo").run(appCmdRef.current); } });
   }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
@@ -6921,6 +6980,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
       phone: !!isPhone,
+      // a touch screen: the viewer offers its text/rectangle toggle
+      touch: touchScreen(),
       sharedWorkspace: workspaces.some((w) => !w.personal),
       // the open page's share audience ("" unshared or not loaded): the
       // sharing tour words its access step for an anyone-with-the-link share
@@ -6979,9 +7040,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       kind: "Folder",
       count: folderMeta[f]?.count || 0,
       labelMode: fileLabels,
+      checked: selecting && selectedFolders.has(f),
       onDragStart: (e) => startFolderDrag(e, f),
       onClick: (e) => handleFolderClick(f, e),
-      onContextMenu: openTagMenu("folder", f),
+      onMenu: openTagMenu("folder", f),
       onDragOver: (e) => dragOverFolder(e, f),
       onDragLeave: () => setFolderDragOver(null),
       onDrop: (e) => dropOnFolder(e, f),
@@ -7144,6 +7206,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const stamp = (f) => (key === "viewed" ? (folderMeta[f]?.viewed || folderMeta[f]?.updated) : folderMeta[f]?.[key]) || "";
     return ids.sort((a, b) => stamp(b).localeCompare(stamp(a)) || path(a).localeCompare(path(b)));
   }, [libTree, folderMeta, homeSort]);
+  // The rows of a "Move to" flyout, a page's or a folder's: each folder by
+  // its path ("" the top level), checked where what is moved already is.
+  const folderMenuRows = (ids, isIn, pick) => ids.map((f) => {
+    const name = folderPath(libTree, f) || t("All files");
+    return (
+      <MenuItem key={f || "top"} icon={FolderIcon} title={isIn(f) ? t("Already in {f}", { f: name }) : name}
+        trailing={isIn(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+        onClick={() => { setHomeMenu(null); pick(f); }}>{name}</MenuItem>
+    );
+  });
   // The pages this view is about: inside a folder its members, at root every
   // page (the library-wide recents feed). Both the label rollup and the
   // listing below start from this set.
@@ -7298,15 +7370,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const cardTime = (item) => formatRelativeTime(sortStamp(item));
   const dateColumnTitle = homeSort === "viewed" ? t("Viewed") : homeSort === "created" ? t("Added") : t("Modified");
   // A list row's trailing columns, the same on every row: kind ("PDF",
-  // "Page", or a folder's / label's page count), the date, and the pin slot
-  // (kept empty where there is nothing to pin, so the columns line up).
-  const rowColumns = (item, kind, pin = null) => {
+  // "Page", or a folder's / label's page count), the date, the pin slot and
+  // the "⋯" that opens `menu` (each kept empty where there is nothing to
+  // pin or no menu, so the columns line up).
+  const menuSlot = <span className="ctlBtn fileRowMenu fileRowMenuSlot" aria-hidden="true" />;
+  const rowColumns = (item, kind, menu, pin = null) => {
     const stamp = sortStamp(item);
     return (
       <>
         <span className="fileRowKind">{kind}</span>
         <span className="fileRowDate" title={formatFullDate(stamp) || undefined}>{formatShortDate(stamp)}</span>
         {pin || <span className="fileRowPinSlot" aria-hidden="true" />}
+        {menu ? <MenuButton className="fileRowMenu" open={menu} /> : menuSlot}
       </>
     );
   };
@@ -7338,7 +7413,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!homeMode) return;
     function onKey(e) {
       if (e.target.closest && e.target.closest("input, textarea, [contenteditable]")) return;
-      if (e.key === "Escape" && (selectedPages.size || selectedFolders.size || selectedLabels.size)) {
+      if (e.key === "Escape" && (selecting || selectedPages.size || selectedFolders.size || selectedLabels.size)) {
         clearSelection();
       } else if (e.key === "Enter") {
         if (selectedLabels.size === 1) openLabel([...selectedLabels][0]);
@@ -7348,7 +7423,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [homeMode, selectedPages, selectedFolders, selectedLabels]);
+  }, [homeMode, selecting, selectedPages, selectedFolders, selectedLabels]);
   // Scrolling the "load more" sentinel into view grows the feed.
   useEffect(() => {
     const el = loadMoreRef.current;
@@ -7768,7 +7843,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const noteSheetCtx = notebook ? null : {
     marks, inkOpen: inkUi.open,
     onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
-    onNotebookView: hasSheets ? () => setNotebookView(focusedBlockId, true) : undefined,
+    onNotebookView: hasSheets ? (sheetId) => setNotebookView(focusedBlockId, true, { id: sheetId, fy: 0 }) : undefined,
   };
   const markupToolbar = (
     <MarkupToolbar
@@ -7791,7 +7866,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
     ? <div className="notesInkDock">{markupToolbar}</div> : null;
 
-  const notesWindow = notesVisible ? (
+  // When no viewer shows (home, page-only, or PDF closed) the notes window
+  // takes the center instead, whether or not the Notes dock is on.
+  const centerNotes = viewerHidden || homeMode || pageOnly;
+  const notesWindow = notesVisible || centerNotes ? (
     <div className="sidebar" data-guide="dock.notes">
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
@@ -7941,7 +8019,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               key={`f:${f.id}`}
                               className="categoryBadge folderChip"
                               title={t("Folder: {f} — right-click to rename or delete", { f: f.name })}
-                              onContextMenu={openTagMenu("folder", f.id)}
+                              {...menuPress(openTagMenu("folder", f.id))}
                             ><FolderIcon size={10} />{f.name}</span>
                           ))}
                           {chips.labels.map((l) => (
@@ -7949,7 +8027,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               key={`l:${l.id}`}
                               className="categoryBadge"
                               title={t("Label: {label} — right-click to rename or delete", { label: l.name })}
-                              onContextMenu={openTagMenu("label", l.id)}
+                              {...menuPress(openTagMenu("label", l.id))}
                             >{l.name}</span>
                           ))}
                         </>
@@ -7962,6 +8040,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
+                {hasSheets && !notebook ? (
+                  // the way to the notebook view that stays in sight, opening at the sheet in view
+                  <button className="uiBtn sm ghost" onClick={() => setNotebookView(focusedBlockId, true)}
+                    title={t("Notebook view: the pages beside the notes")}>
+                    <NotebookIcon size={16} /> {t("Notebook")}
+                  </button>
+                ) : null}
                 {pageAttach || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
@@ -8312,7 +8397,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     folders={b._folderChips} labels={b._labelChips} labelMode={fileLabels}
                     className={selectedPages.has(b._pageId) ? "selected" : ""}
                     onClick={() => openPage(b._pageId)}
-                    onContextMenu={openPageMenu(b._pageId, b.content)}>
+                    onMenu={openPageMenu(b._pageId, b.content)}>
                     <button
                       className="uiClose uiCloseSm pageCardClose"
                       title={t("Remove from Recently viewed")}
@@ -8356,9 +8441,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       folders={b._folderChips} labels={b._labelChips} labelMode={fileLabels}
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
+                      checked={selecting && selectedPages.has(b._pageId)}
                       onClick={(e) => handlePageClick(b, e)}
                       onDoubleClick={() => openPage(b._pageId)}
-                      onContextMenu={openPageMenu(b._pageId, b.content)}
+                      onMenu={openPageMenu(b._pageId, b.content)}
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
@@ -8435,7 +8521,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           <button
                             className="crumbBtn"
                             title={lib.organize ? t("Right-click to rename or delete this label") : undefined}
-                            onContextMenu={openTagMenu("label", labelFilter)}
+                            {...menuPress(openTagMenu("label", labelFilter))}
                           >{labelName(libTree, labelFilter)}</button>
                           )}
                         </span>
@@ -8471,6 +8557,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   />
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
+                {selecting ? (
+                  <>
+                    <span className="homeSelectCount">{t("{n} selected", { n: selectionCount })}</span>
+                    <MenuButton open={openSelectionMenu} disabled={!selectionCount} />
+                    <button type="button" className="uiBtn sm" onClick={clearSelection}>{t("Done")}</button>
+                  </>
+                ) : (
+                  <button type="button" className="uiBtn sm" title={t("Pick several pages or folders to act on together")}
+                    onClick={() => setSelecting(true)}>{t("Select")}</button>
+                )}
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}
@@ -8543,9 +8639,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
                         labelMode={fileLabels}
+                        checked={selecting && selectedLabels.has(l)}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
-                        onContextMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
+                        onMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
@@ -8605,10 +8702,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             />
                           ) : null}
                           draggable={lib.organize && !isEditing}
+                          checked={selecting && selectedPages.has(id)}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
-                          onContextMenu={openPageMenu(id, b.content)}
+                          onMenu={openPageMenu(id, b.content)}
                         >
                           {lib.pin ? (
                             <button
@@ -8667,17 +8765,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <span className="fileRowKind">{t("Kind")}</span>
                         <span className="fileRowDate">{dateColumnTitle}</span>
                         <span className="fileRowPinSlot" />
+                        {menuSlot}
                       </div>
                     ) : null}
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
-                      if (item.kind === "label") { const l = item.label; return (
+                      if (item.kind === "label") { const l = item.label; const menu = l === NO_LABEL ? null : openTagMenu("label", l); return (
                       <div
                         key={item.key}
-                        className={`folderRow labelRow ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
+                        className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
-                        onContextMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
+                        {...menuPress(menu)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
@@ -8685,26 +8784,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ? t("Pages without any label · double-click to open · drop a page to clear its labels")
                           : lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it") : t("Click to select · double-click to open")}
                       >
-                        <LabelIcon size={16} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
+                        {selecting && selectedLabels.has(l) ? <SelectCheck /> : <LabelIcon size={16} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />}
                         <span className="folderName">{labelName(libTree, l)}</span>
-                        {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0))}
+                        {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0), menu)}
                       </div>
                       ); }
-                      if (item.kind === "folder") { const f = item.folder; return (
+                      if (item.kind === "folder") { const f = item.folder; const menu = openTagMenu("folder", f); return (
                       <div
                         key={item.key}
-                        className={`folderRow ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
+                        className={`folderRow rowMenuHost ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
                         onClick={(e) => handleFolderClick(f, e)}
                         onDoubleClick={() => { if (folderRenaming?.id !== f) openFolder(f); }}
-                        onContextMenu={openTagMenu("folder", f)}
+                        {...menuPress(menu)}
                         onDragOver={(e) => dragOverFolder(e, f)}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
                         title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                       >
-                        <FolderIcon size={16} />
+                        {selecting && selectedFolders.has(f) ? <SelectCheck /> : <FolderIcon size={16} />}
                         {folderRenaming?.id === f ? (
                           <input
                             autoFocus
@@ -8721,26 +8820,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : (
                           <span className="folderName">{libTree.folders.get(f).name}</span>
                         )}
-                        {rowColumns(item, tn("{n} page", "{n} pages", folderMeta[f]?.count || 0))}
+                        {rowColumns(item, tn("{n} page", "{n} pages", folderMeta[f]?.count || 0), menu)}
                       </div>
                       ); }
                       const b = item.block;
                       const id = b._pageId;
                       const isPinned = !!b._pinned;
                       const isEditing = homeEditingId === id;
+                      const menu = openPageMenu(id, b.content);
                       return (
                         <div
                           key={id}
-                          className={`fileRow ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          className={`fileRow rowMenuHost ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
-                          onContextMenu={openPageMenu(id, b.content)}
+                          {...menuPress(menu)}
                           title={t("{content}\nClick to select · double-click to open", { content: b.content })}
                         >
-                          <span className="fileRowIcon"><FileGlyph isPdf={!!b._attachment} /></span>
+                          <span className="fileRowIcon">{selecting && selectedPages.has(id) ? <SelectCheck /> : <FileGlyph isPdf={!!b._attachment} />}</span>
                           {isEditing ? (
                             <input
                               autoFocus
@@ -8758,7 +8858,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folderChips} labels={b._labelChips}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          {rowColumns(item, pageKindLabel(b._attachment), lib.pin ? (
+                          {rowColumns(item, pageKindLabel(b._attachment), menu, lib.pin ? (
                             <button
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
@@ -8935,7 +9035,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       setFocusedId(focus);
                     }
                     setBlocks(next); // the transition's delete op
-                    setStatus(t("Block deleted — Ctrl+Z to undo."));
+                    undoableStatus(t("Block deleted."));
                   },
                   // ↑ / ↓ at the editor's first / last line: the editor
                   // moves to the block shown above / below, caret at its
@@ -9144,9 +9244,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
   ) : null;
 
-  // Slot the windows into dock columns / the bottom row. When no PDF is shown
-  // (home, page-only, or PDF closed) the notes window takes the center instead.
-  const centerNotes = viewerHidden || homeMode || pageOnly;
+  // Slot the windows into dock columns / the bottom row (the notes in the
+  // center are no window: centerNotes).
   const winVisible = {
     notes: Boolean(notesWindow) && !centerNotes,
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
@@ -9156,7 +9255,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and closing just returns to the main view.
     const common = {
       onGrip: isPhone ? undefined : (e) => startWindowDock(e, id),
-      onGripDoubleClick: isPhone ? undefined : () => {
+      onFold: isPhone ? undefined : () => {
         const collapsed = !collapsedWins[id];
         setCollapsedWins((prev) => ({ ...prev, [id]: collapsed }));
         guideEvents.emit("window.collapsed", { id, collapsed });
@@ -9248,7 +9347,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <PanelGroup direction={direction} autoSaveId={`gamma-slot-${side}`} ref={(h) => { panelGroupRefs.current[`slot-${side}`] = h; }}>
               {expanded.map((w, i) => (
                 <React.Fragment key={w}>
-                  {i > 0 ? <PanelResizeHandle className={`sash sash-${direction}`} /> : null}
+                  {i > 0 ? <PanelResizeHandle className={`sash sash-${direction}`} hitAreaMargins={SASH_MARGINS} /> : null}
                   <Panel id={w} order={i + 1} minSize={15}>{renderWindow(w)}</Panel>
                 </React.Fragment>
               ))}
@@ -9265,6 +9364,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // View button. A window toggle carries a check while shown. Read-only
   // share views omit AI chat and the import actions. A phone's bottom tabs
   // already switch Notes and Chat, so there only the PDF toggle is a window.
+  // Undo, Redo and the two palettes are their commands (app/appCommands.js),
+  // keys and all: the way to them without a keyboard.
+  const commandRow = (id) => <CommandMenuItem key={id} id={id} ctx={appCmdRef.current} bindings={keybindings} />;
   const viewMenuItems = (menuReadOnly) => {
     const pdfRow = !homeMode && (!!pageAttach || hasSheets);
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
@@ -9284,6 +9386,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
         ),
       ],
+      focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],
+      ["app.quickOpen", "app.commandPalette"].map(commandRow),
       [
         !menuReadOnly && (
           <MenuItem
@@ -9712,7 +9816,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 className="iconBtn navBackBtn"
                 data-guide="header.back"
                 onClick={goBackNav}
-                onContextMenu={(e) => { e.preventDefault(); setNavStack([]); }}
+                {...menuPress((e) => { e.preventDefault(); setNavStack([]); })}
                 title={t("Back to where you were{steps} — Alt+← · right-click to clear", { steps: navStackLen > 1 ? ` (${navStackLen} steps)` : "" })}
                 aria-label={t("Back")}
               >
@@ -9914,7 +10018,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <Panel id="slot-left" order={1} defaultSize={26} minSize={15} className="dockSlot">
             {renderSlotGroup("left", "vertical")}
           </Panel>
-          <PanelResizeHandle className="sash sash-horizontal" />
+          <PanelResizeHandle className="sash sash-horizontal" hitAreaMargins={SASH_MARGINS} />
         </>
       ) : null}
       <Panel id="slot-center" order={2} minSize={30} className="dockSlot">
@@ -9975,23 +10079,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   data-guide="viewer.translate"
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
-                  onClick={(e) => {
-                    if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
+                  onClick={() => {
                     if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
                     // On a translated page: show/hide (all pages). Anywhere
                     // else: translate this page, which also shows the rest.
                     if (pdfTransState.current) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
                     pdfTranslateCtl.current?.translatePage();
                   }}
-                  onContextMenu={(e) => { e.preventDefault(); openTransMenu(e.currentTarget); }}
-                  onPointerDown={(e) => {
-                    if (e.pointerType === "mouse") return;
-                    const el = e.currentTarget;
-                    clearTimeout(transLongRef.current);
-                    transLongRef.current = setTimeout(() => { transLongFiredRef.current = true; openTransMenu(el); }, 500);
-                  }}
-                  onPointerUp={() => clearTimeout(transLongRef.current)}
-                  onPointerCancel={() => clearTimeout(transLongRef.current)}
+                  {...menuPress((e) => { e.preventDefault(); openTransMenu(e.currentTarget); })}
                   title={pdfTransState.running
                     ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
                     : pdfTransState.current
@@ -10035,7 +10130,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <FileTextIcon size={16} />
                 </button>
               ) : null}
-              {isPhone && !shareMode && pdfUrl ? (
+              {touchScreen() && !shareMode && pdfUrl ? (
                 <button
                   data-guide="viewer.selectMode"
                   className={areaSelectMode ? "modeActive" : ""}
@@ -10089,7 +10184,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
-              areaMode={areaSelectMode && isPhone && !shareMode}
+              areaMode={areaSelectMode && !shareMode}
               marks={marks}
               flashHighlightId={flashingId}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
@@ -10135,7 +10230,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
             />
           ) : notebook ? (
-            <NotebookViewer sheets={nbSheets} marks={marks} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
+            <NotebookViewer key={focusedBlockId} place={tabScrollRef.current[focusedBlockId]?.place}
+              sheets={nbSheets} marks={marks} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
               onZoomTo={zoomTo} readOnly={readOnly} onAddSheet={readOnly ? undefined : addPageAtEnd}
               onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef} />
           ) : (
@@ -10149,7 +10245,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       </Panel>
       {slotWins("bottom").length ? (
         <>
-          <PanelResizeHandle className="sash sash-vertical" />
+          <PanelResizeHandle className="sash sash-vertical" hitAreaMargins={SASH_MARGINS} />
           <Panel id="slot-bottom" order={2} defaultSize={32} minSize={12} className="dockSlot">
             {renderSlotGroup("bottom", "horizontal")}
           </Panel>
@@ -10159,7 +10255,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       </Panel>
       {slotWins("right").length ? (
         <>
-          <PanelResizeHandle className="sash sash-horizontal" />
+          <PanelResizeHandle className="sash sash-horizontal" hitAreaMargins={SASH_MARGINS} />
           <Panel id="slot-right" order={3} defaultSize={28} minSize={15} className="dockSlot">
             {renderSlotGroup("right", "vertical")}
           </Panel>
@@ -10194,7 +10290,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <span>{t("Library")}</span>
               </button>
             ) : null}
-            {shareMode || !homeMode ? (
+            {hasSheets ? (
+              // A page with sheets: the bar switches between its two views.
+              [[true, NotebookIcon, t("Notebook")], [false, FileTextIcon, t("Notes")]].map(([on, Icon, label]) => (
+                <button key={label} className={`phoneTab ${notebook === on && !phonePanel ? "active" : ""}`}
+                  onClick={() => setNotebookView(focusedBlockId, on)} title={label} aria-label={label}>
+                  <Icon size={16} />
+                  <span>{label}</span>
+                </button>
+              ))
+            ) : shareMode || !homeMode ? (
               <button
                 className={`phoneTab ${phoneMainActive ? "active" : ""}`}
                 onClick={() => setPhonePanel(null)}
@@ -10205,7 +10310,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : notebook ? t("Notebook") : "PDF"}</span>
               </button>
             ) : null}
-            {!centerNotes ? (
+            {!centerNotes && !hasSheets ? (
               <button
                 className={`phoneTab ${phonePanel === "notes" ? "active" : ""}`}
                 onClick={() => { setNotesVisible(true); setPhonePanel((p) => (p === "notes" ? null : "notes")); }}
@@ -10820,15 +10925,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       label={t("Move to folder")}
                       title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
                     >
-                      {folderMenuIds.length ? folderMenuIds.map((f) => (
-                        <MenuItem
-                          key={f}
-                          icon={FolderIcon}
-                          title={ownFolders.includes(f) ? t("Already in {f}", { f: folderPath(libTree, f) }) : folderPath(libTree, f)}
-                          trailing={ownFolders.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-                          onClick={() => { close(); addPagesToFolder(ids, f); }}
-                        >{folderPath(libTree, f)}</MenuItem>
-                      )) : (
+                      {folderMenuIds.length ? folderMenuRows(folderMenuIds, (f) => ownFolders.includes(f), (f) => addPagesToFolder(ids, f)) : (
                         <MenuItem disabled>{t("No folders yet")}</MenuItem>
                       )}
                       {folderFilter || ownFolders.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
@@ -10881,6 +10978,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const folders = selectedFolders.size > 1 && selectedFolders.has(homeMenu.id) ? [...selectedFolders] : [homeMenu.id];
               const allPinned = folders.every((f) => libTree.folders.get(f)?.pinned);
               const id = homeMenu.id;
+              // Move up / down step one folder past its neighbour in the
+              // custom order, where the listing shows that order.
+              const stepping = lib.organize && homeMode && homeSort === "manual" && folders.length === 1;
+              const [up, down] = [folderNeighbour(libTree, id, -1), folderNeighbour(libTree, id, 1)];
               return menuGroups(
                 [
                   <MenuItem key="open" icon={FolderOpenIcon} keys={chordLabel("Enter")}
@@ -10900,6 +11001,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         setNewFolderName("");
                         setNewFolderOpen(true);
                       }}>{t("New subfolder")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.organize && (
+                    <SubMenuItem key="move" id="move" icon={FolderIcon} label={t("Move to")}>
+                      {folderMenuRows(["", ...folderTargets(libTree, folders, folderMenuIds)],
+                        (f) => folders.every((m) => libTree.folders.get(m)?.parent === f), (f) => moveFolders(folders, f))}
+                    </SubMenuItem>
+                  ),
+                  stepping && (
+                    <MenuItem key="up" icon={ArrowUpIcon} disabled={!up}
+                      onClick={() => { setHomeMenu(null); placeFolders([id], up, false); }}>{t("Move up")}</MenuItem>
+                  ),
+                  stepping && (
+                    <MenuItem key="down" icon={ArrowDownIcon} disabled={!down}
+                      onClick={() => { setHomeMenu(null); placeFolders([id], down, true); }}>{t("Move down")}</MenuItem>
                   ),
                 ],
                 [

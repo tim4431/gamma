@@ -1,9 +1,10 @@
 // A sheet in the notes view (docs/dev/notebooks.md): drawn where it stands
 // among the page's blocks, fitted to the column — its paper, with the
-// layers the notebook view's sheets have — and under it a row of its tools:
-// the pen (the ink strip), its paper, a replay of all its handwriting
-// (ink/inkReplay.js, under the sheet's id), a new page after it, and the
-// switch to the notebook view. In the notebook view the viewer draws the
+// layers the notebook view's sheets have. Its tools sit at the right of the
+// block's own header line, clear of the handwriting: the pen (the ink strip),
+// its paper, a replay of all its handwriting (ink/inkReplay.js, under the
+// sheet's id) and the switch to the notebook view (opening at this sheet);
+// a new page after it is "+" under the paper. In the notebook view the viewer draws the
 // sheets and the notes list them as rows. App owns the tree, the tools, the
 // stroke history and the commits; the tools come through PageToolsContext
 // (markup/PageTools.jsx), the sheet's marks and actions through
@@ -22,7 +23,7 @@ import { t } from "../shared/i18n/i18n.js";
 
 // {marks (surface → marks, markup/MarkupLayers.jsx useMarks), inkOpen (the
 // strip is open), onPen(), onPaper(sheetId, paper), onPaperAll(paper),
-// onAddAfter(sheetId), onNotebookView() (a page without a PDF)}; null in the
+// onAddAfter(sheetId), onNotebookView(sheetId) (a page without a PDF)}; null in the
 // notebook view.
 export const NoteSheetContext = createContext(null);
 
@@ -71,15 +72,6 @@ export function NoteSheet({ block, number }) {
   const editable = !tools.readOnly;
   return (
     <div ref={boxRef} className={"noteSheet" + armedClasses(tools)} data-sheet-id={block.id} data-guide="notes.sheet">
-      {scale ? (
-        <div ref={wrapRef} className="nbSheet" style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }}
-          aria-label={t("Page {n}", { n: number })}>
-          <PaperBackground paper={paper} />
-          <MarkupLayers surface={block.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks}
-            replay={replay.frame} />
-          <span className="nbSheetNo" aria-hidden="true">{number}</span>
-        </div>
-      ) : null}
       <div className="noteSheetBar">
         {editable ? (
           <button type="button" className={"ctlBtn" + (ctx.inkOpen ? " modeActive" : "")} aria-pressed={ctx.inkOpen}
@@ -95,14 +87,8 @@ export function NoteSheet({ block, number }) {
           </button>
         ) : null}
         {drawing.strokes.length ? <InkReplayButton replay={replay} className="ctlBtn" /> : null}
-        {editable ? (
-          <button type="button" className="ctlBtn" onClick={() => ctx.onAddAfter(block.id)}
-            aria-label={t("Add page below")} title={t("Add a page after this one")}>
-            <PlusIcon size={16} />
-          </button>
-        ) : null}
         {ctx.onNotebookView ? (
-          <button type="button" className="ctlBtn" onClick={ctx.onNotebookView} data-guide="sheet.notebookView"
+          <button type="button" className="ctlBtn" onClick={() => ctx.onNotebookView(block.id)} data-guide="sheet.notebookView"
             aria-label={t("Notebook view")} title={t("Notebook view: the pages beside the notes")}>
             <NotebookIcon size={16} />
           </button>
@@ -113,6 +99,23 @@ export function NoteSheet({ block, number }) {
           onChange={(next) => ctx.onPaper(block.id, next)}
           onApplyAll={() => ctx.onPaperAll(paper)}
           onClose={() => setPaperOpen(false)} />
+      ) : null}
+      {scale ? (
+        <div ref={wrapRef} className="nbSheet" data-sheet-id={block.id}
+          style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }} aria-label={t("Page {n}", { n: number })}>
+          <PaperBackground paper={paper} />
+          <MarkupLayers surface={block.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks}
+            replay={replay.frame} />
+          <span className="nbSheetNo" aria-hidden="true">{number}</span>
+        </div>
+      ) : null}
+      {editable ? (
+        <div className="noteSheetFoot">
+          <button type="button" className="ctlBtn" onClick={() => ctx.onAddAfter(block.id)}
+            aria-label={t("Add page below")} title={t("Add a page after this one")}>
+            <PlusIcon size={16} />
+          </button>
+        </div>
       ) : null}
     </div>
   );

@@ -16,30 +16,41 @@ import { clampZoom } from "../shared/model/zoom.js";
 import {
   DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperLines, paperSizeKey, turnPaper,
 } from "./notebook";
+import { placeAt, placeY } from "./sheetPlace";
 import "./notebook.css";
 
 const PAD = 24; // css px around the column at fit-width
 
-// A point of a notebook, in the only terms a zoom scales cleanly: which sheet
-// and where on it (as a fraction of its box). Neither the column's padding nor
-// the gaps between sheets scale with the zoom, so a hold kept as a ratio of
-// scroll offsets drifts by them; a sheet's own box does scale, exactly.
-// `cx`/`cy` are content coordinates (what `scrollLeft` + a view offset gives).
-// Off the sheets — in a gap, or past the last one — the nearest sheet's
-// fraction, which runs outside 0..1 and reads back the same way.
+// The sheets of a scroller — the notebook view's, or the notes' with sheets
+// among them — in its content coordinates (sheetPlace.js).
+function sheetBoxes(el) {
+  const top = el.getBoundingClientRect().top - el.scrollTop;
+  return [...el.querySelectorAll(".nbSheet[data-sheet-id]")].map((node) => {
+    const r = node.getBoundingClientRect();
+    return { id: node.dataset.sheetId, top: r.top - top, height: r.height };
+  });
+}
+
+// The reader's place in a scroller of sheets: the paper at the top of the view.
+export const readPlace = (el) => placeAt(sheetBoxes(el), el.scrollTop);
+
+// Scroll a scroller of sheets back to a place; false when its sheet is not there.
+export function showPlace(el, place) {
+  const y = placeY(sheetBoxes(el), place);
+  if (y == null) return false;
+  el.scrollTop = y;
+  return true;
+}
+
+// A point of the notebook held still across a zoom: a place (sheetPlace.js)
+// with its fraction across the sheet too. `cx`/`cy` are content coordinates
+// (what `scrollLeft` + a view offset gives). Read off the layout boxes, which
+// a pinch's preview transform leaves alone.
 function holdAt(el, cx, cy) {
-  let best = null, dist = Infinity;
-  for (const node of el.querySelectorAll(".nbSheet")) {
-    const top = node.offsetTop, bottom = top + node.offsetHeight;
-    const d = cy < top ? top - cy : cy > bottom ? cy - bottom : 0;
-    if (d < dist) { dist = d; best = node; }
-  }
-  if (!best || !best.offsetWidth || !best.offsetHeight) return null;
-  return {
-    id: best.dataset.sheetId,
-    fx: (cx - best.offsetLeft) / best.offsetWidth,
-    fy: (cy - best.offsetTop) / best.offsetHeight,
-  };
+  const nodes = [...el.querySelectorAll(".nbSheet")];
+  const place = placeAt(nodes.map((n) => ({ id: n.dataset.sheetId, top: n.offsetTop, height: n.offsetHeight })), cy);
+  const node = place && nodes.find((n) => n.dataset.sheetId === place.id);
+  return node?.offsetWidth ? { ...place, fx: (cx - node.offsetLeft) / node.offsetWidth } : null;
 }
 
 // Scroll so a hold's point sits at (hold.vx, hold.vy) in the view. Call it
@@ -90,16 +101,28 @@ const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, 
 // (markup/MarkupLayers.jsx useMarks); scaleValue: "page-width" or a number
 // (string); scrollRef.current(sheetId, box?) scrolls a sheet (and a box on
 // it, in points) into view; onCurrentSheet(id) reports the sheet under the
-// middle of the view.
+// middle of the view; place (sheetPlace.js) is where it opens.
 export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEffectiveScale, onZoomTo, readOnly,
-  onAddSheet, onCurrentSheet, scrollRef }) {
+  onAddSheet, onCurrentSheet, scrollRef, place }) {
   const tools = usePageTools();
   const boxRef = useRef(null);
   const [boxW, setBoxW] = useState(0);
+  const fitting = scaleValue === "page-width" || !Number(scaleValue);
+  const fittingRef = useRef(fitting);
+  fittingRef.current = fitting;
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return undefined;
-    const measure = () => setBoxW(el.clientWidth);
+    let width = 0;
+    const measure = () => {
+      if (el.clientWidth === width) return;
+      // At fit-width a new width (a rotation, a resize) rescales the sheets:
+      // the paper at the top of the view stays there.
+      const hold = width && fittingRef.current ? holdAt(el, el.scrollLeft, el.scrollTop) : null;
+      if (hold) holdRef.current = { ...hold, vx: 0, vy: 0 };
+      width = el.clientWidth;
+      setBoxW(width);
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -107,12 +130,13 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
   }, []);
   const widest = sheets.reduce((w, s) => Math.max(w, s.paper.width), sheets.length ? 0 : DEFAULT_PAPER.width);
   const fit = boxW ? Math.max(0.1, (boxW - 2 * PAD) / widest) : 1;
-  const scale = scaleValue === "page-width" || !Number(scaleValue) ? fit : Number(scaleValue);
+  const scale = fitting ? fit : Number(scaleValue);
 
   // A zoom keeps the point at the top of the view where it was, unless it
   // named a point to hold instead (holdRef, which the gestures below fill in
-  // with the paper under the cursor or the fingers). The hold is read before
-  // the re-render and spent here, once the sheets have their new size.
+  // with the paper under the cursor or the fingers, and a new width above
+  // with the paper at the top). The hold is read before the re-render and
+  // spent here, once the sheets have their new size.
   const prevScale = useRef(scale);
   const holdRef = useRef(null); // { id, fx, fy, vx, vy } from holdAt, plus the view point to put it at
   useLayoutEffect(() => {
@@ -128,6 +152,15 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
     viewerZoomRef.current?.sync(scale);
     onEffectiveScale?.(scale);
   }, [scale]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // It opens at `place` (App's reading place: the sheet a view switch or a tab
+  // switch left) once the sheets have their size, i.e. once the width is in.
+  const placeRef = useRef(place);
+  useLayoutEffect(() => {
+    if (!boxW || !placeRef.current) return;
+    showPlace(boxRef.current, placeRef.current);
+    placeRef.current = null;
+  }, [boxW]);
 
   // Ctrl/⌘ + wheel and two fingers (pinch to zoom, drag to pan) are read by
   // shared/lib/viewerZoom.js, the same reader the PDF viewer uses; what is
@@ -179,13 +212,7 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
     const el = boxRef.current;
     if (!el || !onCurrentSheet) return undefined;
     const pick = () => {
-      const mid = el.getBoundingClientRect().top + el.clientHeight / 2;
-      let best = "", dist = Infinity;
-      for (const node of el.querySelectorAll(".nbSheet")) {
-        const r = node.getBoundingClientRect();
-        const d = mid < r.top ? r.top - mid : mid > r.bottom ? mid - r.bottom : 0;
-        if (d < dist) { dist = d; best = node.dataset.sheetId; }
-      }
+      const best = placeAt(sheetBoxes(el), el.scrollTop + el.clientHeight / 2)?.id || "";
       if (best !== currentRef.current) { currentRef.current = best; onCurrentSheet(best); }
     };
     pick();

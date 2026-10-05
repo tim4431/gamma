@@ -19,7 +19,7 @@ import { NoteSheet } from "../notebook/NoteSheet";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
-import { MdObject, findObject } from "./MdObject";
+import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
 import { LinkIcon, PenIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
@@ -623,7 +623,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           const f = mermaidInfo[mermaidIdx];
           return (
             <MdObject kind="mermaid" idx={mermaidIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
-              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} />
+              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} tools={<ObjectMenuButton />} />
             </MdObject>
           );
         },

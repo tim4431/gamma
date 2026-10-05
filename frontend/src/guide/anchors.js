@@ -57,7 +57,7 @@ export const ANCHORS = {
   "viewer.zoom": { view: "viewer", description: "Zoom out, zoom in and fit to width" },
   "viewer.fullscreen": { view: "viewer", description: "Full screen, bottom-left" },
   "viewer.translate": { view: "translatable pdf", description: "Translate this page; right-click or long-press for the whole document and options" },
-  "viewer.selectMode": { view: "phone pdf", description: "On a phone: whether a drag selects text or draws a box" },
+  "viewer.selectMode": { view: "touch pdf", description: "On a touch screen: whether a drag selects text or draws a box" },
   "viewer.outline": { view: "pdf with an outline", description: "The PDF's table of contents, top-left, when the PDF carries one" },
   "viewer.paper": { view: "notebook view", description: "The notebook view's paper button: size, pattern and colour of the page in view" },
   "viewer.notesView": { view: "notebook view", description: "Back to the notes view: the same pages among the notes" },

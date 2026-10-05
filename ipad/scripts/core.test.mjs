@@ -180,6 +180,10 @@ test("the editing bar's text commands are the web editor's, as one edit", () => 
     "an empty pair at the caret, as a small edit");
   assert.deepEqual(edit("a **word**", c.pure("format", "bold", "a **word**", 4, 8)), { text: "a word", sel: [2, 6] }, "toggled off");
   assert.deepEqual(edit("it", c.pure("format", "italic", "it", 0, 2)), { text: "*it*", sel: [1, 3] });
+  assert.deepEqual(edit("run x", c.pure("format", "code", "run x", 4, 5)), { text: "run `x`", sel: [5, 6] });
+  assert.deepEqual(edit("run `x`", c.pure("format", "code", "run `x`", 5, 6)), { text: "run x", sel: [4, 5] }, "toggled off");
+  assert.equal(c.pure("format", "bold", "`a b`", 2, 3), null, "no marks inside inline code");
+  assert.deepEqual(edit("old", c.pure("format", "strike", "old", 0, 3)), { text: "~~old~~", sel: [2, 5] });
   assert.deepEqual(edit("site", c.pure("format", "link", "site", 0, 4)), { text: "[site]()", sel: [7, 7] }, "the caret in the (…) slot");
   assert.deepEqual(edit("a", c.pure("format", "math", "a", 1, 1)), { text: "a$x$", sel: [2, 3] });
   assert.equal(c.pure("format", "bold", "$x+y$", 2, 2), null, "no marks inside math");

@@ -1,5 +1,5 @@
-/* Gamma's design tokens: the one place theme colours, type and the radius,
-   spacing, motion, shadow and stacking scales are defined
+/* Gamma's design tokens: the one place theme colours, type, control sizes
+   and the radius, spacing, motion, shadow and stacking scales are defined
    (docs/dev/ui-design.md, "Tokens").
    index.html links this file as the first stylesheet, so its values paint
    the very first frame (the pre-paint script only sets data-theme and
@@ -28,6 +28,22 @@
   --space-6: 16px;
   --space-7: 24px;
   --space-8: 32px;
+  /* Control sizes, one set for a mouse and a finger alike (no pointer
+     media query changes them): a button's height and the small button's
+     (an iconSq button is that square, a topbar icon button stands as tall
+     as a button); the frameless icon button (ctlBtn, the viewer's control
+     boxes, page actions, search toggles); a compact button inside a line
+     of text (find arrows, metadata rows, the chat's change list); the
+     round × (small, default, large); a tab. What sits around a control
+     derives from these with calc(), so a size changes in one place. */
+  --ctl-btn: 35px;
+  --ctl-btn-sm: 31px;
+  --ctl-icon-btn: 29px;
+  --ctl-icon-btn-xs: 24px;
+  --ctl-close-sm: 22px;
+  --ctl-close: 26px;
+  --ctl-close-lg: 31px;
+  --ctl-tab: 33px;
   /* Motion: hover and press; enter and fade; larger moves. The global
      prefers-reduced-motion rule in app.css shortens every one of them. */
   --dur-fast: 100ms;

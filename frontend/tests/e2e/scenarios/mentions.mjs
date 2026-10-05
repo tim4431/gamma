@@ -100,6 +100,7 @@ export async function mentionScenarios(env) {
       await input.press("Enter");
       await until(() => requests.length === 3);
       assertEq(requests[2].pages.length, 0);
+      await page.locator(".chatBubbleRow.user").first().hover(); // a message's tools show with its row
       await page.getByTitle("Edit and re-send (removes later messages)").first().click();
       await page.locator(".chatEditTextarea").fill("Compare the results again");
       await page.locator(".chatEditTextarea").press("Enter");

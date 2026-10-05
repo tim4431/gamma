@@ -22,6 +22,8 @@ import { fenceInnerAt, scanFences } from "./fences.js";
 import { scanColorSpans, scanImageSyntax, scanMarks } from "./mdMarks";
 import { parseTable, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { assetUrl } from "../shared/lib/utils";
+import { commandById } from "../app/commands.js";
+import { menuPress } from "../shared/ui/press.js";
 
 // Clicking a rendered widget drops the caret just inside it, which un-renders
 // the span (the caret now touches it) so the source is editable in place.
@@ -165,12 +167,12 @@ export const OBJECT_DRAG_TYPE = "application/x-gamma-object";
 
 // The object behaviour the image and table widgets share (the editor's
 // counterpart of the rendered view's MdObject frame): a click puts the caret
-// after the object, a right-click drops it inside so the source expands
-// ("Edit markdown source"), and the widget is a drag source — ctx.objectDrag
-// (BlockRow's object action) publishes it for App's block drop handlers, so
-// a picture or table can be dragged to another block while its own block is
-// being edited. The mousedown is left to the browser: preventing it would
-// cancel the native drag.
+// after the object, a right-click or a held finger (press.js) drops it
+// inside so the source expands ("Edit markdown source"), and the widget is a
+// drag source — ctx.objectDrag (BlockRow's object action) publishes it for
+// App's block drop handlers, so a picture or table can be dragged to another
+// block while its own block is being edited. The mousedown is left to the
+// browser: preventing it would cancel the native drag.
 function objectWidget(view, el, { kind, idx, length, ctx }) {
   el.dataset.kind = kind;
   el.dataset.idx = idx;
@@ -182,10 +184,10 @@ function objectWidget(view, el, { kind, idx, length, ctx }) {
     view.dispatch({ selection: { anchor: pos + length } });
     view.focus();
   });
-  el.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    placeCaretInside(view, el, 1);
-  });
+  const press = menuPress((e) => { e.preventDefault(); placeCaretInside(view, el, 1); });
+  el.dataset.press = press["data-press"];
+  el.addEventListener("contextmenu", press.onContextMenu);
+  el.addEventListener("pointerdown", press.onPointerDown);
   el.addEventListener("dragstart", (e) => {
     e.stopPropagation();
     if (idx < 0 || !ctx.objectDrag) { e.preventDefault(); return; }
@@ -196,10 +198,10 @@ function objectWidget(view, el, { kind, idx, length, ctx }) {
 }
 
 // An `![alt](url)` shows the picture (sized like the rendered view, alt as
-// its caption) unless a selection reaches inside the span; a right-click
-// drops the caret into the alt text so the source expands. The upload URL
-// gets the workspace / share token like the rendered view's <img> — the
-// browser fetches it without the API header.
+// its caption) unless a selection reaches inside the span; a right-click or
+// a held finger drops the caret into the alt text so the source expands.
+// The upload URL gets the workspace / share token like the rendered view's
+// <img> — the browser fetches it without the API header.
 class ImageWidget extends WidgetType {
   constructor(url, alt, width, idx, length, ctx) {
     super();
@@ -239,7 +241,8 @@ class ImageWidget extends WidgetType {
 
 // A GFM table as a plain read-only table (cells as their raw text), the same
 // object rules as the picture: it stays a table while the caret steps past
-// it, right-click shows the source, and it can be dragged to another block.
+// it, a right-click or a held finger shows the source, and it can be dragged
+// to another block.
 // Cells are edited in the rendered view, never as raw text (mdTools).
 class TableWidget extends WidgetType {
   constructor(source, idx, ctx) {
@@ -852,6 +855,21 @@ function keepUnderPointer(view, pos, y) {
   document.scrollingElement?.scrollBy(0, delta);
 }
 
+// The formatting a system keyboard or menu asks for (`beforeinput`), as the
+// block commands that do it.
+const FORMAT_INPUTS = { formatBold: "block.bold", formatItalic: "block.italic", formatStrikeThrough: "block.strike" };
+
+// Prose gets the system's typing aids, which CodeMirror switches off:
+// autocorrect, a capital to start a sentence, spelling, suggestions. In a
+// code fence or math, where a corrected word is a broken command, they stay
+// off; the caret's place decides as it moves.
+const TYPING_AIDS = { autocorrect: "on", autocapitalize: "sentences", spellcheck: "true", writingsuggestions: "true" };
+const NO_AIDS = {};
+const typingAids = EditorView.contentAttributes.compute(["doc", "selection"], (state) => {
+  const doc = state.doc.toString(), at = state.selection.main.head;
+  return fenceInnerAt(doc, at) || findMathAtCursor(doc, at) ? NO_AIDS : TYPING_AIDS;
+});
+
 // `pinScroll`: opening scrolls nothing (keepUnderPointer), for an editor
 // drawn where its text was, in the same type (a text box's).
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
@@ -924,8 +942,16 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           // swipes) arrive as these input types, not as Ctrl+Z: an editor
           // given `onUndo` (a note row's) hands them to the page's block
           // history, never the browser's contenteditable undo, which would
-          // edit CodeMirror's DOM behind its back.
+          // edit CodeMirror's DOM behind its back. Its B and I keys, and the
+          // Format menu over a selection, arrive as format* input types: they
+          // run the commands Ctrl+B / I / Shift+X run, in every editor.
           beforeinput: (e) => {
+            const format = FORMAT_INPUTS[e.inputType];
+            if (format) {
+              e.preventDefault();
+              commandById(format).run({ editor: api });
+              return true;
+            }
             if (e.inputType !== "historyUndo" && e.inputType !== "historyRedo") return false;
             if (!cbRef.current.onUndo) return false;
             e.preventDefault();
@@ -935,6 +961,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         })),
         // The caret scrolls into view above the touch editing bar.
         EditorView.scrollMargins.of(() => ({ bottom: editBarSpace() })),
+        typingAids,
         dollarPairing,
         dollarBackspace,
         mathBracketPairing,

@@ -338,8 +338,8 @@ test("the viewer tours share their zoom and pen, and drop them once the sibling 
   assert.deepEqual(ids(nb, desk, true), ["nbv-paper", "nbv-notes"], "after a PDF: what the notebook view adds");
   assert.deepEqual(ids(nb, { editable: false }, false), ["viewer-zoom", "nbv-notes"], "read only: no pen, no paper");
   assert.deepEqual(ids(nb, { editable: false }, true), ["nbv-notes"]);
-  assert.deepEqual(ids(pdf, { editable: true, phone: true }, false),
-    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select"], "a phone picks what a drag does");
+  assert.deepEqual(ids(pdf, { editable: true, touch: true }, false),
+    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select"], "a touch screen picks what a drag does");
   // Without a sibling done, a shared step always shows.
   assert.equal(stepApplies({ id: "s", shared: true }, {}), true);
   assert.equal(stepApplies({ id: "s", shared: true, requires: { phone: true } }, { phone: false }), false, "requires still holds");

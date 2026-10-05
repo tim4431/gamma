@@ -179,6 +179,7 @@ export async function mcpScenarios(env) {
       const result = await readLink(url.href);
       assertEq(result.structuredContent.page_id, pageId);
       assert(result.content[0].text.includes("The exact note to discuss"));
+      await page.locator(`.sortableBlockWrap[data-block-id="${note.id}"]`).hover(); // the handle shows with its row
       await page.locator(`.sortableBlockWrap[data-block-id="${note.id}"] .dragHandle`).first().click();
       await page.getByText("Copy link to block", { exact: true }).click();
       const noteUrl = new URL(await page.evaluate(() => navigator.clipboard.readText()));

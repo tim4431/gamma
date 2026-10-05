@@ -19,6 +19,8 @@
 // read-only page. `run` returning false declines the key.
 import { t } from "../shared/i18n/i18n.js";
 import { getParentInfo } from "../shared/model/blockModel.js";
+import { fenceInnerAt } from "./fences.js";
+import { mathTabJump } from "./latexCompletion.js";
 import { toggleTodoLine } from "./mdMarks.js";
 import { runInsertLink, runInsertMath, runInsertSlash, runToggleMark } from "./markCommands.js";
 
@@ -48,6 +50,14 @@ function atVerticalEdge(editor, dir) {
   const b = view.coordsAtPos(moved.head, -1);
   if (!a || !b) return true;
   return Math.abs(a.top - b.top) < 2;
+}
+
+// Where Tab goes from the caret in a math snippet (latexCompletion.js
+// mathTabJump: the next {} slot, past a \right delimiter, out of the span),
+// or null; a "$" in a code fence is no math.
+function slotJump(editor) {
+  if (!editor || fenceInnerAt(editor.value, editor.selectionEnd)) return null;
+  return mathTabJump(editor.value, editor.selectionEnd, 1);
 }
 
 const mark = (id, label, keys, marker) => ({
@@ -162,6 +172,18 @@ export const BLOCK_COMMANDS = [
   {
     id: "block.math", label: t("Inline equation"), group: GROUP_FORMAT, keys: null, edits: true, needsEditor: true, palette: false,
     run: (c) => runInsertMath(c.editor.view),
+  },
+  {
+    // What Tab does in a math snippet (\frac{}{}: the numerator, the
+    // denominator, then out), for the editing bar: an on-screen keyboard
+    // has no Tab. The bar shows it only while there is somewhere to go.
+    id: "block.nextSlot", label: t("Next math argument"), group: GROUP_FORMAT, keys: null, needsEditor: true, palette: false,
+    when: (c) => !!slotJump(c.editor),
+    run: (c) => {
+      const jump = slotJump(c.editor);
+      if (!jump) return false;
+      c.editor.setSelectionRange(jump.anchor, jump.head);
+    },
   },
   // The ⋮⋮ handle menu's entries, for the palette.
   {

@@ -75,6 +75,7 @@ export async function contextualGuideScenarios(env) {
         await page.click('[data-guide="header.view"]');
         await page.locator('.menuPopover').getByRole("button", { name: menu, exact: true }).click();
         await page.getByRole("button", { name: `Close ${title}`, exact: true }).waitFor();
+        await page.keyboard.press("Escape"); // the menu, which reaches over the window's header
       }
       assertNoProblems(page);
     } finally { await ctx.close(); }

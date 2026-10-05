@@ -20,6 +20,8 @@ import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeO
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
+import { menuPress } from "../shared/ui/press.js";
+import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -1317,15 +1319,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // Text selection for highlight creation
   const [selPopup, setSelPopup] = useState(null);
-  // Whether this session has ever seen a real touch — a ref, not an effect
-  // local: the selection effect re-registers on every render (its callback
-  // prop is a fresh closure each time), which would keep clearing a local.
-  const touchSeenRef = useRef(false);
-  useEffect(() => {
-    function onTouchStart() { touchSeenRef.current = true; }
-    document.addEventListener("touchstart", onTouchStart, { passive: true });
-    return () => document.removeEventListener("touchstart", onTouchStart);
-  }, []);
 
   // Ctrl held (when annotating is allowed) → crosshair over the pages: the
   // cue that dragging now draws an area note instead of selecting text.
@@ -1372,8 +1365,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => document.removeEventListener("mousedown", onDown);
   }, [selPopup]);
 
+  // Subscribed once while annotating is allowed: the callback is a fresh
+  // closure on every App render, and re-subscribing on it would drop the
+  // pending selectionchange timer below.
   useEffect(() => {
-    if (!onSelectionFinished) return;
+    if (!canAnnotate) return;
     function onMouseUp() {
       setTimeout(syncSelPopup, 10);
     }
@@ -1435,11 +1431,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // iPadOS/iOS never fires mouseup for a long-press selection or for a drag
     // of the selection handles, so touch devices would never get the highlight
     // popup. selectionchange does fire — debounced, since it fires on every
-    // pixel of a handle drag — and only once a touch has been seen, so mouse
-    // drags keep committing on mouseup (where the modifier key is known).
+    // pixel of a handle drag — and only after a press that was not the
+    // mouse's, so mouse drags keep committing on mouseup (where the modifier
+    // key is known).
     let selTimer = null;
     function onSelectionChange() {
-      if (!touchSeenRef.current) return;
+      if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
       selTimer = setTimeout(syncSelPopup, 350);
     }
@@ -1450,7 +1447,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
-  }, [onSelectionFinished]);
+  }, [canAnnotate]);
 
   function handleSelConfirm(commentText, color, extra) {
     if (!selPopup) return;
@@ -1534,6 +1531,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
           syncCurPage();
+          // The tip is placed on the screen, not on the page, so a scroll
+          // would leave it over other text; and a touch scroll sends none of
+          // the mousedown that otherwise closes it.
+          if (selPopup) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
           scroll content so transform-origin 0 0 coincides with content (0,0) */}
@@ -1666,6 +1667,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   const hideNow = () => { clearTimeout(timerRef.current); setTip(null); };
   const hold = () => clearTimeout(timerRef.current);
   useEffect(() => () => clearTimeout(timerRef.current), []);
+  const menu = menuPress((e) => { hideNow(); onContextMenu(e); });
   // Tapped-open tip: no pointer leaves a touch screen, so it closes on the
   // next tap outside it (or on the badge again).
   useEffect(() => {
@@ -1681,13 +1683,13 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
     <>
       <span className="pdfNoteAnchor" style={style}>
         <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
-          onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; }}
+          {...menu}
+          onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; menu.onPointerDown(e); }}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
             if (touchRef.current) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
             hideNow(); onClick(e);
           }}
-          onContextMenu={(e) => { hideNow(); onContextMenu(e); }}
         >
           <MessageSquareIcon size={10} />
         </button>
@@ -1906,7 +1908,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const baseH = pageSize ? pageSize.height : (reservedHeight ? reservedHeight / scale : undefined);
 
   // Rectangle drag (screenshot-style area note): Ctrl+drag with a mouse, or
-  // any drag while the phone's rectangle mode (areaMode) is on. Pointer
+  // any drag while the rectangle mode (areaMode) is on. Pointer
   // events cover mouse and touch with one path; document-level move/up
   // listeners so the drag survives leaving the page box; rects are clamped
   // to it. Tiny drags are clicks — ignored, so Ctrl+click on highlights
@@ -1914,7 +1916,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [marquee, setMarquee] = useState(null); // live drag rect, current-render px
   function beginAreaDrag(e) {
     if (readOnly || !onAreaSelected) return;
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !e.isPrimary) return;
     const viaCtrl = e.pointerType === "mouse" && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
     if (!areaMode && !viaCtrl) return;
     const wrap = wrapRef.current;
@@ -1932,6 +1934,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     });
     const detach = () => {
       cancelAnimationFrame(moveRaf);
+      document.removeEventListener("pointerdown", onOther, true);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp, true);
       document.removeEventListener("pointercancel", onCancel);
@@ -1953,6 +1956,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       if (ev.pointerId !== pointerId) return;
       detach();
       setMarquee(null);
+    }
+    // A second finger makes the drag a pinch: the area goes.
+    function onOther(ev) {
+      if (ev.pointerId !== pointerId) onCancel({ pointerId });
     }
     function onUp(ev) {
       if (ev.pointerId !== pointerId) return;
@@ -1977,6 +1984,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         image: page ? cropPage(page, r, box, annotationMode).catch(() => null) : null,
       });
     }
+    document.addEventListener("pointerdown", onOther, true);
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp, true);
     document.addEventListener("pointercancel", onCancel);
@@ -2090,11 +2098,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             if (l.url) onExternalLink?.(l.url);
             else onInternalLink?.(l.dest);
           }}
-          onContextMenu={l.url ? (e) => {
+          {...menuPress(l.url ? (e) => {
             e.preventDefault();
             e.stopPropagation();
             onLinkContext?.(l.url);
-          } : undefined}
+          } : null)}
         />
       ))}
       {(findMarks || []).map((m, i) => (
@@ -2129,6 +2137,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // it), and a palette colour is tagged with its index: dark pages
         // swap in a dark-tuned set by index (app.css, "Flip page colors").
         const palette = paletteIndex(color);
+        // Right-click, or a finger held on it: colour, link, copy as reference.
+        const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
         const elements = [];
         for (const r of rects) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
@@ -2154,7 +2164,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
             }}
-            onContextMenu={function (e) { e.preventDefault(); if (onHighlightContext) onHighlightContext({ id: h.id, x: e.clientX, y: e.clientY }); }}
+            {...menuPress(openMenu)}
           />);
         }
         // Speech-bubble badge at the end of the passage when the user typed a
@@ -2172,7 +2182,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
                 top: r.y1 * curH / storedH - 8,
               }}
               onClick={(e) => { e.stopPropagation(); onHighlightJump?.(h.id, e.ctrlKey || e.metaKey); }}
-              onContextMenu={(e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); }}
+              onContextMenu={openMenu}
             />
           );
         }

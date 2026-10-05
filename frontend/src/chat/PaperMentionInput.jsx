@@ -4,6 +4,7 @@ import { BookIcon, CheckIcon } from "../shared/ui/Icons";
 import { createTitleScorer } from "../library/librarySearch";
 import { firstFolderPath } from "../library/libraryUtils";
 import { insertMention, mentionAt, MAX_CHAT_REFERENCES } from "./paperMentions";
+import { composing, sendsOnEnter } from "./enterKey.js";
 import { t } from "../shared/i18n/i18n.js";
 
 // `tree`: the library's folder and label trees (libraryUtils.libraryTree), which
@@ -68,7 +69,7 @@ export default function PaperMentionInput({ value, onChange, pages, tree, openTa
       onChange={(e) => { onChange(e.target.value); scan(e.target); }}
       onSelect={(e) => scan(e.target)} onBlur={() => setMention(null)}
       onKeyDown={(e) => {
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (composing(e)) return;
         if (mention) {
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismissed.current = mention.start; setMention(null); return; }
           if (["ArrowDown", "ArrowUp"].includes(e.key)) {
@@ -79,7 +80,7 @@ export default function PaperMentionInput({ value, onChange, pages, tree, openTa
             e.preventDefault(); choose(results[active]); return;
           }
         }
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); }
+        if (sendsOnEnter(e)) { e.preventDefault(); onSend(); }
       }} />
   </div>;
 }

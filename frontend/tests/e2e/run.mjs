@@ -51,6 +51,7 @@ import { inkEditingScenarios } from "./scenarios/inkEditing.mjs";
 import { pdfLoadScenarios } from "./scenarios/pdfload.mjs";
 import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
+import { touchScenarios } from "./scenarios/touch.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
 import { trashScenarios } from "./scenarios/trash.mjs";
 import { folderScenarios } from "./scenarios/folders.mjs";
@@ -92,6 +93,7 @@ const RUNNERS = {
   "folders": folderScenarios,
   "trash": trashScenarios,
   "ipad": ipadScenarios,
+  "touch": touchScenarios,
   "replica": replicaScenarios,
 };
 

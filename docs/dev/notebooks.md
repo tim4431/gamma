@@ -17,7 +17,8 @@ tour's sibling, so after one of them the other leaves out the buttons they
 share and shows only the paper and Notes view buttons.
 
 Code: `gamma/notebook.py` (server: paper rules, the PDF), `frontend/src/notebook/notebook.js`
-(the same rules and the sheet edits on the client, pure), `notebook/NotebookViewer.jsx`
+(the same rules and the sheet edits on the client, pure), `notebook/sheetPlace.js`
+(the reader's place, pure), `notebook/NotebookViewer.jsx`
 (the notebook view and the paper menu), `notebook/NoteSheet.jsx` (a sheet
 in the notes view), the sheets half of `app/App.jsx` ("Sheets"), and
 `ipad/GammaIPad/Reader/NotebookReader.swift`. Tests:
@@ -31,12 +32,18 @@ the shared cases in `tests/shared/paper.json`, and e2e
   same rules; only the layout differs.
   - The **notes view** draws each sheet where it stands among the
     blocks, fitted to the notes' width (at most 1.5 CSS px per point).
-    Under a sheet are its pen (the ink strip opens at the top of the
-    notes when no viewer holds it), its paper menu, the replay of its
-    handwriting ([handwriting.md](handwriting.md) "Replay"), **+** (a
-    page right after it) and the switch to the notebook view.
+    A sheet's tools sit at the top right of its block, on the block's own
+    line rather than over the handwriting (the title keeps clear of
+    them): its pen (the ink strip opens at the top of the notes when no
+    viewer holds it), its paper menu (opening in the flow above the
+    paper), the replay of its handwriting ([handwriting.md](handwriting.md)
+    "Replay") and the switch to the notebook view. **+** (a page right
+    after it) sits at the bottom right, under the paper.
+    The notes view shows in the viewer's place whether or not the Notes
+    window is open: the centre's notes are no window (`centerNotes`).
   - The **notebook view** puts the sheets in the viewer's place, one under
-    the other, fitted to the width, with the zoom buttons, the pen button
+    the other, fitted to the width (a page without a zoom of its own opens
+    there, never at the zoom the last PDF was read at), with the zoom buttons, the pen button
     and the ink strip a PDF has, **Add page** at the end, and the paper
     button for the sheet in the middle of the view. It zooms off the same
     gesture reader as the PDF viewer, at the same rate: Ctrl/⌘ + wheel
@@ -44,13 +51,19 @@ the shared cases in `tests/shared/paper.json`, and e2e
     — the only zoom gesture a tablet has, since the app turns the browser's
     own off ([ipad.md](ipad.md)). The notes beside them list each sheet
     as a row.
-- **Switching.** A sheet's **Notebook view** button (under it in the notes
-  view) opens the notebook view; it shows when the page has no PDF. The
-  **Notes view** button in the notebook view's side bar, under the paper
-  button, goes back, and so does the viewer's close button. View →
-  Notebook view does both. The choice is remembered per page in this browser and
-  saved the moment it changes. A page with no choice opens in the notes
-  view.
+- **Switching.** On a page with sheets and no PDF, the notes view has two
+  ways to the notebook view: **Notebook** in the page's title row, which
+  stays in sight, and a sheet's **Notebook view** button, which opens at
+  that sheet. The **Notes view** button in the notebook view's side bar,
+  under the paper button, goes back, and so does the viewer's close
+  button. View → Notebook view does both, and in the compact shell the
+  bottom bar's **Notebook** and **Notes** tabs do ([ipad.md](ipad.md#the-compact-shell)).
+  The choice is remembered per page in this browser and saved the moment
+  it changes. A page with no choice opens in the notes view.
+- **The place is kept.** A switch opens the other view at the reader's
+  place: the sheet at the top of the view and how far down it. A tab
+  switch away and back keeps it the same way, whichever view shows the
+  sheets, and so does a new width at fit-width (a rotation, a resize).
 - **+ → New notebook** makes a page with one blank A4 sheet and opens it in
   the notebook view, with its title ready to type.
 - **Adding a page** works the same in both views:
@@ -171,6 +184,15 @@ No schema change: sheets are blocks and properties.
   it draws), `sheetOfBlock` (the nearest sheet), `paperBefore` (the paper
   a sheet added after a block gets), `stableId`, `firstSheetId`,
   `sheetIdAfter`, `newSheet` (folded), `PAPER_SIZES`.
+- `notebook/sheetPlace.js` (pure): a reader's place is `{id, fy}`, a sheet
+  and how far down it as a fraction of its height. Neither the padding
+  around the sheets nor the gaps (or the notes) between them scale with
+  the sheets, so a place kept as a scroll offset, or a ratio of one,
+  drifts by them; a sheet's own box scales exactly. `placeAt(boxes, y)`
+  is the place of a content height, on the nearest sheet when `y` is off
+  them (its fraction then runs outside 0..1 and reads back the same way);
+  `placeY(boxes, place)` is the height back, null when the sheet is gone.
+  `boxes` are `{id, top, height}` in the scroller's content coordinates.
 - `notebook/NotebookViewer.jsx`: `NotebookViewer` draws the notebook view,
   each sheet a `PaperBackground` under `<MarkupLayers>`
   (`markup/MarkupLayers.jsx`: the text boxes, then the ink) keyed by the
@@ -185,17 +207,22 @@ No schema change: sheets are blocks and properties.
   gestures themselves are `shared/lib/viewerZoom.js`
   ([ui-design.md](ui-design.md#zoom-gestures-in-a-viewer)); what is here
   are the commits it hands back. `holdAt`/`applyHold` keep the held point
-  as a sheet and a fraction of its box, since neither the column's padding
-  nor the gaps between sheets scale with the zoom — a hold kept as a ratio
-  of scroll offsets drifts by them. Two fingers that only travelled pan
-  instead. It
+  as a place with its fraction across the sheet too, read off the layout
+  boxes a pinch's preview transform leaves alone. At fit-width a new
+  width (a rotation, a resize) holds the paper at the top of the view the
+  same way. Two fingers that only travelled pan instead. It
   reports the sheet under the middle of the view and scrolls to a sheet
-  and box on request. `PaperMenu` is the paper panel.
+  and box on request, and opens at its `place` prop once its width is
+  measured. `readPlace(el)` and `showPlace(el, place)` read and restore the
+  place of any scroller of sheets (`.nbSheet[data-sheet-id]`): the
+  notebook view's, or the notes' with sheets among them. `PaperMenu` is
+  the paper panel.
 - `notebook/NoteSheet.jsx`: `NoteSheet`, a sheet in the notes view, and
   `NoteSheetContext`, what App gives it besides the tools (which come
   through `PageToolsContext`): `{marks, inkOpen, onPen, onPaper,
   onPaperAll, onAddAfter, onNotebookView}`, the Map of every surface's
-  marks, whether the strip is open, and the sheet actions. It measures its
+  marks, whether the strip is open, and the sheet actions
+  (`onNotebookView(sheetId)` opens the notebook view at that sheet). It measures its
   row, draws `PaperBackground` and `<MarkupLayers>` keyed by its id, and
   hands the layers the replay's frame, drawn as a plain SVG in the ink's
   place, while its replay plays. The context is a new object on each App
@@ -207,7 +234,15 @@ No schema change: sheets are blocks and properties.
     kept in localStorage `gamma-notebook-view:<user>@<workspace>`). It is
     the layout switch beside `pageAttach`: the viewer's close button,
     controls and ink strip show for it, and `viewerHidden` (a closed PDF)
-    never hides it.
+    never hides it. `openBlock` gives a page with sheets and no saved zoom
+    `page-width`.
+  - The place: `tabScrollRef` keeps `{place}` for a page with sheets,
+    read off whichever view shows them (`readSheetPlace`) when the tab is
+    left and when `setNotebookView(pageId, on, place?)` switches. The
+    notebook view mounts per page (`key`) and opens at it; the notes view
+    restores it in a layout effect once its sheets are measured, unless a
+    jump to a block is on its way. A switch also closes the compact
+    shell's panel over the page.
   - In the notes view the rows get `inlineSheets`, the numbers
     `sheetNumbers` and `NoteSheetContext`. The strip shows over the notes
     (`notesInkStrip`) when the page has sheets and no viewer holds it.
@@ -221,7 +256,8 @@ No schema change: sheets are blocks and properties.
     `applyPaperToAll` (every sheet, at any depth) are thin `setBlocks`
     wrappers over `notebook.js`'s pure tree edits (`sheetAfterPlan` and
     `insertSheetAfter`, `blockToSheet`, `withSheetPaper`,
-    `withAllSheetsPaper`), which `tests/notebook.test.mjs` covers.
+    `withAllSheetsPaper`), which `tests/notebook.test.mjs` covers, with
+    `sheetPlace.js`.
   - `createNotebook` posts a page, then its first sheet as an op, and
     turns the notebook view on for it.
   - The notes' ink card, and a text box's marker, jump through

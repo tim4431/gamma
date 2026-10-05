@@ -26,7 +26,8 @@ const currentTheme = () => getComputedStyle(document.documentElement).colorSchem
 // onResize (an editable note) the same right-edge grip as an image drags the
 // diagram's width, written back into the fence's info string (`width=420`,
 // see lib/mermaidMarkdown.js) — double-click restores the natural size.
-export function MermaidDiagram({ source, pending = false, width = null, idx, onResize }) {
+// `tools` end the toolbar (a note's object menu, editor/MdObject.jsx).
+export function MermaidDiagram({ source, pending = false, width = null, idx, onResize, tools = null }) {
   const [theme, setTheme] = useState(currentTheme);
   const [result, setResult] = useState(null);
   const [showSource, setShowSource] = useState(false);
@@ -92,6 +93,7 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
         </button>
         <button type="button" className="ctlBtn" aria-label={t("Download SVG")} title={t("Download SVG")}
           disabled={!active?.svg} onClick={download}><DownloadIcon /></button>
+        {tools}
       </div>
       {!active && <div className="mermaidStatus" role="status">{pending ? t("Waiting for the diagram to finish…") : t("Rendering diagram…")}</div>}
       {active?.error && <div className="mermaidError" role="status">{t("Could not render diagram.")}<pre>{active.error}</pre></div>}

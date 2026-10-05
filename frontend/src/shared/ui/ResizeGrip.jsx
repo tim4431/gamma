@@ -3,13 +3,15 @@
 // a grip on each side, and since figures are centred both edges move
 // together, so the width changes by twice the pointer's travel and the
 // dragged grip stays under the pointer. The drag writes a pixel width through
-// onCommit when the pointer is released, double-click clears it back to the
-// natural size (onCommit(0)), and a click that never moved commits nothing.
+// onCommit when the pointer is released, a double-click or double tap clears
+// it back to the natural size (onCommit(0)), and a click that never moved
+// commits nothing.
 // The live width during the drag is returned so the figure can follow the
 // pointer before the source changes. `bound` (optional) returns the element
 // the figure sits in; its content width caps the drag.
 import React, { useRef, useState } from "react";
 import { t } from "../../shared/i18n/i18n.js";
+import { doublePress } from "./press.js";
 
 function contentWidth(el) {
   if (!el) return Infinity;
@@ -41,6 +43,9 @@ export function useDragResize({ measure, onCommit, bound, min = 60, max = 1600 }
     setDragW(null);
     if (d?.moved && d.w) onCommit(d.w);
   }
+  // The release also counts toward a double tap, and goes no further: a
+  // frame's own double tap (a diagram's) would take the count over.
+  const natural = doublePress((e) => { e.stopPropagation(); onCommit(0); });
   const gripProps = (side) => ({
     className: `mdResizeGrip ${side}`,
     title: t("Drag to resize · double-click for natural size"),
@@ -48,9 +53,9 @@ export function useDragResize({ measure, onCommit, bound, min = 60, max = 1600 }
     onClick: stop,
     onPointerDown: (e) => start(e, side === "left" ? -1 : 1),
     onPointerMove: move,
-    onPointerUp: end,
+    onPointerUp: (e) => { e.stopPropagation(); end(); natural.onPointerUp(e); },
     onPointerCancel: end,
-    onDoubleClick: (e) => { e.stopPropagation(); onCommit(0); },
+    onDoubleClick: natural.onDoubleClick,
   });
   return { dragW, gripProps };
 }

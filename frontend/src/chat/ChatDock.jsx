@@ -21,7 +21,10 @@ import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liv
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
 import { filedIn, pageAttachment } from "../library/libraryUtils";
-import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
+import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
+import { menuPress } from "../shared/ui/press.js";
+import { touchTyping } from "../shared/lib/pointer.js";
+import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { chipNote, isChange, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
@@ -32,10 +35,15 @@ import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+
+// What a remount (an iPad turning, the dock closed and opened again) must
+// not lose: the composer's draft, with the conversation it was typed in, and
+// the id of the last ask from App already sent. One dock is mounted at a time.
+const kept = { key: "", draft: "", asked: 0 };
 
 // A conversation's display name when the user never named it: the first
 // user message's first non-quote line (mirrors derive_title in
@@ -381,10 +389,9 @@ export default function ChatDock({
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
-  onGrip, onGripDoubleClick, collapsed, onClose,
+  onGrip, onFold, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState("");
   const [loadError, setLoadError] = useState("");
   // Chat history is per page; the home view buckets per folder (the folder's
   // id, "home" at the library root) — switching folders switches
@@ -392,6 +399,10 @@ export default function ChatDock({
   // another. A rename or a move keeps the bucket; deleting the folder files
   // its conversations into "home"'s history (DELETE /api/folders/{id}).
   const chatKey = focusedBlockId || organizeFolder || "home";
+  // The draft comes back after a remount in the conversation it was typed
+  // in; loading another conversation empties it (below).
+  const [chatInput, setChatInput] = useState(() => (kept.key === chatKey ? kept.draft : ""));
+  useEffect(() => { kept.draft = chatInput; }, [chatInput]);
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedMessages;
   // A reply is streaming into THIS conversation. Other buckets stream on
@@ -656,7 +667,7 @@ export default function ChatDock({
     let cancelled = false;
     setChatDocs([]);
     setChatIncludeNotes(false);
-    setChatInput("");
+    if (kept.key !== chatKey) { kept.key = chatKey; setChatInput(""); }
     setDocPicker(false);
     const reply = session.getSnapshot().replies.get(chatKey);
     const reloadSaved = session.isSaved(chatKey);
@@ -731,10 +742,18 @@ export default function ChatDock({
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
+  const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const historyOpen = openPopover === "chathistory";
   useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
   // The selection belongs to the open popover: closing it drops the ticks.
-  useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
+  useEffect(() => { if (!historyOpen) { setPicked(new Set()); setRowMenu(null); } }, [historyOpen]);
+  const togglePicked = (id) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const pickOrOpen = (id) => (picked.size ? togglePicked(id) : openHistory(id));
+  const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   useEffect(() => {
     if (readOnly || !historyOpen || history != null) return;
     let cancelled = false;
@@ -1273,11 +1292,11 @@ export default function ChatDock({
 
   // App's asks go out once the chat knows its AI and holds its stored
   // conversation: sent as the user's message, or left in the composer while
-  // a reply is still streaming here.
-  const askedRef = useRef(0);
+  // a reply is still streaming here. Each ask goes once, however often the
+  // dock mounts.
   useEffect(() => {
-    if (!askSignal?.id || askSignal.id === askedRef.current || !aiInfo || loadedFor !== chatKey) return;
-    askedRef.current = askSignal.id;
+    if (!askSignal?.id || askSignal.id === kept.asked || !aiInfo || loadedFor !== chatKey) return;
+    kept.asked = askSignal.id;
     if (aiOff || readOnly) return;
     if (busyHere) setChatInput(askSignal.text);
     else sendChatRef.current?.(askSignal.text);
@@ -1601,7 +1620,7 @@ export default function ChatDock({
           {historyOpen ? (
             <div className="popover chatHistoryPop">
               <input
-                autoFocus
+                autoFocus={!touchTyping()}
                 className="searchInput"
                 value={historyQuery}
                 onChange={(e) => setHistoryQuery(e.target.value)}
@@ -1616,8 +1635,10 @@ export default function ChatDock({
                       className="aiKeyInput"
                       value={renaming.text}
                       placeholder={t("Conversation name")}
+                      enterKeyHint="done"
                       onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
                       onKeyDown={(e) => {
+                        if (composing(e)) return;
                         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
                         else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
                       }}
@@ -1625,37 +1646,41 @@ export default function ChatDock({
                     />
                   </div>
                 ) : (
-                  <div key={s.id} className={`chatHistRow${s.active ? " active" : ""}`}
+                  // A row opens its conversation; while rows are ticked it
+                  // ticks instead. Its menu (⋯, a right-click or a held
+                  // finger) renames, selects and deletes.
+                  <div key={s.id} className={`chatHistRow rowMenuHost${s.active ? " active" : ""}`}
                     role="button" tabIndex={0}
                     title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
-                    onClick={() => { if (!s.active) openHistory(s.id); }}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
+                    onClick={() => { if (!s.active) pickOrOpen(s.id); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget && !s.active) pickOrOpen(s.id); }}
+                    {...menuPress(openRowMenu(s))}>
                     {s.active ? null : (
                       <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
                         aria-label={t("Select this conversation")} title={t("Select for deleting")}
                         onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => setPicked((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(s.id); else next.delete(s.id);
-                          return next;
-                        })} />
+                        onChange={() => togglePicked(s.id)} />
                     )}
                     <span className="chatHistTitle">{s.title || t("Untitled")}</span>
                     <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
-                    <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="ctlBtn" title={t("Rename")} aria-label={t("Rename conversation")}
-                        onClick={() => { renameCancelRef.current = false; setRenaming({ id: s.id, text: s.active ? chatTitle : s.title || "" }); }}>
-                        <PencilIcon size={16} />
-                      </button>
-                      {!s.active ? (
-                        <button type="button" className="ctlBtn" title={t("Delete")} aria-label={t("Delete conversation")}
-                          onClick={() => deleteHistory(s)}>
-                          <TrashIcon size={16} />
-                        </button>
-                      ) : null}
-                    </span>
+                    <MenuButton open={openRowMenu(s)} />
                   </div>
                 ))}
+                {rowMenu ? (
+                  <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={() => setRowMenu(null)}>
+                    <MenuItem icon={PenIcon} onClick={() => {
+                      setRowMenu(null);
+                      renameCancelRef.current = false;
+                      setRenaming({ id: rowMenu.row.id, text: rowMenu.row.active ? chatTitle : rowMenu.row.title || "" });
+                    }}>{t("Rename")}</MenuItem>
+                    {rowMenu.row.active ? null : <>
+                      {picked.has(rowMenu.row.id) ? null : (
+                        <MenuItem icon={SquareCheckIcon} onClick={() => { setRowMenu(null); togglePicked(rowMenu.row.id); }}>{t("Select")}</MenuItem>
+                      )}
+                      <MenuItem icon={TrashIcon} danger onClick={() => { setRowMenu(null); deleteHistory(rowMenu.row); }}>{t("Delete")}</MenuItem>
+                    </>}
+                  </ContextMenu>
+                ) : null}
                 {history == null ? <div className="popoverHint">{t("Loading…")}</div>
                   : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
                   : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
@@ -1689,7 +1714,7 @@ export default function ChatDock({
   );
 
   return (
-    <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
+    <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
       collapsed={collapsed} onClose={onClose} headerContent={readOnly ? <>
         <span className="uiTag">{t("Read only")}</span>
         {findBtn}
@@ -1781,7 +1806,8 @@ export default function ChatDock({
                         value={editingMsg.text}
                         onChange={(e) => setEditingMsg({ idx: i, text: e.target.value })}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
+                          if (composing(e)) return;
+                          if (sendsOnEnter(e)) {
                             e.preventDefault();
                             resend();
                           } else if (e.key === "Escape") { e.preventDefault(); setEditingMsg(null); }
@@ -1937,12 +1963,14 @@ export default function ChatDock({
       // width, then a toolbar — [+], the Full PDF switch while a PDF is in
       // context, the model chip (with reasoning effort), the mic when a
       // connection can transcribe, send / stop. While recording the text
-      // and the toolbar give way to the waveform row.
+      // and the toolbar give way to the waveform row. Its buttons never
+      // take the focus, so a press keeps an on-screen keyboard up.
       <form
         ref={composerRef}
         className={`chatComposer${aiOff ? " off" : ""}`}
         data-guide="chat.composer"
         onSubmit={(e) => { e.preventDefault(); sendChatMessage(); }}
+        onMouseDown={(e) => { if (e.target.closest("button")) e.preventDefault(); }}
       >
         {pdfSelections.length || chatNotes?.length || cursorChip ? (
           <div className="chatSelChips">
@@ -2206,7 +2234,7 @@ export default function ChatDock({
               {t("Selected pages (their PDF text, and optionally your notes) are sent with every question — pick a few and just ask for a report.")}
             </div>
             <input
-              autoFocus data-find
+              autoFocus={!touchTyping()} data-find
               className="searchInput"
               placeholder={t("Search your pages…")}
               value={docPickerQuery}
