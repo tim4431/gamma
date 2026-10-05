@@ -293,12 +293,19 @@ def set_default_quota_mb(mb: int) -> None:
 
 def user_limits(user_id: str) -> dict:
     """Effective limits for an account (its id): per-user override, else
-    server default, each held to a hosted plan's cap."""
+    on a share host what the account's Gamma Cloud plan gives it
+    (``cloud_auth.plan_limits``), else the server default, each held to a
+    hosted plan's cap."""
+    from . import cloud_auth  # local: cloud_auth imports this module
+
     with connect_users_db() as conn:
         found = _limit_settings(conn)
         row = conn.execute("SELECT max_upload_mb, quota_mb, is_guest FROM users WHERE id = ?",
                            (user_id,)).fetchone()
-    default_upload, default_quota, caps = found["max_upload_mb"], found["quota_mb"], found["plan_caps"]
+        plan = cloud_auth.plan_limits(conn, user_id)
+    caps = found["plan_caps"]
+    default_upload = plan.get("max_upload_mb") or found["max_upload_mb"]
+    default_quota = plan.get("quota_mb") or found["quota_mb"]
     upload_override = row[0] if row else None
     quota_override = row[1] if row else None
     # A guest account falls back to a bounded quota rather than the (often

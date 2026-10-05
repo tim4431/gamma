@@ -21,7 +21,7 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
-| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders) or `PRIVACY.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
+| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink, notebook or replica modules, or the frontend's dependencies; manual dispatch | pass/fail on macOS: the shared JavaScript bundled and run bare, the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
@@ -34,7 +34,7 @@ them onto the same release.
 ```
 PR → main ──▶ check (pytest, npm test + build, e2e, extension zip)   ← merge skill waits for this
 merge ───────▶ docker.yml  ghcr :latest                              ← every merge (not cloud/- or sites/-only ones)
-         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/ or PRIVACY.md changed
+         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/, PRIVACY.md or TERMS.md changed
 PR touching cloud/ ──▶ cloud.yml: test                            ← instead of check, for cloud/-only PRs
 PR touching sites/ ──▶ site.yml: check                            ← instead of check, for sites/-only PRs
 build-site ──▶ site.yml --ref <branch>: check → gammapdf.com        ← no merge needed
@@ -194,7 +194,7 @@ modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
 by hand) followed by a manifest parse + zip of the extension. No installers. A PR that changes only
 `cloud/`, `cloud.yml`, the `update-account-server` or `update-demo-server`
 skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
-`build-site` skill or `PRIVACY.md` — skips it (`paths-ignore`); `cloud.yml`
+`build-site` skill, `PRIVACY.md` or `TERMS.md` — skips it (`paths-ignore`); `cloud.yml`
 and `site.yml` check those. (A PR touching the brand artwork the site
 copies still runs `check`: its `branding` job owns those files.) The `merge` skill waits for it before merging; a
 red check is fixed on the branch as normal work.
@@ -254,7 +254,7 @@ dispatch, it needs the file on `main` once before the first run.
 ## `site.yml`
 
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
-app code, only on `sites/`, `PRIVACY.md` and `docs/`: the artwork the build
+app code, only on `sites/`, `PRIVACY.md`, `TERMS.md` and `docs/`: the artwork the build
 copies and the documents it renders as pages (the user guide, `docs/dev/`,
 `docs/research/`), so a documentation change on `main` deploys the site.
 `check`: `npm ci`, `node build.mjs --strict` (fails on an internal link or

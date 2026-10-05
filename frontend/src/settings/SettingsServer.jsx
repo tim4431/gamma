@@ -39,9 +39,7 @@ export function ServerSettings({ value }) {
       <Section title={t("Storage defaults")}>
         <ServerLimitRows key={planSyncs} setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
       </Section>
-      <Section title={t("Guests")}>
-        <GuestSettings setStatus={value.setStatus} />
-      </Section>
+      <GuestSettings setStatus={value.setStatus} />
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
       <Section title={t("Databases")}>

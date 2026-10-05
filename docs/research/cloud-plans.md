@@ -42,16 +42,20 @@ are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 | | Free | Lite | Plus | Pro |
 |---|---|---|---|---|
 | Price | 0 | $2 a month, $20 a year | $5 a month, $50 a year | $20 a month, $200 a year |
-| Library | the desktop app, on disk | a hosted Gamma of your own at `<username>.gammapdf.com` | a hosted Gamma of your own at `<username>.gammapdf.com` | the same, for a group |
-| Accounts on the server | none | 1 | 1 | 10 included; more as seats later |
+| Library | the desktop app, on disk | an account on the shared server | an account on the shared server | a hosted Gamma of your own at `<username>.gammapdf.com`, for a group |
+| Accounts on the server | none | 1 (yours) | 1 (yours) | 10 included; more as seats later |
 | Shared workspaces | self-host only | no; share-by-link (view or edit) still works for anyone | no; share-by-link (view or edit) still works for anyone | yes: roles, live cursors, invitations by cloud username |
 | Storage for uploads | the share host's small default | 1 GB | 6 GB | 100 GB pooled, per-workspace quotas |
 | Per-file cap | 50 MB | 50 MB | 100 MB | 250 MB |
 | Published pages | 5 | unlimited | unlimited | unlimited |
 | Devices | against a server you run | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | the same |
-| Off-site copies | none | daily, 3 kept | daily, 7 kept | hourly, 30 kept |
+| Off-site copies | none | the shared server's own | the shared server's own | hourly, 30 kept |
 | AI | own key or ChatGPT sign-in | the same | the same | the same, plus one shared connection the admin adds for the whole server |
-| Administration | none | you administer your server | you administer your server | users, workspaces, shared AI, guests |
+| Administration | none | none: an ordinary account | none: an ordinary account | users, workspaces, shared AI |
+
+The table is the plans as sold now. Lite and Plus were first built as
+containers of their own, which the paragraphs below still describe; why
+they moved is under "Order of work".
 
 **What Plus sells.** The desktop app is free and local, so the thing a
 Plus customer pays for is not storage: it is a server that is always on.
@@ -450,11 +454,37 @@ month, 1 GB); a memory and CPU size per plan, with placement by the memory
 committed to a host's servers plus a 1 GB reserve; resizes in place
 through Docker's update; `logs` and `rollback` jobs and orphan containers;
 the agent as a compose project of its own (`cloud/fleet/deploy/`),
-published by `fleet.yml`; and hosted containers with no seeded admin and
-no guests. Not built: a second host's routing, snapshot jobs, the `update`
-and `sync` jobs, a notice to every hosted admin, Pro seats beyond ten, the
-Plus storage add-on, the desktop launcher's first-run sign-in, and the
-terms and privacy text.
+published by `fleet.yml`; hosted containers with no seeded admin and
+no guests; a Plan & billing page with the payment method, the invoices, a
+cancel that runs to the end of the period and plan switches through the
+portal's flows; and the terms ([TERMS.md](../../TERMS.md)), which say that
+payments are not refunded. Not built: a second host's routing, snapshot
+jobs, the `update` and `sync` jobs, a notice to every hosted admin, Pro
+seats beyond ten, the Plus storage add-on, the desktop launcher's
+first-run sign-in, and a privacy policy that covers Gamma Cloud.
+
+**Lite and Plus on the shared server (October 2026).** The first build
+gave every paid plan a container. Two things argued against that for the
+single-account plans. A container reserves its memory whether it is used
+or not: at 512 MB a Lite server brings $2 a month, an 8 GB host fits about
+fourteen of them, and each is one more upgrade, migration and data
+directory to look after. And a server with one account has nothing to
+administer: users, the sign-in policy and the shared AI connection are
+group features. The share host was already a multi-tenant Gamma with
+provisioned accounts, a hidden account directory and no guests, so Lite
+and Plus became accounts on it: free, Lite and Plus are one account with a
+growing allowance, with no provisioning wait and no move between them.
+Pro keeps the container and is the plan whose owner is an admin. What it
+costs: Lite and Plus lose the address of their own
+(`<username>.gammapdf.com`) and the isolation of a process each; the
+plan's storage has to reach the share host per account (the `limits`
+claim, refreshed hourly, [dev/cloud_accounts.md](../dev/cloud_accounts.md)
+"Plans on the share host"); and a change between Plus and Pro does not
+move the library, which the person exports and imports. Weighed and
+rejected for now: a sync endpoint through which the share host would
+report usage and be told each account's state. The claim does the limits
+with machinery that existed; the endpoint is the way to per-account usage
+on the Plan page and to a retention rule for lapsed plans.
 
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or
 a merchant of record; whether Pro seats beyond ten are sold at launch or

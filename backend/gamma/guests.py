@@ -28,6 +28,15 @@ SWEEP_INTERVAL_S = 600  # the app lifespan runs ``delete_expired`` at startup an
 NAME_PREFIX = "guest-"
 
 
+def logins_open() -> bool:
+    """Whether this server takes guest logins: not with ``GAMMA_GUEST_MAX=0``,
+    not on a hosted container (``config.guest_max``) and not on a share
+    host, which holds strangers' published pages."""
+    from . import cloud_auth  # local: cloud_auth imports auth, which imports this module
+
+    return config.guest_max() > 0 and not cloud_auth.settings()["share_host"]
+
+
 def expires_at(created_at: str, ttl_hours: int | None = None) -> str:
     """When a guest account created at ``created_at`` goes (UTC ISO, the
     ``page_now`` shape); "" for an unparseable time."""

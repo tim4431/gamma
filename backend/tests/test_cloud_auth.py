@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
 
-from gamma import cloud_auth, cloud_sync, migrations, version
+from gamma import cloud_auth, cloud_sync, migrations, server_settings, version
 from gamma.db import connect_users_db, get_profile, set_profile
 from gamma.server_settings import _set_raw
 
@@ -113,6 +113,9 @@ class FakeAccountServer:
             return {}
         if url == ISSUER + "/jwks":
             return {"keys": [self.jwk()]}
+        if url == ISSUER + "/userinfo":
+            self._bearer(headers)
+            return dict(self.person)
         if url == ISSUER + "/token":
             form = {k: v[0] for k, v in parse_qs(data.decode()).items()}
             self.token_calls.append(form)
@@ -934,3 +937,46 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
     workspaces.lookup_with_token("https://acct.example", "tok", "alice")
     sync_engine.Remote("https://share.example", "", "gamma_x").get("/api/sync/whoami")
     assert len(seen) == 3 and all(ua.startswith("Gamma/") for ua in seen), seen
+
+
+def test_a_share_host_gives_a_paid_plan_its_storage(cloud, monkeypatch):
+    """On a share host an account's storage is what its Gamma Cloud plan
+    gives it (the ``limits`` claim), while its identity holds a live grant;
+    the hourly check follows a lapse, and a grant signed out loses it."""
+    monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
+    paid = {"quota_mb": 6144, "max_upload_mb": 100}
+    cloud.person = {"sub": "sub-ca_paid", "preferred_username": "ca_paid", "email": "ca_paid@example.org",
+                    "email_verified": True, "name": "Paid", "plan": "plus", "limits": paid}
+    c = browser()
+    callback(c, start(c))
+    user = account_of("ca_paid")
+    assert c.get("/api/auth/cloud/status").json()["identity"]["limits"] == paid
+    default = server_settings.user_limits(user)
+    assert default != paid                                # any other server: the claim changes nothing
+    monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
+    assert server_settings.user_limits(user) == paid
+    with connect_users_db() as conn:                      # an admin's override for the account still wins
+        conn.execute("UPDATE users SET quota_mb = 500 WHERE id = ?", (user,))
+    assert server_settings.user_limits(user) == {"quota_mb": 500, "max_upload_mb": 100}
+    with connect_users_db() as conn:
+        conn.execute("UPDATE users SET quota_mb = NULL WHERE id = ?", (user,))
+    # the plan lapses: the next grant check reads the claims again
+    cloud.person = {k: v for k, v in cloud.person.items() if k != "limits"} | {"plan": "free"}
+    assert cloud_sync.check_all() == {user: "ok"}
+    assert server_settings.user_limits(user) == default
+    assert c.get("/api/auth/cloud/status").json()["identity"]["plan"] == "free"
+    # paid again; a claim that is not two whole numbers is no claim
+    cloud.person = {**cloud.person, "plan": "lite", "limits": {"quota_mb": "lots", "max_upload_mb": 50}}
+    cloud_sync.check_all()
+    assert server_settings.user_limits(user) == default
+    cloud.person["limits"] = {"quota_mb": 1024, "max_upload_mb": 50}
+    cloud.offline = True                                   # unreachable: the stored claims stand
+    cloud_sync.check_all()
+    assert server_settings.user_limits(user) == default
+    cloud.offline = False
+    cloud_sync.check_all()
+    assert server_settings.user_limits(user) == {"quota_mb": 1024, "max_upload_mb": 50}
+    # the grant is signed out on the account server: the allowance goes with it
+    cloud.live.clear()
+    cloud_sync.check_all()
+    assert server_settings.user_limits(user) == default

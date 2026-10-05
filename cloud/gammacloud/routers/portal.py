@@ -3,7 +3,7 @@
 from contextlib import closing
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import accounts, billing, connect, db, identities, oidc, pages, pages_billing, providers, servers, sessions
@@ -17,8 +17,9 @@ def _app_page(request: Request, render):
     """An app page: ``render(account, data)`` gives its HTML, or None for a
     404; ``data`` holds ``devices`` (live grants), ``servers`` (them merged
     with the linked servers, ``servers.merge``), ``identities``,
-    ``browsers`` and ``connected`` (the servers this account connected).
-    Signed out goes to the login page and comes back here."""
+    ``browsers``, ``connected`` (the servers this account connected) and
+    ``billing`` (``billing.summary``). Signed out goes to the login page
+    and comes back here."""
     with closing(db.connect()) as conn:
         account = sessions.resolve(conn, request)
         if not account:
@@ -28,9 +29,11 @@ def _app_page(request: Request, render):
                 "servers": servers.merge(devices, servers.of_account(conn, account["id"], grants=True)),
                 "identities": identities.of_account(conn, account["id"]),
                 "browsers": sessions.of_account(conn, account["id"], request),
-                "connected": connect.of_account(conn, account["id"])}
+                "connected": connect.of_account(conn, account["id"]),
+                "billing": billing.summary(conn, account["id"])}
+        public = accounts.public(account, conn)
         conn.commit()
-    html = render(accounts.public(account), data)
+    html = render(public, data)
     if html is None:
         return HTMLResponse(pages.error_page("Not found", "There is no such page."), status_code=404)
     return HTMLResponse(html, headers=NO_STORE)
@@ -40,7 +43,7 @@ def _app_page(request: Request, render):
 def home(request: Request, mail: str = ""):
     """``?mail=failed``: registration could not send the confirmation mail."""
     return _app_page(request, lambda account, d: pages.overview_page(
-        account, d["devices"], d["servers"], mail_failed=mail == "failed"))
+        account, d["devices"], d["servers"], d["billing"], mail_failed=mail == "failed"))
 
 
 @router.get("/devices", response_class=HTMLResponse)
@@ -54,19 +57,20 @@ def settings(request: Request):
 
 
 @router.get("/plan", response_class=HTMLResponse)
-def plan(request: Request, checkout: str = ""):
+def plan(request: Request, checkout: str = "", returned: str = Query("", alias="billing")):
     """The Plan page (``pages_billing``). ``?checkout=success`` is Stripe
-    sending the browser back from Checkout. Unlike ``_app_page`` it needs
-    only the account and ``billing.summary``; it renders the stored copy and
-    never calls Stripe (its script's ``GET /api/billing/me`` refreshes a
-    stale row)."""
+    sending the browser back from Checkout, ``?billing=<flow>`` from a
+    finished portal flow. Unlike ``_app_page`` it needs only the account
+    and ``billing.summary``; it renders the stored copy and never calls
+    Stripe (its script's ``GET /api/billing/me`` refreshes a stale row and
+    ``GET /api/billing/details`` reads the invoices)."""
     with closing(db.connect()) as conn:
         account = sessions.resolve(conn, request)
         if not account:
             return RedirectResponse("/login?" + urlencode({"next": request.url.path}), status_code=302)
         conn.commit()  # the session touch; nothing below writes
         html = pages_billing.plan_page(accounts.public(account, conn), billing.summary(conn, account["id"]),
-                                       checkout=checkout)
+                                       checkout=checkout, returned=returned)
     return HTMLResponse(html, headers=NO_STORE)
 
 

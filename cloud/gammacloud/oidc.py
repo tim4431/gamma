@@ -125,7 +125,7 @@ def discovery() -> dict:
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
         "claims_supported": ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "preferred_username", "email",
-                             "email_verified", "name", "plan"],
+                             "email_verified", "name", "plan", "limits"],
         # not OIDC: where a Gamma server publishes pages ("" = no share host)
         "gamma_share_host": config.SHARE_HOST_URL,
         # not OIDC: how a self-hosted Gamma server gets its client (connect.py)
@@ -430,9 +430,15 @@ def id_token(conn, account, client_id: str, scope: str, *, nonce: str = "", auth
 def claims_for(account, scope: str) -> dict:
     """The identity claims a scope unlocks. ``preferred_username`` (the
     account's username) and ``plan`` always travel: a Gamma server needs the
-    username for its own account row and the plan for its quota."""
+    username for its own account row. So does ``limits``, the storage a
+    paid plan gives the account on the shared server
+    (``config.shared_limits``; absent on a free plan); only that server
+    reads it."""
     scopes = scope.split()
     out = {"preferred_username": account["username"], "plan": account["plan"]}
+    limits = config.shared_limits(account["plan"])
+    if limits:
+        out["limits"] = limits
     if "email" in scopes:
         out["email"] = account["email"]
         out["email_verified"] = bool(account["email_verified_at"])

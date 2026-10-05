@@ -3,14 +3,15 @@ strip, the hosts with their capacity and orphan containers, the hosted
 servers with their actions and a log viewer, an upgrade run in waves, and
 the job queue. ``pages.admin_page`` includes ``ADMIN_TAB`` and appends
 ``ADMIN_JS``, which defines ``loadServers()``, the tab's entry; it uses the
-admin script's ``api``, ``esc``, ``bind``, ``say`` and ``act``.
+admin script's ``api``, ``esc``, ``bind``, ``say``, ``act``, ``ask`` and
+``toast``.
 
 The tables are re-rendered every 4 s while a job is queued or running and
 the tab is in view, and not at all otherwise. Clicks and selects are
 delegated to the tab through ``data-f`` attributes, which the other tabs'
 ``wire()`` never selects. The ``<style>`` block below holds only what the
-portal's stylesheet has no class for: the summary tiles, the capacity
-meters and the log viewer."""
+portal's stylesheet has no class for: the capacity meters and the log
+viewer."""
 
 import json
 
@@ -21,12 +22,6 @@ JOB_STATES = ("queued", "held", "running", "done", "failed", "canceled")
 _QUOTAS = {plan: lim["quota_mb"] for plan, lim in config.PLAN_LIMITS.items() if lim.get("hosted")}
 
 STYLE = """<style>
-#tab-servers .fsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
-#tab-servers .fsum>div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-width:0}
-#tab-servers .fsum>div>span{display:block;color:var(--muted);font-size:12px}
-#tab-servers .fsum b{display:block;font-size:20px;font-weight:600;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#tab-servers .fsum b.mono{font-size:16px;line-height:1.7}
-#tab-servers .fsum small{display:block;color:var(--text-2);font-size:12.5px;line-height:1.6}
 #tab-servers .sub{display:block;color:var(--muted);font-size:12px;margin-top:1px}
 #tab-servers .tbl{overflow-x:auto}#tab-servers th{white-space:nowrap}#tab-servers td{vertical-align:top}#tab-servers td.nw,#tab-servers td.nw .sub{white-space:nowrap}#tab-servers td.fres{max-width:260px;overflow-wrap:anywhere}
 #tab-servers tr.fgrp td{border-bottom:0;padding-bottom:2px}#tab-servers tr.fgone td{opacity:.6}
@@ -35,14 +30,13 @@ STYLE = """<style>
 #tab-servers .cap b{display:block;background:var(--accent)}#tab-servers .cap i{display:block;background:color-mix(in srgb,var(--accent) 40%,var(--accent-soft))}
 #tab-servers .cap b+i{border-left:2px solid var(--surface)}#tab-servers .cap.hot b{background:var(--danger)}
 #tab-servers .section>.body+.body{border-top:1px solid var(--line)}
-#tab-servers h2 select{color:var(--text);margin-left:6px}
 #tab-servers #flognote{margin:0}
 #tab-servers .flog{margin:0;max-height:440px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-all}
 </style>"""
 
 ADMIN_TAB = (
     "<div id=tab-servers hidden>" + STYLE
-    + "<div class=notice id=ferr hidden></div><div class=fsum id=fsum></div>"
+    + "<div class=notice id=ferr hidden></div><div class=tiles id=fsum></div>"
     # hosts
     "<div class=section><h2>Hosts <span>the machines a fleet agent runs on</span></h2>"
     "<div class='body tbl'><table><thead><tr><th>Host</th><th>Heartbeat</th><th>Memory</th><th>Disk</th>"
@@ -326,9 +320,9 @@ const ASK = {
   delete: l => 'Delete ' + l + ' now? Its container, data and off-site copies are removed. This cannot be undone.'};
 async function serverAction(id, label, v){
   if (v === 'logs') return openLogs(id, label);
-  if (ASK[v] && !confirm(ASK[v](label))) return;
+  if (ASK[v] && !await ask(ASK[v](label), {ok: v.charAt(0).toUpperCase() + v.slice(1), danger: true})) return;
   const base = '/api/admin/servers/' + encodeURIComponent(id) + '/';
-  if (v === 'upgrade') { const tag = (prompt('Upgrade ' + label + ' to which image tag?', defTag) || '').trim(); if (!tag) return; await api(base + 'upgrade', {tag}); }
+  if (v === 'upgrade') { const tag = await ask('Upgrade ' + label + ' to which image tag?', {input: defTag, ok: 'Upgrade'}); if (!tag) return; await api(base + 'upgrade', {tag}); }
   else await api(base + v, {});
   await refresh();
 }
@@ -336,16 +330,16 @@ TAB.addEventListener('change', async (ev) => {
   const sel = ev.target; if (!sel.matches('select[data-f=srv]')) return;
   const v = sel.value; sel.value = ''; sel.blur(); if (!v) return;
   try { await serverAction(sel.dataset.id, sel.dataset.label, v); }
-  catch (e) { if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname); else alert(e.message); }
+  catch (e) { if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname); else toast(e.message); }
 });
-TAB.addEventListener('click', (ev) => {
+TAB.addEventListener('click', async (ev) => {
   const b = ev.target.closest('button[data-f]'); if (!b) return;
   const id = b.dataset.id, label = b.dataset.label, go = (fn) => act(b, async () => { await fn(); await refresh(); });
   switch (b.dataset.f) {
     case 'accept': go(() => api('/api/admin/hosts/' + encodeURIComponent(id), {accepting: b.dataset.on === '1'}, 'PATCH')); break;
-    case 'orphan': if (confirm('Remove the container ' + label + '? No server row names it; the agent removes the container and its data directory.'))
+    case 'orphan': if (await ask('Remove the container ' + label + '? No server row names it; the agent removes the container and its data directory.', {ok: 'Remove', danger: true}))
       go(() => api('/api/admin/hosts/' + encodeURIComponent(id) + '/orphans/' + encodeURIComponent(label) + '/remove', {})); break;
-    case 'upgrade': if (confirm('Upgrade ' + label + ' to ' + defTag + '? Its container restarts on the new image; the old one stays until the new one is healthy.'))
+    case 'upgrade': if (await ask('Upgrade ' + label + ' to ' + defTag + '? Its container restarts on the new image; the old one stays until the new one is healthy.', {ok: 'Upgrade'}))
       go(() => api('/api/admin/servers/' + encodeURIComponent(id) + '/upgrade', {tag: defTag})); break;
     case 'retry': case 'cancel': go(() => api('/api/admin/jobs/' + encodeURIComponent(id) + '/' + b.dataset.f, {})); break;
     case 'view': watchLog(id, b.dataset.sid, label); break;
@@ -395,7 +389,7 @@ bind('fprov', async (d, msg) => {
 });
 bind('fupg', async (d, msg) => {
   const tag = d.tag.trim(), n = Math.max(1, Number(d.wave_size) || 1);
-  if (!confirm('Upgrade every running server to ' + tag + ', ' + n + ' at a time? Each container restarts on the new image.')) return;
+  if (!await ask('Upgrade every running server to ' + tag + ', ' + n + ' at a time? Each container restarts on the new image.', {ok: 'Upgrade'})) return;
   const r = await api('/api/admin/servers/upgrade', {tag, wave_size: n});
   say(msg, plural(r.jobs, 'server', 'servers') + ' in ' + plural(r.waves, 'wave', 'waves') + ', run ' + r.run + '.'); refresh();
 });

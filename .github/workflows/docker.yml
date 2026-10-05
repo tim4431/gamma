@@ -1,6 +1,6 @@
 # Server image only. Runs on every push to main (`latest`) — the only workflow
 # a merge triggers; desktop.yml is dispatched by the `release` skill. A merge that only touches the account server (cloud/) or
-# the website (sites/, PRIVACY.md) does not rebuild it (paths-ignore, the
+# the website (sites/, PRIVACY.md, TERMS.md) does not rebuild it (paths-ignore, the
 # same list as check.yml): neither is in this image; cloud.yml and site.yml
 # publish those. The desktop release (desktop.yml)
 # dispatches this workflow on its new `v<version>` tag with the version as
@@ -27,6 +27,7 @@ on:
       - ".github/workflows/site.yml"
       - ".claude/skills/build-site/**"
       - "PRIVACY.md"
+      - "TERMS.md"
   workflow_dispatch:
     inputs:
       version:

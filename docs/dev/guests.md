@@ -30,9 +30,13 @@ Every guest login is a throwaway account of its own. `POST /api/login-guest`
 The endpoint is a sync `def` because it writes files. It is refused on a
 share host and answers 503 once the live guest accounts reach
 `GAMMA_GUEST_MAX` (default 500, `0` turns guest logins off; the count and
-the insert are one statement). With `0`, `GET /api/server-config` says
-`guest: false` too, so the login page shows no guest button; every paid
-hosted container runs that way ([hosted.md](hosted.md)). Each login creates
+the insert are one statement). A hosted container (`GAMMA_HOSTED=1`) reads
+as `0` whatever the variable says (`config.guest_max`). Where guest logins
+are off (`guests.logins_open`: the cap is 0, or the server is a share
+host), `GET /api/server-config` says `guest: false`, so the login page
+shows no guest button, and `GET /api/admin/settings` says `guest_logins:
+false`, so Settings → Server shows no Guests section
+([hosted.md](hosted.md)). Each login creates
 a workspace directory, so it is rate limited to 10 per IP per hour.
 
 Everything keyed on `is_guest` applies: no exports, no workspace creation,

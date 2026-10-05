@@ -1,7 +1,10 @@
 # Hosted servers and the fleet
 
-A Lite, Plus or Pro account on Gamma Cloud gets a Gamma container of its own at
-`<username>.<GAMMA_CLOUD_HOSTED_DOMAIN>`. The account server
+A Pro account on Gamma Cloud gets a Gamma container of its own at
+`<username>.<GAMMA_CLOUD_HOSTED_DOMAIN>`: the plans marked `hosted` in
+`config.PLAN_LIMITS`. Lite and Plus have none; their library is an account
+on the shared server ([cloud_accounts.md](cloud_accounts.md) "Plans on the
+share host"). The account server
 ([cloud_accounts.md](cloud_accounts.md)) decides which containers should
 exist and what limits each one runs under. A small agent on every host
 does the Docker work. The container learns its limits by calling the
@@ -115,8 +118,7 @@ change between Plus and Pro reaches the container at its next hourly
 sync. No `sync` job exists: the container syncs at startup and every hour.
 
 **Container size.** Each hosted plan in `config.PLAN_LIMITS` names a
-`memory_mb` and `cpus`: Lite 512 MB and 1 CPU, Plus 768 and 1, Pro 1536
-and 2. The `create` payload carries them and `limits` keeps them. A pass
+`memory_mb` and `cpus`: Pro has 1536 MB and 2 CPUs. The `create` payload carries them and `limits` keeps them. A pass
 whose new limits have another size than the stored ones resizes the
 container (`hosted._resize`, through `_resize_if_moved`). It enqueues an
 `upgrade` job with `{label, memory_mb, cpus}` and no image, which the
@@ -125,7 +127,12 @@ restart, and a stopped container stays stopped. A resize still queued
 takes a newer size instead of a second job. Before the container exists,
 a queued `create` job takes the new size, and a `create` already running
 is resized once it is done. A late result of a `create` whose payload was
-blanked no longer says its size, so it is resized to be sure. A lapse keeps the last hosted plan's limits, so it never resizes.
+blanked no longer says its size, so it is resized to be sure. A lapsed
+server is never resized. It keeps the limits of the last hosted plan it
+ran, or Pro's when that plan has no container any more
+(`hosted._container_plan`): a move down from Pro, or a server made while
+Lite and Plus had containers. Such a server turns read-only and follows
+the lifecycle, and no new one is made for the account.
 Rows stored before sizes existed have none in `limits`; they get them at
 the next pass without a resize, and their containers keep the agent's
 default size until the plan changes.
@@ -211,8 +218,10 @@ secret and is refused too), 404 for a client that names no live server,
 
 `GET /api/hosted/status` (portal session only) is what the plan page
 polls: `{"server": null}` or `{"server": {id, label, url, state,
-read_only, limits, report, reported_at, synced_at, host}}`
-(`hosted.status_for`).
+read_only, limits, report, reported_at, synced_at, stops_at, deletes_at,
+host}}` (`hosted.status_for`). `stops_at` is set while the server is
+read-only and `deletes_at` from then until it is deleted; both are the
+dates the tick itself acts on, and the Plan page shows them.
 
 **In the account's server list.** `servers.of_account`, which feeds
 `/api/me` (meant for the desktop launcher, which does not read it yet),
@@ -402,7 +411,8 @@ most every 30 minutes per container (`DATA_EVERY`); a `create` or
 
 The Admin page's **Servers** tab (`pages_fleet.py`), top to bottom:
 
-- **a summary strip**: hosts (fresh and stale), servers by state, jobs
+- **a summary strip** (the portal's shared `.tiles`, as on the Billing
+  tab): hosts (fresh and stale), servers by state, jobs
   queued, running and failed, and the default image with the number of
   servers that are *outdated*;
 - **hosts**: name, agent version, id and address; the last heartbeat,

@@ -268,7 +268,19 @@ def list_subscriptions(request: Request, status: str = "", limit: int = 200):
             "ORDER BY s.updated_at DESC LIMIT ?", (status, status, max(1, min(limit, 1000)))).fetchall()
         # ``test_mode``: a test key's customers live under /test/ in Stripe's dashboard.
         return {"enabled": billing.enabled(), "test_mode": "_test_" in config.STRIPE_SECRET,
-                "subscriptions": [dict(r) for r in rows]}
+                "summary": billing.admin_summary(conn), "subscriptions": [dict(r) for r in rows]}
+
+
+@router.get("/billing-events")
+def list_billing_events(request: Request, limit: int = 50):
+    """The newest webhook deliveries with what each did (``billing_events``)."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        rows = conn.execute(
+            "SELECT e.id, e.type, e.account_id, e.outcome, e.received_at, a.username FROM billing_events e "
+            "LEFT JOIN accounts a ON a.id = e.account_id ORDER BY e.received_at DESC, e.rowid DESC LIMIT ?",
+            (max(1, min(limit, 500)),)).fetchall()
+        return {"events": [dict(r) for r in rows]}
 
 
 @router.post("/subscriptions/{account_id}/refresh")

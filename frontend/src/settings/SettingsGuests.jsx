@@ -3,10 +3,11 @@
 // the guide offers the first-run tour on arrival). Both live in the server
 // `settings` table through /api/admin/settings; an environment variable
 // (GAMMA_GUEST_TTL_HOURS, GAMMA_DEMO) overrides the saved value, and the row
-// is then read-only. docs/dev/guests.md.
+// is then read-only. A server that takes no guest logins (a hosted container,
+// a share host, GAMMA_GUEST_MAX=0) has no Guests section. docs/dev/guests.md.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { Row, Toggle, UnitInput } from "./SettingsKit";
+import { Row, Section, Toggle, UnitInput } from "./SettingsKit";
 import { ClockIcon, GlobeIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -42,11 +43,13 @@ export function GuestSettings({ setStatus }) {
     if (!Number.isFinite(n) || n < 1 || n === saved.guest_ttl_hours) return; // the box shows the stored value again
     await save({ guest_ttl_hours: n }, t("Guest workspaces now last {n} h.", { n }));
   }
-  if (!saved) return error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p>
-    : <p className="setNotice">{t("Loading…")}</p>;
+  if (saved?.guest_logins === false) return null;
+  if (!saved) return <Section title={t("Guests")}>
+    {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : <p className="setNotice">{t("Loading…")}</p>}
+  </Section>;
   const ttlManaged = saved.guest_ttl_source === "environment";
   const demoManaged = saved.demo_mode_source === "environment";
-  return <>
+  return <Section title={t("Guests")}>
     <Row icon={ClockIcon} label={t("Guest workspaces last")}
       hint={ttlManaged ? envHint("GAMMA_GUEST_TTL_HOURS") : t("Then the guest's account and workspace are deleted")}
       title={t("Every guest login makes a fresh throwaway account with its own workspace. It is deleted this many hours after it was made, whether or not the visitor comes back.")}>
@@ -58,5 +61,5 @@ export function GuestSettings({ setStatus }) {
       title={t("For a public try-it server: the login page offers Try the demo (a guest login) first and folds the password form behind Admin sign-in, and a guest is offered the first-paper tour on arrival. Guests, their expiry and the AI allowance work the same either way.")}
       onChange={(on) => save({ demo_mode: on }, on ? t("Demo mode on.") : t("Demo mode off."))} />
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
-  </>;
+  </Section>;
 }

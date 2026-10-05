@@ -105,7 +105,11 @@ DEFAULT_GUEST_MAX = 500
 def guest_max() -> int:
     """``GAMMA_GUEST_MAX``: how many guest accounts may live at once (a
     guest login past it is refused with 503); 0 turns guest logins off.
-    Unset or unparseable = 500."""
+    Unset or unparseable = 500. A hosted container (``hosted``) takes no
+    guests whatever the variable says: a guest would not count against the
+    plan's accounts."""
+    if hosted():
+        return 0
     try:
         value = int(os.environ.get("GAMMA_GUEST_MAX", "").strip() or DEFAULT_GUEST_MAX)
     except ValueError:
