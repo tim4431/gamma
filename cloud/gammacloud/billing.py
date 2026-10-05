@@ -149,11 +149,11 @@ def enabled() -> bool:
 
 def can_sell(plan: str) -> bool:
     """A plan can be bought: billing is on and the place its library lives
-    is configured, the shared server's address (``config.SHARE_HOST_URL``)
-    for Lite and Plus and the hosting domain (``config.HOSTED_DOMAIN``) for
-    a plan with a container."""
+    is configured, the shared server's address (``config.APP_URL``) for
+    Lite and Plus and the hosting domain (``config.HOSTED_DOMAIN``) for a
+    plan with a container."""
     limits = config.PLAN_LIMITS.get(plan, {})
-    home = config.SHARE_HOST_URL if limits.get("shared") else config.HOSTED_DOMAIN if limits.get("hosted") else ""
+    home = config.APP_URL if limits.get("shared") else config.HOSTED_DOMAIN if limits.get("hosted") else ""
     return enabled() and bool(home)
 
 
@@ -615,7 +615,7 @@ def summary(conn, account_id: str) -> dict:
                "grace_ends_at": _plus_days(row["past_due_since"], config.GRACE_DAYS),
                "ended_at": row["ended_at"], "updated_at": row["updated_at"]}
     return {"enabled": enabled(), "sells": [p for p in config.PLANS if can_sell(p)],
-            "shared_url": config.SHARE_HOST_URL,
+            "shared_url": config.APP_URL,
             "plan": pub["plan"], "plan_source": pub["plan_source"], "granted_plan": pub["granted_plan"],
             "has_customer": bool(row and row["stripe_customer_id"]),
             "subscription": sub, "prices": config.PLAN_PRICES_USD,

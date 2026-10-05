@@ -62,14 +62,15 @@ def _copies(interval_s: int, keep: int) -> str:
 
 
 def _host(username: str) -> str:
-    return f"{username}.{config.HOSTED_DOMAIN or 'gammapdf.com'}"
+    """The address a Pro server of this account would answer at."""
+    return f"{username}{config.HOSTED_SUFFIX}.{config.HOSTED_DOMAIN or 'gammapdf.com'}"
 
 
 def plan_lines(plan: str, username: str) -> list[str]:
     """The six lines a card lists (HTML), from ``config.PLAN_LIMITS``."""
     lim = config.PLAN_LIMITS[plan]
     if lim.get("shared"):
-        where = f" at <b>{pages.esc(_bare(config.SHARE_HOST_URL))}</b>" if config.SHARE_HOST_URL else ""
+        where = f" at <b>{pages.esc(_bare(config.APP_URL))}</b>" if config.APP_URL else ""
         return [f"Your library on Gamma Cloud, always on{where}",
                 "One account; share links (view or edit) still work for anyone",
                 f"{_size(lim['quota_mb'])} for uploads, {lim['max_upload_mb']} MB per file",

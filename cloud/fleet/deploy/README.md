@@ -20,7 +20,7 @@ It is a compose project of its own, apart from the account server's
 the agent never touches the portal, the share host or the demo, and
 their updates never touch the agent. The two projects share only the
 external network `gamma-fleet`. Caddy joins it on the account side to
-route `<label>.gammapdf.com` to `gamma-<label>:9001`, and the agent
+route `<label>-user.gammapdf.com` to `gamma-<label>:9001`, and the agent
 starts every hosted container on it.
 
 ## Where it runs

@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from .. import accounts, config, db, identities, oidc, pages, providers, ratelimit, sessions, settings
+from .. import accounts, config, db, entrance, identities, oidc, pages, providers, ratelimit, sessions, settings
 from ..accounts import Problem
 from ..db import new_token
 from ..pages import NO_STORE
@@ -68,13 +68,14 @@ def _back(flow: dict) -> str:
 
 def _sign_in(conn, request: Request, account, flow: dict, via: str) -> tuple[str, str]:
     """A portal session for the account; returns (where to go, session
-    token). A Gamma server's pending sign-in finishes right here when it can."""
+    token). A Gamma server's pending sign-in finishes right here when it
+    can, by the entrance's rule (``entrance.after_sign_in``)."""
     token = sessions.create(conn, account["id"], request)
     db.audit(conn, "account.login", account["id"], account["id"], f"{via} {ratelimit.client_ip(request)}")
     if flow.get("request_id"):
         req = oidc.pending(conn, flow["request_id"])
         if req and account["email_verified_at"]:
-            return oidc.finish(conn, req, account), token
+            return entrance.after_sign_in(conn, req, account), token
         return _back(flow), token
     return identities.safe_next(flow.get("next", "/")), token
 

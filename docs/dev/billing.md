@@ -76,7 +76,7 @@ until it is set:
 | `GAMMA_CLOUD_STRIPE_SECRET` | the secret key (`sk_live_…` / `sk_test_…`); empty = billing off |
 | `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET` | the webhook endpoint's signing secret (`whsec_…`) |
 | `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the six recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id) |
-| `GAMMA_CLOUD_SHARE_HOST_URL` | the shared server's address; Lite and Plus are sold only while it is set |
+| `GAMMA_CLOUD_APP_URL` | the shared server's address for people (default: `GAMMA_CLOUD_SHARE_HOST_URL`); Lite and Plus are sold only while there is one |
 | `GAMMA_CLOUD_HOSTED_DOMAIN` | the zone of the hosted containers; Pro is sold only while it is set |
 
 `config.PLAN_PRICES_USD` is what the pages show; what is charged is the

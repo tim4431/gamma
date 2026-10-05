@@ -4407,6 +4407,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-decoration: none;
 }
 .loginCloudBtn:hover { background: var(--bg-hover); }
+/* a Gamma Cloud server's login page: this is the one way in, so it is the primary */
+.loginCloudBtn.lead { padding: 10px; border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.loginCloudBtn.lead:hover { background: var(--accent); filter: brightness(1.1); }
 .loginCloudBtn > img { flex: none; }
 .loginOr {
   display: flex;

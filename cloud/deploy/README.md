@@ -246,28 +246,41 @@ Restart the container after editing `.env` (`docker compose up -d`).
 ## The free share host
 
 The compose file also runs `share`: one Gamma in cloud mode
-(`ghcr.io/tim4431/gamma`, pinned to an image tag) that holds every free
-account's published pages and answers `share.gammapdf.com` and the page
-hosts `<username>-pages.gammapdf.com` ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
-"The share host"). Setting it up once:
+(`ghcr.io/tim4431/gamma`, pinned to an image tag), the shared server. It
+answers at three kinds of address ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
+"The share host" and "The entrance"):
+
+- `app.gammapdf.com`, the one people use: every account signs in there,
+  and a Lite or Plus library lives there (`GAMMA_PUBLIC_URL` in
+  `share.env`, `GAMMA_CLOUD_APP_URL` in `.env`);
+- `share.gammapdf.com`, where Gamma servers publish pages
+  (`GAMMA_CLOUD_SHARE_HOST_URL`). A server that has published keeps this
+  address, so it never changes;
+- the page hosts `<username>-pages.gammapdf.com`.
+
+Setting it up once:
 
 1. A wildcard DNS record at Cloudflare: `*` → this host's address, proxied.
    Named records (`account`) keep precedence; the universal certificate
    covers the first-level wildcard, and the Caddyfile's `*.gammapdf.com`
    site serves the internal certificate behind it (SSL mode "Full").
-2. The share host's client on the account server:
-   `docker compose exec account python manage.py create-client "Share host" share-host https://share.gammapdf.com/api/auth/cloud/callback`
-   (the secret is shown once).
+2. The shared server's client on the account server, with both callbacks:
+   `docker compose exec account python manage.py create-client "Gamma Cloud" share-host https://app.gammapdf.com/api/auth/cloud/callback https://share.gammapdf.com/api/auth/cloud/callback`
+   (the secret is shown once). A client made before `app.gammapdf.com`
+   existed takes the new callback with
+   `manage.py client-redirect <client id> https://app.gammapdf.com/api/auth/cloud/callback`.
 3. `share.env` from `share.env.example`: the client id and secret, and
    `GAMMA_CLOUD_ADMIN_SUBJECT` = your cloud account id, so your first sign-in
    there makes you its admin. The image also seeds an `admin` account with a
    random password printed once to the container's log while no account
    exists; delete it or set its password from Settings → Users afterwards.
-4. `GAMMA_CLOUD_SHARE_HOST_URL=https://share.gammapdf.com` in `.env`, then
+4. `GAMMA_CLOUD_SHARE_HOST_URL=https://share.gammapdf.com` and
+   `GAMMA_CLOUD_APP_URL=https://app.gammapdf.com` in `.env`, then
    `docker compose up -d` (the account server restarts with the new
    variable, `share` starts) and `docker compose exec caddy caddy reload
    --config /etc/caddy/Caddyfile` for the new site.
-5. Check: `curl https://share.gammapdf.com/api/health` answers ok,
+5. Check: `curl https://app.gammapdf.com/api/health` and
+   `curl https://share.gammapdf.com/api/health` answer ok,
    `https://account.gammapdf.com/.well-known/openid-configuration` shows
    `gamma_share_host`, and from a linked desktop the share popover's
    Gamma Cloud section offers Publish.
@@ -303,7 +316,7 @@ are configured in `.env`:
 ## Hosted servers
 
 A Pro account gets a Gamma container of its own at
-`<username>.gammapdf.com`. (Lite and Plus are accounts on the share host,
+`<username>-user.gammapdf.com`. (Lite and Plus are accounts on the share host,
 "The free share host" above, which therefore needs the disk and the
 backups for their libraries.) The account server decides what should exist;
 a fleet agent on each host does the Docker work
@@ -320,9 +333,10 @@ project's side of it:
    must be the zone the Caddyfile's wildcard site serves and the wildcard
    DNS record covers (the share host's step 1 above already made both).
    The account server builds each server's public URL, OIDC callback and
-   mail links as `https://<label>.<domain>`. Caddy routes every
-   `<label>.gammapdf.com` that is not `share`, `demo` or a `-pages` host to
-   `gamma-<label>:9001`. Empty means hosting is off: no server is created,
+   mail links as `https://<label>-user.<domain>` (the suffix is
+   `GAMMA_CLOUD_HOSTED_SUFFIX`, default `-user`). Caddy routes every
+   `<label>-user.gammapdf.com` to `gamma-<label>:9001`; the rule and the
+   suffix must agree. Empty means hosting is off: no server is created,
    whatever the plan.
 3. **The image.** `GAMMA_CLOUD_FLEET_IMAGE` (`ghcr.io/tim4431/gamma`) and
    `GAMMA_CLOUD_FLEET_IMAGE_TAG` (`latest`) are what a new server runs. The

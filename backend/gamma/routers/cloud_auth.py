@@ -1,7 +1,9 @@
 """Sign in with Gamma Cloud — the wire around ``gamma/cloud_auth.py``:
 
 - ``GET /api/server-config`` (public): what the login page needs — whether
-  cloud sign-in is on and the account server's address, whether guests may
+  cloud sign-in is on, the account server's address and whether the page
+  leads with it (``cloud.lead``: a hosted container or a share host, whose
+  people all come from Gamma Cloud), whether guests may
   sign in, for how long (``guest_ttl_hours``), whether a guest starts with
   the ``GAMMA_GUEST_SEED`` library (``guest_seeded``) and ``demo`` mode
   (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
@@ -51,7 +53,8 @@ def server_config():
     cfg = cloud_auth.settings()
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
     plan = hosted.limits()
-    return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
+    lead = enabled and (config.hosted() or cfg["share_host"])
+    return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else "", "lead": lead},
             "password_login": True, "registration": False, "guest": guests.logins_open(),
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),

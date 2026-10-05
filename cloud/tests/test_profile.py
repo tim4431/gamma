@@ -42,9 +42,12 @@ def lab_client(name="The lab's server"):
 def lab_tokens(client, client_id, secret, scope="openid offline_access prefs", **extra):
     verifier, challenge = pkce()
     r = client.get("/authorize", params=authorize_params(challenge, client_id=client_id, redirect=SERVER_CALLBACK,
-                                                        scope=scope))
-    assert r.status_code == 200, r.text
-    redirect = client.post("/authorize/continue", json={"request_id": request_id_from(r.text)}).json()["redirect"]
+                                                        scope=scope), follow_redirects=False)
+    if r.status_code == 302:        # a hosted server the account has signed in to before: no confirm card
+        redirect = r.headers["location"]
+    else:
+        assert r.status_code == 200, r.text
+        redirect = client.post("/authorize/continue", json={"request_id": request_id_from(r.text)}).json()["redirect"]
     code = parse_qs(urlsplit(redirect).query)["code"][0]
     r = client.post("/token", data={"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
                                     "redirect_uri": SERVER_CALLBACK, "client_id": client_id, "client_secret": secret,

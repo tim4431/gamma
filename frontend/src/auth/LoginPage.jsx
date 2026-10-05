@@ -108,6 +108,9 @@ function takeCloudError() {
 // returns to what the visitor was reading (a share view's own Sign in).
 // `readOnly`: a hosted server whose plan lapsed (server-config's
 // `read_only`): signing in still works, to read and export.
+// `cloudLogin.lead` (a Gamma Cloud server: a hosted container or the shared
+// server, whose people all sign in through Gamma Cloud): the page is that
+// one button, and the password form folds behind Admin sign-in.
 export function LoginPage({
   username,
   password,
@@ -127,25 +130,26 @@ export function LoginPage({
 }) {
   const [cloudError] = React.useState(takeCloudError);
   const leadsWithDemo = demo && !!onGuestLogin;
+  const leadsWithCloud = !leadsWithDemo && !!cloudLogin?.enabled && !!cloudLogin.lead;
   const [signInOpen, setSignInOpen] = React.useState(false);
   const errorText = typeof error === "string" ? error : error?.text || "";
   const badPassword = error?.field === "password";
   const passwordRef = React.useRef(null);
   React.useEffect(() => { if (badPassword) passwordRef.current?.focus(); }, [error, badPassword]);
+  // on a Gamma Cloud server a refused password keeps the folded form it was typed in open
+  React.useEffect(() => { if (errorText && leadsWithCloud) setSignInOpen(true); }, [errorText, leadsWithCloud]);
   const hours = Number(guestTtlHours) || 0;
-  const signIn = <>
-    {readOnly ? (
-      <LoginError>{t("This server is read-only: you can sign in to read and export your data, but nothing can be changed.")}</LoginError>
-    ) : null}
-    {cloudLogin?.enabled ? <>
-      <a className="loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
-        title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
-        <BrandMark size={18} />
-        {t("Sign in with Gamma Cloud")}
-      </a>
-      {cloudError ? <LoginError>{cloudError}</LoginError> : null}
-      <div className="loginOr">{t("or use your account on this server")}</div>
-    </> : cloudError ? <LoginError>{cloudError}</LoginError> : null}
+  const readOnlyNote = readOnly ? (
+    <LoginError>{t("This server is read-only: you can sign in to read and export your data, but nothing can be changed.")}</LoginError>
+  ) : null;
+  const cloudButton = cloudLogin?.enabled ? (
+    <a className={`loginCloudBtn${leadsWithCloud ? " lead" : ""}`} href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
+      title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
+      <BrandMark size={18} />
+      {t("Sign in with Gamma Cloud")}
+    </a>
+  ) : null;
+  const passwordForm = (
     <form onSubmit={onSubmit}>
       <input
         type="text"
@@ -183,8 +187,41 @@ export function LoginPage({
         </button>
       ) : null}
     </form>
+  );
+  const signIn = <>
+    {readOnlyNote}
+    {cloudButton ? <>
+      {cloudButton}
+      {cloudError ? <LoginError>{cloudError}</LoginError> : null}
+      <div className="loginOr">{t("or use your account on this server")}</div>
+    </> : cloudError ? <LoginError>{cloudError}</LoginError> : null}
+    {passwordForm}
   </>;
+  const adminSignIn = (
+    <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
+      onClick={() => setSignInOpen((open) => !open)}>
+      <ChevronRightIcon size={14} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
+      {t("Admin sign-in")}
+    </button>
+  );
   const subtitleText = subtitle || t("Read papers, highlight, and keep what you learn — in one place.");
+  if (leadsWithCloud) {
+    return (
+      <AuthShell>
+        <p className="loginSubtitle">{subtitleText}</p>
+        {readOnlyNote}
+        {cloudButton}
+        {cloudError ? <LoginError>{cloudError}</LoginError> : null}
+        {adminSignIn}
+        {signInOpen ? <div className="loginDisclosureBody">{passwordForm}</div> : null}
+        {onBack ? (
+          <button type="button" className="loginDisclosure" onClick={onBack}>
+            <ArrowLeftIcon size={14} />{t("Back to the shared page")}
+          </button>
+        ) : null}
+      </AuthShell>
+    );
+  }
   if (!leadsWithDemo) {
     return (
       <AuthShell>
@@ -226,11 +263,7 @@ export function LoginPage({
       </p>
       {errorText && !signInOpen ? <LoginError>{errorText}</LoginError> : null}
       {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
-      <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
-        onClick={() => setSignInOpen((open) => !open)}>
-        <ChevronRightIcon size={14} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
-        {t("Admin sign-in")}
-      </button>
+      {adminSignIn}
       {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}
     </AuthShell>
   );
