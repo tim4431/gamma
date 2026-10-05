@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import cloud_auth, config, workspaces
+from . import config, workspaces
 from .db import connect_users_db, format_stamp, new_account_id, page_now, parse_stamp
 from .logbuf import log
 from .server_settings import guest_ttl_hours
@@ -32,6 +32,8 @@ def logins_open() -> bool:
     """Whether this server takes guest logins: not with ``GAMMA_GUEST_MAX=0``,
     not on a hosted container (``config.guest_max``) and not on a share
     host, which holds strangers' published pages."""
+    from . import cloud_auth  # local: cloud_auth imports auth, which imports this module
+
     return config.guest_max() > 0 and not cloud_auth.settings()["share_host"]
 
 
