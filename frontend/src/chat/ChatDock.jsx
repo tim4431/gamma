@@ -630,14 +630,14 @@ export default function ChatDock({
   // history entry opened). PDF button: on until this document has been sent
   // in THIS conversation, then off. Messages record the doc ids they carried
   // (pdfDocs); older saves only have display names — treat any sent PDF as
-  // covering the current one.
+  // covering the current one. The composer is left alone: a bucket switch
+  // empties it up front, so a draft typed while the stored copy loads stays.
   function showLoaded(msgs, title) {
     setChatMessages(msgs);
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
     const references = [...new Set((lastUser?.contextPages || []).map((p) => p.id))].slice(0, MAX_CHAT_REFERENCES);
     setChatDocs(references);
     setChatIncludeNotes(!!lastUser?.includeNotes);
-    setChatInput("");
     setChatTitle(title || "");
     const sent = msgs.some((m) => m.pdfDocs
       ? (docId && m.pdfDocs.includes(docId)) || m.pdfDocs.includes(focusedBlockId)
@@ -805,6 +805,7 @@ export default function ChatDock({
       session.seen(chatKey, data.messages || [], data.updated_at);
       if (chatKeyRef.current !== chatKey) return;
       showLoaded(data.messages || [], data.title);
+      setChatInput("");
       setHistory(null);
       setOpenPopover(null);
       chatStickRef.current = true;

@@ -17,7 +17,9 @@ pages too" alike) files the active conversation and the history of the
 folder and of every folder below it into the library chat's history
 (`home`, `file_into_home` in `routers/chats.py`), where they stay
 findable. ChatDock's `chatKey` is the open page's id, else the open
-folder's id, else `home`.
+folder's id, else `home`. A bucket switch empties the composer at once and
+then reads the stored conversation; a draft typed while that read is in
+flight stays (opening a history entry still empties it).
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
