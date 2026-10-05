@@ -217,7 +217,7 @@ and the popup with its folder menu.
 The suite uses a disposable workspace on the curated demo account so AI shots
 can use its configured provider. Notes and the connector use an isolated
 server/account instead (the extension targets the default workspace), as do
-the feature demos above.
+the ink and collaboration demos above.
 
 Set `DEMO_PASSWORD` in the shell without committing or logging it; `BASE_URL`
 defaults to `http://127.0.0.1:9001`, and `DEMO_USER` to `demo`. Then:
@@ -239,10 +239,11 @@ node tools/readme-media/suite-workspace.mjs --remove
 `run-case.mjs` prepares each case in that disposable workspace: it clears the
 note page, removes a paper that must visibly be fetched, or resets tabs. Run
 library and search before reference-links, which removes and fetches the
-QEC paper again. The library search demo feeds the website; the README shows
-search. A failed recording leaves the workspace available for inspection;
-remove it after finishing. Never read account databases for credentials or
-commit cookies, passwords, exports, or raw recordings.
+QEC paper again. The library search demo is shown nowhere at the moment; the
+README and the website show search. A failed recording leaves the workspace
+available for inspection; remove it after finishing. Never read account
+databases for credentials or commit cookies, passwords, exports, or raw
+recordings.
 
 ## Delivery and review
 

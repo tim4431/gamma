@@ -7,12 +7,10 @@ node tools/branding/build.mjs
 node tools/branding/build.mjs --check
 ```
 
-Generation needs Python 3 and the frontend's locked Playwright dependency:
-`npm ci --prefix frontend`, then `cd frontend` and
-`npx playwright install chromium-headless-shell`. The check needs only Node.
-The generator runs offline using the hero's system font stack. Commit the
-updated sources, consumer outputs and `generated.json` together. Normal builds
-and unpacked extension installs use committed outputs; they need no generator.
+Generation's requirements are in [tools/branding](../../tools/branding/README.md);
+the check needs only Node. Commit the updated sources, consumer outputs and
+`generated.json` together. Normal builds and unpacked extension installs use
+committed outputs; they need no generator.
 
 ## Source ownership
 
@@ -20,7 +18,7 @@ and unpacked extension installs use committed outputs; they need no generator.
 |---|---|
 | `marks/favicon.svg` | The only editable Gamma mark, used for every icon and composition |
 | `compositions/` | Hero layouts and the shared Gamma PDF logo layout |
-| `tokens.json` | Brand palette and typography reference; Store background is consumed directly |
+| `tokens.json` | Brand palette and typography reference; the Store layouts read its colors directly |
 
 Open `marks/favicon.svg` in a browser or SVG editor to edit the mark. Keep the
 32 by 32 viewBox and the `gamma-background` ID on its background rectangle:
@@ -66,7 +64,8 @@ Published paths stay unchanged: `docs/assets/branding/`, the frontend favicon,
 mask and home-screen icons (full-bleed plates through the `bleed` option,
 [docs/dev/ipad.md](../../docs/dev/ipad.md)), desktop resources, extension icons, backend MCP icon and plugin icon.
 They are generated copies because each package must remain self-contained.
-Use this pipeline to supply brand assets to a future `site/` directory too.
+The website (`sites/`) keeps no copies: `sites/build.mjs` takes its favicon,
+logo, hero and illustrations from these paths at each build.
 
 Screenshots and recordings remain in `docs/assets/`; third-party logos and
 licenses remain with the frontend; UI glyphs and React illustrations remain

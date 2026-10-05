@@ -1,20 +1,23 @@
 # Gamma Cloud plans: pricing, billing, and hosted servers in batch
 
 Design worked out in October 2026 for the paid side of Gamma Cloud: what
-the Free, Plus and Pro plans contain and cost, how a purchase is verified
-and kept inside the account server, what the subscription page shows, how
-Stripe is wired in, and how the paid containers are created, upgraded and
-retired as a fleet. It restates the product shape the earlier
+the Free, Lite, Plus and Pro plans contain and cost, how a purchase is
+verified and kept inside the account server, what the subscription page
+shows, how Stripe is wired in, and how the paid containers are created,
+upgraded and retired as a fleet. It restates the product shape the earlier
 [hosting.md](hosting.md) note deferred to (a container per paying customer,
 the free tier in the desktop app, one share host, one account server),
-since the planning file that held it was never in the repository. Nothing
-below is built except where it says so; the account server's current
-mechanics are in [dev/cloud_accounts.md](../dev/cloud_accounts.md).
+since the planning file that held it was never in the repository. The
+design is now built: the status paragraph at the end of "Order of work"
+lists where the result differs from the text, and the current mechanics
+are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
+[dev/billing.md](../dev/billing.md) and [dev/hosted.md](../dev/hosted.md).
 
 ## Where things stand
 
 - The account server (`cloud/`, v0) has `plan` as a column on `accounts`
-  with the values `free`, `plus`, `pro` (`config.PLANS`). An admin sets
+  with the values `free`, `plus`, `pro` (`config.PLANS`; `lite` has been
+  added since, and `plan` is now computed, rule 4 below). An admin sets
   it, or an invite code grants it. Every ID token and `/userinfo` answer
   carries it as the `plan` claim, and each Gamma server stores the last
   claims per linked identity.
@@ -32,7 +35,7 @@ mechanics are in [dev/cloud_accounts.md](../dev/cloud_accounts.md).
 - Not built: anything that takes money, anything that creates a container,
   and any limit on a Gamma server that depends on a plan other than the
   publish cap. The website's FAQ says "no plans, no seats and no account
-  with us".
+  with us". (All of it since built; the FAQ now points to `/pricing`.)
 
 ## The plans
 
@@ -121,8 +124,8 @@ whose owner unlinked, and a status (grace, read-only) that is not a plan.
 authenticates with its own OIDC client id and secret, which it already
 holds in its environment, and asks `POST /api/hosted/sync` at startup and
 hourly from the app's `every()` loop. The body is its report (build and
-schema version, accounts, upload bytes, data-directory bytes, health); the
-answer is its limits:
+schema version, accounts, upload bytes, data-directory bytes, public URL);
+the answer is its limits:
 
 ```json
 {"plan": "pro", "status": "active", "read_only": false,
@@ -137,13 +140,14 @@ account server changes nothing, and a server that never got one runs on its
 environment's defaults. Where each field lands on the Gamma side:
 
 - `quota_mb` and `max_upload_mb` become the server-wide defaults
-  `server_settings._defaults` reads when the admin has not set them (a
+  (`server_settings._plan_caps`) when the admin has not set them (a
   hosted admin's own setting may only go lower). No environment variable
   sets those defaults today, so this is the first way a provisioned
   container gets them without `manage.py` inside the container.
 - `max_accounts` and `policy` feed `cloud_auth._resolve`. A new policy
-  **`invited`** is needed: provision only a subject that holds a pending
-  invitation on this server (`pending_memberships`), refuse everyone else.
+  **`invited`** is needed (since built in `cloud_auth.py`): provision only
+  a subject that holds a pending invitation on this server
+  (`pending_memberships`), refuse everyone else.
   Checked against the code: under `refuse` and `claim` an unknown subject
   is refused before `claim_pending_memberships` runs, and `provision` lets
   any cloud account in, so neither fits a Pro server that invites its
@@ -161,8 +165,8 @@ environment's defaults. Where each field lands on the Gamma side:
   the existing notices table.
 
 A plan change therefore needs no restart: upgrade, downgrade, grace and
-suspension all arrive with the next sync, and the account server can ask
-for one sooner by enqueueing a `sync` job (below).
+suspension all arrive with the next sync. (The `sync` job planned below
+for asking sooner was not built: the container's admin has Sync now.)
 
 ## Verifying a purchase
 
@@ -214,18 +218,20 @@ The rules that make the purchase trustworthy:
    back to the grant or to `free` by itself.
 5. **The Customer Portal does the rest.** `POST /api/billing/portal`
    creates a portal session and the browser goes there to change the
-   payment method, switch between the Plus and Pro prices, cancel at period
-   end, or download invoices. The portal configuration allows exactly those
-   switches; every change comes back through the webhook.
+   payment method, switch between the Lite, Plus and Pro prices, cancel at
+   period end, or download invoices. The portal configuration allows
+   exactly those switches; every change comes back through the webhook.
 6. **Edge rules.** The webhook path is excluded from the portal session
-   check and the Turnstile gate, rate-limited by Stripe's published
-   addresses only, and allowed through Cloudflare's WAF. Keys live in the
-   environment: `GAMMA_CLOUD_STRIPE_SECRET`, `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET`,
-   and the four price ids (`..._PRICE_PLUS_MONTH`, `_PLUS_YEAR`,
+   check, the same-origin check (`app._CROSS_ORIGIN_OK`) and the Turnstile
+   gate, and allowed through Cloudflare's WAF. As built it is not limited
+   to Stripe's published addresses: the signature check refuses anything
+   else. Keys live in the environment: `GAMMA_CLOUD_STRIPE_SECRET`,
+   `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET`, and the six price ids
+   (`..._PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`,
    `_PRO_MONTH`, `_PRO_YEAR`). Stripe's test mode and the CLI's event
-   forwarding cover local development; the tests use a recorded event set
-   against a fake Stripe client, the way `test_cloud_auth.py` fakes the
-   account server.
+   forwarding cover local development; the tests (`test_billing.py`)
+   build events against a fake Stripe client, the way `test_cloud_auth.py`
+   fakes the account server.
 
 What this means for "validation" from a Gamma server's point of view: a
 container never hears about money. It exists because a webhook provisioned
@@ -254,8 +260,10 @@ else in the repository learns Stripe's vocabulary:
   lists subscriptions by status, with a link into Stripe's dashboard per
   customer; refunds and disputes stay in Stripe.
 - Account deletion (`/api/me/delete`) cancels the subscription at Stripe
-  first and tears the container down (below); a deleted account with a live
-  subscription is refused until the cancel succeeded.
+  first and tears the container down (below; as built, the server lapses
+  like a cancelled plan and is deleted when the account is purged); a
+  deleted account with a live subscription is refused until the cancel
+  succeeded.
 
 Gamma servers keep seeing only the `plan` claim and, for hosted ones, the
 limits answer. The share host's publish cap keeps reading the claim.
@@ -303,18 +311,22 @@ provisioning, host, OIDC client id, image tag, `state`
 last computed, last report, created and changed times). `fleet_jobs` is the
 queue: host, server, kind (`create`, `update`, `restart`, `start`, `stop`,
 `delete`, `snapshot`, `upgrade`, `sync`), payload, state, attempts, result.
+As built, the states add `grace` and `read_only`, and the kinds are
+`create`, `start`, `stop`, `restart`, `delete`, `upgrade` (which also
+resizes), `rollback` and `logs` ([dev/hosted.md](../dev/hosted.md)).
 
 **An agent per host, not a socket in the account server.** Creating a
 container means the Docker socket, which is root on the host. The account
 server is the one process on the public internet, so it should not hold
 it. Instead a small service, `gamma-fleet`, runs on every host with the
 socket and the Docker SDK, makes outbound calls only, and long-polls
-`GET /api/fleet/jobs?host=` with its host token. It applies each job,
-reports the result, and every five minutes posts each container's health,
-memory and the size of its data directory. A host whose heartbeat stops is
-shown stale and takes no new placements. The agent is a second small
-Python package under `cloud/fleet/`, deployed as a container with the
-socket mounted, and it shares nothing with `gammacloud` but the HTTP shape.
+`GET /api/fleet/jobs` with its host token, which names the host. It
+applies each job, reports the result, and every five minutes posts each
+container's health, memory and the size of its data directory. A host
+whose heartbeat stops is shown stale and takes no new placements. The
+agent is a second small Python package under `cloud/fleet/`, deployed as
+a container with the socket mounted, and it shares nothing with
+`gammacloud` but the HTTP shape.
 
 **Creating a server** (a `create` job, enqueued by the webhook when a
 subscription becomes active and no row exists):
@@ -325,7 +337,7 @@ subscription becomes active and no row exists):
    written into the job payload once and never stored in clear.
 3. The agent starts `gamma-<label>` from `ghcr.io/tim4431/gamma:<tag>` (the
    tag is the fleet's current pin, per server so a canary can run ahead),
-   with `/srv/gamma/<account id>/data` on `/data`, the cloud variables, a
+   with `/srv/gamma/<label>/data` on `/data`, the cloud variables, a
    fixed `GAMMA_PUBLIC_URL`, `FORWARDED_ALLOW_IPS` = the fleet network's
    pinned subnet, the off-site bucket variables with prefix
    `hosted/<account id>/`, a memory limit and a CPU share, restart
@@ -428,15 +440,21 @@ text above: a hosted server needs a confirmed e-mail before it is created;
 a username rename is refused while a server exists; a label another
 account ever held is never reused; a `paused` subscription has its own
 page state; stale hosts are only flagged, never closed; deletion comes 60
-days after the stop; and the Caddy route by hostname label serves one host
-only. Later additions: a Lite plan ($2 a month, 1 GB); a memory and CPU
-size per plan, with placement by the memory committed to a host's servers
-plus a 1 GB reserve; resizes in place through Docker's update; `logs` and
-`rollback` jobs and orphan containers; the agent as a compose project of
-its own (`cloud/fleet/deploy/`), published by `fleet.yml`; and hosted
-containers with no seeded admin and no guests. Not built: a second host's
-routing, snapshot jobs, Pro seats beyond ten, the Plus storage add-on, the
-desktop launcher's first-run sign-in, and the terms and privacy text.
+days after the stop; the Caddy route by hostname label serves one host
+only, and a stopped server's name is a plain 502 rather than a "paused"
+page; upgrade waves count servers across the fleet, not per host; a
+resize follows the plan rather than an admin's action; and lifecycle mail
+covers the server's ready, read-only, stopped and deletion warning, with
+none of its own for a failed payment. Later additions: a Lite plan ($2 a
+month, 1 GB); a memory and CPU size per plan, with placement by the memory
+committed to a host's servers plus a 1 GB reserve; resizes in place
+through Docker's update; `logs` and `rollback` jobs and orphan containers;
+the agent as a compose project of its own (`cloud/fleet/deploy/`),
+published by `fleet.yml`; and hosted containers with no seeded admin and
+no guests. Not built: a second host's routing, snapshot jobs, the `update`
+and `sync` jobs, a notice to every hosted admin, Pro seats beyond ten, the
+Plus storage add-on, the desktop launcher's first-run sign-in, and the
+terms and privacy text.
 
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or
 a merchant of record; whether Pro seats beyond ten are sold at launch or

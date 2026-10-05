@@ -103,7 +103,8 @@ with folders and labels stays the navigation model.
 Backend
 - `blocks_store.get_or_create_doc_page` + `GET/POST /blocks/by-doc/{doc_id}`
   are the only "open-or-create page" path; the lookup key is the PDF hash.
-  Note pages are created by a bare `POST /blocks {parent_id:"root"}`.
+  ~~Note pages are created by a bare `POST /blocks {parent_id:"root"}`.~~
+  `POST /api/pages` (`blocks_store.create_page`, stage 1).
 - ~~`clip.find_page` / `GET /library/lookup` scan only pages with `doc_id`; a
   web clip without a PDF lands in a hard-coded "Web clips" page.~~ A clip
   with no PDF makes a `web_url` page (stage 3); `find_page` stays the
@@ -175,12 +176,13 @@ Old rows were historically tolerated forever by read-side shims, which means
 every renamed property or syntax lived twice in the code. The block-centric
 work replaced that with ONE idempotent normalization pass, now
 `gamma/normalize.py`, which the versioned migration runner
-([migrations.md](migrations.md)) applies in its baseline step and every
-backup restore applies to the imported files. Each step only touches rows
-that still carry the old shape (SQL-filtered), so a clean database costs one
-query per step. Schema changes themselves (columns, tables, the workspace
-layout) are numbered migration steps, no longer lazy `ALTER TABLE` on
-connect.
+([migrations.md](migrations.md)) applied in its baseline step (removed
+since, with every step below `MIN_UPGRADABLE`) and every backup restore
+still applies to the imported files (`ws_backup._normalize_copies`). Each
+step only touches rows that still carry the old shape (SQL-filtered), so a
+clean database costs one query per step. Schema changes themselves
+(columns, tables, the workspace layout) are numbered migration steps, no
+longer lazy `ALTER TABLE` on connect.
 
 Per-workspace `pages.db`
 - `properties.sourceUrl` (camelCase, earliest pages) → `source_url`; the old
@@ -191,13 +193,16 @@ Per-workspace `pages.db`
   becomes `<name>` and `auto_title` is set to it, so the metadata worker may
   still replace it and the prefix special-case in `metadata._save_props` can
   go.
-- Stage 4 (when it lands): highlight blocks under a page with `doc_id` gain
-  `attachment_id = doc_id`.
+- ~~Stage 4 (when it lands): highlight blocks under a page with `doc_id` gain
+  `attachment_id = doc_id`.~~ Dropped: stage 4 kept one document per page,
+  so highlights carry no `attachment_id`.
 
 Per-workspace `data.db`
 - Drop the legacy `annotations`, per-user `shares` and `prefs` tables
   (superseded by `unified_blocks`, the global `shares` table and
-  `user_prefs`); add `chats.title` where missing.
+  `user_prefs`); add `chats.title` where missing. The chats have since
+  moved to `pages.db` (migration step 28, `normalize.pages_db_chats`,
+  which gives a missing title `''`).
 
 Global `users.db`
 - Backfill `shares.page_id` for rows minted when shares were keyed by PDF
@@ -211,6 +216,10 @@ the stage-3 schema step shipped as migration step 2, and the matching read-side 
 are deleted (`sourceUrl` fallbacks in `ai_context`/`metadata`/`pdf`, the
 `PDF Notes - ` recogniser in `metadata._save_props`, `auth._legacy_share_page`
 + the lazy backfill in `share_lookup`). New code writes only the new shape.
+Steps 1 and 2 have since been deleted with every step below
+`MIN_UPGRADABLE` (19; [migrations.md](migrations.md) "Nothing piles up"),
+so the pass now runs on backup restore only
+(`tests/test_restore_consistency.py`).
 
 ## Roadmap
 
@@ -290,7 +299,8 @@ picker lists every page. Found and fixed on the way: orphan-upload cleanup
 raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
 
 ### Stage 2 — search and AI read the whole knowledge base
-*(backend done 2026-09-02; frontend pending.)*
+*(backend done 2026-09-02; frontend: the status note at the end of this
+stage.)*
 - Add `block_fts(block_id, page_id, content)` (FTS5, same `textnorm`
   normalization, maintained on block writes) next to `pdf_fts`; one
   `/api/search` returning hits with `source: "notes" | "pdf"`, page id, and
@@ -306,11 +316,15 @@ raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
   `pdf_missing`, `search_pdf`; extraction stays in `routers/search.py`),
   `blocks_store.root_pages` (the one library/folder page scan the search,
   `/pdf-search`, reindex and the agent's scope share), `GET /api/search?q=&limit=&scope=`
-  in `routers/search.py` (notes first by bm25, then PDF; `scope` = folder
-  path; response shape in [api.md](api.md)). `/pdf-search` and
-  `/block-search` are untouched until the frontend switches.
+  in `routers/search.py` (notes first by bm25, then PDF; `scope` = a
+  folder's id since folders are blocks; response shape in
+  [api.md](api.md)). `/pdf-search` and `/block-search` are untouched until
+  the frontend switches.
 - Search panel groups: titles → this page (notes, then its PDF) → other
-  pages → PDF text; "This PDF" only when the open page has one.
+  pages → PDF text; "This PDF" only when the open page has one. — **done**:
+  `search/SearchPanel.jsx` (Titles, Notes on this page, This PDF, Other
+  notes, Reference links, Other PDFs), still over `/block-search` +
+  `/pdf-search`.
 - `AIChatRequest`: drop `doc_id`; `pages` + `page_id` only, attachment
   derived server-side. `ai_context.build_messages` frames context as
   "pages from the user's knowledge base"; a page section = title,
@@ -340,10 +354,11 @@ raced the upload→attach window (the grace is `upload_gc.UPLOAD_GRACE_S`).
 regex over notes, library-wide) + `/pdf-search` on purpose — see the
 inventory; `/api/search` serves the AI tools and is verified with curl (notes
 + pdf hits). The chat sends `page_id`. Settings pane label "Search PDF text"
-→ "Search".)*
+→ "Search library" (`settings/AssistantTools.jsx`).)*
 
 ### Stage 3 — the page as a document
-*(backend bits done 2026-09-02 — see the inventory above; frontend pending.)*
+*(backend bits done 2026-09-02 — see the inventory above; frontend: the
+status note at the end of this stage.)*
 - Page header: title, labels, an "Attachments" row (PDF chip opens/toggles
   the viewer, web source chip, other files) and metadata (DOI/arXiv/authors
   from `properties.meta`) available on ANY page — a note about a paper you
@@ -390,9 +405,9 @@ A multi-PDF viewer with `attachment_id` on highlights is not planned.
   (via `FileChipContext`, which App provides around the tree with
   `openBlock` and `promoteFile`; the hash → page lookup is one batched
   `POST /pages/by-docs` per page render, forgotten on every page open).
-  Every such upload goes through `fileChip.postFile` — an XMLHttpRequest
-  (fetch cannot report upload progress) that reports to the hook App
-  installs with `setUploadReporter`: a row in the background-tasks list
+  Every such upload goes through `postFile` (`FileChip.jsx`) — an
+  XMLHttpRequest (fetch cannot report upload progress) that reports to the
+  hook App installs with `setUploadReporter`: a row in the background-tasks list
   (bytes and a percentage while the file goes up), and the status pill once
   an upload has run for a moment or is large, so a screenshot flashes by
   and a big dataset shows its progress. Drop and paste semantics: a file dropped on a block row lands
@@ -408,6 +423,8 @@ A multi-PDF viewer with `attachment_id` on highlights is not planned.
 
 Still open from the old stage 4: zoom-in on any block as a focused sub-page
 (breadcrumb back to the page); tabs and `?block=` already carry the id.
+The `/page` slash command is not that: it makes a new library page and
+links it where it was typed (`editor/slashCommands.js`).
 
 ## Non-goals (for now)
 - No page-type enum — describe pages by what they carry.

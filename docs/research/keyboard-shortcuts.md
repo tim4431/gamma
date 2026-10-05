@@ -36,9 +36,11 @@ system took the shape in [docs/dev/hotkeys.md](../dev/hotkeys.md).
 Takeaways: the line-level set is VS Code's and is the one most people
 carry between tools; note apps agree with each other, not with VS Code, on
 Ctrl+Enter (checkbox) and on Ctrl+D (Notion: duplicate; VS Code: add next
-match; every browser: bookmark), so Ctrl+Enter follows the note apps and
-Ctrl+D is left alone. The palette-prefix idea (one input, `>` for
-commands) is VS Code's and lets three "go to" features share one popup.
+match; every browser: bookmark), so Ctrl+Enter followed the note apps and
+Ctrl+D is left alone. (The to-do toggle has since lost its Ctrl+Enter
+default and ships unbound, `editor/blockCommands.js`.) The palette-prefix
+idea (one input, `>` for commands) is VS Code's and lets three "go to"
+features share one popup.
 
 ## What a browser will not give up
 
@@ -73,7 +75,8 @@ could bind the reserved ones in its shell; Gamma itself does not.
   chord shadowing an app chord while an editor is open can be intended.
 - **Few defaults.** The block and view commands exist and sit in the
   palette, but only Ctrl+Shift+P, F2, Ctrl+Shift+K, Ctrl+, and the ↑/↓ hop
-  between blocks were added as keys: a default binding is a claim on the
+  between blocks were added as keys (and since then Delete, for the pages
+  selected on the home library): a default binding is a claim on the
   user's muscle memory and on the browser's, and each one was asked for
   explicitly. Anything else is one click away in Settings → Keyboard.
 - **Not done, deliberately.** Chords (Ctrl+K Ctrl+0) — Ctrl+K is the link

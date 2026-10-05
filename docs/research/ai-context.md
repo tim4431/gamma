@@ -9,42 +9,81 @@ they are meant to work live in [docs/dev/ai.md](../dev/ai.md),
 [ai_context.md](../dev/ai_context.md) and [ai_tools.md](../dev/ai_tools.md);
 this note is the audit behind the next change to them, not a copy.
 
-## What one request carries
+## What the audit found
+
+What the code did in September 2026, and why each point cost something.
+What it does now is in the dev docs named above, in [ai.md](../dev/ai.md)
+under "Prompt caching" and "Fitting the window".
 
 Chat APIs keep nothing between calls, so every request rebuilds the whole
-prompt. Gamma's has four layers:
+prompt: the system prompt and, with tools, up to 14 tool specs (≈10k chars
+of JSON); the page context, which for a PDF is its first 60,000 chars by
+default plus a document map (≈2.4k, in practice up to 4.1k for 24–47-page
+papers); every saved turn; and this turn's question with up to 24k chars
+of selected PDF passages, 24k of selected note text and ≤13.5k of attached
+chips. With tools, one turn is a loop of up to 32 rounds, and each round
+re-sent all of that plus every tool result and picture so far, in full.
 
-1. **Fixed per conversation.** The system prompt (`_SYSTEM_PROMPT` ≈1.2k
-   chars + `_CITATION_PROMPT` ≈0.9k, plus `agent_system()` ≈3–5k when tools
-   are on) and, with tools, the tool specs (up to 14, ≈10k chars of JSON).
-2. **The page context**, built fresh on every request by `gather_inputs`
-   and injected once, in front of the *oldest* user turn
-   (`build_messages`, `ai_context.py:385-391`): each context page's title,
-   properties line, notes (always for a note page, with `include_notes`
-   for a PDF page) and, for a PDF, the first `context_char_limit` chars
-   (default 60,000) labelled as an excerpt when the document doesn't fit —
-   or windows around the selected passages when the message has a
-   selection, plus a document map (≈2.4k, in practice up to 4.1k for
-   24–47-page papers) in agent chats. The "Model saw pages 1–5 of 19" chip
-   reports how far the character budget reached, not a page count anyone
-   chose.
-3. **The conversation**: every saved turn's `text`, unbounded, and in agent
-   chats every earlier reply's tool calls replayed as call + result turns,
-   the results sharing an 8,000-char budget newest-first
-   (`TOOL_REPLAY_BUDGET`), the calls themselves never dropped.
-4. **This turn**: the question, up to 24k chars of selected PDF passages
-   and 24k of selected note text, the cursor block and attached chips
-   (≤13.5k), pasted images and selection crops, native PDF files.
-
-With tools, one turn is then a loop of up to 32 rounds
-(`MAX_TOOL_ROUNDS`), and each round re-sends all of the above plus every
-tool result so far, in full, plus every `view_pdf_page` picture and every
-attachment (`routers/ai.py:1488-1520`). Nothing inside a turn is elided.
-
-That is why a page chat's third message on a 19-page physics paper reads
+That is why a page chat's third message on a 19-page physics paper read
 "↑28k": ≈20k tokens for the 60k-char excerpt (dense notation tokenizes
 worse than prose), ≈4k of prompts and tool specs, and the turns so far —
 all of it sent again on every message, and again on every tool round.
+
+Seven problems, by cost:
+
+1. **No prompt caching on any wire.** No request asked for it: no
+   `cache_control` breakpoints on Anthropic, no `prompt_cache_key` on
+   OpenAI, and a fresh `session_id` per request on the Codex backend,
+   where Codex CLI keeps one per session. System, tools, the excerpt and
+   the history were billed as fresh input on every turn and every tool
+   round. Within one agent turn the total input was roughly quadratic in
+   the number of rounds: round *n* re-sent *n−1* rounds of results and the
+   whole fixed part. A 10-round answer on a 60k excerpt was on the order
+   of 200k+ uncached input tokens.
+2. **The prefix changed when it shouldn't.** Caching (explicit or
+   automatic) works on a stable prefix. The context was glued to the
+   oldest user turn and rebuilt on every request: a message with a PDF
+   selection swapped the head excerpt for windows around the selection,
+   the next one swapped it back, and a settings or note edit rewrote it.
+   Every such change invalidated everything after it, which is the whole
+   conversation. The context was historically attached to the first
+   question but semantically belongs to the current one.
+3. **Nothing bounded the prompt before the provider refused it.** The
+   model's context window was fetched and drawn as the header's ring, red
+   past 80%, and used for nothing else. Character caps existed on the
+   parts, but not on the history's prose, the replayed call stubs, the
+   in-turn tool results or images. Overflow arrived as the provider's
+   400/413, shown as "This conversation is too long for the model" with
+   "New chat" as the fix. A native-PDF request refused for its size was
+   retried as text, and the provider was then wrongly marked as refusing
+   PDF files. Cut-off replies weren't detected either: a reply that hit
+   the 8,192 output cap looked complete, and a tool call whose arguments
+   were cut off ran with `{}`.
+4. **The same text went in several times.** The head excerpt and
+   `read_page`: the agent prompt said to look the answer up "even if you
+   think you know it", even when the whole paper fit, and nothing told
+   the model which pages the excerpt covered. A page's notes up to four
+   times: in the context section, in every `read_page` window (uncapped,
+   so paging a paper N times sent the notes N times), in `read_block` and
+   in the focus/chip section. A selected passage twice: quoted in the
+   question and inside the window around it. A replayed tool result
+   beside the fresh re-read its "call again before quoting" note asks for.
+5. **Growth across a long conversation.** The client uploaded every saved
+   message object as `history`, base64 images and 4k action results
+   included, though the server read only the text and the actions. The
+   server replayed every non-error turn in full: no turn limit, no token
+   budget, no summary. A long conversation ended only in `too_long`.
+6. **Budgets measured in the wrong unit.** Every budget is characters.
+   60,000 chars is ≈15k tokens of English prose, ≈20k+ of notation-heavy
+   physics, and ≈40–60k of Chinese or Japanese text — the same setting
+   fills a quarter or a whole 64k window depending on the paper. The
+   multi-page split divides its budget by *all* context pages, note-only
+   pages included, which get unbounded notes anyway and waste their PDF
+   share. Uploaded PDF files each got the full single-paper budget on top
+   of the split.
+7. **Docs that no longer matched the code**, in small ways (what the chip
+   caps cap, what the read window covers, the map's size). Those passages
+   are since corrected in the three docs.
 
 ## What already works and must survive any change
 
@@ -56,117 +95,7 @@ search relaxation, `ensure_indexed` kicking the indexer from any chat, the
 coverage report streamed back as the first NDJSON line, the selection-
 centred context with crops for formula text, and the cross-turn tool-result
 elision with its "call again before quoting" note. None of the problems
-below is fixed by weakening these.
-
-## Problems, by cost
-
-### 1. No prompt caching on any wire
-
-`grep cache_control|prompt_cache|previous_response_id` over the repo finds
-nothing. The Anthropic adapter (`ai_protocols/anthropic.py:58-86`) sets no
-`cache_control` breakpoints, so system, tools, the 60k excerpt and the
-history are billed as fresh input on every turn and every tool round —
-`cache_read`/`cache_write` in the usage line, and the "% from the prompt
-cache" the UI already renders (`tokenUsage.cachedPercent`), are always 0
-there. OpenAI's Chat Completions and Responses wires rely on automatic
-prefix caching with no `prompt_cache_key`; the Responses wire hard-codes
-`store: False` (`responses.py:67`) without `previous_response_id`; the
-Codex backend gets a fresh `uuid4()` `session_id` on every request
-(`chatgpt.py:99`), where Codex CLI keeps one per session.
-
-Within one agent turn the total input is roughly quadratic in the number of
-rounds: round *n* re-sends *n−1* rounds of results and the whole fixed
-part. A 10-round answer on a 60k excerpt is on the order of 200k+ uncached
-input tokens.
-
-### 2. The prefix changes when it shouldn't
-
-Caching (explicit or automatic) works on a stable prefix. Gamma's prefix is
-the system prompt, then the tools, then the context glued to the oldest
-user turn — and that context is *rebuilt every request*: a message with a
-PDF selection swaps the head excerpt for `selection_context` windows, the
-next one without a selection swaps it back, `include_notes` or the context
-size edited mid-conversation rewrite it, a note edit changes the notes
-section. Every such change invalidates everything after it, which is the
-whole conversation. The context is historically attached to the first
-question but semantically belongs to the current one.
-
-### 3. Nothing bounds the prompt before the provider refuses it
-
-The model's context window is fetched (`ai_catalog.context_window`) and
-drawn as the header's ring, red past 80% — and used for nothing else. The
-server never estimates the assembled prompt's size, never compares it with
-the window, never trims. Character caps exist on the parts (excerpt,
-selections, chips, replay budget), but not on the history's prose, the
-replayed call stubs, the in-turn tool results, or images. Overflow arrives
-as the provider's 400/413, classified `too_long` (`ai_client.py:83-98`),
-shown as "This conversation is too long for the model" with "New chat" as
-the fix. One accidental retry exists: a native-PDF request that fails with
-any 4xx is retried as text (`open_with_fallback`), which may happen to fit,
-and then wrongly marks the provider as refusing PDF files.
-
-Cut-off replies aren't detected either: Anthropic's
-`stop_reason: max_tokens`, OpenAI's `finish_reason: length` and the
-Responses `response.incomplete` event are only consulted when the reply is
-empty, so a reply that hit the 8,192 output cap looks complete, a
-`response.incomplete` stream loses its usage, and a tool call whose
-arguments were cut off runs with `{}` (`parse_tool_args`).
-
-### 4. The same text goes in several times
-
-- **Head excerpt vs `read_page`.** The first 60k chars are in context, and
-  the agent prompt says "look the answer up with the tools before answering,
-  even if you think you know it … a PDF excerpt is only part of the
-  document" (`ai_tools.py:1446-1452`) — even when the whole paper fit and no
-  EXCERPT label was added. The model dutifully calls `read_page(pdf_page=1)`
-  and gets the text it already has. Nothing tells it which pages the
-  excerpt covers.
-- **Notes ×4.** A page's notes and highlights are in the context section
-  (when included), again in **every** `read_page` result — the read window
-  caps the PDF text only; `page_report_section` appends all notes and
-  highlights uncapped on every windowed call, so paging a paper N times
-  sends the notes N times — again with ids in `read_block`, and again in the
-  focus/chip section.
-- **Selections ×2.** A selected PDF passage is quoted in the question (≤24k)
-  *and* sits inside its `selection_context` window; a note selection is
-  quoted (≤4k each) *and* its whole block is attached as a chip.
-- **Replay vs re-read.** The replayed results carry "call again before
-  quoting or editing", so the model re-reads, and the request then holds
-  the 4k replayed copy and the fresh full copy of the same page.
-- Each `read_page` repeats the page's title, properties and summary, which
-  the context already holds.
-
-### 5. Growth across a long conversation
-
-The client sends every saved message object as `history` — including
-base64 `images` from earlier turns, `actions` with 4k results, `context`
-and `usage` — on every request (`ChatDock.jsx:927`); the server reads only
-`text` and `actions`, but the upload happens, and the same array is
-re-`PUT` to `/api/chats` every 500 ms while a reply streams. On the server,
-`build_messages` replays every non-error turn in full: no turn limit, no
-token budget, no summary. In agent chats the replayed tool-call stubs and
-the `_ELIDED_RESULT` placeholders are never dropped and the
-`_REPLAYED_NOTE` prefixes (≈120 chars each) aren't counted against the
-replay budget. A long conversation ends only in `too_long`.
-
-### 6. Budgets measured in the wrong unit
-
-Every budget is characters. 60,000 chars is ≈15k tokens of English prose,
-≈20k+ of notation-heavy physics, and ≈40–60k of Chinese or Japanese text —
-the same setting fills a quarter or a whole 64k window depending on the
-paper. The multi-page split divides `multi_context_char_limit` by *all*
-context pages, note-only pages included, which get unbounded notes anyway
-and waste their PDF share. Uploaded PDF files each get the full
-single-paper budget on top of the split. The document map's sampling step
-(`rows*100//2400`) lets 24–47-page papers exceed the stated 2.4k.
-
-### 7. Docs that no longer match the code
-
-`ai_tools.md` says `_DETAIL_CAP`/`_ARG_CAP` cap tool output — they cap the
-saved chip, the model gets the full result. `ai.md`'s "Read window" is the
-PDF text only. `ai_context.md`'s "~2.4k" map, "every single-page chat
-request" (it is every PDF page of every request) and "split evenly across
-papers" (across pages) are each a little off.
+above is fixed by weakening these.
 
 ## What to change, in order
 
@@ -182,8 +111,8 @@ the UI before and after.
    limit; the adapter is the one place, `anthropic.py:request`). OpenAI
    Chat and Responses: `prompt_cache_key` = the chat bucket, so turns of one
    conversation route to the same cache. Codex: one `session_id` per
-   conversation, not per request (`chatgpt.py:99`). Leave `store: False`
-   and `previous_response_id` alone — server-side storage of the
+   conversation, not per request. Leave `store: False` and
+   `previous_response_id` alone — server-side storage of the
    conversation is a privacy trade the user hasn't made, and prefix caching
    gets most of the saving without it.
 2. **Keep the prefix stable within a conversation.** Split the context into
@@ -262,21 +191,41 @@ input tokens per question fell.
 ## What shipped from this (September 2026)
 
 Tier 1 whole, Tier 2's steps 5–6 and 8, and step 10 from Tier 3:
-`cache_control` breakpoints on Anthropic, `prompt_cache_key` on OpenAI's
-platform and the Codex backend with a per-conversation `session_id`; the
-context split into the document part on the oldest turn and the message
-part with the question; `elide_live_results` as the in-turn valve;
-`prompt_tokens` against the catalog's window with `drop_turns`, and a
-retry on `too_long`; `read_page` skipping the pages and notes the context
-holds, with `coverage_lines` in the agent prompt and the excerpt label
-naming its pages; the map from the cut-short page; the client sending
-`{role, text, actions}` only; the stop reason surfaced as `truncated`.
+
+- Step 1: `cache_control` breakpoints on Anthropic (`_with_breakpoints` in
+  `ai_protocols/anthropic.py`), `prompt_cache_key` on OpenAI's platform
+  (`ai_protocols/openai.py`, `responses.py`), and a per-conversation
+  `session_id` on the Codex backend (`ai_protocols/chatgpt.py`).
+- Step 2: the context split into the document part on the oldest turn and
+  the message part with the question (`ai_context.build_messages`,
+  `message_context`).
+- Step 3: `ai_context.elide_live_results` as the in-turn valve
+  (`LIVE_KEEP_ROUNDS`, `LIVE_RESULT_BUDGET`).
+- Step 4: `ai_context.prompt_tokens` against the catalog's window with
+  `drop_turns`, and a retry on `too_long` (`routers/ai.py`).
+- Steps 5–6: `read_page` skipping the pages and notes the context holds,
+  with `ai_tools.coverage_lines` in the agent prompt and the excerpt label
+  naming its pages; the map from the cut-short page
+  (`ai_context.document_map`, `from_page`).
+- Step 8: the client sending `{role, text, actions}` only, since joined by
+  `reasoning`, the thinking a provider wants back
+  (`frontend/src/chat/ChatDock.jsx`).
+- Step 10: the stop reason surfaced as `truncated` (`truncated_stop` in
+  `ai_protocols/base.py`).
+
 The coverage pill now folds in what the tools read and which pages
-nobody saw. Still open: quoting a selection twice (step 7), compaction
-(9), token-aware budgets and the multi-page split (11), a per-model
-output cap (12). The mechanics are in [ai.md](../dev/ai.md) "Prompt
-caching" and "Fitting the window", [ai_context.md](../dev/ai_context.md)
-and [ai_tools.md](../dev/ai_tools.md).
+nobody saw.
+
+## Still open
+
+- Step 7: a selection is still quoted twice.
+- Step 9: compaction.
+- Step 11: token-aware budgets and the multi-page split. Only the map's
+  step is since fixed (`document_map` rounds it up).
+- Step 12: the per-model output cap is built in part.
+  `ai_catalog.reply_cap` bounds a named service's cap by the model's
+  output limit, while OpenAI, Anthropic and custom endpoints keep the flat
+  8,192.
 
 ## What was not measured
 

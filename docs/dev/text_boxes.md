@@ -217,7 +217,7 @@ and mark yellow are the export's. A change to one side needs the other.
 - `gamma/text_box.py`: the rules above, and the box in a PDF, which both
   PDF writers draw with. `_paragraphs` reads the Markdown through
   `pdf_document.chunks`, the shared engine
-  ([import_export.md](import_export.md#the-shared-typesetting-engine)).
+  ([pdf_typesetting.md](pdf_typesetting.md#the-shared-typesetting-engine)).
   - `plain_text` is the text without marks, math as TeX. `measure` is the
     size a box's text needs, for a box made on the server. `pdf_ops` draws
     a box from its top-left in a y-down frame and returns the drawn size.

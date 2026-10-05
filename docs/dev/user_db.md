@@ -162,8 +162,8 @@ All state is SQLite + files on disk under a data directory (env
     ([mirror.md](mirror.md); empty in a workspace that mirrors nothing);
   - `upload_orphans` — the stored files nothing references
     (`name`, `since`; "Stored files" below);
-  - `chats` / `chat_history` — the AI chat ([ai.md](ai.md) "Chat history
-    buckets"): one active conversation per `bucket` (a page's id, a
+  - `chats` / `chat_history` — the AI chat
+    ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
     `updated_at`, and the bucket's earlier conversations by `id`. They live
     with the pages they are about, so a backup, a restore and a Gamma

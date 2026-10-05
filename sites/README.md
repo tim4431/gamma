@@ -30,9 +30,9 @@ sites/
 
 1. copies `site/` to `dist/`, expanding the includes in every `.html`;
 2. copies the artwork the front page uses from the repository into
-   `dist/media/`: the favicon (`frontend/public/media/icons/`), the hero PNG
-   and the illustration SVGs (`docs/assets/branding/`), nine of the demos
-   (`docs/assets/demos/`) and the hero still
+   `dist/media/`: the favicon (`frontend/public/media/icons/`), the hero
+   PNG, the logo and the illustration SVGs (`docs/assets/branding/`), nine
+   of the demos (`docs/assets/demos/`) and the hero still
    (`docs/assets/screenshots/hero-app.webp`, shot by
    `tools/readme-media/shoot-hero.mjs`). The site keeps no copies of its own,
    so regenerating brand assets or re-recording a demo updates the site on

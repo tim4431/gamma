@@ -41,6 +41,18 @@ dated inventories so they are not mistaken for the current implementation.
 The root `CLAUDE.md` is an ignored local guide for machine setup and general
 working rules; shared project documentation belongs here.
 
+One file per topic. `docs/dev/` files are named in snake_case
+(`frontend-refactor.md` and `ui-design.md` keep their older names because
+source comments cite them), research notes in kebab-case. Source comments cite
+a doc by its path and section title, so a renamed file or heading needs a
+search of the code as well as of the docs. When a topic outgrows its file,
+move the section into a file of its own and leave a short pointer behind, as
+[translation.md](translation.md), [chat_history.md](chat_history.md) and
+[pdf_typesetting.md](pdf_typesetting.md) were split out, and add its row to
+the developer guide. When a plan or a research gap is built, describe the
+mechanics in the topic doc and mark the plan or note with one clause; the
+[research index](../research/README.md) keeps what each note still leaves open.
+
 The user guide, `docs/dev/` and `docs/research/` are also pages of
 gammapdf.com (`/docs/`, `/docs/dev/<name>/`, `/docs/research/<name>/`),
 rendered from these files by the website build on every push to `main`

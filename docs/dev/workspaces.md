@@ -429,7 +429,7 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
   operations. Effective permissions remain a server decision.
 - Shared workspace chats are visible to other workspace members. There is
   one conversation per page or folder: two members asking at once end up in
-  one merged conversation ([ai.md](ai.md) "Chat history buckets").
+  one merged conversation ([chat_history.md](chat_history.md)).
 - The account directory is visible to every signed-in non-guest account.
 - Cross-workspace page transfer uses export and merge, with no direct move.
 - The browser extension clips into the default workspace.

@@ -2,9 +2,9 @@
 
 The agent is one container per host of hosted Gamma servers. It holds
 the Docker socket and works through the job queue the account server
-keeps for that host: create, start, stop, restart, upgrade and delete the
-`gamma-<label>` containers, and a heartbeat every five minutes. What it
-does and the API it speaks are in
+keeps for that host: create, start, stop, restart, upgrade or resize, roll
+back and delete the `gamma-<label>` containers and fetch their logs, and a
+heartbeat every five minutes. What it does and the API it speaks are in
 [docs/dev/hosted.md](../../../docs/dev/hosted.md); the package and its
 tests are in [../README.md](../README.md).
 

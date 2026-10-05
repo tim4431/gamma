@@ -3,7 +3,7 @@
 How a PDF gets from the workspace's `uploads/` to a painted page in the
 viewer, and why each part is shaped the way it is. The measurements at the end
 are what the design is judged by; rerun them before changing any of it. The
-survey that led here is [research/pdf_loading.md](../research/pdf_loading.md).
+survey that led here is [research/pdf-loading.md](../research/pdf-loading.md).
 
 The idea in one sentence: **the server already knows the document, so the
 client lays it out before it parses, picks its transport by size, and never

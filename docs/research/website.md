@@ -49,14 +49,14 @@ page that came out of this lives in `sites/` ([sites/README.md](../../sites/READ
 ## What Gamma's page took from this
 
 Section order: hero (headline, category subline, OS-detected Download plus
-a Docker secondary, keyword chips, the app screenshot in a window frame),
-three value pillars (your library on your machine, papers and notes are one
-thing, open source and open formats), six feature rows that follow the
-README's sections and reuse its demos and illustrations, a "Get Gamma"
+demo and Docker secondaries, keyword chips, the app screenshot in a window
+frame), three value pillars (your library on your machine, papers and notes
+are one thing, open source and open formats), ten feature rows that follow
+the README's sections and reuse its demos and illustrations, a "Get Gamma"
 platform section in Paperpile's apps-and-tools spirit (Windows, macOS, Linux,
-Docker, the extension, the Codex plugin), a self-hosting section with the
-two Docker snippets, a data-ownership section in Zotero's register, a
-seven-question FAQ, a closing call to action, and the grouped footer.
+Docker, the extension, Codex, Claude Code and MCP), a self-hosting section
+with the two Docker snippets, a data-ownership section in Zotero's register,
+a seven-question FAQ, a closing call to action, and the grouped footer.
 
 Tone: lead with what the reader does, state privacy as fact, no adjectives
 for their own sake. Testimonials, press and community counts were left out:

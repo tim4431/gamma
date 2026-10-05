@@ -6,32 +6,66 @@ design that was picked. Read these when a similar decision comes up again;
 the current mechanics live in [docs/dev/](../dev/), which these notes never
 duplicate.
 
-| Note | Question it answers |
-|---|---|
-| [paper-fetching.md](paper-fetching.md) | What real paper questions revealed about search, reference following, publisher downloads, open-access provenance and human help after blocked access; the browser handoff that followed; how discovery from a research question differs (OpenAlex, citation graphs, general web search, ranking a lab's publication list), where a real reply's 26k tokens went and the four changes that followed (a probe read, a round's reads side by side, search filters, the reply waiting on its card), and the checks that remain. |
-| [demo-production.md](demo-production.md) | How scripted demos and screen-recording editors achieve smooth motion, readable framing and repeatable exports; animated WebP delivery measured on Gamma's refreshed demos. |
-| [handwriting-interactions.md](handwriting-interactions.md) | How Goodnotes and Notability select, edit, transform and reuse ink; finger taps versus holds; contextual menus; the broader writing/study feature inventory; Gamma gaps and acceptance criteria. |
-| [collaboration.md](collaboration.md) | How real-time collaborative editing is built elsewhere (OT, record-level last-writer-wins, CRDTs), why a snapshot autosave cannot collaborate, and why Gamma took the Notion / Linear / Figma shape. |
-| [workspaces.md](workspaces.md) | What happens when identity and data location are one string, what a workspace model needs, and how to version a data directory so upgrades stay safe and steps do not pile up. |
-| [handwriting.md](handwriting.md) | Which ink formats exist (InkML, Xournal++, PDF `/Ink`, tldraw, Excalidraw, reMarkable, PencilKit) and which are worth speaking, what stylus input the browser gives on each platform, what the upstream fork's native-iPad handwriting taught, and how Notability's pen, highlighter, eraser and lasso are set up. |
-| [obsidian.md](obsidian.md) | What an Obsidian vault is (files, wikilinks, embeds, block ids, callouts, properties, tags), how the official Importer maps Notion and Logseq into it, what an export from another app is expected to look like, and the mapping Gamma's vault import/export chose. |
-| [pdf_loading.md](pdf_loading.md) | Where a cold PDF open spends its time, the five moves the upstream fork made (range transport, server page sizes, server previews, keeping parsed documents, MRC flattening) with their measurements, which of them fit Gamma's workspace and derived-data model, the path chosen, and what measuring found that the survey had not (the worker script re-downloaded on every open). |
-| [latex-editing.md](latex-editing.md) | How LaTeX Workshop, Obsidian's LaTeX Suite and Overleaf complete `\commands` (fuzzy ranking, `@`/typed shorthands, snippet slots) and place their equation previews (hover with a caret marker, a strip anchored to the equation), and which of those Gamma's completion tiers, abbreviation table and docked preview took. |
-| [onboarding.md](onboarding.md) | How VS Code walkthroughs, Notion, Linear, Figma, Logseq, Readwise Reader and the tour libraries onboard a first user (content, task-driven tours, checklists, coach marks), why tours rot (selectors), and which pieces Gamma's guide took. |
-| [website.md](website.md) | What thirteen note and reading apps (Obsidian, Zotero, Readwise, Paperpile, Joplin, …) put on their front page, which patterns recur and which are optional, and the section order and tone gammapdf.com took from them. |
-| [upstream-features.md](upstream-features.md) | What the upstream fork (`amogadget/Gamma`) built that this one had not as of September 2026 (native iPad app, offline downloads, audio-synced note replay, recording blocks, durable offline edits, model-catalog refresh, server previews, MRC flattening), ranked, with what was already here or done differently and what to revisit. |
-| [hosting.md](hosting.md) | What running Gamma as a multi-tenant service with open registration would take: where the code assumes one machine (local uploads, per-workspace SQLite, in-process rooms, native sync work), the sharded-SQLite-plus-R2 shape picked over Supabase Postgres, R2 as a cache-backed primary and a two-layer backup target, and the registration, limit, abuse and operations gaps. |
-| [ai-context.md](ai-context.md) | What one AI chat request carries (fixed prompts, the rebuilt page context, the unbounded history, every tool round re-sending it all), why it costs what it does (no prompt caching on any wire, a prefix that changes each turn, notes and excerpts sent several times over, character budgets that mean different token counts per script), and the ordered list of changes — caching breakpoints, a stable document turn, in-turn elision, pre-flight trimming, compaction. |
-| [open-weight-providers.md](open-weight-providers.md) | How Chinese and open-weight models (DeepSeek, Kimi, Qwen, GLM, MiniMax, Doubao, local servers) reach Gamma through the `openai` and `anthropic` wires as of October 2026: which base URLs work, and the ranked gaps (reasoning dropped between tool rounds, the fixed `/v1` path, inline `<think>`, Qwen3's non-streaming refusal, pictures sent to text-only models, no vendor thinking switch). |
-| [ai-permissions.md](ai-permissions.md) | How Claude Code and Codex ask before an agent acts (allow / ask / deny rules, approval policies inside a sandbox, answers for one call, the session or always, a decline that redirects), and which of those Gamma's Allow / Ask / Off permissions and approval card took. |
-| [keyboard-shortcuts.md](keyboard-shortcuts.md) | What VS Code, Obsidian, Logseq and Notion bind for line and block operations, palettes and renaming, which chords a browser keeps for itself, what CodeMirror's default keymap had been doing in the block editor, and why Gamma treats the block as the line, reads physical keys and stores rebindings in the profile. |
-| [data-model.md](data-model.md) | What a clean-slate redesign of the stored shapes would change, ranked as of October 2026: accounts keyed by a mutable name, folders and labels as path strings without identity, the time-based change feed, user content in the "derived" database and the index staleness protocol it forces, hot page fields reached through JSON, and the highlight shape's redundancies; what was considered and left alone. |
-| [zotero-features.md](zotero-features.md) | What Zotero 7, 8 and 9 and Better BibTeX do that Gamma does not as of October 2026 (batch and auto-exported BibTeX with stable keys, CSL-styled citations, add by identifier without a PDF, a duplicate finder, saved searches, web snapshots, retraction flags, filename templates, feeds), what Gamma already has beside each, and the order worth building them in. |
-| [scaling.md](scaling.md) | Where the design stopped scaling (one process, the workspace write lock, native PDF work in the web process, per-request connections, local uploads, startup migrations), the Postgres shape and the SQLite-with-workspace-affinity shape that was chosen, and the ranked work list with its status: connection cache, pragmas, orjson, the HTTP stack, precompressed assets, durable batch ids, the blob seam, share tokens with a workspace prefix, lazy per-workspace migration, workspace-scoped preferences, backups to a bucket; LiteFS and placement for a cluster. |
-| [bundle.md](bundle.md) | What the frontend's one 2.7 MB startup chunk held as of October 2026 (pdf.js, KaTeX, CodeMirror, highlight.js, parse5, Settings, the chat), what each first screen downloaded (the pdf.js worker everywhere), what splitting by surface reached (1.9 MB; the library's first screen from 1.2 MB to 0.7 MB on the wire), what stayed in because every page paints it, and where the rest would come from (the page surface out of `App.jsx`). |
-| [cloud-plans.md](cloud-plans.md) | What the Free, Plus and Pro plans of Gamma Cloud contain and cost (Plus 6 GB at $5 a month beside Zotero's and Obsidian Sync's price lists, Pro 100 GB for ten accounts, no bundled AI tokens and why), how a paid container learns and enforces its owner's limits (`/api/hosted/sync`, the `invited` policy, read-only), how a Stripe purchase is verified and kept inside the account server, what the `/plan` page shows, and how the paid containers are created, routed, upgraded in waves and retired by a per-host agent. |
-| [touch.md](touch.md) | What the web app can and cannot do on an iPad with fingers and a Pencil and no keyboard as of October 2026: the writing surfaces built for touch beside an outliner, library and menus built for mouse and keyboard (typed `/` inserts, Tab and Shift+Enter structure, right-click-only menus that iPadOS never opens, hover-only tools, 12–26 px targets), what was measured in touch emulation, the platform facts behind it, what only the device can show, and which of those gaps the editing bar has since closed. |
+The last column says what a note still leaves open, checked against the code
+in October 2026. "Nothing" means the note records a decision that is built;
+the dev doc named there describes how it works now.
 
-Conventions: one file per topic, dated where the survey has a shelf life,
-written after the fact from what was actually found. Add a row here for
-every new note.
+## Reading, PDFs and handwriting
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [pdf-loading.md](pdf-loading.md) | Where a cold PDF open spends its time, the five moves the upstream fork made (range transport, server page sizes, server previews, keeping parsed documents, MRC flattening) with their measurements, and which of them fit Gamma. | Nothing; server previews and MRC flattening were declined. Built: [dev/pdf_loading.md](../dev/pdf_loading.md). |
+| [handwriting.md](handwriting.md) | Which ink formats exist (InkML, Xournal++, PDF `/Ink`, tldraw, Excalidraw, reMarkable, PencilKit) and which are worth speaking, what stylus input each platform gives the browser, and how Notability's pen, highlighter, eraser and lasso are set up. | Dashed and dotted pens, the highlighter drawn behind ink, the eraser returning to the last tool, draw-and-hold shapes, preset reorder and sync, a `.xopp` importer. |
+| [handwriting-interactions.md](handwriting-interactions.md) | How Goodnotes and Notability select, edit, transform and reuse ink; finger taps versus holds; contextual menus; the wider writing and study feature inventory. | Priorities 1, 2 and 4 are built ([dev/handwriting.md](../dev/handwriting.md)). Open: priority 3 and the long tail of the inventory (copy and paste of ink, shapes, ruler, layers, locks, recognition, audio). |
+| [touch.md](touch.md) | What the web app can and cannot do on an iPad with fingers and a Pencil and no keyboard: what was measured in touch emulation and the platform facts behind it. | The editing bar closed the typing gaps ([dev/ipad.md](../dev/ipad.md)). Open: right-click-only menus, hover-only tools, small targets, typing aids. |
+| [ipad.md](ipad.md) | Native app or installed web app for the iPad, and why PencilKit's drawing format was rejected. | Nothing; the installed web app came first and the native app followed. Built: [dev/ipad.md](../dev/ipad.md). |
+
+## Notes and the editor
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [collaboration.md](collaboration.md) | How real-time collaborative editing is built elsewhere (OT, record-level last-writer-wins, CRDTs), why a snapshot autosave cannot collaborate, and why Gamma took the Notion / Linear / Figma shape. | Nothing. Built, and since extended with a three-way text merge: [dev/collab.md](../dev/collab.md). |
+| [latex-editing.md](latex-editing.md) | How LaTeX Workshop, Obsidian's LaTeX Suite and Overleaf complete `\commands` and place their equation previews, and which of those Gamma took. | Nothing. Built: [dev/latex_editing.md](../dev/latex_editing.md). |
+| [keyboard-shortcuts.md](keyboard-shortcuts.md) | What VS Code, Obsidian, Logseq and Notion bind for line and block operations, which chords a browser keeps for itself, and why Gamma treats the block as the line and reads physical keys. | Nothing; multi-key chords, multi-cursor and palette prefixes were left out on purpose. Built: [dev/hotkeys.md](../dev/hotkeys.md). |
+
+## AI
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [ai-context.md](ai-context.md) | What one chat request carries and why it cost what it did, and the ordered list of changes: caching breakpoints, a stable document turn, in-turn elision, pre-flight trimming, compaction. | Steps 7 and 9, most of 11, and part of 12; compaction is not built. Built steps: [dev/ai.md](../dev/ai.md), [dev/ai_context.md](../dev/ai_context.md). |
+| [open-weight-providers.md](open-weight-providers.md) | How Chinese and open-weight models (DeepSeek, Kimi, Qwen, GLM, MiniMax, Doubao, local servers) behave on the `openai` and `anthropic` wires, and the ranked gaps found. | Reasoning passthrough, the base-URL path and picture gating are closed. Open: inline `<think>`, Qwen3's non-streaming refusal, thinking on the Anthropic wire, vendor thinking switches. |
+| [ai-permissions.md](ai-permissions.md) | How Claude Code and Codex ask before an agent acts, and which of those Gamma's Allow / Ask / Off permissions and approval card took. | Nothing. Built: [dev/ai.md](../dev/ai.md#asking-before-a-call-approvals). |
+| [paper-fetching.md](paper-fetching.md) | What real paper questions revealed about search, reference following, publisher downloads and blocked access; the browser handoff that followed; where a real reply's tokens went. | The live-service checks listed under "Still unverified". Built: [dev/ai_tools.md](../dev/ai_tools.md). |
+
+## Library, import and export
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [obsidian.md](obsidian.md) | What an Obsidian vault is, how the official Importer maps Notion and Logseq into it, and the mapping Gamma's vault import and export chose. | Nothing. Built: [dev/import_export.md](../dev/import_export.md). |
+| [zotero-features.md](zotero-features.md) | What Zotero 7 to 9 and Better BibTeX do that Gamma does not, what Gamma has beside each, and the order worth building them in. | The BibTeX bibliography is built. Open backlog: multi-select copy, CSL styles, add by identifier without a PDF, a duplicate finder, saved searches, snapshots, retraction flags, feeds. |
+| [upstream-features.md](upstream-features.md) | What the upstream fork (`amogadget/Gamma`) built that this one had not as of September 2026, ranked. | The iPad app and offline use were built differently here. Open: audio-synced replay and recording blocks, model-catalog refresh, server previews, MRC flattening. |
+
+## Data model, scaling and hosting
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [workspaces.md](workspaces.md) | What happens when identity and data location are one string, what a workspace model needs, and how to version a data directory so upgrades stay safe. | Nothing. Built: [dev/workspaces.md](../dev/workspaces.md), [dev/migrations.md](../dev/migrations.md). |
+| [data-model.md](data-model.md) | What a clean-slate redesign of the stored shapes would change, ranked, and what was considered and left alone. | Nothing; schema steps 25 to 34 made the changes, with the differences listed in the note. Built: [dev/user_db.md](../dev/user_db.md). |
+| [scaling.md](scaling.md) | Where the design stopped scaling, the Postgres shape and the SQLite-with-workspace-affinity shape that was chosen, and the ranked work list. | Items 1 to 12 are built. Parked until a second node: LiteFS, placement, a router and worker processes. |
+| [bundle.md](bundle.md) | What the frontend's one startup chunk held, what each first screen downloaded, and what splitting by surface reached. | A dated measurement. The rest of the saving needs the page surface out of `App.jsx` ([dev/frontend-refactor.md](../dev/frontend-refactor.md)). |
+| [hosting.md](hosting.md) | What running Gamma as a multi-tenant service with open registration would take, and where the code assumes one machine. | The sharded shape was not built; Gamma Cloud's hosted containers took its place. Open on a Gamma server: a real default quota, a report path for public shares, terms of service, self-service deletion, shipping logs out. |
+| [cloud-plans.md](cloud-plans.md) | What the Free, Lite, Plus and Pro plans contain and cost beside Zotero's and Obsidian Sync's price lists, and how a paid container learns and enforces its owner's limits. | The design is built, with differences listed in its status paragraph. Not built: the `update` and `sync` fleet jobs, a notice to every hosted admin. Built: [dev/billing.md](../dev/billing.md), [dev/hosted.md](../dev/hosted.md). |
+
+## Onboarding, website and demos
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [onboarding.md](onboarding.md) | How VS Code walkthroughs, Notion, Linear, Figma, Logseq, Readwise Reader and the tour libraries onboard a first user, why tours rot, and which pieces Gamma's guide took. | An anchor inspector and a synced onboarding preference; the checklist was declined. Built: [dev/onboarding.md](../dev/onboarding.md). |
+| [website.md](website.md) | What thirteen note and reading apps put on their front page, which patterns recur, and the section order and tone gammapdf.com took from them. | Nothing. Mechanics: [sites/README.md](../../sites/README.md). |
+| [demo-production.md](demo-production.md) | How scripted demos and screen-recording editors achieve smooth motion, readable framing and repeatable exports; animated WebP delivery measured on Gamma's demos. | Nothing. Rules: [tools/readme-media/README.md](../../tools/readme-media/README.md). |
+
+Conventions: one file per topic in kebab-case, dated where the survey has a
+shelf life, written after the fact from what was actually found. When a gap
+a note lists is closed, mark it there with one clause and describe the
+mechanics in the dev doc. Add a row here for every new note, and update its
+last column when the status changes.

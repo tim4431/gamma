@@ -7,7 +7,7 @@
   python manage.py create-account <email> <username> [--password P] [--plan free] [--admin] [--verified]
   python manage.py set-password <username> <password>
   python manage.py set-admin <username> [--off]
-  python manage.py set-plan <username> <free|plus|pro>
+  python manage.py set-plan <username> <free|lite|plus|pro>
   python manage.py verify <username>               mark the e-mail confirmed
   python manage.py delete-account <username>
   python manage.py restore-account <username>      undo a delete within the grace period

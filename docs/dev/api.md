@@ -342,18 +342,8 @@ than 30 days ago the same way, every hour.
 
 ### PDFs & uploads (`pdf.py`, `uploads.py`)
 
-Publisher connections use `routers/publisher_sessions.py` and require a personal
-account; guest and share-token access is rejected.
-
-| Method | Endpoint | Behavior |
-|---|---|---|
-| GET | `/publisher-sessions` | Connection metadata and supported `publisher_roots`; never cookie values |
-| POST | `/publisher-sessions` | Save `{host, cookies, user_agent?}` for the signed-in account; requires HTTPS or localhost, JSON, and a body of at most 256 KiB |
-| DELETE | `/publisher-sessions/{host}` | Disconnect that account's host; returns `{ok: true}` |
-
-See [publisher sessions](paper_metadata.md#connected-publisher-sessions) for
-encryption, expiry and request scoping. The PDF endpoints below use the same
-guarded fetch path.
+The PDF endpoints below fetch through the same guarded path as the saved
+publisher connections ([Publisher sessions](#publisher-sessions-routerspublisher_sessionspy)).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -626,12 +616,18 @@ never a guest.
 | GET | `/publish/limit` | the share host's half: `{used, max, plan}` — the root pages of the request's workspace (a publishing mirror's token names it) and the cap its owner's plan puts on them (`max` null = none). 404 on a server that is not a share host. Nothing cached |
 | GET | `/pages/resolve-public?host=&path=` | no auth: a page host's pretty address → `{share, page_id}`, the share token the share view opens with (audience and role its own). `host` must match `GAMMA_PAGE_HOST` (the username read out of it), `path` is `/<slug>-<id>` or `/<id>`; only the trailing id counts, a root page with a share in that account's default personal workspace. 404 otherwise (counted like an unknown share token); 429 past 120 per IP in 5 minutes |
 
-### Publisher sessions (`routers/publisher_sessions.py`) — see [extension.md](extension.md)
+### Publisher sessions (`routers/publisher_sessions.py`)
+
+Personal accounts only; guest and share-token access is rejected. Encryption,
+expiry and request scoping are in
+[paper_metadata.md](paper_metadata.md#connected-publisher-sessions), the
+Connector's side in [extension.md](extension.md).
+
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/publisher-sessions` | the account's connected publisher hosts (metadata only) and the supported roots |
-| POST | `/publisher-sessions` | store a cookie snapshot for one host (JSON, 256 KiB cap; HTTPS or localhost, personal accounts only) |
-| DELETE | `/publisher-sessions/{host}` | forget a host |
+| GET | `/publisher-sessions` | the account's connected publisher hosts (metadata only, never cookie values) and the supported `publisher_roots` |
+| POST | `/publisher-sessions` | save `{host, cookies, user_agent?}` for the signed-in account; requires HTTPS or localhost, JSON, and a body of at most 256 KiB |
+| DELETE | `/publisher-sessions/{host}` | disconnect that account's host; returns `{ok: true}` |
 
 ### Admin (`admin.py`, prefix `/api/admin`)
 | Method | Path | Purpose |

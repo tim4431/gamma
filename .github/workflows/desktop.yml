@@ -545,7 +545,7 @@ jobs:
             btn "macOS / Linux setup" 555555 gnubash "$base/install-gamma-codex.sh"
             echo
             echo
-            echo "In Gamma, open Settings → AI → External assistants → Codex CLI and copy the setup command. It installs the plugin and connects your Gamma server, then asks you to approve a workspace in your browser. Requires the Codex CLI; works with browser and self-hosted Gamma."
+            echo "In Gamma, open Settings → AI → Integrations → Codex CLI and copy the setup command. It installs the plugin and connects your Gamma server, then asks you to approve a workspace in your browser. Requires the Codex CLI; works with browser and self-hosted Gamma."
             echo
             echo "### Claude Code"
             echo

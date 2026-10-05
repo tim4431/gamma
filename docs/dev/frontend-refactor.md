@@ -2,11 +2,15 @@
 
 The file organization is in place ([source map](../../frontend/src/README.md):
 functional folders directly under `src/`, alongside `app/` and `shared/`,
-without an extra `features/` layer). The state decomposition below is a
-proposal: modules have moved, their state ownership has not been redesigned —
-with one step taken: the block tree holds the document only, and the
-viewer's own state (the open editor, their folding) is App's `view` beside
-it (`shared/model/blockModel.js`, [collab.md](collab.md)).
+without an extra `features/` layer), and so is the startup bundle split
+([Lazy boundaries](#lazy-boundaries)). The state decomposition below is
+still a proposal: modules have moved, their state ownership has not been
+redesigned, and `app/App.jsx` is about 11,000 lines. Two steps are taken:
+the block tree holds the document only, and the viewer's own state (the open
+editor, their folding) is App's `view` beside it
+(`shared/model/blockModel.js`, [collab.md](collab.md)); the AI connect
+dialog's form state is `useProviderEditor` (`settings/providerEditor.js`).
+Everything from "Goal and current constraints" on is open work.
 
 ## Lazy boundaries
 
@@ -65,7 +69,7 @@ what each first screen downloads: [the bundle note](../research/bundle.md).
 
 `frontend/src/app/App.jsx` still combines session checks,
 library mutations, account preference synchronization, page loading and saving,
-PDF state, AI provider forms, dock geometry, and most workspace markup.
+PDF state, AI provider state, dock geometry, and most workspace markup.
 
 The goal is a small composition root with explicit state owners and commands.
 Extraction should remove coupled responsibilities, not merely move long
@@ -76,8 +80,9 @@ may carry a PDF attachment.
 
 ## Proposed ownership
 
-Paths below are relative to `frontend/src/`. The folders exist; the hooks
-and state owners in this table are proposals.
+Paths below are relative to `frontend/src/`. The folders exist except
+`app/preferences/`, `pages/` and `workspace/`; the hooks and state owners in
+this table are proposals.
 
 | Module or area | Responsibility | Existing code to extract |
 |---|---|---|
@@ -93,7 +98,7 @@ and state owners in this table are proposals.
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
 | `sharing/` | Share-link resolution/gates and owner share controls | `resolveShare`, `loadShareSettings`, invitation mutations (the popover itself, `SharePopover.jsx`, already lives here) |
-| `settings/` | Settings panels and AI provider form/request state | Existing settings files plus provider CRUD, catalog, OAuth, and usage handlers |
+| `settings/` | Settings panels and AI provider form/request state | Existing settings files plus the provider list, Test, usage and login-check handlers App still holds (the connect dialog's form, catalog and sign-in are already `useProviderEditor`) |
 | `chat/` | Chat attachments and page-change notifications | `addBlockToChat`, `addHighlightToChat`, image selection, existing `ChatDock` |
 | `shared/ui/`, `shared/lib/` | Reusable controls, API transport, and small shared functions | Menus, icons, selected parts of `shared/ui/Widgets.jsx` and `shared/lib/utils.js` |
 
@@ -184,12 +189,16 @@ visible slices. Keep one command path for operations invoked by cards, menus,
 drag/drop, and keyboard shortcuts. Preserve folder refinement rules and the
 ordering of folder-chat moves before folder navigation changes.
 
-AI provider forms should own their drafts, busy/error state, catalog requests,
-and OAuth lifecycle in the settings feature. App should receive the selected
-provider/model and refresh commands rather than every form setter.
+The AI connect dialog's drafts, busy/error state, catalog requests and OAuth
+sign-in live in the settings feature (`useProviderEditor`,
+`settings/providerEditor.js`). App still holds the provider list, the Test
+and Usage results and the login check; it should receive the selected
+provider/model and refresh commands instead.
 
-Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared; transfer
-dialogs, workspace docks, and chat/editor rendering belong with their feature.
+Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared;
+workspace docks (`DockWindow`, `OpenTabs`) and chat/editor rendering
+(`ChatMarkdown`, `GammaLinkCard`, `BlockDropIndicator`) belong with their
+feature. The transfer dialogs already live in `transfers/`.
 The highlight palette is `shared/model/highlightColors.js` and the zoom
 limits are `shared/model/zoom.js`, so neither the block editor nor the
 notebook viewer imports the PDF viewer for constants. Split `shared/lib/utils.js` into API transport and
@@ -203,9 +212,10 @@ domain helpers as actual consumers are moved; avoid another catch-all folder.
    Use deterministic unit tests for queues and pure layout operations; browser
    checks exercise the user flows. Keep this separate from mechanical moves.
 2. **Extract leaf modules and view sections.** Move settings/provider form
-   logic, library selectors, URL helpers, and reusable UI. Extract `LibraryView`,
-   `NotesPane`, `WorkspaceTopbar`, and feature dialogs with narrow inputs and
-   command callbacks. These are manageable initial changes with clear owners.
+   logic (done: `useProviderEditor`), library selectors, URL helpers, and
+   reusable UI. Extract `LibraryView`, `NotesPane`, `WorkspaceTopbar`, and
+   feature dialogs with narrow inputs and command callbacks. These are
+   manageable initial changes with clear owners.
 3. **Extract dock state and rendering.** Add the layout model, drag adapter,
    `DockSlot`, and phone shell. Implement validation/cancellation corrections
    with the corresponding checks. Keep PDF scroll restoration separate from
@@ -217,10 +227,10 @@ domain helpers as actual consumers are moved; avoid another catch-all folder.
    transfers, sharing, metadata, and chat integration into their owners. Features
    communicate via explicit callbacks such as `onPageChanged` and
    `onTransferUpdated`, not an application-wide bag of setters.
-6. **Finish the composition root and styles.** App lives in `app/`, library and
-   settings CSS are colocated, and `main.jsx` keeps the stylesheet order.
-   Reduce App's responsibilities further and split the remaining shared
-   styles only when cascade interactions can be checked.
+6. **Finish the composition root and styles.** Done so far: App lives in
+   `app/`, library and settings CSS are colocated, and `main.jsx` keeps the
+   stylesheet order. Reduce App's responsibilities further and split the
+   remaining shared styles only when cascade interactions can be checked.
 
 Each stage should build and remain usable on its own. Keep file moves and
 behavior corrections distinguishable in the diff. No router library, global

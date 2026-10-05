@@ -1,7 +1,7 @@
 // Two copies of one conversation (two tabs, two members) never overwrite
 // each other: the session's saves are conditional on the version it last
 // read or wrote, a 409 brings the stored copy, the two are merged and saved
-// again (routers/chats.py, docs/dev/ai.md "Chat history"). Failed saves
+// again (routers/chats.py, docs/dev/chat_history.md). Failed saves
 // are retried when worth it and otherwise surface as `saveError`.
 import assert from "node:assert/strict";
 import { test } from "node:test";

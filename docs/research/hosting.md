@@ -8,7 +8,8 @@ couplings are cheap to loosen and which are a rewrite, and the shape that
 was picked. The current mechanics live in
 [dev/workspaces.md](../dev/workspaces.md), [dev/user_db.md](../dev/user_db.md),
 [dev/collab.md](../dev/collab.md) and [dev/migrations.md](../dev/migrations.md);
-nothing here is implemented.
+the sharded shape was never built, and the pieces built since under other
+plans are marked where they come up.
 
 **Superseded (2026-09-21).** The shape below — sharded multi-tenant nodes
 behind an edge router — was replaced by the plan in
@@ -31,7 +32,10 @@ bytes under a content hash into `workspaces/<id>/uploads/`, and
 Range support, which pdf.js's range transport depends on. The module is
 small (about 230 lines). Every consumer wants a local path (about 70 call
 sites: the uploads route, export zips, the manifest in `pdf_meta`, text
-extraction in `pdf_text`, backups). This is the easy one.
+extraction in `pdf_text`, backups). This is the easy one. (Since built:
+every read and write of a stored file goes through the store's calls in
+`storage.py`; an S3 driver under them was built and then dropped, see
+[scaling.md](scaling.md) item 8.)
 
 **Databases are SQLite, one set per workspace.** `pages.db` holds the block
 tree behind recursive CTEs, `block_fts` / `pdf_fts` are FTS5 tables, the
@@ -114,7 +118,9 @@ The storage change itself: `store_pdf` / `store_file` write to R2 via the
 S3 API and keep a cached copy; the orphan purge (`upload_gc`) deletes the
 object too; `ws_backup` writes snapshots to R2; new `GAMMA_R2_*` variables in
 `config.py`, with the pure-local behaviour kept when they are unset so
-self-hosters are untouched. Quotas, hashing and dedup do not change.
+self-hosters are untouched. Quotas, hashing and dedup do not change. Not
+built this way: the files stay local and a bucket holds only their off-site
+copies (`offsite.py`, set by `GAMMA_S3_*` or in Settings → Backups).
 
 ### R2 as the backup target
 
@@ -130,13 +136,22 @@ Gamma change, which turns a dead disk into a loss of seconds rather than a
 day and gives node migration a source. Litestream is configured per
 database file, so the configuration has to be generated from the workspace
 list. Once both are in place the remaining single point is the R2 account,
-which a periodic copy to a second provider covers cheaply.
+which a periodic copy to a second provider covers cheaply. Since built in
+another form: `offsite.py` copies each changed database (through the backup
+API) and the uploads to any S3-compatible bucket on a schedule, and
+`manage.py litestream-config` writes a Litestream configuration for the same
+bucket; the zip snapshots stay local.
 
 ## Open registration: what is missing
 
 There is no self-service registration. `routers/auth.py` has login, logout,
 session and guest login; accounts are made by an admin in Settings → Users
-or `manage.py`. Opening the door needs, in order of importance:
+or `manage.py`. (Since built, at the account server rather than in each
+Gamma server: registration with e-mail verification and password reset,
+Turnstile, an open / invite / closed switch and self-service deletion, in
+`cloud/gammacloud/accounts.py`, `captcha.py` and `settings.py`; a Gamma
+server creates accounts from Gamma Cloud sign-ins under its policy,
+`cloud_auth.py`.) Opening the door needs, in order of importance:
 
 - A registration endpoint with email verification. Accounts have no email
   column today, so `users.db` grows one and a sending service (Resend, SES,
@@ -149,16 +164,19 @@ or `manage.py`. Opening the door needs, in order of importance:
 - A server setting for open / invite code / closed, next to the existing
   default quota and public URL in `server_settings.py`, so the door can be
   opened gradually.
-- Per-account limits. The default quota is 0 (unlimited) and
-  `workspaces.create` has no cap on personal workspaces per account. Set a
-  real default, keep the per-user override that already exists, add a
-  workspace count limit, and decide whether the daily-wiped guest account
-  stays.
+- Per-account limits. The default quota is 0 (unlimited; a guest gets
+  200 MB). Set a real default, keep the per-user override that already
+  exists, and decide whether guest accounts (a throwaway account per
+  visitor, deleted after `guest_ttl_hours`) stay. A workspace count limit
+  has since been built: 50 memberships per account
+  (`workspaces.MAX_WORKSPACES_PER_USER`).
 
 Things that already hold and only need checking:
 
 - AI cost is the user's: provider keys are per-account entries, never
-  server env, so nobody can burn the operator's quota.
+  server env, so nobody can burn the operator's quota. The shared entries
+  an admin may add since (Settings → Server) are metered per account over
+  a rolling 24 hours (`ai_settings.py`).
 - Outbound fetches (PDF resolution, link previews, the agent's web reach)
   go through `net_guard.guarded_urlopen`, which refuses private addresses
   and redirects to them; every new outbound path must too.
@@ -179,7 +197,9 @@ Operations:
 - Upgrades cannot roll: a server refuses a data directory newer than
   itself, so all nodes upgrade together, and the pre-migration snapshot of
   every workspace database takes real time at tens of thousands of
-  workspaces. Measure it in staging first.
+  workspaces. Measure it in staging first. (Since built: steps after
+  version 33 run per workspace as it is first opened, after a snapshot of
+  that one file, `migrations.py`; [scaling.md](scaling.md) item 10.)
 - `logbuf` is an in-memory scrubbed log that dies with the process; ship
   stdout to an external log store and alert on warning counts.
 - The in-process schedulers (guest wipe, manifest generation, mirror sync
@@ -187,7 +207,8 @@ Operations:
   duplicate work; any genuinely global task would need a leader.
 
 Compliance: `PRIVACY.md` exists; terms of service, self-service account
-deletion (only admins delete today) and deletion that also reaches R2
+deletion on a Gamma server (only admins delete there; the account server
+has it since, `POST /api/me/delete`) and deletion that also reaches R2
 objects and Litestream replicas (`remove_all` clears only the local
 directory) are missing. Data export is already complete through the
 Backups zip.

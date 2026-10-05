@@ -55,7 +55,7 @@ Lessons worth keeping regardless of mechanism:
 
 Upstream keys everything per user and treats the upload as the unit. Gamma's
 data helpers take a workspace, uploads are read under `resolve_ws` plus
-`share_scope_page`, derived per-document data already lives in the workspace's
+`share_scope`, derived per-document data already lives in the workspace's
 `data.db` (the PDF FTS index, page snapshots), and every PDF is already opened
 in pypdfium2 once for that index. So:
 

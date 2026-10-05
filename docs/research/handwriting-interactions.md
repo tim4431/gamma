@@ -51,30 +51,30 @@ workflow, not unrelated text-block capabilities.
 
 | Capability | Reference behavior | Gamma status |
 |---|---|---|
-| Pen styles | Goodnotes: fountain, ball, brush; solid/dashed/dotted; tip, pressure and stabilization options. [Pen][g-pen] | One pressure-shaped pen; pressure toggle, fixed smoothing; no per-preset pen style or patterns. |
+| Pen styles | Goodnotes: fountain, ball, brush; solid/dashed/dotted; tip, pressure and stabilization options. [Pen][g-pen] | One pressure-shaped pen; pressure toggle, fixed smoothing; no per-preset pen style or patterns. Since built: Pen or Monoline per preset (`markup/MarkupToolbar.jsx`). |
 | Graphite pencil | Goodnotes has a separate Pencil with shading and configurable thickness. [Pencil][g-pencil] | Missing. |
 | Pen/color presets | Goodnotes supports per-tool color slots and reordering. Notability allows duplicated, reordered and hidden tools. [Colors][g-colors], [Toolbox][n-tools] | Pen/highlighter presets, custom color, size, duplicate/remove; no reorder/hide. |
 | Finger/stylus roles | Notability separates Pencil writing from one-finger navigation and supports temporarily disconnecting Pencil. [Pencil input][n-pencil] | Auto-pen and fingers-never-draw preferences; pen priority and same-page palm suppression. |
-| Stylus shortcuts | Notability documents Pencil double-tap choices, pressure and automatic tool return after erasing. [Pencil input][n-pencil] | Eraser/barrel button handling; native Pencil-specific gestures unimplemented. |
+| Stylus shortcuts | Notability documents Pencil double-tap choices, pressure and automatic tool return after erasing. [Pencil input][n-pencil] | Eraser/barrel button handling; native Pencil-specific gestures unimplemented. Since built in the iPad app: double tap switches to the eraser and back ([ipad.md](../dev/ipad.md)). |
 | Freehand highlighting | Notability styles and erases highlighting like ink, with pressure and line patterns. [Highlighter][n-highlight] | Separate translucent presets; constant width, multiply blending. |
 | Straight/smart highlighting | Notability: draw-and-hold straightens; long-press PDF/typed text and drag snaps highlighting to words. [Highlighter][n-highlight] | Freehand highlighter plus a separate PDF text-selection highlight flow. |
 | Precise and whole erasing | Goodnotes: precision, standard and stroke modes. Notability: partial and whole. [Goodnotes eraser][g-eraser], [Notability eraser][n-eraser] | Partial and whole, three radii. Partial erasure currently tests stored sample points. |
 | Eraser filters | Goodnotes can limit erasure to chosen stroke types, including highlighter only. [Eraser][g-eraser] | Missing. |
 | Return to previous tool | Both document eraser auto-deselect. [Goodnotes][g-eraser], [Notability][n-pencil] | Missing for the toolbar eraser. |
 | Scribble to erase | Goodnotes can erase covered writing using a pen scribble; can be disabled. [Gesture][g-scribble] | Missing. Notability equivalent unverified. |
-| Undo/redo without keyboard | Goodnotes documents two-/three-finger double taps. Notability offers two-/three-finger taps or three-finger swipes, plus visible controls. [Goodnotes gestures][g-undo], [Notability settings][n-settings], [Getting started][n-start] | Ink undo/redo is keyboard-driven while its strip is open. No ink touch controls. |
+| Undo/redo without keyboard | Goodnotes documents two-/three-finger double taps. Notability offers two-/three-finger taps or three-finger swipes, plus visible controls. [Goodnotes gestures][g-undo], [Notability settings][n-settings], [Getting started][n-start] | Ink undo/redo is keyboard-driven while its strip is open. No ink touch controls. Since built: Undo ink / Redo ink buttons on the strip (`markup/MarkupToolbar.jsx`). |
 
 ### Selection, transformation and reuse
 
 | Capability | Reference behavior | Gamma status |
 |---|---|---|
-| Direct object selection | Goodnotes finger-tap opens its contextual menu. [UI][g-ui] | Unarmed ink click jumps to the note block. Armed ink has no tap-to-edit action. |
+| Direct object selection | Goodnotes finger-tap opens its contextual menu. [UI][g-ui] | Unarmed ink click jumps to the note block. Armed ink has no tap-to-edit action. Since built: a tap or hold selects the nearest stroke and opens the selection menu (`ink/InkLayer.jsx`). |
 | Freeform/box selection | Both offer lasso and rectangle selection. [Goodnotes][g-select], [Notability][n-select] | Present, with a dashed bounding box. |
 | Selection filters | Goodnotes can include/exclude content types, allowing ink selection over an image. [Selection][g-select] | Ink only; no pen/highlighter filter. |
-| Contextual actions | Goodnotes menu includes copy/cut/duplicate/delete, color, ordering and other object-specific actions. Notability includes Style, Convert, Copy, Cut, Duplicate, Group, Save, Delete. [Goodnotes][g-select], [Notability][n-select] | No selection action menu. Move and keyboard delete only. |
-| Move with finger | Notability allows finger or pen dragging inside a selection. [Select][n-select] | Move exists, but `penOnly` rejects finger input before the selection branch. |
-| Resize and rotate | Goodnotes has selection handles. Notability supports bounding handles, pinch scaling and twist rotation. [Goodnotes][g-ui], [Notability][n-select] | Missing. |
-| Restyle existing ink | Notability can change an existing line's pattern; partially erased pieces retain independently editable width/color. [Conversion/editing][n-convert], [Eraser][n-eraser] | Preset changes affect future strokes only. No selected-ink restyling. |
+| Contextual actions | Goodnotes menu includes copy/cut/duplicate/delete, color, ordering and other object-specific actions. Notability includes Style, Convert, Copy, Cut, Duplicate, Group, Save, Delete. [Goodnotes][g-select], [Notability][n-select] | No selection action menu. Move and keyboard delete only. Since built: Color, Width, Duplicate, Select note, Show note and Delete (`ink/InkLayer.jsx`); no copy or cut. |
+| Move with finger | Notability allows finger or pen dragging inside a selection. [Select][n-select] | Move exists, but `penOnly` rejects finger input before the selection branch. Since built: a finger drag inside the selection moves it in pen-only mode. |
+| Resize and rotate | Goodnotes has selection handles. Notability supports bounding handles, pinch scaling and twist rotation. [Goodnotes][g-ui], [Notability][n-select] | Missing. Since built: resize and rotate handles (`ink/InkLayer.jsx`). |
+| Restyle existing ink | Notability can change an existing line's pattern; partially erased pieces retain independently editable width/color. [Conversion/editing][n-convert], [Eraser][n-eraser] | Preset changes affect future strokes only. No selected-ink restyling. Since built: Color and Width on a selection (`restyleStrokes` in `ink/ink.js`); no pattern. |
 | Mirror | Notability documents horizontal/vertical ink flipping on iOS. [Pencil input][n-pencil] | Missing. |
 | Copy, cut and paste elsewhere | Both expose clipboard operations for selections. Notability documents hold-to-paste and dragging ink as an image to another app. [Goodnotes][g-select], [Notability][n-select] | No ink clipboard or cross-page ink paste. |
 | Group and reuse | Notability groups ink for joint transforms and saves it as reusable stickers. [Conversion/editing][n-convert] | Ink note blocks group persistence, but there is no explicit reusable selection/group or sticker action. |
@@ -89,12 +89,12 @@ workflow, not unrelated text-block capabilities.
 | Draw-and-hold geometry | Both straighten/recognize held strokes. Goodnotes adds connectors and diagram controls; Notability provides editable shape points/fill. [Goodnotes shapes][g-shape], [Notability shapes][n-shape] | Missing. |
 | Ruler | Both have movable drawing rulers. Notability supports stamping precise lines; its article excludes Mac/iPhone. [Goodnotes ruler][g-ruler], [Notability ruler][n-ruler] | Missing. |
 | Magnified writing window | Both provide an inset writing area with automatic advance/new-line behavior. Goodnotes documents Zoom Window as iOS-only. [Goodnotes Zoom][g-zoom], [Notability Zoom][n-zoom] | Whole-PDF zoom only. |
-| Handwriting recognition/search | Notability converts/searches handwriting and converts math with editable LaTeX. Goodnotes supports text/math conversion. [Notability conversion][n-convert], [Goodnotes selection][g-select] | Search sees captions/PDF text; no ink recognition. |
+| Handwriting recognition/search | Notability converts/searches handwriting and converts math with editable LaTeX. Goodnotes supports text/math conversion. [Notability conversion][n-convert], [Goodnotes selection][g-select] | Search sees captions/PDF text; no ink recognition. Since built: *Transcribe with AI* asks the chat to write a group's text into its caption (`view_ink`, `gamma/ink_view.py`). |
 | Reflow and word editing | Goodnotes Edit Handwriting supports word selection, line straightening, alignment, recoloring and width-driven reflow. [Reflow][g-reflow] | Missing; requires a model of words/lines beyond raw strokes. |
 | Writing assistance | Goodnotes documents spellcheck and handwriting reflow; Math Assist has platform/language limits. [AI guide][g-ai], [Math Assist][g-math] | No handwriting-specific assistance. |
 | Audio-linked handwriting | Both support recording linked to handwriting replay. Goodnotes replay modes are limited to iOS/macOS notebooks. [Goodnotes audio][g-audio], [Notability overview][n-start] | Sample timing exists and drives a replay of a group's writing ([handwriting.md](../dev/handwriting.md) "Replay"); no recording. |
 | Tape and presentation pointer | Notability offers revealable study tape and a laser pointer that leaves no stored ink. [Overview][n-start], [Laser][n-laser] | Missing. |
-| Page media and backgrounds | Notability includes text boxes, photos, stickers, sticky notes, scanned/PDF backgrounds, templates and multi-note viewing. [Overview][n-start] | PDF + ink overlay and notes-pane content; no mixed-object canvas or notebook paper tool. |
+| Page media and backgrounds | Notability includes text boxes, photos, stickers, sticky notes, scanned/PDF backgrounds, templates and multi-note viewing. [Overview][n-start] | PDF + ink overlay and notes-pane content; no mixed-object canvas or notebook paper tool. Since built: sheets of paper in a page ([notebooks.md](../dev/notebooks.md)) and typed text boxes ([text_boxes.md](../dev/text_boxes.md)). |
 
 ## Source audit before the selection work (2026-09-14)
 
@@ -167,12 +167,13 @@ about undocumented behavior in either reference app.
 
 | Priority | Deliverable | Completion evidence |
 |---|---|---|
-| 1 | Direct touch selection, contextual menu, finger movement, selected color/width, duplicate/delete, visible undo/redo | Entire write → tap → edit → undo → resume flow works with touch; changes survive reload. |
-| 2 | Copy/cut/paste, proportional resize, rotate, proper eraser gesture transactions and filters | Multi-group edits are atomic in history; transformed ink agrees in canvas, note preview and exported PDF. |
+| 1 | Direct touch selection, contextual menu, finger movement, selected color/width, duplicate/delete, visible undo/redo (since built: `ink/InkLayer.jsx`, `markup/MarkupToolbar.jsx`) | Entire write → tap → edit → undo → resume flow works with touch; changes survive reload. |
+| 2 | Copy/cut/paste, proportional resize, rotate, proper eraser gesture transactions and filters (since built: resize and rotate) | Multi-group edits are atomic in history; transformed ink agrees in canvas, note preview and exported PDF. |
 | 3 | Draw-and-hold straight lines/shapes, highlighter behavior, auto-return eraser, toolbar reordering | Gesture cancellation is predictable; normal letters are not silently converted or erased. |
-| 4 | Zoom writing window, reusable ink, recognition/search/reflow, audio replay, study tools | Separate designs for word recognition, reusable objects and audio time alignment; platform limitations are explicit. |
+| 4 | Zoom writing window, reusable ink, recognition/search/reflow, audio replay, study tools (since built: replay without audio) | Separate designs for word recognition, reusable objects and audio time alignment; platform limitations are explicit. |
 
-Playwright coverage to add with priority 1:
+Playwright coverage to add with priority 1 (since built:
+`frontend/tests/e2e/scenarios/inkEditing.mjs`):
 
 1. Trusted touch tap on a thin stroke opens an anchored menu and selects
    only the intended stroke; blank taps dismiss it.

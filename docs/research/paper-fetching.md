@@ -168,7 +168,8 @@ Still unverified: completing a real publisher's check through the Connector
 Atypon's `epdf` reader), whether a stored User-Agent makes a transferred
 `cf_clearance` usable from a server on the browser's machine, the
 desktop app's path through the system browser, and whether real publishers'
-checks pass by themselves in a minimized window.
+checks pass by themselves in a background tab (as first built, a minimized
+window).
 
 ## Discovery from a research question (2026-09-29)
 

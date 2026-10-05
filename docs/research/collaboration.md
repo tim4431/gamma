@@ -109,8 +109,9 @@ SQL.
   alone does not provide durable offline storage. A socket that also
   accepted writes would need all of that duplicated.
 - **Conflict resolution is per record and per property.** Content is one
-  last-writer-wins value; properties are a patch, so unrelated properties
-  never fight.
+  value, merged three-way when the `set` carries its base (above) and
+  otherwise last writer wins; properties are a patch, so unrelated
+  properties never fight.
 - **Undo is rebased, not replayed.** Each undo snapshot is patched with the
   remote ops as they arrive, so undoing your own change never reverts
   someone else's.

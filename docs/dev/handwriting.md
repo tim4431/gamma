@@ -434,7 +434,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   edit shares (`require_ws_writer`). `.ink` is in `storage.FILE_MEDIA_TYPES`
   (`application/json`), so `GET /api/uploads/<hash>.ink` is the ordinary
   upload route with its share scoping and cache headers.
-- Interchange ([import_export.md](import_export.md)): the annotated PDF
+- Interchange ([import_export.md](import_export.md),
+  [pdf_typesetting.md](pdf_typesetting.md)): the annotated PDF
   writes one `/Ink` per look bucket (colour × tool × size × opacity) with
   `/InkList` in user space, the mean drawn width as `/BS /W`, the note on
   the first, an `/NM` for Zotero, and a private `/GammaInk` key carrying the

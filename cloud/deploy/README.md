@@ -15,7 +15,8 @@ deploy/
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
   compose.build.yml    layered on compose.yml: build from ./src instead of pulling
   Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
-  .env.example         → .env: public URL, SMTP, Google/GitHub, hostname (not the sign-up gate)
+  .env.example         → .env: public URL, SMTP, Google/GitHub, Stripe, hosting, hostname
+                       (not the sign-up gate)
   share.env.example    → share.env: the share host's cloud client and page hosts
   demo/                the public demo, its own compose project (demo/README.md)
 ```
@@ -101,7 +102,8 @@ proxy's rate limits. A host whose default network predates the pin needs
 
    From then on the **Admin** page in the portal does this: accounts
    (search, plan, verify, admin, rename, delete), invites, the OIDC clients
-   of hosted servers, the sign-up settings, the audit log.
+   of hosted servers, the fleet and its servers, billing, the sign-up
+   settings, the audit log.
 5. **Sign in** at https://account.gammapdf.com/login, change the password
    under Settings, then register a second account in a private window with
    an invite code to see the verify mail arrive.
@@ -334,7 +336,7 @@ project's side of it:
    `docker compose up -d` in its folder). Its first heartbeat shows the
    host on the Servers tab with its memory and disk; until then it takes
    no servers.
-7. **A first server by hand.** Give an account a Plus or Pro plan on the
+7. **A first server by hand.** Give an account a Lite, Plus or Pro plan on the
    Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
    The agent pulls the image, starts `gamma-<username>` with its data in
    `/srv/gamma/<username>/data`, waits for its health check, and the

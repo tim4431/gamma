@@ -215,8 +215,9 @@ read_only, limits, report, reported_at, synced_at, host}}`
 (`hosted.status_for`).
 
 **In the account's server list.** `servers.of_account`, which feeds
-`/api/me` (the desktop launcher), the Overview and the Devices page, puts
-the account's hosted server first while it is not deleted. The row has the
+`/api/me` (meant for the desktop launcher, which does not read it yet),
+the Overview and the Devices page, puts the account's hosted server first
+while it is not deleted. The row has the
 same shape as a linked server's, with `kind: "hosted"`, `hosted: true`,
 `name` "Your hosted Gamma", the server's `state`, `version` and `schema`
 from its last sync, and `last_seen_at` from `synced_at`. When the
