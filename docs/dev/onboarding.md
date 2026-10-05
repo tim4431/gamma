@@ -657,7 +657,8 @@ Tour fields:
 - `trigger`, `offer: {title, line}`, `offerAnchor`, `offerPlacement`: when
   and how it is offered by itself (Triggered tours and hints, above).
 - `hint: true`: a one-step triggered guide, never in the Tours menu.
-- `show`: a surface App brings up before the first step (`"chat"`).
+- `show`: a surface App brings up before the first step (`"chat"`; the
+  windows tour's `"windows"` is Chat and, beside a visible PDF, Notes).
 - `restore`: what App restores when the last step is done (`"pen"`).
 - `welcome: true` with `minutes`: the first `intro` step is the centred
   welcome card, which is also the offer.
@@ -708,6 +709,7 @@ where the thing happens:
 | Event | Emitted by |
 |---|---|
 | `popover.opened` `{name}` | App, when a topbar popover opens |
+| `window.collapsed` `{id, collapsed}`, `window.moved` `{id, side}` | App: a window's title double-clicked, and a window dropped into a dock slot (the Arrange windows tour) |
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |

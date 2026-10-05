@@ -32,7 +32,8 @@ chats, preferences *and* the AI credentials side by side. Consequences:
 **A storage location should be named by a random id, never by a
 human-editable name.** With `workspaces/<id>/` a rename changes one row;
 files never move. The same rule already held for uploads (content-hash
-names) and pages (client-minted ids); accounts were the exception.
+names) and pages (client-minted ids); accounts were the exception, until
+schema version 25 keyed them by an id too ([data-model.md](data-model.md)).
 
 **Introduce the object people actually share.** A *workspace* (a library:
 pages, files, chats, search indexes) sits between account and page. Every
@@ -87,7 +88,12 @@ The migration design follows from the pile-up observed above.
 - **One version for the whole directory**, stored in the central database
   (`PRAGMA user_version`), not one per file: the per-workspace files can be
   restored from backups older than any step, so they are normalised on
-  restore instead of versioned.
+  restore instead of versioned. Revised in 2026-10 (schema version 34):
+  each workspace's `pages.db` now carries its own stamp as well, so its
+  steps run when it is first opened or a background walk reaches it, not
+  before the server starts, and a restored copy below the base stamp is
+  normalised to the base first, then runs the steps above it
+  ([scaling.md](scaling.md) item 10).
 - **The schema module always describes the current shape.** A fresh install
   and an upgraded one must be identical, and nothing may be patched lazily
   on connect. A release that changes a shape ships one numbered,
@@ -113,7 +119,9 @@ The migration design follows from the pile-up observed above.
 - *One workspace = one account, sharing by inviting into the account:*
   no roles, no way to leave, and credentials shared with the library.
 - *Per-file schema versions:* restore semantics become "which files are at
-  which version", and every step must handle every combination.
+  which version", and every step must handle every combination. (Adopted
+  later for the workspace files, with the base stamp bounding the
+  combinations; see above.)
 - *Keep lazy `ALTER`s but add a version check:* the check adds nothing
   unless the patches can also be removed, which needs the numbered-step
   structure anyway.

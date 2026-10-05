@@ -1,0 +1,42 @@
+# The fleet agent on one host (cloud/fleet/deploy/README.md): the service
+# that creates, starts, upgrades and removes the hosted Gamma containers
+# (docs/dev/hosted.md "The agent"). Its own compose project in its own
+# folder (/root/Container/gamma-fleet/ on the VPS), independent of the
+# account server's (cloud/deploy/):
+#
+#   - the image is ghcr.io/tim4431/gamma-fleet:latest, which fleet.yml
+#     publishes on a push to main touching cloud/fleet/ or on a dispatch;
+#     update with `docker compose pull && docker compose up -d`;
+#   - its settings are .env (.env.example): the account server's public
+#     address and this host's token from Admin → Servers → Add host;
+#   - the Docker socket, which is root on this host, and the hosted
+#     servers' data root /srv/gamma, mounted at the same path inside;
+#   - the external network gamma-fleet (`docker network create --subnet
+#     10.203.0.0/24 gamma-fleet`, once per host), where every hosted
+#     container answers as gamma-<label>. The agent joins it to reach their
+#     health checks. No port: every call it makes is outbound.
+
+services:
+  fleet:
+    image: ghcr.io/tim4431/gamma-fleet:latest
+    restart: unless-stopped
+    env_file: .env
+    # On SIGTERM the agent finishes the job in hand before it exits; an
+    # upgrade pulls and then waits up to two minutes for the health check,
+    # which Docker's default ten seconds would cut short.
+    stop_grace_period: 5m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The same path inside and out: the agent hands it to the daemon as
+      # a bind mount. GAMMA_FLEET_DATA_ROOT in .env must name it.
+      - /srv/gamma:/srv/gamma
+    networks:
+      - fleet
+
+networks:
+  # Created by hand with the pinned subnet every hosted server trusts for
+  # X-Forwarded-For. External, so a `docker compose down` here never tries
+  # to remove it from under the running servers and Caddy.
+  fleet:
+    name: gamma-fleet
+    external: true

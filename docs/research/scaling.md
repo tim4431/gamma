@@ -171,13 +171,19 @@ planned, the item says so under *Built*.
     configuration for deployments that run it. The zip snapshot stays the
     user-facing export.
     *Built* as the off-site copies (below): scheduled copies with a change
-    signal from file stats, 7 kept per database, `manage.py offsite` to
+    signal from file stats, 7 kept per database by default
+    (`offsite.DEFAULT_KEEP`, an admin sets 1 to 1,000), `manage.py offsite` to
     list and restore them and `manage.py litestream-config`. A round over
     1,000 unchanged workspaces takes about 120 ms. Litestream itself was
     not run.
 13. *Cluster only:* `users.db` through LiteFS with write forwarding.
 14. *Cluster only:* a placement table overriding the hash, and a relocate
     job.
+
+Three rows of the table above are in no item and not built: the router,
+the process roles and the job queue claimed by worker processes. A
+deployment is still one uvicorn process whose jobs run as threads
+(`gamma/jobs.py`).
 
 The same survey found three frontend items, not part of this list. Splitting
 the main chunk by surface is built (October 2026): 2.7 MB became 1.9 MB,

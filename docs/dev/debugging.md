@@ -29,8 +29,9 @@ npm run build   # outputs dist/ (FastAPI serves it in the Docker image)
 First run: the app seeds an `admin` account with a random password printed
 once to the console (only while zero non-guest accounts exist). User CRUD
 also via `python manage.py` (create-user, set-password, set-admin,
-rename-user, delete-user, list-users, list-workspaces, set-member,
-sweep-guests, migrate, backups, offsite, litestream-config).
+rename-user, delete-user, list-users, create-workspace, list-workspaces,
+set-member, set-access, link-identity, list-identities, unlink-identity,
+sweep-guests, hosted-sync, migrate, backups, offsite, litestream-config).
 
 Docker:
 
@@ -314,7 +315,7 @@ and pure-module tests are still chosen by hand.
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt   # pytest, pytest-xdist, pytest-timeout, httpx
+pip install -r requirements-dev.txt   # pytest, pytest-xdist, pytest-timeout, httpx, moto, requirements-s3.txt
 python -m pytest tests -q -n auto --dist loadfile   # parallel, ~15 s
 python -m pytest tests -q                           # serial, ~50 s (simpler tracebacks)
 ```
@@ -624,6 +625,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
+- `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`,
+  `notebooks.mjs`, `mcp.mjs`, `cloudSignIn.mjs` and `replica.mjs` (the
+  iPad's sync core against a real server, no browser) are groups of their
+  own; each file's header names the doc it covers.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;

@@ -7,7 +7,7 @@ backend/
 ├── app.py            uvicorn entry — imports gamma.app:app
 ├── manage.py         user CRUD CLI (setup / create-user / …)
 ├── gamma/            the package — see gamma/README.md
-└── tests/            in-process TestClient tests — see tests/README.md
+└── tests/            in-process TestClient tests — see docs/dev/debugging.md "Tests"
 
 data/                repo-root runtime data, outside backend source
 ├── users.db          global: accounts, sessions, workspaces + members, shares, personal prefs (schema-versioned)

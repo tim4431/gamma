@@ -1,11 +1,13 @@
-# gammapdf.com: build sites/dist from the page sources plus the README
-# artwork and demos, and deploy it as a Cloudflare Worker (static assets
-# only). The site depends on no app code, so it has its own check and its
-# own deploy, independent of check.yml / docker.yml:
+# gammapdf.com: build sites/dist from the page sources, the README artwork
+# and demos, and the documents under docs/ rendered as pages, and deploy it
+# as a Cloudflare Worker (static assets only). The site depends on no app
+# code, so it has its own check and its own deploy, independent of
+# check.yml / docker.yml:
 #
-# - a pull request touching the site or anything it copies runs `check`
-#   only (build, every include expanded, the pages present, a wrangler dry
-#   run — no credentials needed);
+# - a pull request touching the site or anything it copies or renders runs
+#   `check` only (a strict build: every include expanded, every internal
+#   link and anchor resolving, the pages present, a wrangler dry run — no
+#   credentials needed);
 # - a push to main touching those paths checks and deploys;
 # - a manual dispatch from ANY branch (the `build-site` skill:
 #   `gh workflow run site.yml --ref dev`) checks and deploys that branch.
@@ -19,9 +21,7 @@ on:
     branches: [main]
     paths:
       - "sites/**"
-      - "docs/assets/branding/**"
-      - "docs/assets/demos/**"
-      - "docs/assets/screenshots/01-annotated-pdf.png"
+      - "docs/**"
       - "frontend/public/media/icons/favicon.svg"
       - "PRIVACY.md"
       - ".github/workflows/site.yml"
@@ -29,9 +29,7 @@ on:
     branches: [main]
     paths:
       - "sites/**"
-      - "docs/assets/branding/**"
-      - "docs/assets/demos/**"
-      - "docs/assets/screenshots/01-annotated-pdf.png"
+      - "docs/**"
       - "frontend/public/media/icons/favicon.svg"
       - "PRIVACY.md"
       - ".github/workflows/site.yml"
@@ -54,11 +52,11 @@ jobs:
       - working-directory: sites
         run: |
           npm ci
-          npm run build
+          node build.mjs --strict
       - name: Pages assembled
         working-directory: sites
         run: |
-          for f in index.html 404.html pricing.html privacy/index.html _redirects _headers media/favicon.svg; do
+          for f in index.html 404.html pricing.html privacy/index.html docs/index.html docs/dev/index.html docs/dev/mcp/index.html docs/research/index.html sitemap.xml _redirects _headers media/favicon.svg; do
             test -s "dist/$f" || { echo "::error::dist/$f is missing"; exit 1; }
           done
           if grep -rl '<!--#include' dist --include='*.html'; then

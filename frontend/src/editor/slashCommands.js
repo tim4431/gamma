@@ -4,6 +4,7 @@
 // tests/slashCommands.test.mjs pins the ranking; editor/SlashMenu.jsx holds
 // the popup and the icons, editor/BlockTree.jsx the trigger, keys and state.
 import { TEXT_COLORS, colorSpan } from "./mdMarks.js";
+import { TEXT_INSERTS, replaceRange } from "./slashInserts.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
@@ -11,49 +12,11 @@ import { t, T } from "../shared/i18n/i18n.js";
 //   { value, start, cursor, setText(newVal, selStart, selEnd),
 //     openRefPopup(), pickImage(), insertSheet(), newPage(id) }
 // start = index of the "/", cursor = caret (end of the typed query); commands
-// replace that range with their insertion. A command that `needs` one of
-// the editor's abilities is offered only where the editor has it
+// replace that range with their insertion (the text-only ones are
+// slashInserts.js's, which the iPad app runs too). A command that `needs`
+// one of the editor's abilities is offered only where the editor has it
 // (filterSlashCommands' `can`).
-
-function replaceRange(ctx, text, caretRel, selLen = 0) {
-  const { value, start, cursor } = ctx;
-  const newVal = value.slice(0, start) + text + value.slice(cursor);
-  const caret = start + (caretRel != null ? caretRel : text.length);
-  ctx.setText(newVal, caret, caret + selLen);
-}
-
-// Turn the current line into `prefix` + its text (swapping out an existing
-// markdown line prefix, so /h2 on a "# heading" re-levels instead of stacking).
-const LINE_PREFIX_RE = /^(#{1,6} |> |[-*+] \[[ xX]\] |[-*+] |\d+\. )/;
-function applyLinePrefix(ctx, prefix) {
-  const { value, start, cursor } = ctx;
-  let v = value.slice(0, start) + value.slice(cursor);
-  const lineStart = v.lastIndexOf("\n", start - 1) + 1;
-  const rest = v.slice(lineStart);
-  const m = rest.match(LINE_PREFIX_RE);
-  const stripped = m ? rest.slice(m[0].length) : rest;
-  v = v.slice(0, lineStart) + prefix + stripped;
-  const caret = Math.max(lineStart + prefix.length, start - (m ? m[0].length : 0) + prefix.length);
-  ctx.setText(v, caret, caret);
-}
-
-// Insertions that want their own line (divider, code block, table) prepend a
-// newline unless the "/" already sat at a line start.
-function blockInsert(ctx, body, caretRelInBody, selLen = 0) {
-  const atLineStart = ctx.start === 0 || ctx.value[ctx.start - 1] === "\n";
-  const lead = atLineStart ? "" : "\n";
-  replaceRange(ctx, lead + body, caretRelInBody != null ? lead.length + caretRelInBody : null, selLen);
-}
-
-// The local calendar day (toISOString would give UTC's, a day off in the
-// evening west of Greenwich).
-function today() {
-  const d = new Date(), pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-const TABLE_MD = "| Column 1 | Column 2 |\n| --- | --- |\n|   |   |";
-const MERMAID_MD = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```";
+const I = TEXT_INSERTS;
 
 // The bare "/" list's sections, in this order; a typed query is one ranked
 // list instead (filterSlashCommands).
@@ -63,32 +26,32 @@ export const SLASH_GROUPS = { text: T("Text"), math: T("Math"), insert: T("Inser
 // the row shows to type after the "/", `hint` its one-line description,
 // `icon` the popup's icon key (SlashMenu.jsx MENU_ICONS).
 export const SLASH_COMMANDS = [
-  { name: "h1", group: "text", icon: "h1", label: T("Heading 1"), hint: T("Big section heading"), keywords: ["heading", "title", "header"], run: (ctx) => applyLinePrefix(ctx, "# ") },
-  { name: "h2", group: "text", icon: "h2", label: T("Heading 2"), hint: T("Medium section heading"), keywords: ["heading", "subtitle", "header"], run: (ctx) => applyLinePrefix(ctx, "## ") },
-  { name: "h3", group: "text", icon: "h3", label: T("Heading 3"), hint: T("Small section heading"), keywords: ["heading", "subheading", "header"], run: (ctx) => applyLinePrefix(ctx, "### ") },
+  { name: "h1", group: "text", icon: "h1", label: T("Heading 1"), hint: T("Big section heading"), keywords: ["heading", "title", "header"], run: I.h1 },
+  { name: "h2", group: "text", icon: "h2", label: T("Heading 2"), hint: T("Medium section heading"), keywords: ["heading", "subtitle", "header"], run: I.h2 },
+  { name: "h3", group: "text", icon: "h3", label: T("Heading 3"), hint: T("Small section heading"), keywords: ["heading", "subheading", "header"], run: I.h3 },
   {
     name: "todo", group: "text", icon: "todo", label: T("To-do"), hint: T("A task with a checkbox to tick"),
     keywords: ["task", "checkbox", "check", "checklist"],
-    run: (ctx) => applyLinePrefix(ctx, "- [ ] "),
+    run: I.todo,
   },
-  { name: "bullet", group: "text", icon: "bullet", label: T("Bulleted list"), hint: T("A list with bullet points"), keywords: ["list", "ul", "unordered"], run: (ctx) => applyLinePrefix(ctx, "- ") },
-  { name: "number", group: "text", icon: "number", label: T("Numbered list"), hint: T("A list numbered 1, 2, 3"), keywords: ["list", "ol", "ordered"], run: (ctx) => applyLinePrefix(ctx, "1. ") },
-  { name: "quote", group: "text", icon: "quote", label: T("Quote"), hint: T("A quotation, set off with a bar"), keywords: ["blockquote", "cite", "quotation"], run: (ctx) => applyLinePrefix(ctx, "> ") },
+  { name: "bullet", group: "text", icon: "bullet", label: T("Bulleted list"), hint: T("A list with bullet points"), keywords: ["list", "ul", "unordered"], run: I.bullet },
+  { name: "number", group: "text", icon: "number", label: T("Numbered list"), hint: T("A list numbered 1, 2, 3"), keywords: ["list", "ol", "ordered"], run: I.number },
+  { name: "quote", group: "text", icon: "quote", label: T("Quote"), hint: T("A quotation, set off with a bar"), keywords: ["blockquote", "cite", "quotation"], run: I.quote },
   {
     name: "callout", group: "text", icon: "callout", label: T("Callout"), hint: T("A colored box: note, tip, warning, danger"),
     keywords: ["admonition", "aside", "banner", "note", "tip", "warning"],
-    run: (ctx) => applyLinePrefix(ctx, "> [!note] "),
+    run: I.callout,
   },
-  { name: "divider", group: "text", icon: "divider", label: T("Divider"), hint: T("A horizontal line between sections"), keywords: ["hr", "rule", "separator", "line"], run: (ctx) => blockInsert(ctx, "---\n") },
+  { name: "divider", group: "text", icon: "divider", label: T("Divider"), hint: T("A horizontal line between sections"), keywords: ["hr", "rule", "separator", "line"], run: I.divider },
   {
     name: "math", group: "math", icon: "math", label: T("Inline equation"), hint: T("LaTeX math inside the line of text"),
     keywords: ["equation", "latex", "tex", "formula"],
-    run: (ctx) => replaceRange(ctx, "$x$", 1, 1),
+    run: I.math,
   },
   {
     name: "equation", group: "math", icon: "equation", label: T("Equation block"), hint: T("LaTeX math on a line of its own"),
     keywords: ["display", "math", "latex", "formula"],
-    run: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
+    run: I.equation,
   },
   // Notion's /page: a new page in the library, its [[link]] put where the
   // command was typed (under an id minted here, which the page is then made
@@ -108,17 +71,17 @@ export const SLASH_COMMANDS = [
   {
     name: "table", group: "insert", icon: "table", label: T("Table"), hint: T("A 2×2 table to fill in"),
     keywords: ["grid", "rows", "columns"],
-    run: (ctx) => blockInsert(ctx, TABLE_MD, 2, 8),
+    run: I.table,
   },
   {
     name: "code", group: "insert", icon: "code", label: T("Code block"), hint: T("Code with syntax highlighting"),
     keywords: ["fence", "pre", "snippet"],
-    run: (ctx) => blockInsert(ctx, "```\n\n```", 4),
+    run: I.code,
   },
   {
     name: "mermaid", group: "insert", icon: "mermaid", label: T("Mermaid diagram"), hint: T("A flowchart or sequence diagram from text"),
     keywords: ["diagram", "flowchart", "sequence", "chart", "graph"],
-    run: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
+    run: I.mermaid,
   },
   {
     name: "image", group: "insert", icon: "image", label: T("Image"), hint: T("Upload a picture from this device"),
@@ -128,7 +91,7 @@ export const SLASH_COMMANDS = [
   {
     name: "date", group: "insert", icon: "date", label: T("Today's date"), hint: T("Written as YYYY-MM-DD"),
     keywords: ["today", "now", "time", "day"],
-    run: (ctx) => replaceRange(ctx, today()),
+    run: I.date,
   },
   {
     name: "link", group: "link", icon: "link", label: T("Link to note"), hint: T("A link to another page or block"),
@@ -143,7 +106,7 @@ export const SLASH_COMMANDS = [
   {
     name: "highlight", group: "style", icon: "highlight", label: T("Highlight text"), hint: T("Mark text like a highlighter pen"),
     keywords: ["mark", "yellow", "emphasize"],
-    run: (ctx) => replaceRange(ctx, "==x==", 2, 1),
+    run: I.highlight,
   },
   // Colored text / background tint, Notion's palette written as Obsidian-
   // compatible inline HTML (mdMarks TEXT_COLORS): an empty span with the

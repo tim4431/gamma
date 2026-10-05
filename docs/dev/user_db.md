@@ -53,8 +53,9 @@ All state is SQLite + files on disk under a data directory (env
     their own role ([api.md](api.md) "Shares");
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
-    preference `profile`, the active AI provider, the AI provider entries
-    and the machine-translation keys with their secrets, the seen notices).
+    preference `profile` and its sync base `profile-base`, the active AI
+    provider, the AI provider entries, the machine-translation and online
+    search services with their secrets, the seen notices).
     Everything that names a workspace's pages (open tabs, recents, reading
     positions) is kept in that workspace's pages.db (`workspace_prefs`,
     below) from migration step 34 on. The rows here with a workspace id are
@@ -161,8 +162,8 @@ All state is SQLite + files on disk under a data directory (env
     ([mirror.md](mirror.md); empty in a workspace that mirrors nothing);
   - `upload_orphans` — the stored files nothing references
     (`name`, `since`; "Stored files" below);
-  - `chats` / `chat_history` — the AI chat ([ai.md](ai.md) "Chat history
-    buckets"): one active conversation per `bucket` (a page's id, a
+  - `chats` / `chat_history` — the AI chat
+    ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
     `updated_at`, and the bucket's earlier conversations by `id`. They live
     with the pages they are about, so a backup, a restore and a Gamma

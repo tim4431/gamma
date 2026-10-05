@@ -1,7 +1,7 @@
 # Paper metadata and PDF resolution
 
 How a page block learns what paper it holds, and how a link or DOI becomes a
-stored PDF. Code: `gamma/routers/metadata.py`, `gamma/pdf.py`.
+stored PDF. Code: `gamma/routers/metadata.py`, `gamma/routers/pdf.py`.
 
 ## Metadata fetch / edit / cite
 
@@ -24,7 +24,8 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
 
 The registry helpers (`_fetch_arxiv` / `_arxiv_search` — both parse Atom
 entries through `_arxiv_entry_meta` — `_fetch_doi`, `_crossref_search`) also
-back the chat agent's `search_papers` tool ([ai_tools.md](ai_tools.md)).
+back the chat agent's `search_papers` tool, with OpenAlex as its third
+registry (`gamma/openalex.py`; [ai_tools.md](ai_tools.md)).
 Every registry call goes through `_http_get` (20 s timeout);
 `GAMMA_METADATA_LOOKUP=off` makes it fail at once, so every lookup finds
 nothing (an offline server; the browser suite sets it — a slow Crossref
@@ -180,8 +181,8 @@ order and the first that answers with a PDF wins, so one broken repository
 link does not end the fallback. When none confirms, the best one is still
 handed on for the proxy to try. The fallback is disabled when the
 request sends `allow_oa: false` and identifies itself with a fixed project
-email in `pdf.py` (no config). Non-published substitutions return a `note` the
-frontend surfaces.
+email in `routers/pdf.py` (`CONTACT_EMAIL`, no config). Non-published
+substitutions return a `note` the frontend surfaces.
 
 The answer also carries a `version` when the walk knows it: `publisher` (the
 article page's own PDF), `preprint` (an arXiv PDF), or an open-access copy's
@@ -210,7 +211,7 @@ Cookie values are never returned. Guest accounts and share links cannot use
 these endpoints. Imports require HTTPS (including the existing trusted proxy
 configuration) or localhost and are bounded to 256 KiB / 200 cookies.
 
-`users.db.publisher_sessions` (schema v5) stores authenticated Fernet ciphertext
+`users.db.publisher_sessions` stores authenticated Fernet ciphertext
 per `(user_id, host)`, each sealed with its account's id. The key is generated at `GAMMA_DATA_DIR/publisher-sessions.key`
 with private file permissions where supported, or supplied as a Fernet key in
 `GAMMA_PUBLISHER_SESSION_KEY`. Keep it stable across workers and restarts. Encryption

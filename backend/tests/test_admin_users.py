@@ -258,6 +258,30 @@ def test_self_rename_keeps_the_session_working(boss):
     assert s["user"] == "bigboss" and s["is_admin"] is True
 
 
+def test_a_hosted_container_seeds_no_admin(tmp_path):
+    """A paid hosted container's owner becomes admin at their first cloud
+    sign-in, so a fresh one seeds no ``admin`` login of its own."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = (
+        "from gamma.seed import ensure_admin_seed\n"
+        "from gamma.db import connect_users_db\n"
+        "print('SEED:' + repr(ensure_admin_seed()))\n"
+        "with connect_users_db() as c:\n"
+        "    print('USERS:' + str(c.execute('SELECT COUNT(*) FROM users').fetchone()[0]))\n"
+    )
+    env = {**os.environ, "GAMMA_DATA_DIR": str(tmp_path), "GAMMA_HOSTED": "1",
+           "GAMMA_CLOUD_ADMIN_SUBJECT": "sub-owner"}
+    env.pop("GAMMA_ADMIN_USER", None)
+    env.pop("GAMMA_ADMIN_PASSWORD", None)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         env=env, cwd=str(Path(__file__).resolve().parent.parent)).stdout
+    assert "SEED:None" in out and "USERS:0" in out, out
+
+
 def test_seed_hints_but_never_backdoors_an_adminless_instance(boss):
     """Accounts exist but nobody has the privilege (upgraded instance) — the
     seed must NOT create an admin login; it only logs a hint."""

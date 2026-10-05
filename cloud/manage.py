@@ -7,7 +7,7 @@
   python manage.py create-account <email> <username> [--password P] [--plan free] [--admin] [--verified]
   python manage.py set-password <username> <password>
   python manage.py set-admin <username> [--off]
-  python manage.py set-plan <username> <free|plus|pro>
+  python manage.py set-plan <username> <free|lite|plus|pro>
   python manage.py verify <username>               mark the e-mail confirmed
   python manage.py delete-account <username>
   python manage.py restore-account <username>      undo a delete within the grace period
@@ -273,7 +273,9 @@ def cmd_hosts(args):
     for h in rows:
         print(f"{h['name']:<16} {h['id']:<16} {'accepting' if h['accepting'] else 'closed':<9} "
               f"{'stale' if h['stale'] else 'fresh':<5} mem={h['memory_used_mb']}/{h['memory_mb']}MB "
-              f"disk={h['disk_used_mb']}/{h['disk_mb']}MB servers={h['servers']} seen={h['last_seen_at'] or 'never'}")
+              f"committed={h['committed_mb']}MB free={h['free_mb']}MB disk={h['disk_used_mb']}/{h['disk_mb']}MB "
+              f"servers={h['servers']} seen={h['last_seen_at'] or 'never'}"
+              + (f" orphans={','.join(h['orphans'])}" if h["orphans"] else ""))
 
 
 def cmd_add_host(args):
@@ -292,6 +294,7 @@ def cmd_servers(args):
     for s in rows:
         print(f"{s['label']:<20} {s['username'] or s['account_id']:<20} {s['limits'].get('plan', s['plan']):<5} "
               f"{s['state']:<12} {'read-only ' if s['read_only'] else ''}host={s['host'] or '-'} "
+              f"mem={s['memory_mb']}MB tag={s['image_tag']}{' (outdated)' if s['outdated'] else ''} "
               f"version={s['report'].get('version', '')} synced={s['synced_at'] or 'never'}")
 
 

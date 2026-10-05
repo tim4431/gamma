@@ -19,7 +19,7 @@ claude mcp add --transport http --scope user gamma <your-gamma-address>/mcp
 Alternatively, download `gamma-claude-code-plugin-X.Y.Z.zip` from a Gamma release,
 extract it into a permanent location, and add the extracted `gamma-marketplace`
 directory with the same marketplace command. Replace the MCP URL with the one
-shown in Gamma's **Settings → Integrations**. Use HTTPS for remote servers;
+shown in Gamma's **Settings → AI → Integrations**. Use HTTPS for remote servers;
 HTTP localhost is supported.
 
 Start Claude Code, open `/mcp`, select `gamma`, and authenticate. Sign in to Gamma
@@ -91,7 +91,7 @@ The IDE extension can use the direct MCP connection without the plugin.
 Paste a Gamma page or share link with your question. The assistant uses
 `read_gamma_link` to resolve and read it. Copy the page URL directly from your
 browser's address bar, or use an existing block or share link.
-Both assistants use the same workflow. Follow-up questions keep the last supplied
+All three assistants use the same workflow. Follow-up questions keep the last supplied
 page as context until you send a different reference.
 
 Gamma must be running and reachable from the machine running the MCP client.

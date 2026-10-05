@@ -3,13 +3,17 @@
 // in-memory host (tests/replica/memoryHost.mjs) instead of the app's Swift
 // one. No browser: the same rounds the desktop's mirror runs
 // (backend/tests/test_mirror*.py pins the Python engine), here from the
-// device's side — the first fill, the folder and label trees, pushes,
-// merges of text and drawings, an edit beating a delete, deletions, a lost
-// answer, a block moved between pages, receive-only.
+// device's side — the first fill, the folder and label trees, pushes, the
+// editing bar's outline edits with their undo and redo, merges of text and
+// drawings, an edit beating a delete, deletions, a lost answer, a block
+// moved between pages, receive-only.
 import { Account } from "../harness.mjs";
 import { MemoryHost } from "../../replica/memoryHost.mjs";
 import { syncRound } from "../../../src/replica/round.js";
-import { addNote, addSheet, createNotebook, deleteBlock, deletePage, editPage, saveInk, setText } from "../../../src/replica/edits.js";
+import {
+  addNote, addNoteAfter, addSheet, createNotebook, createPage, deleteBlock, deletePage, editPage, indent, moveBlock, outdent,
+  restore, saveInk, setText,
+} from "../../../src/replica/edits.js";
 import { libraryRows, pageView } from "../../../src/replica/views.js";
 import { encodeStroke, inkProps, newInk, serializeInk } from "../../../src/ink/ink.js";
 
@@ -103,6 +107,38 @@ export async function replicaScenarios({ server, makePdf, step, until, assert, a
     assertEq((await me.api(group.properties.ink_url)).space.kind, "canvas", "on the sheet's canvas");
     const again = await round();
     assertEq(again.pages_pulled + again.pages_pushed, 0, "settled: nothing moves");
+  });
+
+  await step("replica: the editing bar's outline edits made here go there, and their undo and redo too", async () => {
+    const page = await createPage(host, { title: "Outline on the iPad" });
+    for (const [id, content] of [["rpO1", "one"], ["rpO2", "two"], ["rpO3", "three"]]) await addNote(host, page, { id, content });
+    await round();
+    // the outline there, as text: "one(two) three"
+    const shape = async () => {
+      const show = (list) => (list || []).map((n) => n.content + (n.children?.length ? `(${show(n.children)})` : "")).join(" ");
+      return show((await there(page)).children);
+    };
+    await indent(host, page, "rpO2");
+    await addNoteAfter(host, page, "rpO1", "rpO4");
+    await setText(host, page, "rpO4", "four", "");
+    const unMove = await moveBlock(host, page, "rpO3", -1);
+    await round();
+    assertEq(await shape(), "one(two) three four", "indented, a note added after a block, one moved up");
+    const unOutdent = await outdent(host, page, "rpO2");
+    await round();
+    assertEq(await shape(), "one two three four", "outdented, right after the block it was under");
+    // the server re-keyed four's insert (its key was two's, and two was
+    // still beside it when the insert landed): an undo goes by neighbours,
+    // not keys
+    const reOutdent = await restore(host, page, unOutdent);
+    await restore(host, page, unMove);
+    await round();
+    assertEq(await shape(), "one(two) four three", "undone, newest first");
+    await restore(host, page, reOutdent);
+    await round();
+    assertEq(await shape(), "one two four three", "redone");
+    const again = await round();
+    assertEq(again.pages_pulled + again.pages_pushed, 0, "settled: the keys made here are the ones there");
   });
 
   await step("replica: one text and one drawing changed on both sides merge on both", async () => {

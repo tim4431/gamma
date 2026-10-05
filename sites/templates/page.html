@@ -10,12 +10,18 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1b1b1a" media="(prefers-color-scheme: dark)">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Gamma PDF">
+  <meta property="og:title" content="{{title}}">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:url" content="https://gammapdf.com{{path}}">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <!--#include header -->
 <main id="main" class="wrap prose">
 {{content}}
+<p class="docs__source">{{source}}</p>
 </main>
 <!--#include footer -->
 </body>

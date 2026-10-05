@@ -72,12 +72,15 @@ These describe the implementation unless explicitly marked as plans.
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Typed text boxes on PDF pages and sheets, and their PDF interchange | [Text boxes](text_boxes.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
-| Imports, exports, and shared PDF typesetting | [Import and export](import_export.md) |
+| Imports and exports: dialogs, formats, pipelines | [Import and export](import_export.md) |
+| The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, page cards, recents, and trash | [Home library](home_library.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
 | Long-paper context and grounding | [AI context](ai_context.md) |
+| Chat buckets per page and folder, the active conversation, and the archive | [Chat history](chat_history.md) |
+| The translated PDF view, its engines and limits | [PDF translation](translation.md) |
 | Clickable PDF citations and library links | [PDF citations](pdf_citations.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
@@ -95,14 +98,19 @@ These describe the implementation unless explicitly marked as plans.
 | Plans, Stripe checkout and webhooks, the effective-plan rule, the Plan page | [Billing](billing.md) |
 | Public website build and deployment | [Website](../../sites/README.md) |
 
-## Plans and research
+## Plans and design references
 
-- [Frontend decomposition](frontend-refactor.md): remaining App.jsx ownership
-  work; the current folder layout is in the source map.
-- [Scaling on SQLite](../research/scaling.md): the workspace-affinity shape
-  and the storage work list (connection cache, lazy migration, off-site copies, …);
-  the dev docs describe each item once it lands.
-- [Block-centric design](block_centric.md): target model, dated inventory,
-  and staged roadmap; check the code before treating a planned step as built.
+- [Frontend decomposition](frontend-refactor.md): the one live plan. The
+  folder layout and the bundle split are done, and "Lazy boundaries" describes
+  the chunks as built; moving state ownership out of `App.jsx` has barely
+  started.
+- [Block-centric design](block_centric.md): the design reference for the
+  block model, with its staged roadmap. The stages are built; the block
+  zoom-in is the open item. The stored shapes as built are in
+  [storage](user_db.md) and [home library](home_library.md).
+- [Scaling on SQLite](../research/scaling.md): items 1 to 12 of its work list
+  are built and described in the topic docs above; the cluster items (LiteFS,
+  placement, a router and worker processes) wait for a second node.
 - [Research notes](../research/README.md): surveys, findings, and design
-  rationale. Keep current implementation details in the topic docs above.
+  rationale, grouped by area, with what each still leaves open. Keep current
+  implementation details in the topic docs above.

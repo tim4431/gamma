@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} · Gamma PDF</title>
+  <meta name="description" content="{{description}}">
+  <link rel="canonical" href="https://gammapdf.com{{path}}">
+  <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b1b1a" media="(prefers-color-scheme: dark)">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Gamma PDF">
+  <meta property="og:title" content="{{title}}">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:url" content="https://gammapdf.com{{path}}">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<!--#include header -->
+<div class="wrap docs">
+{{nav}}
+<main id="main" class="prose docs__main">
+{{content}}
+<p class="docs__source">{{source}}</p>
+</main>
+</div>
+<!--#include footer -->
+</body>
+</html>

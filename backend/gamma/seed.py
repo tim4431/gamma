@@ -208,9 +208,16 @@ def ensure_admin_seed():
     account exists this is a strict no-op — deliberately NOT keyed on "no
     admin exists", because silently adding an admin login to an upgraded
     multi-user instance would be a backdoor; those grant the privilege via
-    `manage.py set-admin`."""
-    from . import workspaces
+    `manage.py set-admin`.
 
+    A paid hosted container (``GAMMA_HOSTED`` with a
+    ``GAMMA_CLOUD_ADMIN_SUBJECT``) seeds nothing: its owner becomes admin
+    at their first Gamma Cloud sign-in, and a seeded ``admin`` would be a
+    login nobody owns that takes one of the plan's accounts."""
+    from . import config, workspaces
+
+    if config.hosted() and config.cloud_env()["admin_subject"]:
+        return None
     username = os.environ.get("GAMMA_ADMIN_USER", "").strip() or "admin"
     env_password = os.environ.get("GAMMA_ADMIN_PASSWORD", "")
     password = env_password or secrets.token_urlsafe(9)  # 12 chars, URL-safe alphabet

@@ -253,6 +253,8 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `lib/updater.js` — the electron-updater wrapper described above.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block).
+  `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
+  build made without a certificate ([release.md](release.md)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
   sets env before importing gamma, serves the bundled `frontend_dist`).
 - `build_backend.py` — PyInstaller onedir freeze into

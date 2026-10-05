@@ -11,49 +11,43 @@ note does not repeat.
 
 There is no adapter per vendor. A Chinese or open-weight model is an entry
 on one of the two key wires, `openai` (Chat Completions) or `anthropic`
-(Messages), with a custom base URL. DeepSeek is the only named preset
-(`SERVICES` in `ai_protocols/__init__.py`). Models the listing does not
-return can be typed in by hand in the connect form. Context windows and
-effort levels come from models.dev when the vendor's listing omits them.
-Nothing blocks a private or loopback base URL, so a local Ollama, vLLM or
-LM Studio server works as a custom endpoint.
+(Messages), with its own base URL. The presets, the path rule and what
+each wire sends are in [ai.md](../dev/ai.md) "Other services".
 
-What works today, on either wire: plain chat, streamed translation, token
-counts (`stream_options.include_usage`), the native-PDF fallback to text
-(any 4xx on file parts), `max_tokens` rather than `max_completion_tokens`,
-and no OpenAI- or Anthropic-only fields (cache keys, service tiers, cache
-breakpoints) sent to another host. The CJK token estimate (one token per
-character) errs on the high side, which is the safe side.
+When surveyed, DeepSeek was the only preset and both wires appended a
+fixed `/v1/…` path to the base URL. A URL pasted with the vendor's `/v1`
+doubled the version and came back as a 404 shown as `bad_endpoint`, with
+no hint that only `/v1` was wrong, and a vendor on another version path
+(GLM's `v4`, Ark's `v3`, Qianfan's `v2`) could not be reached on the
+`openai` wire at all. Plain chat, streamed translation, token counts and
+the native-PDF fallback to text worked on either wire, and no OpenAI- or
+Anthropic-only field went to another host.
 
 ## Endpoints
 
-Both wires append a fixed path to the base URL: `/v1/chat/completions` and
-`/v1/models` (`openai.py` `request`, `base.py` `models_request`), and
-`/v1/messages` (`anthropic.py`). Settings strip only a trailing `/`
-(`ai_settings.apply_provider_fields`). So the base URL entered must be the
-vendor's URL without its `/v1`, and a vendor whose path is not `/v1`
-cannot be reached on the `openai` wire at all.
+The vendors' documented base URLs when surveyed. Which of them are presets
+and how a base URL becomes a request path is in [ai.md](../dev/ai.md)
+"Other services".
 
-| Service | Documented OpenAI base | Enter on `openai` | Anthropic base (`anthropic` wire) |
-|---|---|---|---|
-| DeepSeek | `https://api.deepseek.com` | as is (preset) | `https://api.deepseek.com/anthropic` |
-| Kimi (Moonshot) | `https://api.moonshot.cn/v1`, `.ai/v1` | without `/v1` | `https://api.moonshot.cn/anthropic` |
-| Qwen (Model Studio) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | without `/v1` | `https://dashscope.aliyuncs.com/apps/anthropic` |
-| GLM (Zhipu / Z.ai) | `https://open.bigmodel.cn/api/paas/v4` | unreachable (`v4`) | `https://open.bigmodel.cn/api/anthropic`, `https://api.z.ai/api/anthropic` |
-| MiniMax | `https://api.minimaxi.com/v1`, `api.minimax.io/v1` | without `/v1` | `https://api.minimax.io/anthropic` |
-| SiliconFlow | `https://api.siliconflow.cn/v1` | without `/v1` | — |
-| Volcengine Ark (Doubao) | `https://ark.cn-beijing.volces.com/api/v3` | unreachable (`v3`) | — |
-| Baidu Qianfan | `https://qianfan.baidubce.com/v2` | unreachable (`v2`) | — |
-| Ollama / vLLM / LM Studio | `http://host:port/v1` | without `/v1` | — |
-
-Entering the documented URL doubles the version (`…/v1/v1/chat/completions`).
-The result is a 404, which shows as `bad_endpoint` ("check the base URL")
-and gives no hint that only `/v1` was wrong. The user guide's "any
-OpenAI-compatible gateway" promises more than this delivers.
+| Service | Documented OpenAI base | Anthropic base (`anthropic` wire) |
+|---|---|---|
+| DeepSeek | `https://api.deepseek.com` | `https://api.deepseek.com/anthropic` |
+| Kimi (Moonshot) | `https://api.moonshot.cn/v1`, `.ai/v1` | `https://api.moonshot.cn/anthropic` |
+| Qwen (Model Studio) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `https://dashscope.aliyuncs.com/apps/anthropic` |
+| GLM (Zhipu / Z.ai) | `https://open.bigmodel.cn/api/paas/v4` | `https://open.bigmodel.cn/api/anthropic`, `https://api.z.ai/api/anthropic` |
+| MiniMax | `https://api.minimaxi.com/v1`, `api.minimax.io/v1` | `https://api.minimax.io/anthropic` |
+| SiliconFlow | `https://api.siliconflow.cn/v1` | — |
+| Volcengine Ark (Doubao) | `https://ark.cn-beijing.volces.com/api/v3` | — |
+| Baidu Qianfan | `https://qianfan.baidubce.com/v2` | — |
+| Ollama / vLLM / LM Studio | `http://host:port/v1` | — |
 
 ## Gaps, ranked
 
-1. **Reasoning is dropped between tool rounds.** The OpenAI wire reads
+Each gap is described as surveyed. Its status after the changes of
+3 October follows the title; the detail is under "What landed".
+
+1. **Reasoning is dropped between tool rounds.** *Closed on the `openai`
+   wire; open on the `anthropic` wire.* The OpenAI wire reads
    `delta.content` and `delta.tool_calls` only. `reasoning_content` is
    never read, and the assistant turn the agent loop replays
    (`ai_agent.py`, the `{"role": "assistant", "content", "tool_calls"}`
@@ -74,11 +68,12 @@ OpenAI-compatible gateway" promises more than this delivers.
    `reasoning_content` on turns that carry `tool_calls` (the Anthropic
    wire: the thinking blocks with their signatures).
 2. **A version path other than `/v1` is unreachable, and a pasted `/v1`
-   doubles.** See the table. Fix: when the base URL already ends in a
-   version segment (`/v\d+`), append only `/chat/completions` and
-   `/models`. Then add `SERVICES` presets for Kimi, Qwen, GLM, MiniMax and
-   SiliconFlow with their key URLs, so most users never type an endpoint.
-3. **Thinking that arrives inside the text shows as text.** MiniMax's
+   doubles.** *Closed; MiniMax and SiliconFlow got no preset.* Fix: when
+   the base URL already ends in a version segment (`/v\d+`), append only
+   `/chat/completions` and `/models`. Then add `SERVICES` presets for Kimi,
+   Qwen, GLM, MiniMax and SiliconFlow with their key URLs, so most users
+   never type an endpoint.
+3. **Thinking that arrives inside the text shows as text.** *Open.* MiniMax's
    OpenAI endpoint wraps thinking in `<think>…</think>` inside `content`
    (unless `reasoning_split` is sent). So does a local server running a
    reasoning model without a reasoning parser (Qwen3, DeepSeek-R1
@@ -87,6 +82,7 @@ OpenAI-compatible gateway" promises more than this delivers.
    pick up braces from it. Fix: fold a leading `<think>` block out of the
    OpenAI stream, or steer MiniMax to its Anthropic endpoint.
 4. **Qwen3 open-weight models on Model Studio refuse non-streamed calls.**
+   *Open.*
    They think by default, and a non-streamed request is a 400 unless it
    sends `enable_thinking: false`. Gamma's non-streamed callers are the
    Test probe (which also runs right after Connect), metadata extraction,
@@ -95,14 +91,15 @@ OpenAI-compatible gateway" promises more than this delivers.
    similar commercial models are not affected. Fix: on a compatible
    server, have `call_ai` stream and join the reply (what `streams_only`
    already does for the Codex backend).
-5. **Pictures go to text-only models.** `view_pdf_page`, `view_ink`,
+5. **Pictures go to text-only models.** *Closed.* `view_pdf_page`, `view_ink`,
    selection crops and pasted images are offered whatever the model takes.
    DeepSeek, Kimi K2, MiniMax-M2 and GLM's text models then reject the
    `image_url` parts. Unlike native PDFs, images get no text fallback.
    models.dev carries `modalities.input`, so `ai_catalog` could read it
    beside the window and efforts, and the chat could drop the picture
    tools and warn on attached images.
-6. **No vendor thinking switch, and a tight output cap.** Effort goes out
+6. **No vendor thinking switch, and a tight output cap.** *The switch is
+   open; the cap is raised for the presets.* Effort goes out
    as `reasoning_effort`. DeepSeek and GLM switch thinking with `thinking:
    {type}` and Qwen with `enable_thinking`, so "none" turns nothing off and
    the user cannot avoid gap 1 by disabling thinking. The chat's
@@ -225,18 +222,23 @@ The services above are presets under the connect dialog's Other tile
 (`ai_protocols/services.py`; the mechanics are in [ai.md](../dev/ai.md)
 "Other services"). Gaps 1, 2 and 5 are closed on the `openai` wire, gap 6 in part:
 
-1. Thinking is kept and echoed back, within a reply and across messages.
-2. A base URL that ends in a version keeps it; GLM, the coding plans and a
-   pasted `/v1` work. Presets cover Kimi, Qwen, GLM and OpenRouter, each
+1. Thinking is kept and echoed back, within a reply and across messages
+   (`REASONING_FIELDS` in `ai_protocols/openai.py`).
+2. A base URL that ends in a version keeps it (`api_url` in
+   `ai_protocols/base.py`); GLM, the coding plans and a pasted `/v1` work. Presets cover Kimi, Qwen, GLM and OpenRouter, each
    with its China endpoint and coding subscription where the vendor sells
    one. DeepSeek sells no subscription.
-5. Pictures are left out for models that read text only.
-6. The reply cap is 32,768 for these presets, bounded by the model's own
-   output limit. The vendor thinking switches are still not sent; effort
+5. Pictures are left out for models that read text only
+   (`ai_catalog.image_input`).
+6. The reply cap is 32,768 for these presets except OpenRouter, which
+   keeps 8,192, bounded by the model's own output limit
+   (`ai_catalog.reply_cap`). The vendor thinking switches are still not sent; effort
    goes out as `reasoning_effort`, which all four accept on their current
    models.
 
-Kimi's preset also sends `prompt_cache_key`.
+Kimi's preset also sends `prompt_cache_key`, and the Kimi, Qwen and GLM
+presets name their models.dev key (`catalog`), which closes the recheck's
+host-hint misses.
 
 Still open:
 

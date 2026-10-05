@@ -43,8 +43,9 @@ its own: its zip rides on the same release with the same version.
    (~20 min) unless asked; `gh run watch <id> --exit-status` if so. The
    desktop publish job re-dispatches `docker.yml` with the version, so the
    image gets a matching `:<version>` tag on its own, and uploads the
-   Gamma Connector zip and the Codex plugin zip, its setup scripts and
-   checksums onto the same release. When the `CWS_*` repository variables
+   Gamma Connector zip and the assistant plugin assets (the Codex and
+   Claude Code zips, the dsh tarball, setup scripts and checksums) onto the
+   same release. When the `CWS_*` repository variables
    exist it also dispatches `chrome-store.yml`, which submits the Connector
    zip to the Chrome Web Store (`gh run list --workflow chrome-store.yml
    --limit 1` once the release is out; a notice says when an earlier

@@ -171,4 +171,32 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(tree.map { $0.string("id") }, [text, page], "right after the note")
         XCTAssertEqual(tree.last?.dict("properties")["collapsed"] as? Bool, true, "folded: the page shows its drawings")
     }
+
+    func testAnOutlineEditAndItsUndoRunThroughTheHost() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let connection = Connection(id: "t", server: URL(string: "https://example.invalid")!, user: "u", workspace: "w", workspaceName: "W")
+        let replica = try Replica(connection: connection, token: "gamma_test", directory: dir)
+        let note = try XCTUnwrap(try replica.edit("createPage", [["title": "Notes"]]) as? String)
+        let one = try XCTUnwrap(try replica.edit("addNote", [note, ["content": "one"]]) as? String)
+        let two = try XCTUnwrap(try replica.edit("addNote", [note, ["content": "two"]]) as? String)
+        func outline() throws -> [String] {
+            let snapshot = try XCTUnwrap(replica.store.snapshot(note))
+            let tree = try XCTUnwrap(try replica.pure("tree", [snapshot, note]) as? [[String: Any]])
+            return tree.map { node in
+                let kids = (node["children"] as? [[String: Any]] ?? []).map { $0.string("id") }
+                return ([node.string("id")] + kids).joined(separator: ">")
+            }
+        }
+        XCTAssertNil(try replica.edit("indent", [note, one]), "the first note has nothing to go under")
+        let undo = try XCTUnwrap(try replica.edit("indent", [note, two]) as? [Any])
+        XCTAssertEqual(try outline(), ["\(one)>\(two)"], "under the note above")
+        let redo = try XCTUnwrap(try replica.edit("restore", [note, undo]) as? [Any])
+        XCTAssertEqual(try outline(), [one, two], "undone")
+        _ = try replica.edit("restore", [note, redo])
+        XCTAssertEqual(try outline(), ["\(one)>\(two)"], "redone")
+        let edit = try XCTUnwrap(try replica.pure("format", ["bold", "a word", 2, 6]) as? [String: Any])
+        XCTAssertEqual(edit.string("insert"), "**word**")
+        XCTAssertEqual([edit.int("from"), edit.int("to"), edit.int("anchor"), edit.int("head")], [2, 6, 4, 8])
+    }
 }

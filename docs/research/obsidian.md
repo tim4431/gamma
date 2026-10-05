@@ -125,7 +125,7 @@ headings, paragraphs and genuine lists, no `.obsidian/` folder.
   paragraphs, deeper blocks as nested lists), pages link by title
   (`[[Title]]`, `[[Folder/Title]]` when ambiguous), block mentions and synced
   blocks become `[[Title#^id]]` / `![[Title#^id]]` with ` ^id` written on the
-  target, a heading target links as `[[Title#Heading]]`, highlights are
+  target (a heading too: no `[[Title#Heading]]` is written), highlights are
   `[!quote]` callouts whose title links the bundled PDF's page
   (`[[paper.pdf#page=3|p. 3]]`), the PDF sits in `attachments/` and is the
   quoted `source: "[[paper.pdf]]"` property, labels become `tags`. The Gamma

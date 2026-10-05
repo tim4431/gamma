@@ -99,6 +99,27 @@ export async function chatNavigationScenarios(env) {
     }
   }
 
+  await step("chat navigation: a draft typed while the stored conversation loads stays", async () => {
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    await ctx.route("**/api/chats/home", async (route) => { await held; await route.continue(); });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await input.fill("Typed before the load");
+      const loaded = page.waitForResponse((res) => res.url().endsWith("/api/chats/home"));
+      release();
+      await loaded;
+      await page.waitForLoadState("networkidle");
+      assertEq(await input.inputValue(), "Typed before the load");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("chat navigation: the header exports the context the model is sent", async () => {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [
       { role: "user", text: "What is this paper about?" },

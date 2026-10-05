@@ -2,11 +2,11 @@
 
 Everything you can do in Gamma, one section per part of the app. The [README](../README.md) covers installing it; the section links there land here.
 
-**Contents:** [Getting started](#getting-started) · [Reading and highlighting](#reading-and-highlighting) · [Notes](#notes) · [AI chat](#ai-chat) · [Library and organization](#library-and-organization) · [Search](#search) · [Metadata and citations](#metadata-and-citations) · [Sharing a page](#sharing-a-page) · [Workspaces](#workspaces) · [Offline copies](#offline-copies) · [Gamma Connector](#gamma-connector) · [Assistants: Codex and Claude Code](#assistants-codex-and-claude-code) · [Import and export](#import-and-export) · [Backups](#backups) · [Install as an app](#install-as-an-app) · [Panels, tabs and navigation](#panels-tabs-and-navigation) · [Settings at a glance](#settings-at-a-glance) · [Shortcut cheat sheet](#shortcut-cheat-sheet)
+**Contents:** [Getting started](#getting-started) · [Reading and highlighting](#reading-and-highlighting) · [Notes](#notes) · [AI chat](#ai-chat) · [Library and organization](#library-and-organization) · [Search](#search) · [Metadata and citations](#metadata-and-citations) · [Sharing a page](#sharing-a-page) · [Workspaces](#workspaces) · [Offline copies](#offline-copies) · [Gamma Connector](#gamma-connector) · [Assistants: Codex and Claude Code](#assistants-codex-and-claude-code) · [Import and export](#import-and-export) · [Backups](#backups) · [Upgrading](#upgrading) · [Install as an app](#install-as-an-app) · [Panels, tabs and navigation](#panels-tabs-and-navigation) · [Report a problem](#report-a-problem) · [Settings at a glance](#settings-at-a-glance) · [Shortcut cheat sheet](#shortcut-cheat-sheet)
 
 ## Getting started
 
-1. **Sign in.** Your administrator gives you an account, or click **Continue as guest** (**Try the demo** on a demo server) to try things out: you get a workspace of your own that is deleted with everything in it after a while (a day unless the admin changed it; the guest button says how long and the account menu says when).
+1. **Sign in.** Your administrator gives you an account, or, where the server allows guests, click **Continue as guest** (**Try the demo** on a demo server) to try things out: you get a workspace of your own that is deleted with everything in it after a while (a day unless the admin changed it; the guest button says how long and the account menu says when).
 2. **Add a paper.** Click **+** in the top bar and paste any link — an arXiv page, a DOI, or a publisher page; Gamma finds the PDF (and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled). Or upload PDFs, or **drag files or whole folders into the window** — subfolders become library folders.
 3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to comment. That's a note; everything else builds on that.
 
@@ -27,7 +27,7 @@ On open, each paper's title, authors and venue are filled in automatically (arXi
 - **Click a highlight** to jump to its note (and quote it into the chat). **Right-click** it to recolor, link it to a paper, copy it as a reference point (also copies a deep link to the exact passage), or delete it. Highlights with a comment carry a small **speech-bubble badge** — hover it to read the note in place.
 - **Highlights already in the file** (made in Acrobat, Preview, SumatraPDF…) are imported as blocks when the paper is added; by default the embedded copies are then removed from the stored PDF, so nothing renders twice and a highlight you delete is gone from exports too. Settings → Reading & editing → *Imported annotations* → *Keep originals* leaves the file as it came instead.
 - **Zoom**: Ctrl+wheel (anchored at the cursor), pinch on touch, or the zoom buttons in the viewer's controls on its left edge (−, +, fit width). Zoom and reading position are remembered per paper and synced across your devices.
-- **Dark pages**: Settings → Appearance → *Flip page colors* inverts the page for night reading (display only; the PDF is untouched).
+- **Dark pages**: Settings → Appearance → *Dark PDF pages* inverts the page for night reading (display only; the PDF is untouched).
 
 ### Draw with a pen
 
@@ -176,7 +176,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 - **On the home page** Ctrl+F goes to the listing's *Filter by title or label* box instead: it matches page titles and folder or label names only, floats the matches to the top and dims the rest. When nothing matches, *Search inside notes and PDFs* (or Enter in the box) hands your words to the full search; with matches, the row under them does the same.
 - **Filter chips**: type a label or folder name and press Tab — label chips match exactly, folder chips include everything beneath them (`qc` pulls in `qc/neutral-atom`).
 - **Ctrl+P** is the quick way to another page: a palette listing your recent pages, open tabs and the rest, filtered by title, folder or label as you type (small typos are forgiven, like the library's filter box). Matching folders and labels get rows of their own and open their view. ↑↓ and Enter open the pick; **Ctrl+Enter** searches notes and PDFs for what you typed, **Shift+Enter** creates a page with it as the title.
-- **Enter / Shift+Enter** step through matches; the chevron collapses the result lists into a compact find bar (make that the default in Settings → Reading & editing).
+- **Enter / Shift+Enter** step through matches; on a page the search opens as a compact find bar, and the chevron expands the result lists (Settings → Reading & editing → *Search opens as* chooses which, for a page and for the home page).
 - Matching is forgiving: "3000" finds "3,000-qubit", even across a line break. Opening a library hit loads the paper and scrolls to the highlighted match.
 - Each result shows whether it is a paper or a page, its section's count, and the query marked in its title and text; notes read as plain text, without their markdown.
 
@@ -226,7 +226,7 @@ Your library lives on your server and opens from any browser — the office desk
 **Making one**
 
 - **Desktop app** (the easy way): open the remote server, open the workspace switcher, and click the **clone** chip on the workspace's row. The app creates a local server if needed, sets up the copy and opens it; from then on it syncs in the background whichever server the window shows, and the row's chip reads *open clone*.
-- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
+- **Any Gamma**: on the *server*, make a **Read and write** token in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
 
 A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Workspaces → Clones lists every copy with its state, conflicts and these actions.
 
@@ -252,7 +252,7 @@ Codex, Claude Code, DeepSeek Harness and any other MCP client can search and rea
 The assistant can also walk your folders, read the AI chat you kept with a page or folder, look at a PDF page as a picture (a figure, a scanned page), and export a page the way the Export dialog does: as Markdown, as the annotated PDF, or as your notes typeset as a PDF. For example: *"@Gamma, export my notes on the blockade paper as Markdown into docs/notes.md"*. Claude Code saves an exported PDF to a file it can move where you asked.
 
 - **Codex**: Settings → AI → Integrations → **Codex CLI**, pick your operating system, copy the one setup command and run it on the computer where you use Codex. It installs the Gamma plugin from a published release and opens Gamma sign-in; approve the workspace and start a new chat. Invoke `$gamma` in the CLI or pick Gamma from the plugin picker.
-- **Claude Code**: the same panel shows the connection command (`claude mcp add --transport http gamma <your-address>/mcp`); the plugin setup is in [plugins/gamma](../plugins/gamma/README.md). Sign in through `/mcp`, then run `/gamma:gamma` or just ask.
+- **Claude Code**: the same panel shows the connection command (`claude mcp add --transport http --scope user gamma <your-address>/mcp`); the plugin setup is in [plugins/gamma](../plugins/gamma/README.md). Sign in through `/mcp`, then run `/gamma:gamma` or just ask.
 - **DeepSeek Harness**: Settings → AI → Integrations → **DeepSeek Harness**. Create a read-only token (dsh has no browser sign-in), run the install command, which adds the Gamma plugin to dsh's web profile (needs pnpm), then start dsh with the start command and paste the token when asked. Gamma's tools appear as `mcp__gamma__…`; paste a Gamma page link with your question.
 - **Other MCP clients** use the server URL shown in the panel; sign in happens in the browser. Manual tokens are there for clients that cannot.
 - For a Gamma hosted remotely an administrator confirms the **Public server URL** once in Settings → Server, which enables assistant sign-in; no environment variables or restart.
@@ -286,12 +286,13 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 - **A workspace**: Settings → Workspaces → the row's *Data* menu → **Export** downloads a zip (pages, notes, highlights, uploaded PDFs); **Import** there restores or merges it. **Export all** takes every personal workspace at once.
 - **Snapshots**: Settings → Backups keeps server-side snapshots per workspace you can roll back to; rolling back first keeps the current state as a *Before restore* snapshot. **Add task** schedules them (hourly, daily, weekly, monthly or a cron expression); daily and weekly times are in your own time zone.
 - **The whole server** (administrators): Settings → Server → *Server backups* snapshots every account and workspace; restore with the server stopped (`manage.py backups --restore`).
+- **Off-site copies** (administrators): Settings → Backups → *Off-site copies* sends the databases and uploaded files to an S3-compatible bucket (AWS S3, Cloudflare R2, MinIO) every so often, so a lost disk costs at most one interval of work. Gamma keeps running on its own disk; the bucket is read only by a restore (`manage.py offsite --restore`, with the server stopped). The desktop app does not include this.
 
 Account credentials and private AI keys are never part of an export.
 
 ## Upgrading
 
-A new Gamma upgrades your data by itself. On its first start it takes a snapshot of every database into the data directory's `backups/` folder, then brings the data to its own shape, step by step; the log says what it did. The desktop app updates itself; a Docker server updates when its image is pulled (the compose template runs Watchtower, which does that for you), and the next start upgrades the data.
+A new Gamma upgrades your data by itself. On its first start it takes a snapshot of the databases into the data directory's `backups/` folder before it changes them, then brings the data to its own shape, step by step, each workspace when it is first opened; the log says what it did. The desktop app updates itself on Windows and Linux (on macOS it says when a new version is out and opens the release page); a Docker server updates when its image is pulled (the compose template runs Watchtower, which does that for you), and the next start upgrades the data.
 
 Very old data may need one stop on the way. Each release can upgrade data from a certain version on and drops the older steps; if your data is older than that, Gamma **changes nothing** and shows one page at its usual address instead of the app:
 
@@ -339,7 +340,7 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 | Group | Pane | What's there |
 |---|---|---|
 | Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
-| Preferences | Appearance | Theme (system + seven), flip page colors, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
+| Preferences | Appearance | Theme (system + seven), dark PDF pages, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
 | | Language and Translation | The interface language, the viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |
 | | Keyboard | Every shortcut, rebindable; what Enter makes (a new note or a new line) |
@@ -348,7 +349,7 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 | | Tool usage | Which tools the agent may use per chat kind, background fetching, the reading helper, online search services, tool limits |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
 | Library | Workspaces | Personal and shared workspaces, export / import, **Clones** (offline copies) |
-| | Backups | Scheduled backup tasks and server-side snapshots |
+| | Backups | Scheduled backup tasks and server-side snapshots; for admins, off-site copies to a bucket |
 | | Maintenance | Storage, search-index rebuild, metadata health table |
 | Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, the database check, server backups, the log |
 | Help & diagnostics | | This browser's session log, debug tracing, Report a problem |

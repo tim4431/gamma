@@ -695,7 +695,7 @@ push.
 
 A page of a local Gamma (the desktop sidecar, usually) can be published to
 the free share host, so its share link works while the laptop is closed
-(`gamma/publish.py`, the plan's step 6). The share host is a Gamma with
+(`gamma/publish.py`, the plan's step 5). The share host is a Gamma with
 cloud sign-in under the `provision` policy and the *Accept published pages*
 switch on ([cloud_accounts.md](cloud_accounts.md) "The share host"); the
 account server names it (`gamma_share_host` in its discovery document).
@@ -890,8 +890,8 @@ drives the popover's settings view, detach / link again and the merge chip;
 `publish.mjs` publishes end to end against a second Gamma started as the
 share host and a stand-in account server
 ([debugging.md](debugging.md)). The
-desktop's flow — the *keep offline* chip, the registry map, the
-*offline copy* / *original* cross-links, one copy per workspace — is a step
+desktop's flow — the *clone* chip, the registry map, the
+*clone* / *origin* cross-links, one copy per workspace — is a step
 of `desktop/test/e2e.js`.
 
 ## A replica on a device: the iPad

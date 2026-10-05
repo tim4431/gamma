@@ -171,9 +171,10 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 
 ## Endpoints
 
-### Session & account (`auth.py`)
+### Session & account (`auth.py`; the cloud routes in `cloud_auth.py`, `/auth/cloud/exchange` in `publish.py`)
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/health` | liveness probe, `{ok: true}` (`app.py`; no session) |
 | POST | `/login`, `/login-guest`, `/logout` | session management (`/login` refuses an account with an empty password hash — one only its cloud identity signs in, and every guest). `/login-guest` mints a fresh guest account with its own workspace (`gamma/guests.py`, [guests.md](guests.md)) → `{ok, username}` (`guest-<8 chars>`); 403 on a share host, 503 once `GAMMA_GUEST_MAX` guests are live. A guest's `/logout` deletes the account |
 | GET | `/server-config` | public: what the login page offers besides a password — `{cloud: {enabled, issuer}, password_login, registration, guest, guest_ttl_hours, guest_seeded, demo, page_host}` (`cloud.enabled` false while the server still has to be connected; `guest` false on a share host; `guest_ttl_hours` how long a guest account lives; `guest_seeded` whether a guest starts with the `GAMMA_GUEST_SEED` library; `demo` whether demo mode is on — [guests.md](guests.md); `page_host` the per-account page hostname pattern from `GAMMA_PAGE_HOST`, e.g. `{username}-pages.gammapdf.com`, "" when unset — how the app knows it was opened on a page host; `read_only` true while a hosted container's plan keeps it read-only, `hosted` `{plan, status}` on a hosted container that has synced, else null — "Hosted containers") ([cloud_accounts.md](cloud_accounts.md)) |
 | POST | `/auth/cloud/exchange` | the share host's half of publishing ([mirror.md](mirror.md) "Publishing"): `Authorization: Bearer <Gamma Cloud access token>`, body `{server?}` (the calling server's name) → `{token, workspace_id, username, url}` — a write-scope integration token (365 days, named "Published pages from <server>", replacing the live one of that name) on the person's default personal workspace here, the account resolved under the sign-in policy like a first sign-in (provisioned under `provision`, pending invitations claimed), and this server's address. 403 unless the server accepts published pages (`cloud_share_host`), for an unconfirmed cloud e-mail, or when the policy refuses the account; 401 for a token the account server does not know; 503 when it cannot be asked; 429 past 20 per IP or 10 per cloud account in 10 minutes |
@@ -341,18 +342,8 @@ than 30 days ago the same way, every hour.
 
 ### PDFs & uploads (`pdf.py`, `uploads.py`)
 
-Publisher connections use `routers/publisher_sessions.py` and require a personal
-account; guest and share-token access is rejected.
-
-| Method | Endpoint | Behavior |
-|---|---|---|
-| GET | `/publisher-sessions` | Connection metadata and supported `publisher_roots`; never cookie values |
-| POST | `/publisher-sessions` | Save `{host, cookies, user_agent?}` for the signed-in account; requires HTTPS or localhost, JSON, and a body of at most 256 KiB |
-| DELETE | `/publisher-sessions/{host}` | Disconnect that account's host; returns `{ok: true}` |
-
-See [publisher sessions](paper_metadata.md#connected-publisher-sessions) for
-encryption, expiry and request scoping. The PDF endpoints below use the same
-guarded fetch path.
+The PDF endpoints below fetch through the same guarded path as the saved
+publisher connections ([Publisher sessions](#publisher-sessions-routerspublisher_sessionspy)).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -577,7 +568,7 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 ### Notices (`notices.py`, `gamma/notices.py`) — see [settings.md](settings.md) "Notices"
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. The sources (`update` and `log-errors` for admins; `backup-failed`, `mirror-conflicts`, `publish-conflicts`, `cloud-sync`, `cloud-sync-choice`, `free-translate`, `storage` for everyone) are the table in [settings.md](settings.md) "Notices". Guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
+| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. The sources (`update`, `log-errors` and `db-damage` for admins; `backup-failed`, `mirror-conflicts`, `publish-conflicts`, `cloud-sync`, `cloud-sync-choice`, `hosted`, `free-translate`, `storage` for everyone) are the table in [settings.md](settings.md) "Notices". Guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
 | POST | `/notices/{id}/seen` | `{fingerprint}` — the account has seen this version of the notice (kept in the account-wide `notices-seen` pref); it stays quiet until the fingerprint changes. 403 for guests and tokens, 400 for a malformed id or fingerprint |
 
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
@@ -588,7 +579,7 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 | DELETE | `/integrations/tokens/{id}` | revoke a connection |
 | GET | `/integrations/oauth/request?request_id=` | the pending consent (client name, the account's workspaces) for the consent screen |
 | POST | `/integrations/oauth/consent` | approve or deny a pending sign-in for one workspace |
-| GET | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource` | OAuth discovery for MCP clients (no `/api` prefix) |
+| GET | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource` (and `…/oauth-protected-resource/mcp`) | OAuth discovery for MCP clients (no `/api` prefix) |
 | POST | `/oauth/register`; GET `/oauth/authorize`; POST `/oauth/token` | dynamic client registration, the authorization redirect, the PKCE code exchange (no `/api` prefix) |
 | POST | `/mcp` | the Streamable HTTP MCP endpoint (bearer token or OAuth access token; no `/api` prefix, browser origins refused) |
 
@@ -625,12 +616,18 @@ never a guest.
 | GET | `/publish/limit` | the share host's half: `{used, max, plan}` — the root pages of the request's workspace (a publishing mirror's token names it) and the cap its owner's plan puts on them (`max` null = none). 404 on a server that is not a share host. Nothing cached |
 | GET | `/pages/resolve-public?host=&path=` | no auth: a page host's pretty address → `{share, page_id}`, the share token the share view opens with (audience and role its own). `host` must match `GAMMA_PAGE_HOST` (the username read out of it), `path` is `/<slug>-<id>` or `/<id>`; only the trailing id counts, a root page with a share in that account's default personal workspace. 404 otherwise (counted like an unknown share token); 429 past 120 per IP in 5 minutes |
 
-### Publisher sessions (`routers/publisher_sessions.py`) — see [extension.md](extension.md)
+### Publisher sessions (`routers/publisher_sessions.py`)
+
+Personal accounts only; guest and share-token access is rejected. Encryption,
+expiry and request scoping are in
+[paper_metadata.md](paper_metadata.md#connected-publisher-sessions), the
+Connector's side in [extension.md](extension.md).
+
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/publisher-sessions` | the account's connected publisher hosts (metadata only) and the supported roots |
-| POST | `/publisher-sessions` | store a cookie snapshot for one host (JSON, 256 KiB cap; HTTPS or localhost, personal accounts only) |
-| DELETE | `/publisher-sessions/{host}` | forget a host |
+| GET | `/publisher-sessions` | the account's connected publisher hosts (metadata only, never cookie values) and the supported `publisher_roots` |
+| POST | `/publisher-sessions` | save `{host, cookies, user_agent?}` for the signed-in account; requires HTTPS or localhost, JSON, and a body of at most 256 KiB |
+| DELETE | `/publisher-sessions/{host}` | disconnect that account's host; returns `{ok: true}` |
 
 ### Admin (`admin.py`, prefix `/api/admin`)
 | Method | Path | Purpose |

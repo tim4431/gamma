@@ -44,35 +44,8 @@ nearby, since most are extensions of existing code rather than new systems.
 unique keys, a pinned `cite_key`, and a share-link URL that always serves the
 current `.bib`. See
 [import_export.md](../dev/import_export.md#bibtex-bibliography). The "Copy
-BibTeX" action on a multi-selection proposed below (and in the suggested
-order) is still unbuilt: the library view has no such command. The rest of
-this entry is the survey as written.
-
-**Zotero.** Select any items, a collection or the whole library and export
-to BibTeX, BibLaTeX, RIS, CSL JSON, EndNote XML, RDF, CSV, or drag items
-into a text editor to paste formatted entries. Better BibTeX adds stable
-citation keys generated from a pattern (default `auth.lower + shorttitle(3,3)
-+ year`, with `a`/`b` suffixes on clashes), pinned keys, and *auto-export*: a
-collection is linked to a `.bib` path and rewritten whenever its items
-change, which is how Zotero libraries feed Overleaf and local LaTeX builds.
-
-**Gamma.** BibTeX exists only per page: the Share popover's copy button, a
-```` ```bibtex ```` fence inside each page of the Markdown and Obsidian
-exports, and the AI `cite` tool, which is read by the model, not saved to a
-file. Export modes (`routers/export.py`) are annotated PDF, notes PDF,
-readable Markdown, Obsidian, Logseq, Zotero RDF and the Gamma zip; none is a
-bibliography. Citation keys are first-author surname plus year with no
-clash handling and no way to pin one, so two papers by the same author in
-one year collide silently.
-
-**Nearest fit.** A `bibtex` export mode over the existing page-or-folder
-`ExportJob` that concatenates `properties.bibtex`, with keys made unique at
-export time (append `a`, `b`, …) and a per-page override field for a
-pinned key. A "Copy BibTeX" action on a multi-selection in the library view
-covers the quick case without a file. Auto-export maps naturally onto a
-share-link-like URL that always serves the folder's current `.bib`, which is
-what Overleaf's "upload from URL" refresh consumes; that avoids running a
-file watcher at all.
+BibTeX" action on a multi-selection that the survey also proposed (see the
+suggested order) is still unbuilt: the library view has no such command.
 
 ### 2. Formatted citations in a style (CSL)
 
@@ -143,8 +116,8 @@ columns (creator, year, publication, date added, Zotero 9 adds "added by").
 
 **Gamma.** Search chips for folder and label are not saveable. `kind` is one
 of seven values and only `book` changes anything. The list view has fixed
-columns (kind, date, pin) and sorts by modified, added, viewed or title, not
-by author, year or venue. There is no read/unread state.
+columns (kind, date, pin) and sorts by modified, added, viewed, title or a
+custom order, not by author, year or venue. There is no read/unread state.
 
 **Nearest fit.** Saved searches are a stored query plus a pseudo-folder in
 the sidebar, which the label view already demonstrates. Sort by author and

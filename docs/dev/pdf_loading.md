@@ -3,7 +3,7 @@
 How a PDF gets from the workspace's `uploads/` to a painted page in the
 viewer, and why each part is shaped the way it is. The measurements at the end
 are what the design is judged by; rerun them before changing any of it. The
-survey that led here is [research/pdf_loading.md](../research/pdf_loading.md).
+survey that led here is [research/pdf-loading.md](../research/pdf-loading.md).
 
 The idea in one sentence: **the server already knows the document, so the
 client lays it out before it parses, picks its transport by size, and never
@@ -19,15 +19,16 @@ is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
 backups harmlessly, and is purged with the index when no page carries the
 document any more (`pdf_index.purge_unused`).
 
-Who writes it: `storage.store_pdf` (uploads, imports, file chips), the
-`/api/pdf` proxy's save path and `/api/clip` schedule it on a background
-thread the moment the file lands, so the first open finds it ready; the search
-indexer computes it while it has the file open anyway; and the endpoint
-computes it on demand for anything older, in pdfium, in FastAPI's threadpool
-(the route is a sync `def`). A walk already running for the document is
-joined, not repeated, so opening a book right after uploading it waits for
-the upload's own walk instead of queueing a second one behind the pdfium
-lock.
+Who writes it: `storage.store_pdf` (uploads, imports, file chips) and
+`storage.store_pdf_path` (an upload sent in parts, `upload_parts.finish`;
+[api.md](api.md) "/uploads/parts"), the `/api/pdf` proxy's save path and
+`/api/clip` schedule it on a background thread the moment the file lands, so
+the first open finds it ready; the search indexer computes it while it has
+the file open anyway; and the endpoint computes it on demand for anything
+older, in pdfium, in FastAPI's threadpool (the route is a sync `def`). A walk
+already running for the document is joined, not repeated, so opening a book
+right after uploading it waits for the upload's own walk instead of queueing
+a second one behind the pdfium lock.
 
 Every manifest walk is `pdf_text.page_sizes`, behind the same lock as text
 extraction. The lock is taken per page (and once each for the open and the

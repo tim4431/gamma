@@ -44,9 +44,9 @@ opens a dialog asking Fetch from cloud / Push to cloud; Settings → Account &
 sync → Settings sync has one Sync now button (`gamma/cloud_sync.py`,
 [cloud_accounts.md](cloud_accounts.md)). `PUT /api/prefs/profile`
 (whole-object replace, kept for scripts and tests) requires an object. Both
-share the prefs cap of 64 KB, enough for four long custom prompts. Step 17
-of the migrations turned the old `appearance` key into the profile's first
-two entries.
+share the prefs cap of 64 KB, enough for four long custom prompts. The
+migration that folded the old `appearance` key into the profile is below
+the upgrade floor now (`MIN_UPGRADABLE` in `gamma/migrations.py`).
 
 Each account section's tag shows where its own settings stand. A section
 names the preferences it holds: `Section`'s `prefs`, taken pane by pane

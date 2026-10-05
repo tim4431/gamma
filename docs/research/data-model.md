@@ -9,11 +9,22 @@ keeps the diagnosis and the reasoning, so the ranking can be revisited when
 a redesign is actually on the table.
 
 Since then the six changes ranked below landed, as schema versions 25–30
-([dev/migrations.md](../dev/migrations.md)); the dev docs describe the
-result. Two details went otherwise than written here: the highlight's
+([dev/migrations.md](../dev/migrations.md)): account ids (25), the hot
+columns (26), the change log (27), chats and the notes index in `pages.db`
+(28), folders and labels as blocks (29) and the highlight shape (30); the
+dev docs describe the result. Details went otherwise than written here:
+the change log, `page_changes`, keeps one row per page whose `seq` moves
+to the next on every write, not a row per change; the hot columns are a
+stored `page_id` and the generated `kind` (with `folder` and `label`
+cases) and `doc_id`, with no `highlight_id` column (the block id became
+the highlight's id) and no `page_folders` join; the highlight's
 rectangles keep the viewer's measured frame (the page size once beside
 them) rather than PDF points, and a text box keeps `pdf_page`, its only
-page, since it has no position.
+page, since it has no position. Two of the smaller redundancies went
+later: `sessions.guest_date` (step 31), and recents, open tabs and
+reading positions moved into each workspace's `pages.db` as
+`workspace_prefs` (step 34), still one value per key, last write wins.
+`bibtex` is still stored beside `meta`.
 
 ## What the survey found
 

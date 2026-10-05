@@ -19,7 +19,7 @@ Status: **v0**, plus the preference profile, the linked-server list and
 the username lookup (the account server's half of steps 7 and 8 of the
 plan). Paid plans are sold through Stripe ([billing.md](billing.md)). The
 effective plan is the higher of a grant (an admin's or an invite's) and a
-live subscription. Plus and Pro accounts get a hosted container
+live subscription. Lite, Plus and Pro accounts get a hosted container
 ([hosted.md](hosted.md)). The consumer side, "Sign in with Gamma Cloud" on
 every Gamma server, is under "The Gamma side" below.
 
@@ -29,7 +29,7 @@ every Gamma server, is under "The Gamma side" below.
 |---|---|
 | accounts | e-mail, username, password (bcrypt; none for an account made through Google/GitHub), display name, plan, admin flag, soft deletion; the random account id is the identity, e-mail and username both change |
 | outside sign-in | Google (OIDC + the one-tap prompt) and GitHub (OAuth), linked to accounts |
-| portal | sign in / register / verify / reset, then Overview, Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
+| portal | sign in / register / verify / reset, then Overview, Plan ([billing.md](billing.md)), Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
 | identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
@@ -124,7 +124,7 @@ the signing keys and every token hash.
 | `audit` | every account-changing event |
 | `prefs` | the preference profile: (`account_id`, `key`) → `value` (JSON text) and `updated_at`, the version (step 4) |
 | `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5), `version` (the build label it last reported, `''` until it does) and `schema` (its data directory's schema version, NULL until it reports; step 8) |
-| `hosts`, `hosted_servers`, `fleet_jobs` | the fleet's hosts, the hosted servers and the agents' job queue (step 9; [hosted.md](hosted.md) "Tables") |
+| `hosts`, `hosted_servers`, `fleet_jobs` | the fleet's hosts, the hosted servers and the agents' job queue (step 9; `hosts.orphans`, step 10; [hosted.md](hosted.md) "Tables") |
 | `subscriptions`, `billing_events` | the account server's copy of each Stripe subscription, and the webhook events it has seen (step 9; [billing.md](billing.md)). `accounts.granted_plan` is the plan an admin or an invite gave; `accounts.plan` is the effective one |
 
 Every secret at rest is a SHA-256 of a long random token
@@ -584,15 +584,16 @@ Clients tab and can delete it there.
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
-`clients`, `delete-client`, `rotate-key`, `settings`, and the fleet's
-`hosts`, `add-host`, `servers`, `provision`, `jobs` ([hosted.md](hosted.md)
-"Admin"). Every command but `setup` and
+`clients`, `delete-client`, `rotate-key`, `settings`, billing's
+`subscriptions` and `billing-sync` ([billing.md](billing.md)), and the
+fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
+([hosted.md](hosted.md) "Admin"). Every command but `setup` and
 `migrate` refuses an outdated `cloud.db`. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
 patch accounts (plan, admin, verified), resend a verify mail, delete,
 restore, purge; invites; `GET`/`PATCH /settings` (the sign-up gate,
 `settings.admin_view` / `settings.update`); OIDC clients; the audit log;
-hosts, hosted servers and jobs. The portal's Admin page, the API and `manage.py` are one surface: the page
+the subscriptions; hosts, hosted servers and jobs. The portal's Admin page, the API and `manage.py` are one surface: the page
 and the CLI call the same functions.
 
 ## Tests
@@ -642,14 +643,18 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
+- `test_billing.py`, `test_hosted.py` and `test_fleet.py`: billing and the
+  hosted servers ([billing.md](billing.md), [hosted.md](hosted.md) "Tests").
 
 `conftest.py` points the data directory at a temp folder and the mail
 backend at the in-memory outbox before the package is imported. CI runs
-the tests in the `test` job of `cloud.yml` on a PR that touches `cloud/`.
-Dispatching `cloud.yml` from any branch (the `update-account-server`
-skill) tests and publishes `ghcr.io/<owner>/gamma-cloud:latest`; no merge
-to `main` is involved. The Gamma app's `check.yml` / `docker.yml` skip
-changes that only touch the account server
+the tests in the `test` job of `cloud.yml` on a PR to `main` that touches
+`cloud/`. Dispatching `cloud.yml` from any branch (the `build-cloud` and
+`update-account-server` skills) tests and publishes
+`ghcr.io/<owner>/gamma-cloud:latest` and `:sha-<short>`; no merge to
+`main` is involved. The fleet agent's tests and image are `fleet.yml`'s
+([hosted.md](hosted.md) "Tests"). The Gamma app's `check.yml` /
+`docker.yml` skip changes that only touch the account server
 ([github_actions.md](github_actions.md)).
 
 ## The Gamma side: Sign in with Gamma Cloud
@@ -921,7 +926,7 @@ Two more settings shape what a share host serves, both environment only
 | plan | published pages |
 |---|---|
 | `free` | 5 (`GAMMA_FREE_PAGE_LIMIT` overrides it; 0 lifts the cap) |
-| `plus`, `pro`, anything else | unlimited |
+| `lite`, `plus`, `pro`, anything else | unlimited |
 
 The plan is the `plan` claim the share host stored for the identity at its
 last exchange or sign-in.
@@ -975,7 +980,15 @@ A paid hosted container runs with `GAMMA_HOSTED=1` next to the cloud
 variables above. `GAMMA_CLOUD_CLIENT_ID` and `GAMMA_CLOUD_CLIENT_SECRET`
 must name the container's own confidential client: the sync
 authenticates with them, and without them it logs a warning and does
-nothing.
+nothing. Two first-run behaviours of the image are off there:
+
+- **No seeded admin.** With `GAMMA_HOSTED` and `GAMMA_CLOUD_ADMIN_SUBJECT`
+  set, `seed.ensure_admin_seed` creates no `admin` account. The owner
+  becomes admin at their first cloud sign-in as the admin subject; a
+  seeded login would belong to nobody and take one of the plan's accounts.
+- **No guests.** The account server starts every container with
+  `GAMMA_GUEST_MAX=0` ([guests.md](guests.md)), since a guest would not
+  count against the plan's accounts.
 
 **The sync.** At startup and then every hour (the app's `every()` loop,
 `hosted.tick`) the container posts its report to

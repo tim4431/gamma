@@ -8,6 +8,7 @@ notes or files and imports nothing from `backend/`.
 Architecture and the full reference: [docs/dev/cloud_accounts.md](../docs/dev/cloud_accounts.md).
 The hosted servers and the fleet agent that runs them ([fleet/](fleet/README.md),
 tested on its own with `cd fleet && python -m pytest -q`): [docs/dev/hosted.md](../docs/dev/hosted.md).
+The paid plans and Stripe: [docs/dev/billing.md](../docs/dev/billing.md).
 The product plan it serves: [docs/research/cloud-plans.md](../docs/research/cloud-plans.md).
 
 ```bash

@@ -34,19 +34,20 @@ kept as its `image_tag`; an upgrade run moves that tag.
 
 ## Tables
 
-All three were added in schema step 9 (`db.py`).
+All three were added in schema step 9 (`db.py`), `hosts.orphans` in step
+10.
 
 | table | what |
 |---|---|
-| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `last_seen_at` |
-| `hosted_servers` | one per account (`account_id` unique): `label` (the hostname label, the username at creation, unique), `host_id`, `client_id` (its OIDC client, kind `container`), `image_tag` (the tag it runs), `state`, `read_only`, `limits` (the last sync answer, JSON), `report` (what the container last reported, plus the agent's `agent` part), `reported_at`, `synced_at`, `state_changed_at`, `created_at`, `deleted_at` |
-| `fleet_jobs` | the queue: `host_id`, `server_id`, `kind`, `payload` (JSON), `state`, `attempts`, `result` (JSON text, 4000 chars at most), `wave` (`<run>/<nnn>` for an upgrade run), `created_at`, `started_at`, `finished_at` |
+| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `orphans` (JSON list: the labels of containers its agent reported that no server row on the host names), `last_seen_at` |
+| `hosted_servers` | one per account (`account_id` unique): `label` (the hostname label, the username at creation, unique), `host_id`, `client_id` (its OIDC client, kind `container`), `image_tag` (the tag it runs), `state`, `read_only`, `limits` (the last sync answer, JSON, which holds the container's size too), `report` (what the container last reported, plus the agent's `agent` part), `reported_at`, `synced_at`, `state_changed_at`, `created_at`, `deleted_at` |
+| `fleet_jobs` | the queue: `host_id`, `server_id` (empty for an orphan's removal), `kind`, `payload` (JSON), `state`, `attempts`, `result` (JSON text, 4000 chars at most; a `logs` job's 100,000, its oldest lines dropped first), `wave` (`<run>/<nnn>` for an upgrade run), `created_at`, `started_at`, `finished_at` |
 
 A job is `queued` (the agent may take it), `held` (a later wave of an
 upgrade run), `running` (handed to the agent), `done`, `failed` or
 `canceled`. A `create` job's payload holds the container's client secret.
-It is blanked to `{}` when the job finishes or is canceled, and the
-admin API never shows a payload's `env`.
+It is blanked to `{}` when the job finishes, times out or is canceled, and
+the admin API never shows a payload's `env`.
 
 ## Server states
 
@@ -113,6 +114,22 @@ A server whose container was never made (its last `create` job is not
 change between Plus and Pro reaches the container at its next hourly
 sync. No `sync` job exists: the container syncs at startup and every hour.
 
+**Container size.** Each hosted plan in `config.PLAN_LIMITS` names a
+`memory_mb` and `cpus`: Lite 512 MB and 1 CPU, Plus 768 and 1, Pro 1536
+and 2. The `create` payload carries them and `limits` keeps them. A pass
+whose new limits have another size than the stored ones resizes the
+container (`hosted._resize`, through `_resize_if_moved`). It enqueues an
+`upgrade` job with `{label, memory_mb, cpus}` and no image, which the
+agent applies in place: the same container and image, no pull and no
+restart, and a stopped container stays stopped. A resize still queued
+takes a newer size instead of a second job. Before the container exists,
+a queued `create` job takes the new size, and a `create` already running
+is resized once it is done. A late result of a `create` whose payload was
+blanked no longer says its size, so it is resized to be sure. A lapse keeps the last hosted plan's limits, so it never resizes.
+Rows stored before sizes existed have none in `limits`; they get them at
+the next pass without a resize, and their containers keep the agent's
+default size until the plan changes.
+
 **`tick(conn)`**, hourly from `app.purge`, which commits:
 
 1. the stale-host alarm (`fleet.stale_hosts`): a host silent for 15
@@ -121,7 +138,10 @@ sync. No `sync` job exists: the container syncs at startup and every hour.
    placement already skips a host by its `last_seen_at`, its first
    heartbeat back makes it a candidate again, and `accepting` stays the
    admin's choice;
-2. a job `running` for over an hour (`fleet.JOB_TIMEOUT`) is failed;
+2. a job `running` for over an hour (`fleet.JOB_TIMEOUT`) is failed, with
+   `timed_out` in its result, and a `create` job's payload is blanked. A
+   result the agent sends later is still taken unless an admin retried or
+   canceled the job meanwhile;
 3. each server that is not deleted, in its own savepoint so one failure
    does not stop the rest:
    - a `provisioning` server with no host is placed again;
@@ -146,11 +166,18 @@ restore within the grace period resumes it. Before an account row is
 purged, `hosted.purge_account` deletes a live server now and removes the
 row, which references the account.
 
-**Placement** (`fleet.place`): among hosts that are accepting, were seen
-within 15 minutes and have more free disk (`disk_mb - disk_used_mb`) than
-the plan's `quota_mb`, the one with the most free memory. With none the
-row stays `provisioning` with `report.note` = "waiting for a host with
-room", and the tick tries again.
+**Placement** (`fleet.place`) counts committed memory, not what a host
+happens to use. A host's free memory is its `memory_mb` less the
+`memory_mb` of every server on it that is not deleted and less 1024 MB it
+keeps for itself (`fleet.HOST_RESERVE_MB`), floored at 0. A host qualifies
+when it is accepting, was seen within 15 minutes, has more free disk
+(`disk_mb - disk_used_mb`) than the plan's `quota_mb` and at least the
+plan's `memory_mb` free. The one with the most free memory wins, the
+oldest on a tie. With none the row stays `provisioning` with
+`report.note` = "waiting for a host with room". Every heartbeat places
+the waiting servers (`hosted.place_waiting`), so a new host's first report
+takes them at once, and the hourly tick tries too. *Provision* on a
+waiting server places it now instead of refusing it as one that exists.
 
 ## The sync
 
@@ -167,12 +194,14 @@ limits, computed fresh and stored as `limits`:
 ```json
 {"plan": "plus", "status": "grace", "read_only": false, "policy": "refuse",
  "max_accounts": 1, "quota_mb": 6144, "max_upload_mb": 100,
+ "memory_mb": 768, "cpus": 1.0,
  "offsite": {"interval_s": 86400, "keep": 7},
  "grace_until": "2026-10-10T09:00:00.000Z",
  "message": "Payment failed; this server becomes read-only on 10 Oct unless the card is fixed at account.gammapdf.com/plan."}
 ```
 
-The plan's numbers come from `config.PLAN_LIMITS`. `status` follows the
+The plan's numbers come from `config.PLAN_LIMITS`. `memory_mb` and `cpus`
+are the container's size, which Gamma ignores. `status` follows the
 state table above. `grace_until` is set only in grace. `message` is one
 sentence the container shows: the grace deadline, the read-only stop
 date, the deletion date, or the suspension, and empty when all is well.
@@ -186,8 +215,9 @@ read_only, limits, report, reported_at, synced_at, host}}`
 (`hosted.status_for`).
 
 **In the account's server list.** `servers.of_account`, which feeds
-`/api/me` (the desktop launcher), the Overview and the Devices page, puts
-the account's hosted server first while it is not deleted. The row has the
+`/api/me` (meant for the desktop launcher, which does not read it yet),
+the Overview and the Devices page, puts the account's hosted server first
+while it is not deleted. The row has the
 same shape as a linked server's, with `kind: "hosted"`, `hosted: true`,
 `name` "Your hosted Gamma", the server's `state`, `version` and `schema`
 from its last sync, and `last_seen_at` from `synced_at`. When the
@@ -211,24 +241,35 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   is there, so an idle poll never holds it.
 - `POST /api/fleet/jobs/{id}` `{"state": "done"|"failed", "result": {...}}`
   for a job of this host that is `running` (404 for another host's job,
-  409 for one not running). A done `create` moves the server to
-  `running` and sends the ready mail. A failed one leaves it
-  `provisioning` with the error in `report.note`. A done `upgrade` sets
-  `image_tag`. Then the waves are checked.
+  409 for one not running). A job that timed out (tick step 2) still
+  takes its late result, unless an admin retried or canceled it since. A
+  done `create` moves the server to `running`, clears `report.note` and
+  sends the ready mail; a failed one leaves it `provisioning` with the
+  error in `report.note`. A done `upgrade` with a `tag` sets `image_tag`,
+  and so does a done `rollback` whose reported image is
+  `FLEET_IMAGE:<tag>`. A done `delete` with no server drops its label
+  from the host's orphans. Then the waves are checked.
 - `POST /api/fleet/heartbeat` `{agent_version, memory_mb, disk_mb,
   memory_used_mb, disk_used_mb, containers: [{label, running, health,
-  memory_mb, data_mb, image}]}` updates the host (`last_seen_at` too) and,
-  for each container of a server on this host, the server's
-  `report.agent` (with its own `last_seen_at`).
+  memory_mb, memory_limit_mb, data_mb, image}]}` updates the host
+  (`last_seen_at` too) and, for each container of a server on this host,
+  the server's `report.agent` (with its own `last_seen_at`). A label that
+  no server row on this host names, in any state, is an orphan. Each
+  heartbeat replaces the host's `orphans`, and the admin's view leaves out
+  a label a row has named since.
 
-Job payloads:
+Job payloads and results:
 
-| kind | payload |
-|---|---|
-| `create` | `{label, account_id, plan, image, env, data_dir, memory_mb, cpus, network, public_url}`. `env`: `GAMMA_HOSTED=1`, `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY` (the plan's), `GAMMA_CLOUD_ADMIN_SUBJECT` (the account id), `GAMMA_PUBLIC_URL`. `memory_mb`, `cpus` and `network` are null, which means the agent's defaults |
-| `start`, `stop`, `restart` | `{label}` |
-| `delete` | `{label, account_id}` |
-| `upgrade` | `{label, image, tag}` |
+| kind | payload | result when done |
+|---|---|---|
+| `create` | `{label, account_id, plan, image, env, data_dir, memory_mb, cpus, network, public_url}`. `env`: `GAMMA_HOSTED=1`, `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY` (the plan's), `GAMMA_CLOUD_ADMIN_SUBJECT` (the account id, which also stops the image seeding an `admin` of its own), `GAMMA_PUBLIC_URL`, `GAMMA_GUEST_MAX=0` (no guest logins: a guest would not count against the plan's accounts). `memory_mb` and `cpus` are the plan's; `network` is null, the agent's own | `{container, image, health}` |
+| `start`, `stop`, `restart` | `{label}` | `{container, health}`; `stop`: `{container, stopped}`, or a `note` when there is no container |
+| `delete` | `{label, account_id}`; an orphan's removal has `account_id` `""` and no server | `{removed, data, bucket_prefix, bucket_objects}` |
+| `upgrade` | `{label, image, tag}`; a resize is `{label, memory_mb, cpus}` | `{container, image, previous, memory_mb, cpus, health}` |
+| `rollback` | `{label}` | `{container, image, previous, health}` (or a `note`: already rolled back) |
+| `logs` | `{label}` | `{container, lines, since}`: the last 200 lines, each with its Docker timestamp; `since` is the oldest one's, or `""` |
+
+A failed job's result is `{"error": "..."}`.
 
 The `create` job's client is made on first use (kind `container`,
 redirect `https://<label>.<domain>/api/auth/cloud/callback`, owner = the
@@ -239,13 +280,38 @@ fleet network's subnet.
 
 **Upgrade waves.** `fleet.upgrade(tag, wave_size, server_ids?)` takes the
 servers with a host in `running`, `grace`, `read_only` or `suspended`
-(only `server_ids` when given; servers that already have an upgrade
-pending are skipped) and enqueues one `upgrade` job each to
-`FLEET_IMAGE:<tag>`, in waves of `wave_size` under a run id: wave 1
-`queued`, the rest `held`. `release_waves` queues a run's next wave only
-when every job of the earlier waves is `done` or `canceled`. A `failed`
-job therefore pauses the run until an admin retries it (the same job id
-is queued again, so its wave can finish) or cancels it.
+(only `server_ids` when given; servers that already have an image upgrade
+pending are skipped, but a pending resize does not count) and enqueues one
+`upgrade` job each to `FLEET_IMAGE:<tag>`, in waves of `wave_size` under a
+run id: wave 1 `queued`, the rest `held`. `release_waves` queues a run's
+next wave only when every job of the earlier waves is `done` or
+`canceled`. A `failed` job therefore pauses the run until an admin retries
+it (the same job id is queued again, so its wave can finish) or cancels
+it. An upgrade does not change the container's size and a resize never
+touches its image, so the two give the same result in either order.
+
+`fleet.upgrade_one(server_id, tag)` is one server's upgrade outside any
+wave: 409 unless the server is in one of those states with a host and has
+no image upgrade pending. Its `image_tag` moves when the job is done. A
+server is `outdated` while its image (`FLEET_IMAGE:image_tag`) differs
+from `fleet.default_image()` (`FLEET_IMAGE:FLEET_IMAGE_TAG`).
+
+**Orphans.** `fleet.remove_orphan(host_id, label)` enqueues a `delete`
+job with `{label, account_id: ""}` and no server. The container and its
+data directory go; the bucket prefix stays, since it may belong to the
+account's live server on another host. It answers 404 for a label that
+is not an orphan on that host and 409 when a server row there has the
+label. A removal already pending is returned again rather than doubled.
+A server can take the label after the removal was queued, so the check is
+made again when the job would be handed to the agent (`claim` cancels it,
+naming the server) and when it is retried (409). Running it then would
+delete that server's container and data.
+
+**Retries and timeouts.** `fleet.retry` queues a `failed` or `canceled`
+job again under its id. It refuses any job of a deleted (or purged) server
+but its `delete` job, and a `create` job that a later one replaced (a
+deleted row brought back has a new one). A retried `create` gets a new
+payload and secret.
 
 ## The agent
 
@@ -253,8 +319,9 @@ is queued again, so its wave can finish) or cancels it.
 in its own image (`cloud/fleet/Dockerfile`: `docker` and `boto3`). The
 module docstring lists the environment: `GAMMA_FLEET_ACCOUNT_URL`,
 `GAMMA_FLEET_HOST_TOKEN`, `GAMMA_FLEET_NETWORK` (`gamma-fleet`),
-`GAMMA_FLEET_DATA_ROOT` (`/srv/gamma`), `GAMMA_FLEET_MEMORY_MB` (768),
-`GAMMA_FLEET_CPUS` (1), and the optional bucket `GAMMA_FLEET_S3_*`.
+`GAMMA_FLEET_DATA_ROOT` (`/srv/gamma`), `GAMMA_FLEET_MEMORY_MB` (768) and
+`GAMMA_FLEET_CPUS` (1) for a job that names no size, and the optional
+bucket `GAMMA_FLEET_S3_*`.
 
 The loop: a heartbeat when due (every five minutes, a minute after a
 failed one), one long poll, the job it got. A poll that comes back empty
@@ -265,62 +332,131 @@ error text and is never raised.
 
 A server's container is `gamma-<label>`, labelled `gamma.label`,
 `gamma.account` and `gamma.plan`, restart `unless-stopped`, with
-`<root>/<label>/data` on `/data`, `mem_limit` and `nano_cpus`, on the
-fleet network. What it was created with (image, environment, limits,
+`<root>/<label>/data` on `/data`, on the fleet network. Its limits are
+`mem_limit`, `memswap_limit` (twice the memory, Docker's default for
+`--memory`) and a CPU quota (`cpu_quota` per `cpu_period` of 100 ms), not
+`nano_cpus`, because Docker's update changes only the quota. What it was created with (image, environment, limits,
 network) is kept in `<root>/<label>/container.json` (mode 600), so
-`start` can rebuild a missing container and `upgrade` reuses the
-configuration. With a bucket configured every container also gets
+`start` and `restart` can rebuild a missing container and `upgrade`
+reuses the configuration. With a bucket configured every container also gets
 `GAMMA_S3_BUCKET`, `_ENDPOINT`, `_REGION`, `_ACCESS_KEY`, `_SECRET_KEY` and
 `GAMMA_S3_PREFIX=<prefix><account id>/`.
 
-- `create`: write `container.json`, pull, replace any container left by an
-  earlier attempt (the data directory stays), run, wait for health;
-- `start`: start it, or run it from `container.json` when it is gone;
-  `stop`; `restart`. `start` and `restart` wait for health;
+- `create`: refuse a payload with no account id (the bucket prefix is the
+  account's, and a later delete finds the copies by it), write
+  `container.json`, pull, replace any container left by an earlier attempt
+  and any `-prev` left by an earlier life of the label (the data directory
+  stays), run, wait for health;
+- `start`: start it unless it is running, or run it from `container.json`
+  when it is gone; `restart`: restart it, or run it from `container.json`
+  when it is gone. Both wait for health. `stop`: stop it (with no
+  container the job is done, with a note);
 - `delete`: remove the container and any `-prev` one, the server's
-  directory, and the bucket prefix;
+  directory, and, when the payload names the account, its bucket prefix.
+  With nothing there it is done all the same;
 - `upgrade`: pull, rename the running container to `gamma-<label>-prev`
-  and stop it, run the new image with the same configuration, wait for
-  health, then remove the previous one and save the new image in
-  `container.json`.
+  and stop it, run the new image with the same configuration (and the
+  payload's `memory_mb` and `cpus` when it has them), wait for health,
+  then remove the previous one and save the new image and size in
+  `container.json`. A payload with no image is a resize: Docker's update
+  sets the new limits on the container as it is, and `container.json`
+  takes the size. With no container only `container.json` changes;
+- `rollback`: with a `-prev`, stop and remove the live container, rename
+  `-prev` back to the live name, start it, wait for health, and save its
+  image in `container.json`, marked `rolled_back`. With no `-prev` it
+  fails with "nothing to roll back to", unless the live container already
+  runs the marked image, in which case it is started if needed and the job
+  is done ("already rolled back"). The next upgrade clears the mark;
+- `logs`: the live container's last 200 lines with timestamps
+  (`logs(tail=200, timestamps=True)`, each line cut to 400 characters).
 
 A failed upgrade stops the new container (its logs stay) and keeps the
 previous one stopped, not removed; the error says so. Gamma may already
 have migrated the data directory, so starting the old image again is the
-operator's call (Gamma's own pre-migration copy is in the data directory,
-[migrations.md](migrations.md)). A retry while a `-prev` exists keeps
-that one as the fallback and replaces only the failed container under the
-live name. The last known-good container is removed only after a new one
-passed its health check.
+operator's call, by `rollback` (Gamma's own pre-migration copy is in the
+data directory, [migrations.md](migrations.md)). A retry while a `-prev`
+exists keeps that one as the fallback and replaces only the failed
+container under the live name. The last known-good container is removed
+only after a new one passed its health check. A resize while such a
+failure waits (a `-prev`, and a live container on another image than
+`container.json`) is refused until the upgrade is retried or rolled back.
+
+Every handler can run again, after it finished or after the agent died
+midway, and end in the same place: a `create` replaces what an attempt
+left; `start` and `stop` leave a container already in that state alone;
+`delete` with nothing there is done; an `upgrade` that died after the
+rename finds the `-prev` and goes on; a `rollback` that died after the
+rename finds the marked image and only starts it.
 
 Health is `GET http://gamma-<label>:9001/api/health` answering 200 within
 120 seconds, polled every 2 seconds. The agent joins the fleet network so
 the name resolves. The heartbeat reads memory from `/proc/meminfo` and
 disk from the data root's file system, and for each `gamma-<label>`
-container its status, Docker health, memory use and data-directory size.
+container its status, Docker health, memory limit (`HostConfig.Memory`),
+memory use and data-directory size. The memory use comes from `stats()`,
+a second or two per running container. The data directory is walked at
+most every 30 minutes per container (`DATA_EVERY`); a `create` or
+`delete` measures it afresh.
 
 ## Admin
 
-The Admin page's **Servers** tab (`pages_fleet.py`):
+The Admin page's **Servers** tab (`pages_fleet.py`), top to bottom:
 
-- hosts: name, id, address, agent version, last heartbeat (*stale* past
-  15 minutes), memory and disk used, server count, and *Open* / *Close*
-  for placement. *Add host* shows the agent token once;
-- hosted servers: the label linked to its address, the host, the account,
-  the plan, state and read-only pills, *up* / *down* from the agent,
-  version, data size, last sync, any note or failed jobs, and the
-  actions. *Provision* takes an account id;
-- *Upgrade*: an image tag and a wave size, for every running server;
-- the last 100 jobs, with *Retry* (failed or canceled) and *Cancel*
-  (queued, held or failed).
+- **a summary strip**: hosts (fresh and stale), servers by state, jobs
+  queued, running and failed, and the default image with the number of
+  servers that are *outdated*;
+- **hosts**: name, agent version, id and address; the last heartbeat,
+  *stale* past 15 minutes; memory as committed of total, with what is
+  free, the reserve and what is in use, over a thin meter (committed, then
+  the reserve); disk used of total over another; the server count; *Open*
+  / *Close* for placement. A host with orphans gets a row under it with
+  each label and *Remove*. *Add host* shows the agent token once;
+- **hosted servers**: the label linked to its address, its id and host;
+  the account (username and id); the plan with its quota, memory and
+  CPUs; pills for the lifecycle state, *read-only* where the state does not
+  say it, and *up*, *down* or *unhealthy* from the agent, with any note and
+  the jobs in flight or failed; the image tag, with *outdated* and an
+  inline *Upgrade* to the default tag; data used of the quota over a
+  meter, and its size on disk; the last sync and the agent's last report;
+  the *Actions* menu. Deleted servers are hidden behind *show N deleted*.
+  *Provision* has a username search (`GET /accounts?q=`, debounced) that
+  fills the account id. It says so when the account already has a
+  server, is on a plan without one, or has not confirmed its address;
+- **logs**: *Logs* enqueues a `logs` job. The viewer under the servers
+  shows a "fetching" strip and polls `GET /jobs/{id}` every 2 seconds (for
+  three minutes at most), then the lines in a scrolling monospace block,
+  with *Fetch again* and *Close*. A done `logs` job in the Jobs table has
+  *View*;
+- **upgrade**: an image tag and a wave size, for every running server;
+- **jobs**: the last 100, filtered by state. Each row has its age, the
+  kind (an upgrade's tag or *resize*; for a run, the job's wave and the
+  run's servers done of total), server, host, state, duration and the
+  first 160 characters of the result (all of it on hover), with *Retry*
+  (failed or canceled) and *Cancel* (queued, held or failed).
+
+The tab reloads every 4 seconds while a job is queued or running, and
+only while it is the open tab of a visible page. Otherwise nothing polls.
+A reload waits while an *Actions* menu has the focus.
 
 The API behind it (`/api/admin`, admins through a portal session only):
-`GET`/`POST /hosts` (the token is in the create answer only),
-`PATCH /hosts/{id}` (`name`, `accepting`), `GET /servers`,
-`POST /servers/provision` `{account_id}` (the account's effective plan
-must be hosted; 409 when it has a server), `POST /servers/upgrade`
-`{tag, wave_size, server_ids?}`, `POST /servers/{id}/{action}`,
-`GET /jobs?state=&limit=`, `POST /jobs/{id}/retry|cancel`.
+
+- `GET /hosts`: each host with `servers`, `committed_mb`, `reserve_mb`,
+  `free_mb` and `orphans`. `POST /hosts` `{name, address}` (the token is
+  in this answer only), `PATCH /hosts/{id}` (`name`, `accepting`),
+  `POST /hosts/{id}/orphans/{label}/remove` → `{job}`;
+- `GET /servers` → `{servers, default_image}`, each server with
+  `memory_mb`, `cpus`, `quota_mb`, `image`, `outdated`, its account, its
+  host and its job counts by state. `POST /servers/provision`
+  `{account_id}` (the account's effective plan must be hosted; 409 when
+  it has a server). `POST /servers/upgrade` `{tag, wave_size,
+  server_ids?}` → `{run, image, jobs, waves}`. `POST /servers/{id}/upgrade`
+  `{tag}`, `/logs` and `/rollback` → `{job}`. `POST /servers/{id}/{action}`
+  → `{server}`;
+- `GET /jobs?state=&limit=`: each job with `duration_s`, and for one of
+  an upgrade run `wave_total` and `wave_done` (the run's jobs, and how
+  many are done). A `logs` job's lines are only counted there
+  (`line_count`); `GET /jobs/{id}` has the whole result.
+  `POST /jobs/{id}/retry|cancel`.
 
 The server actions:
 
@@ -329,35 +465,48 @@ The server actions:
 - `suspend` sets `suspended` (read-only; the lifecycle leaves it alone);
 - `resume` recomputes the state from the account;
 - `delete` ends it now. An account still on a hosted plan gets a fresh
-  server at its next plan change.
+  server at its next plan change;
+- `logs` is a job whose result holds the container's last 200 lines;
+- `rollback` is a job back to the container a failed upgrade kept ("The
+  agent");
+- `upgrade` `{tag}` is this server's upgrade alone (`fleet.upgrade_one`).
 
-`manage.py`: `hosts`, `add-host <name> [--address A]` (prints
-`GAMMA_FLEET_HOST_TOKEN=…` once), `servers`, `provision <username>`,
+`manage.py`: `hosts` (with committed and free memory and any orphans),
+`add-host <name> [--address A]` (prints `GAMMA_FLEET_HOST_TOKEN=…` once),
+`servers` (with size, tag and *outdated*), `provision <username>`,
 `jobs [--state S]`.
 
 ## Deployment
 
-[cloud/deploy/README.md](../../cloud/deploy/README.md) "Hosted servers"
-has the steps. In short:
+Two compose projects share the work, joined by one external network:
 
-- the external network `gamma-fleet`, created once per host with the
-  pinned subnet `10.203.0.0/24`. Caddy and the agent join it, and every
-  container trusts it for `X-Forwarded-For`;
-- `GAMMA_CLOUD_HOSTED_DOMAIN` set to the zone of the Caddyfile's
-  wildcard site;
-- the Caddyfile routes every `<label>.gammapdf.com` that is not `share`,
-  `demo` or a `-pages` host to
-  `gamma-{http.request.host.labels.2}:9001`, passing Cloudflare's
-  `CF-Connecting-IP` as `X-Forwarded-For`. A stopped server is a 502 for
-  its name;
-- the agent is the `fleet` service of `compose.yml` behind the `fleet`
-  profile, with the Docker socket and `/srv/gamma` mounted at the same
-  path. Its host token comes from `.env`;
-- a host is added on the Servers tab or with `manage.py add-host`. It
-  takes servers after its first heartbeat.
+- the account server's, [cloud/deploy/](../../cloud/deploy/README.md)
+  ("Hosted servers" there): `GAMMA_CLOUD_HOSTED_DOMAIN` set to the zone
+  of the Caddyfile's wildcard site, `GAMMA_CLOUD_FLEET_IMAGE` and
+  `_IMAGE_TAG` for what a new server runs, and Caddy on `gamma-fleet`.
+  The Caddyfile routes every `<label>.gammapdf.com` that is not `share`,
+  `demo` or a `-pages` host to `gamma-{http.request.host.labels.2}:9001`,
+  passing Cloudflare's `CF-Connecting-IP` as `X-Forwarded-For`. A stopped
+  server is a 502 for its name;
+- the agent's own, [cloud/fleet/deploy/](../../cloud/fleet/deploy/README.md)
+  (`/root/Container/gamma-fleet/` on the VPS):
+  `ghcr.io/tim4431/gamma-fleet:latest` with the Docker socket and
+  `/srv/gamma` mounted at the same path, on `gamma-fleet`, with no port.
+  Its `.env` holds the account server's public address
+  (`GAMMA_FLEET_ACCOUNT_URL=https://account.gammapdf.com`), the host
+  token and the bucket. The `update-fleet` skill updates it;
+- the network `gamma-fleet`, created once per host with the pinned
+  subnet `10.203.0.0/24`. Caddy, the agent and every hosted container
+  join it, and each container trusts it for `X-Forwarded-For`.
+
+A host is added on the Servers tab or with `manage.py add-host`. It takes
+servers after its first heartbeat. The agent only calls out, so on a host
+anywhere it needs the token and nothing else.
 
 Routing to a second host needs a DNS record per server (or an edge proxy)
-and is not built. Until it is, run one host or close the others for
+and is not built. Caddy reaches a container by its name on `gamma-fleet`,
+which resolves only on Caddy's own host. Until then the agent that runs
+the servers runs beside Caddy, and any other host stays closed for
 placement.
 
 ## Tests
@@ -368,12 +517,16 @@ placement.
   (`make_account`, `make_host`, `hosting`, …) are imported by
   `test_fleet.py`.
 - `cloud/tests/test_fleet.py`: host tokens, the job queue and its long
-  poll, the heartbeat, placement and the stale alarm, upgrade waves, a
-  stuck job, the admin endpoints and the CLI.
+  poll, the heartbeat and orphans, placement by committed memory and the
+  stale alarm, resizes, upgrade waves and one server's upgrade, logs and
+  rollback jobs, stuck jobs with late results and retries, the job rows'
+  durations and run progress, schema step 10, the admin endpoints and the
+  CLI.
 - `cloud/fleet/tests/test_agent.py`, run from `cloud/fleet` with
   `python -m pytest -q`: the agent against a fake Docker client and a
-  fake account server, every job kind with its failures, the heartbeat,
-  the loop, the settings and the HTTP client.
+  fake account server, every job kind with its failures and with a second
+  run, the heartbeat and its data-size cache, the loop, the settings and
+  the HTTP client.
 
 Time is moved by backdating rows (`past_due_since`, `state_changed_at`,
 `last_seen_at`, `started_at`), like the other account-server tests.

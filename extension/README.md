@@ -95,15 +95,19 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3 manifest: service worker, content script, popup, options, command |
-| `worker.js` | per-tab detection state + badge, save pipeline, context menus, popup message API |
+| `manifest.json` | MV3 manifest: service worker, content scripts, popup, options, command |
+| `worker.js` | per-tab detection state + badge, save pipeline, context menus, popup message API, the tabs that fetch PDFs for the AI chat |
+| `handoff.js` | the rules for those chat fetches (which URLs to try, when a tab needs the user), pure |
+| `ids.js` | DOI-in-path and arXiv-id rules shared by the content script and the worker |
 | `detect.js` | content script: identifier extraction (meta tags, URL, JSON-LD, DOI fallback) |
+| `bridge.js` | content script: answers the Gamma app's questions about the Connector (installed, can it fetch this request) |
 | `api.js` | settings in `chrome.storage.sync` + the fetch wrapper (cookie session, error parsing) |
 | `publisherSessions.js` | publisher-host validation, connection flow, automatic-refresh rules and session status text |
 | `popup.html/js/css` | the popup (setup → offline → sign-in → save); styling reads the app's design tokens and repeats its control recipes |
 | `tokens.css`, `fonts/` | committed copies of the app's design tokens and the Latin subset of Inter; `npm run copy-tokens` in `frontend/` refreshes them |
 | `theme.js` | sets Light or Dark (the tokens' `data-theme` / `data-scheme`) from the OS before the stylesheets paint |
 | `options.html/js` | server, account, saving defaults |
+| `ui.js`, `serverList.js` | controls shared by popup and options: icons, menu rows, the folder picker, the saved-server rows |
 | `assets/icons/` | enabled/disabled toolbar icons, manifest icons, and notification icon |
 
 No build step: plain ES modules.

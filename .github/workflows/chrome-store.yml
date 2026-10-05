@@ -116,7 +116,24 @@ jobs:
             exit 0
           fi
 
-          up=$(api POST "upload/v2/$ITEM:upload" -T "$ZIP")
+          # fetchStatus does not always show a review: during an item's first
+          # one it returns no revision status at all. The upload is then
+          # refused with FAILED_PRECONDITION / NOT_UPDATEABLE ("You may not
+          # edit or publish an item that is in review"), which is the same
+          # skip as above; any other refusal fails the run.
+          out=$(mktemp)
+          code=$(curl -sS -o "$out" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -T "$ZIP" \
+            "https://chromewebstore.googleapis.com/upload/v2/$ITEM:upload")
+          if [ "$code" -ge 400 ]; then
+            reason=$(jq -r '[.error.details[]? | select((."@type" // "") | endswith("ErrorInfo")) | .reason][0] // empty' "$out" 2>/dev/null)
+            if [ "$reason" = NOT_UPDATEABLE ]; then
+              echo "::notice::The store takes no new package now ($(jq -r '.error.message' "$out")), so $VERSION is not uploaded. The next release, or re-running this workflow once the review is over, carries it."
+              exit 0
+            fi
+            echo "::error::POST upload/v2/$ITEM:upload: HTTP $code $(jq -c . "$out" 2>/dev/null || cat "$out")"
+            exit 1
+          fi
+          up=$(cat "$out")
           jq . <<<"$up"
           state=$(jq -r '.uploadState // empty' <<<"$up")
           for _ in $(seq 30); do

@@ -14,21 +14,15 @@ Study date: 2026-09-18, a source and history audit of the upstream fork, not run
 
 ### 1. Native iPad app with Apple Pencil support
 
-**Priority:** High. **Implemented upstream:** September 10. Adds a dedicated tablet experience; handwriting itself already exists in this fork.
+**Priority:** High. **Implemented upstream:** September 10.
 
-**Done here (2026-09-18), differently:** the iPad app is the web app added to the home screen — manifest, full-bleed icons from the brand mark, theme-colored status bar, standalone-mode CSS — because the browser ink layer already covers Pencil input and a PencilKit client would reintroduce the opaque format the handwriting research rejected. Design: [ipad.md](ipad.md); implementation: [dev/ipad.md](../dev/ipad.md).
-
-A SwiftUI app combines PDFKit reading/text selection with PencilKit drawing, keeping existing Gamma document and block IDs. Each explicitly created ink group becomes one `pdf_ink` block with editable PencilKit source, annotation text, and child notes.
-
-**Where:** [PDFInkView.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Reader/PDFInkView.swift), [InkPageOverlay.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Reader/InkPageOverlay.swift), [setup guide](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/README.md).
+Upstream built a SwiftUI app that combines PDFKit reading and text selection with PencilKit drawing, each ink group one `pdf_ink` block holding editable PencilKit source ([setup guide](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/README.md)). Here the web app installs to the home screen, and a native app in `ipad/` followed: a PDFKit reader whose Pencil strokes are the same `gamma-ink` vectors, not PencilKit drawings. Reasoning: [ipad.md](ipad.md); mechanics: [dev/ipad.md](../dev/ipad.md).
 
 ### 2. Intentional offline library downloads and offline startup
 
-**Priority:** High. **Implemented upstream:** September 11. Enables disconnected reading and travel workflows.
+**Priority:** High. **Implemented upstream:** September 11.
 
-An account/server-scoped manifest tracks a persistent download queue and separate readiness for PDFs, notes, handwriting, and recordings, retaining completed components for retries. The app can reopen a saved local account without a network session, with download selection, cancellation, storage-size reporting, conservative local removal, and same-account reconnection.
-
-**Where:** [GammaWorkspaceOffline.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/App/GammaWorkspaceOffline.swift), [GammaOfflineCache.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaOfflineCache.swift), [offline behavior and limits](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/OFFLINE.md).
+Upstream keeps a persistent download queue per account and server, with separate readiness for PDFs, notes, handwriting and recordings, and reopens a saved account without a network session ([offline behavior and limits](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/OFFLINE.md)). Here the native app keeps a replica of one whole workspace, files included, and reads and writes it offline, with no per-page choice of what to download ([dev/ipad.md](../dev/ipad.md) "A replica: a mirror without a server").
 
 ### 3. Audio synchronized with handwriting: Note Replay
 
@@ -50,11 +44,9 @@ Native `AVAudioRecorder` writes AAC segments, finalizing on pause and rolling ov
 
 ### 5. Durable offline edits and explicit sync-conflict resolution
 
-**Priority:** High–medium. **Implemented upstream:** September 10–11. Persistence across process restarts is the gap, not live collaboration generally.
+**Priority:** High–medium. **Implemented upstream:** September 10–11.
 
-Atomic page snapshots persist editable data together with an outbox before networking, and retries reuse stable IDs to avoid duplicate blocks. Revision-checked native updates stop on conflicts and expose local/remote choices, while pending work survives relaunch and sign-out.
-
-**Where:** [GammaCache.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaCache.swift), [GammaWorkspace.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/App/GammaWorkspace.swift), [routers/ink.py](https://github.com/amogadget/Gamma/blob/2dbde2d/backend/gamma/routers/ink.py).
+Upstream persists atomic page snapshots together with an outbox before networking, retries with stable IDs, and stops on a revision conflict to offer local/remote choices ([GammaCache.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaCache.swift)). Here the iPad's replica keeps each page's snapshot and its unpushed edits in SQLite and syncs by the desktop mirror's rules; conflicts are listed in the app and resolved in the web app's clone view, and a browser tab's queued edits are still in memory ([dev/ipad.md](../dev/ipad.md), [collab.md](../dev/collab.md)).
 
 ### 6. Automatic AI model-catalog refresh
 
@@ -66,11 +58,9 @@ A background watcher checks provider entries every ten minutes and refreshes cat
 
 ### 7. Hybrid iPad workspace: full web app ↔ native reader
 
-**Priority:** Medium. **Implemented upstream:** September 10. Preserves feature coverage without rebuilding every screen natively.
+**Priority:** Medium. **Implemented upstream:** September 10.
 
-A `WKWebView` hosts the existing Gamma web interface and passes the selected document to the native reader through a bridge validated against the main-frame origin, session, and document identity. Returning to the web editor waits for pending native changes to sync and reloads the tree to avoid stale edits overwriting them.
-
-**Where:** [GammaWebWorkspace.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Web/GammaWebWorkspace.swift), [nativeBridge.js](https://github.com/amogadget/Gamma/blob/2dbde2d/frontend/src/nativeBridge.js), [parity matrix](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/WEB_PARITY.md).
+Upstream hosts the web interface in a `WKWebView` and passes the selected document to the native reader through a bridge validated against the main-frame origin, session and document identity ([parity matrix](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/WEB_PARITY.md)). Here it is the other way round: the native app is the shell, and opens the web app in a web view for what it does not do itself ([dev/ipad.md](../dev/ipad.md)).
 
 ### 8. Server-rendered PDF previews while pdf.js loads
 
@@ -93,7 +83,7 @@ A background worker detects large masks in mixed-raster-content scans and replac
 - **Handwriting:** browser drawing, lasso operations, erasing, and undo already exist. [Our handwriting research](handwriting.md) evaluated upstream and chose an open vector format rather than PencilKit source plus raster derivatives.
 - **AI model discovery:** already present; unattended refresh and persisted catalogs are the additional upstream capability.
 - **Live collaboration:** already present. [Our collaboration documentation](../dev/collab.md) states that queued edits live in memory rather than durable offline storage.
-- **PDF loading:** range requests, server-provided page geometry, and parsed-document caching already exist. [Our loading study](pdf_loading.md) and [implementation notes](../dev/pdf_loading.md) document adopting those ideas, deferring JPEG previews, and rejecting MRC flattening.
+- **PDF loading:** range requests, server-provided page geometry, and parsed-document caching already exist. [Our loading study](pdf-loading.md) and [implementation notes](../dev/pdf_loading.md) document adopting those ideas, deferring JPEG previews, and rejecting MRC flattening.
 - **Other existing counterparts:** desktop packaging, browser capture, translation, Zotero import/export, note-PDF export, themes, and editable embeds. These should not be counted as missing features merely because upstream has different commit IDs.
 
 ## Maturity and integration caveats
@@ -113,7 +103,7 @@ These are recommendations for future prioritization, not approved implementation
 
 - [ ] Evaluate automatic model-catalog refresh as a small addition, preserving explicit user model choices and current provider behavior.
 - [ ] Design audio blocks around this fork's existing vector ink and block operations, and drive the replay (built, without audio) from them.
-- [ ] Scope durable offline storage and conflict UX separately from native iPad UI work.
-- [ ] Evaluate a native iPad client using current workspace identities, permissions, and synchronization APIs.
+- [ ] Scope durable offline storage and conflict UX separately from native iPad UI work. Since built for the iPad as the replica (`frontend/src/replica/`); conflicts are resolved in the web app, and the browser has no durable queue.
+- [x] Evaluate a native iPad client using current workspace identities, permissions, and synchronization APIs. Since built: `ipad/`.
 - [ ] Revisit server previews only with a representative scan demonstrating a remaining first-paint bottleneck.
 - [ ] Keep MRC flattening deferred unless requirements justify revisiting the documented quality/storage tradeoff.

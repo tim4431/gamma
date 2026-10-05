@@ -4,7 +4,7 @@ _Last updated: 2026-10-04._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
-policy covers the Gamma desktop app (Windows, macOS, including the
+policy covers the Gamma desktop app (Windows, macOS, Linux, including the
 Microsoft Store edition "Gamma PDF"), the self-hosted Gamma server, and
 the Gamma Connector browser extension. It is published by the developer of
 Gamma, referred to below as "we".
@@ -51,7 +51,20 @@ needs them. What is sent is limited to what the feature requires:
   document excerpts needed to answer, are sent to the provider you
   configured (for example Anthropic, OpenAI, or a server you host) using
   your own API key or account. Their privacy policies apply to that data.
-  Your keys are stored only in your Gamma data directory.
+  Your keys are stored only in your Gamma data directory. To learn each
+  model's limits the server also downloads a public model list from
+  models.dev; the request carries nothing about you, and
+  `GAMMA_MODEL_CATALOG=off` turns it off.
+- **Online search by the assistant**: when you ask the AI assistant to
+  look for papers or read one from the web, your search words go to
+  Crossref, arXiv and OpenAlex, and a general web search goes to your AI
+  provider's own search or to a search service that you or the server's
+  administrator set up (Brave Search or a SearXNG instance); the
+  documents it reads are fetched from the sites that host them.
+- **Translation**: when you translate a page or a selection, that text is
+  sent to the translator chosen in Settings: your AI provider, Microsoft's
+  translation endpoint (the default when no AI provider is set up), or
+  Google Cloud Translation or Youdao with your own key.
 - **External assistants (MCP), what the assistant reads**: when you approve a
   workspace in Gamma's browser sign-in flow, or create a manual token and give
   it to an MCP client, that client can read the workspace's pages, notes,
@@ -68,10 +81,12 @@ needs them. What is sent is limited to what the feature requires:
   connection token. Browser sign-in also stores client registration metadata
   and temporary authorization/consent records; authorization codes are stored
   as hashes and expire after two minutes. Tokens expire after 90 days and can
-  be revoked in Settings → AI → External assistants.
-- **Update checks** (desktop app, non-Store installs): the app asks GitHub
+  be revoked in Settings → AI → Integrations.
+- **Update checks**: the desktop app (non-Store installs) asks GitHub
   Releases for the latest version. The Microsoft Store edition never does
-  this; the Store delivers updates.
+  this; the Store delivers updates. A self-hosted server asks GitHub's API
+  for the latest release to show its administrators that a newer one
+  exists; `GAMMA_UPDATE_CHECK=off` turns that off.
 - **Browser extension (Gamma Connector)**: it keeps your server address
   and preferences in the browser's extension storage and talks only to the
   Gamma server you configured, never to us. It sends that server:

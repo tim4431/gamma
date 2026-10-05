@@ -1,8 +1,8 @@
 # Billing: plans, Stripe and the Plan page
 
-How the account server sells the Plus and Pro plans: the rule that turns a
-grant and a subscription into the one plan every claim carries, the Stripe
-wiring (Checkout, the Customer Portal, the webhook, the nightly
+How the account server sells the Lite, Plus and Pro plans: the rule that
+turns a grant and a subscription into the one plan every claim carries, the
+Stripe wiring (Checkout, the Customer Portal, the webhook, the nightly
 reconciliation), the portal's Plan page, the Admin page's Billing tab and
 the website's pricing page. The design and the reasons behind the prices
 are in [research/cloud-plans.md](../research/cloud-plans.md). The account
@@ -107,10 +107,10 @@ URL `/plan`, both on `GAMMA_CLOUD_PUBLIC_URL`.
 
 **The Customer Portal.** `POST /api/billing/portal` answers a portal
 session for the account's customer (404 without one) that returns to
-`/plan`. The portal does the payment method, switching between the four
+`/plan`. The portal does the payment method, switching between the six
 prices, cancelling at period end, resuming and invoices; every change comes
 back through the webhook. Configure it in the Stripe dashboard (Settings →
-Billing → Customer portal) to allow exactly those, with the four prices as
+Billing → Customer portal) to allow exactly those, with the six prices as
 the products a customer may switch between.
 
 **The webhook.** `POST /api/billing/webhook` takes the raw body and the
@@ -166,8 +166,9 @@ load and reloads the page when the plan or status moved.
 `checkout_open`, `plan`, `plan_source`, `granted_plan`, `has_customer`,
 `subscription` (`status`, `plan`, `interval`, `amount_usd`, `renews_at`,
 `cancel_at_period_end`, `period_end`, `seats`, `past_due_since`,
-`grace_ends_at`, `ended_at`, `read_only_until`, `deletes_at`) or null,
-`prices` (`config.PLAN_PRICES_USD`) and `hosted` (`hosted.status_for`).
+`grace_ends_at`, `ended_at`, `read_only_until`, `deletes_at`,
+`updated_at`) or null, `prices` (`config.PLAN_PRICES_USD`) and `hosted`
+(`hosted.status_for`).
 
 ## The Plan page
 
@@ -182,14 +183,14 @@ follows `pages_billing.can_buy`, the same test `checkout_url` applies
 checkout that would answer 409. It has six states
 (`pages_billing.plan_state`):
 
-- **Free.** Four cards, Free, Lite, Plus and Pro, with six lines each drawn from
-  `config.PLAN_LIMITS`, the monthly and the yearly price with the yearly
-  saving, a Monthly/Yearly toggle, and "Choose Plus" / "Choose Pro", which
-  post to checkout and follow the URL. A line under the cards points to
-  self-hosting. While checkout is closed the buttons read "Not available
-  yet" and are disabled. A granted plan shows a strip saying so, its
-  server, and the three cards with the granted one marked as the current
-  plan.
+- **Free.** Four cards, Free, Lite, Plus and Pro, with six lines each (the
+  paid ones drawn from `config.PLAN_LIMITS`), the monthly and the yearly
+  price with the yearly saving, a Monthly/Yearly toggle, and "Choose Lite" /
+  "Choose Plus" / "Choose Pro", which post to checkout and follow the URL. A
+  line under the cards points to self-hosting. While checkout is closed the
+  buttons read "Not available yet" and are disabled. A granted plan shows a
+  strip saying so, its server, and the four cards with the granted one
+  marked as the current plan.
 - **Checkout returned** (`?checkout=success` on an account with a
   subscription row or a Stripe customer, until the server runs): "Setting
   up your server…", polling `GET /api/hosted/status` every 3 seconds until
@@ -233,7 +234,8 @@ at registration gets its server once the link is clicked.
 `GET /api/admin/subscriptions?status=` (the rows joined with username,
 e-mail and the effective plan; admin only) with a status filter, the period
 end, the cancel flag and the Stripe customer id linked to
-`https://dashboard.stripe.com/customers/<id>`, and a Refresh per row
+`https://dashboard.stripe.com/customers/<id>` (`/test/customers/` with a
+test key), and a Refresh per row
 (`POST /api/admin/subscriptions/{account_id}/refresh`, a re-read from
 Stripe, audited as `billing.refresh`). Refunds, disputes and invoices stay
 in Stripe's dashboard. On the Accounts tab the plan select shows and sets
@@ -244,10 +246,10 @@ same list.
 ## The website
 
 `sites/site/pricing.html` (`/pricing`, in the header, the footer and
-`sitemap.xml`) shows the same three cards with static copy and links Plus
-and Pro to `https://account.gammapdf.com/plan`. The FAQ's "Is Gamma free?"
-says the app is free and open source and points to it. Keep its numbers in
-step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
+`sitemap.xml`) shows the same four cards with static copy and links Lite,
+Plus and Pro to `https://account.gammapdf.com/plan`. The FAQ's "Is Gamma
+free?" says the app is free and open source and points to it. Keep its
+numbers in step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
 
 ## Running it locally with Stripe test mode
 

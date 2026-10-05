@@ -8,6 +8,7 @@ From the repository root:
 ```sh
 node tools/branding/build.mjs          # regenerate all published copies and ledger
 node tools/branding/build.mjs --check  # check sources, coverage, hashes, dimensions
+node --test tools/branding/check.test.mjs  # the check's own test (CI runs both)
 node tools/branding/render.mjs         # optional inspection PNGs in artifacts/
 ```
 
@@ -15,7 +16,7 @@ Generation uses Python 3 (standard library), the frontend's locked Playwright
 dependency and its Chromium headless shell. Run `npm ci --prefix frontend`,
 then `npx playwright install chromium-headless-shell` from `frontend/`.
 Set `PYTHON` if the interpreter has a different name. Rendering is offline;
-The logo uses the same Inter/Segoe UI system font stack as the hero.
+the logo uses the same Inter/Segoe UI system font stack as the hero.
 
 `build.mjs` distributes canonical artwork, generates README scenes, renders
 Store art and hero PNGs, and records provenance. `store-layouts.mjs` owns
@@ -61,4 +62,4 @@ Light/Dark app themes live in `frontend/src/shared/styles/tokens.css`.
 README feature illustrations share the logo placement, warm paper background, amber
 curves and card shadow defined in `branding.py`, with 72 px headings and 28 px
 introductory copy on a 1920 × 1080 canvas. The real recordings use the matching
-16:9 paper frame in `tools/readme-media/media_output.py`.
+16:9 paper frame, `Frame` in `tools/readme-media/compose.py`.

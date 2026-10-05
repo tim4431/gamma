@@ -156,11 +156,14 @@ message, and it doesn't stop fabrication — the tools are the better lever.
 - With tools off the model sees only the labelled head excerpt; nothing else
   in a plain chat can reach the rest of the paper (native PDF attachment is
   refused by the ChatGPT-OAuth backend and falls back to that same excerpt).
-  Paper chats default to tools off, so the head budget is what most paper
-  chats live on — hence the 60,000 default (a typical ~20-page paper fits
-  whole; the multi-paper total is 120,000, split evenly across the context
-  pages, note pages included). The budgets are characters: 60,000 of
-  English prose is ~15k tokens, of dense notation ~20k, of Chinese ~50k
+  Tools are on by default in every chat kind (`gamma-ai-agent-enabled`,
+  reading allowed — [ai.md](ai.md) "Permissions and knobs"), but a chat
+  with them switched off, or a reply that never calls one, lives on the head
+  budget alone — hence the 60,000 default (a typical ~20-page paper fits
+  whole; the multi-paper total is 120,000, `multi_context_char_limit`, split
+  evenly across the context pages, note pages included). The budgets are
+  characters: 60,000 of English prose is ~15k tokens, of dense notation
+  ~20k, of Chinese ~50k
   (`ai_context.estimate_tokens` counts that way for the window fit). The
   truncation is also shown to the user: `head_context` returns the coverage
   (`pages_shown` from `pdf_text.extract_text_pages`, total from

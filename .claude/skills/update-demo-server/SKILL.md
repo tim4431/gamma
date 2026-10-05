@@ -60,7 +60,8 @@ gh run list --workflow docker.yml --branch main --limit 3 --json databaseId,head
 Work that is only on a branch is not in any of these. Say how many image
 files `main` lacks (`git diff --name-only origin/main origin/<branch> --
 backend/app.py backend/manage.py backend/gamma backend/requirements.txt
-frontend ':!frontend/tests' Dockerfile docker-entrypoint.sh`) and offer the
+backend/requirements-s3.txt frontend ':!frontend/tests' Dockerfile
+docker-entrypoint.sh`) and offer the
 `merge` skill; the merge's own run is then the one to wait for.
 
 ## 2. An older build

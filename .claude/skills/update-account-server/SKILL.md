@@ -7,7 +7,7 @@ description: Publish the Gamma Cloud account server (ghcr.io/tim4431/gamma-cloud
 
 `account.gammapdf.com` runs via docker compose on the VPS
 `root@69.63.206.178`, folder `/root/Container/gamma-account/` (services
-`account`, `caddy`; Cloudflare in front). The account server ships on its
+`account`, `share`, `caddy`; Cloudflare in front). The account server ships on its
 own: `.github/workflows/cloud.yml`, dispatched from ANY branch, runs the
 `cloud/` tests and publishes `ghcr.io/tim4431/gamma-cloud:latest` (plus
 `:sha-<short>`); this skill builds through the `build-cloud` skill and deploys the result. A merge to

@@ -8,7 +8,7 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import db, fleet
+from .. import db, fleet, hosted
 
 router = APIRouter(prefix="/api/fleet")
 
@@ -58,5 +58,6 @@ def heartbeat(body: dict, request: Request):
         host = _host(conn, request)
         db.begin_write(conn)
         fleet.heartbeat(conn, host, body)
+        hosted.place_waiting(conn)
         conn.commit()
     return {"ok": True}

@@ -204,7 +204,7 @@ context for answering; `read_block` is the editing view.)
 
 The AI chat kept with a page or folder, read from the rows the chat panel
 keeps (`chats` / `chat_history` in pages.db, bucket keys as in
-[ai.md](ai.md) "Chat history buckets": a folder's bucket is its id).
+[chat_history.md](chat_history.md) "Buckets": a folder's bucket is its id).
 `page_id` names a page's chat; without it, `folder` names a folder's (a path
 or an id, `_resolve_folder`; the library root's, `home`, when empty). In a paper chat the page is the default and folder
 chats are out of scope. Pages and folders go through the same scope checks as

@@ -7,7 +7,9 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
 `gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
-`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` + the chat-history router.
+`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation and the
+stored chat conversations have their own documents:
+[translation.md](translation.md) and [chat_history.md](chat_history.md).
 
 ## Provider and models
 
@@ -71,8 +73,9 @@ ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
 `protocol`, never from the provider id; the default model is the account's
 own first model, else the server's first) — AI endpoints must use it, not
 module-level config constants for credentials or model routing. Env vars set
-each protocol's administrator-controlled default base URL, including
-`GAMMA_AI_CHATGPT_BASE_URL`.
+each protocol's administrator-controlled default base URL
+(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`,
+`GAMMA_AI_OPENAI_BASE_URL`, `GAMMA_AI_CHATGPT_BASE_URL`).
 
 Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 `services` with the settings) are form presets, data rather than code: a
@@ -350,8 +353,9 @@ maintenance.
 
 ## Chat endpoint
 
-`/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
-Completions API. Requests carry a model-registry id, optional `effort`
+`/api/ai/chat` speaks every wire in `ai_protocols/` (the Anthropic Messages
+API, OpenAI Chat Completions, the Responses API and the Codex backend; see
+"Protocol adapters"). Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
 set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, pasted `images`
@@ -469,7 +473,8 @@ was requested but the provider took text instead. Two more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window") and "Reply cut off at the output limit"
 (`{"truncated": true}`: the provider's stop reason was `max_tokens`,
-`length` or the Responses API's `incomplete` — `Protocol.events` ends every
+`length`, `max_output_tokens` or the Responses API's `incomplete`
+(`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
 stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
 it; the agent loop stops there rather than run a half-written tool call).
 `/api/ai/models` marks each model `native_pdf` (false for
@@ -1190,148 +1195,8 @@ gateways keep chat-completions tools.
 
 ## PDF translation
 
-`POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
-in the PDF zoom column does everything by state:
-
-- On the page being read, a click translates it unless it is already fully
-  translated under the current language and model. On such a page a click
-  toggles show/hide for ALL pages (the viewer reports `current` next to
-  `pages` in its state).
-- A page a halted job left half-done counts as untranslated, so a click
-  finishes it from the cache. Switching language or model in Settings makes
-  the button translate afresh.
-- Hidden = slashed icon; holding Alt peeks. A click during a job halts it.
-- Right-click (long-press on touch) opens the option menu: Translate this
-  page / Translate whole document / Show original·translation (Stop
-  translating while running).
-
-A whole-document job queues pages nearest the current page first (forward before backward at
-equal distance), so the page being read paints immediately. The queue lives
-in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
-segments queued pages in order and feeds one flat list of ~6-paragraph /
-1200-char chunks, while N workers (Settings → Translation → parallel
-requests, 1–`TRANSLATE_PARALLEL_MAX` = 4 in `app/prefDefs.js`, below the six
-AI calls an account may have open at once; a larger stored value reads as 4)
-stream through it across page boundaries — the first request is
-in flight while later pages are still segmenting, chunks paint as they land,
-char-weighted progress shows under the button and as a background-tasks row.
-Halting aborts the in-flight requests (each job carries an AbortController)
-and keeps finished chunks; re-running skips done pages and re-fills partial
-ones from the server cache. Reliability: each chunk gets one client-side
-retry, and the server salvages a miscounted model reply ("expected 5, got
-4") by re-translating that batch paragraph by paragraph, concurrently — a
-paragraph that still fails comes back verbatim (shown as original, uncached)
-instead of failing the request.
-
-The viewer requests `stream: true`. The reply is then NDJSON: `{"i":
-[request indices], "text": partial}` lines as the model writes each
-paragraph, then the same final `{translations, model, cached}` object a
-plain call returns. `ai_client.partial_json_strings` reads the complete
-elements of the half-written JSON array plus the one in progress. Lines are
-throttled to ~20/s (`_TRANSLATE_STREAM_INTERVAL`), and an element maps to
-every request index that shares its source text. `stream: false` (the
-default) still answers in one JSON body. The salvage path never streams. An
-upstream failure mid-stream is an in-band `{"error"}` line.
-
-On the page, a paragraph whose translation is queued gets a faint accent
-wash over its original lines, an in-flight one shimmers, streamed text
-types onto the page behind a caret (masking the original as soon as there
-is something to show), and a landed paragraph fades in. That is
-`TransPending`/`TransPara` in `pdf/PdfViewer.jsx`, driven by the entry's
-`queued`/`busy`/`partial` fields, which the job clears when it ends, halts
-or fails.
-
-Geometry never leaves the client: `frontend/src/pdf/pdfTranslate.js` segments
-pdf.js text runs into paragraph blocks (columns via whitespace-river
-detection, paragraphs via indents/font changes, figure-wrap via sustained
-width changes; math-heavy/numeric blocks are skipped), each carrying
-PER-LINE rects. The overlay masks exactly those original lines (plus the
-leading between them) and lays the translation over them with an inline
-cloned background — so figures a paragraph brushes against are never painted
-over, and the layout never moves. Translated text is selectable/copyable;
-while shown, the invisible original text layer stands down.
-
-Targets are the allowlisted `TRANSLATE_LANGS` codes
-(`gamma/translate_engines.py`, shared by both translation paths; mirrored in
-`frontend/src/app/prefDefs.js`). What translates is Settings → Translation ›
-"Translate with" (`translateModel`, a browser pref; "" is the default).
-`translateModelFor` (`app/prefDefs.js`) turns the pick into what is sent:
-the pick while it is still offered, the free Microsoft service when there
-is no chat model at all, else the chat model. Reasoning `effort` and
-parallel requests sit in the same Translation section. Effort is omitted
-unless picked; Low/Minimal is the speed lever for reasoning models. The
-"Translation button" switch hides the viewer's button; the selection
-translator has its own switch.
-
-The server keeps an **in-memory only** LRU (~5k entries, lock-guarded
-because requests run in the threadpool) per (user, language, bare model
-name, source text). Nothing goes to disk; the cache makes
-halts/retries/re-shows free until a restart. Duplicate paragraphs within a
-request go upstream once. Caps: 200 texts / 60k chars per request.
-
-**Selection translation.** The text-selection popup (`PlainTip` in
-`pdf/PdfViewer.jsx`, the highlight colors + link) carries a 文A button
-when Settings → Translation › "Translate a selection" is on (`selTranslate`,
-account pref, default on).
-
-- It sends the selection as ONE text through the page translator's request
-  (`translateChunk`: same model or service, language, server cache,
-  streamed partials). Lines are rejoined by `selectionParagraphs`
-  (`pdf/pdfTranslate.js`, the page blocks' hyphen/CJK rules), capped at
-  5000 characters.
-- The result shows under the colors as a fold-out panel: a header with the
-  language, spinner and copy button, then selectable text. The button
-  refolds it.
-- "Translate on select" (`selTranslateAuto`, default off) starts it as soon
-  as the popup opens.
-- The popup is keyed by the selection, so a new selection starts over and
-  aborts the previous request. A click or selection inside the popup keeps
-  it open (the viewer's selection sync ignores a selection anchored in
-  `.plainTip`).
-- `TipFrame` flips the popup above the selection when it would run past the
-  window's bottom. Like the popup itself, it needs edit rights on the page.
-
-**Machine-translation services.** "Translate with" also offers the services
-in `gamma/translate_engines.py`. The viewer then sends `model:
-"engine:<id>"`, and `/api/ai/translate` hands the misses to
-`translate_engines.translate` instead of a chat model.
-
-- **Microsoft (free)** needs no setup. It is the endpoint Edge's own page
-  translation calls: `POST
-  edge.microsoft.com/translate/translatetext?to=<code>&isEnterpriseClient=false`
-  with a JSON array of strings and no key or token. The reply has
-  Translator v3's shape (`[{detectedLanguage, translations: [{text, to}]}]`);
-  the source language is detected per text.
-- The endpoint is unofficial and undocumented, so it can change or throttle
-  without notice; Google and Youdao are the fallback. The older
-  `/translate/auth` token flow answers 404 since July 2026.
-- Microsoft refuses requests past about 50k characters (measured), so
-  batches stay at 100 texts / 20k characters.
-- Its consecutive failures are counted in memory. From `FREE_ALERT_AFTER`
-  (3) on, the server log gets one warning per streak and each account that
-  met them gets the `free-translate` notice ([settings.md](settings.md)
-  "Notices"); the Settings row shows the error. One success ends the streak.
-- **Google Cloud Translation**: v2 basic, the API key sent as
-  `X-Goog-Api-Key`, `format: "text"`.
-- **Youdao**: the `openapi.youdao.com/v2/api` batch, with a v3 SHA-256
-  signature over the concatenated queries. A query listed in `errorIndex`
-  comes back verbatim and uncached.
-- Each service maps the target codes to its own (Microsoft `zh-Hans`,
-  Youdao `zh-CHS`) and splits a request by its batch limits.
-- The service path needs no AI provider. It has no effort, no streamed
-  partials (the stream is just the final line), no token usage and nothing
-  to salvage, since the APIs answer aligned lists.
-- Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
-
-Credentials are per account under the reserved `translate-engines` pref.
-Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
-masked `GET /api/translate/engines`; guests can't store any.
-`PUT` / `DELETE /api/translate/engines/{id}` set or drop a service's
-credentials, and `POST /api/translate/engines/{id}/test` translates one
-sentence for the row's Test button (in-body result). Unlike the LLM
-prompt, nothing tells these services to leave math, `[12]` citation markers
-or URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are
-skipped client-side, so the risk is small.
+The translated view (`POST /api/ai/translate`, the 文A button, the engines
+and their limits) has its own document: [translation.md](translation.md).
 
 ## Token usage
 
@@ -1418,113 +1283,8 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   entry applies. No prices anywhere: they differ per provider and change;
   the tokens are what every provider agrees on.
 
-## Chat history buckets
+## Chat history
 
-Focused page id in the paper view, `home` at the library root, the
-folder's own id per folder (folders are blocks,
-[home_library.md](home_library.md) "Folders and labels") — each folder keeps
-its own conversation, and switching folders re-scopes the next message. A
-bucket is always a block id or `home`, so a rename or a move of the folder
-changes nothing about its chat. No conversation is ever dropped with a
-folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
-pages too" alike) files the active conversation and the history of the
-folder and of every folder below it into the library chat's history
-(`home`, `chats.file_into_home`), where they stay findable. ChatDock's
-`chatKey` is the open page's id, else the open folder's id, else `home`.
-
-Replies stream per bucket, independently. `chat/chatSession.js` (owned by
-App, so navigation can unmount the dock while a request runs) keeps one
-in-flight reply per bucket. `active` is the set of streaming buckets, each
-with its own `AbortController`. Asking one paper, opening another and asking
-it too runs both requests at once. The composer, the Stop button and the
-edit/re-send controls are disabled only while THIS bucket's reply streams
-(`busyHere` in `ChatDock`), and Stop aborts only that one. A bucket refuses
-a second question until its reply ends. The stream's `done` agent event
-carries the bucket so a background reply finishing does not clear the open
-page's live edit preview (`handleAgentEvent`). Covered by
-`tests/chatSession.test.mjs` and the e2e `chat navigation` steps.
-
-Two tabs, or two members, can hold the same bucket's conversation, so a save
-never replaces a copy it hasn't seen. The active row's `updated_at` is the
-conversation's version. `GET /chats/{key}` returns it, the session keeps the
-one it last read or wrote per bucket (`seen`, `version`), and every save
-sends it (`PUT /chats/{key}` `{messages, updated_at}`). A save made from an
-older copy is refused with 409 and the stored conversation. The session then
-merges the two (`mergeChats`, three-way from the copy it had read). Every
-message either side added stays, ours after the message it follows, else at
-the end. Our newer version of a message wins, theirs wins where ours is
-unchanged, and what either side dropped since the copy was read goes: this
-tab's edit-and-resend, and the other side's New chat (the stored
-conversation is then empty, or another one opened from history) or
-edit-and-resend, so a stale tab never brings an archived conversation back.
-A turn (a question and the replies after it) this tab changed since stays
-whole: a reply that finished here after another tab's New chat starts the
-new conversation with its question. The session shows the merge and saves
-it against the stored version; a reply still streaming is rebased onto it
-on its next update. A tab that comes back into focus (`focus`,
-`visibilitychange`) reads the stored conversation again and shows it when
-its version is not the tab's, as long as the tab's copy is saved and no
-reply streams there; the composer's draft stays. Messages carry
-a client-minted `id`, so the versions of one streamed reply are one message;
-older messages match by content. A save that fails on the network or with a
-5xx is retried (1, 3, 8 s). One that still fails, or a refusal, marks the
-bucket in the session's `failed` map, and the dock shows "This conversation
-isn't saved" with Retry until a save goes through. Covered by `tests/chatConflicts.test.mjs`,
-`backend/tests/test_chat_versions.py` and the e2e step "two tabs asking in
-one conversation".
-
-Chats belong to the workspace, and only its editors change them
-(`require_ws(write=True)` on every chat write). A workspace viewer asks the
-AI with the reading tools, but its conversation stays in the tab: App's
-save does nothing for it, the dock shows a "Not saved" tag, hides History,
-and New chat starts over locally.
-
-### Chat history
-
-Each bucket keeps its earlier conversations. `chats` (in the workspace's
-pages.db, beside the pages they are about) holds the
-one ACTIVE conversation per bucket — what the panel shows and autosaves —
-plus its `title`, its `updated_at` the conversation's version; `chat_history`
-holds the archived ones (`id, bucket, title, messages, created_at,
-updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
-
-- **New chat** (+ in the header) archives the conversation: it POSTs
-  `/chat-history/archive` `{bucket, messages, title, updated_at}`, which
-  files it into history and clears the active row. The title is the user's,
-  else the first user message's first non-quote line (`derive_title`). The
-  client sends its own copy of the messages, so a reply still inside the
-  500 ms autosave debounce is kept. An empty conversation archives to
-  nothing. A stored conversation newer than the copy (another tab kept
-  talking) is archived too, never deleted. Whichever of the two holds every
-  message of the other is archived alone; otherwise both are.
-- The **History** button (clock icon) opens a popover listing the active
-  conversation first (highlighted, "now") and then the bucket's archived
-  ones newest-first (`GET /chat-history?bucket=`; title, age, message count
-  in the tooltip), with a search box filtering on title + first message.
-  Clicking an entry POSTs `/chat-history/{id}/open` with the current
-  conversation and its version: the current one is archived (a newer stored
-  one too, as for New chat), the entry becomes the active row and leaves
-  history, and the answer carries the new version. A conversation is always
-  in exactly one place.
-  - Rename: inline `aiKeyInput`. The active chat's title goes through
-    `PUT /chats/{key}` `{title}`, which leaves the messages and the version
-    as they are; an entry's through `PUT /chat-history/{id}`. The autosave
-    never sends a title, so it can't roll a rename back.
-  - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
-    conversation has no delete; start a new chat instead.
-  - Several at once: each archived row carries a tick box (on hover, and on
-    every row while anything is ticked). The bar under the list says how
-    many, offers **Select all** (the rows the search leaves listed) and
-    **Clear**, and its **Delete** confirms once and sends them in one call
-    (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
-    popover: closing it, or a search that hides a ticked row, drops them, so
-    Delete never takes a row the user cannot see.
-- History follows its bucket: a folder delete moves its entries into
-  `home`'s with the active rows, and `ops.delete_page` drops the active row
-  and the entries of a page deleted for good, in the deleting transaction
-  (a page in Recently deleted keeps its chats). A Gamma export carries its pages' buckets whole (the active
-  conversation and the history; on a folder export the folder views'
-  buckets too), and a backup merge or an import adds every conversation
-  the workspace lacks — a bucket's active one, an archived one by its id
-  (`db.copy_chats`); a replace restore brings the backup's chats with its
-  pages.
+Which conversation a chat belongs to (a bucket per page, per folder, or
+`home`) and how earlier conversations are kept and archived are in
+[chat_history.md](chat_history.md).

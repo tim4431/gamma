@@ -291,7 +291,10 @@ def refresh_subscription(account_id: str, request: Request):
 
 
 # --- hosted servers and the fleet (docs/dev/hosted.md) ------------------------
-# Hosts, hosted servers, their jobs and upgrade waves: the Servers tab.
+# Hosts, hosted servers, their jobs and upgrades: the Servers tab. The
+# actions that enqueue a job for the container (logs, rollback, one
+# server's upgrade, an orphan's removal) answer with that job, which the
+# page polls at GET /jobs/{id}.
 
 class HostBody(BaseModel):
     name: str
@@ -311,6 +314,10 @@ class UpgradeBody(BaseModel):
     tag: str
     wave_size: int = 1
     server_ids: list[str] | None = None
+
+
+class ServerUpgradeBody(BaseModel):
+    tag: str
 
 
 @router.get("/hosts")
@@ -339,11 +346,23 @@ def patch_host(host_id: str, body: HostPatch, request: Request):
     return {"host": host}
 
 
+@router.post("/hosts/{host_id}/orphans/{label}/remove")
+def remove_orphan(host_id: str, label: str, request: Request):
+    """A container on the host that no server row names: a delete job for
+    it (container and data directory; the bucket is left alone)."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        job = fleet.remove_orphan(conn, host_id, label, actor=admin["id"])
+        conn.commit()
+    return {"job": job}
+
+
 @router.get("/servers")
 def list_servers(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"servers": hosted.servers(conn)}
+        return {"servers": hosted.servers(conn), "default_image": fleet.default_image()}
 
 
 @router.post("/servers/provision")
@@ -366,6 +385,39 @@ def upgrade_servers(body: UpgradeBody, request: Request):
     return run
 
 
+# Before /servers/{server_id}/{action}, which would take these paths too.
+@router.post("/servers/{server_id}/upgrade")
+def upgrade_server(server_id: str, body: ServerUpgradeBody, request: Request):
+    """This server alone to an image tag, outside any wave."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        job = fleet.upgrade_one(conn, server_id, body.tag, actor=admin["id"])
+        conn.commit()
+    return {"job": job}
+
+
+def _server_job(server_id: str, kind: str, request: Request) -> dict:
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        job = hosted.admin_job(conn, server_id, kind, admin["id"])
+        conn.commit()
+    return {"job": job}
+
+
+@router.post("/servers/{server_id}/logs")
+def server_logs(server_id: str, request: Request):
+    """A logs job: its result holds the container's last 200 lines."""
+    return _server_job(server_id, "logs", request)
+
+
+@router.post("/servers/{server_id}/rollback")
+def server_rollback(server_id: str, request: Request):
+    """A rollback job: back to the container a failed upgrade kept."""
+    return _server_job(server_id, "rollback", request)
+
+
 @router.post("/servers/{server_id}/{action}")
 def server_action(server_id: str, action: str, request: Request):
     with closing(db.connect()) as conn:
@@ -381,6 +433,14 @@ def list_jobs(request: Request, state: str = "", limit: int = 100):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
         return {"jobs": fleet.jobs(conn, state, limit)}
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str, request: Request):
+    """One job with its whole result (a logs job's lines)."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"job": fleet.job(conn, job_id)}
 
 
 @router.post("/jobs/{job_id}/{action}")

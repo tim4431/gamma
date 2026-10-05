@@ -1,6 +1,8 @@
 // The formatting commands of the block editor (bold, italic, code, strike,
 // highlight, link, inline math) and the "/" that opens the insert menu, as
-// functions of a CodeMirror view. Plain JS, no editor imports:
+// functions of a CodeMirror view over plans of the text alone (`…Plan`,
+// `…At`: {changes, selection} or null), which the iPad app's editing bar
+// applies too (ipad/core/entry.js `format`). Plain JS, no editor imports:
 // editor/blockCommands.js makes them catalog commands and node tests load
 // the catalog. Toggle semantics live in mdMarks.toggleMark; inside math, a
 // code fence or inline code a formatting key is swallowed and does nothing —
@@ -21,6 +23,17 @@ function markBlockedAt(doc, from, to, marker) {
   if (inFenceOrMath(doc, from, to)) return true;
   if (marker === "`") return false;
   return scanMarks(doc).some((s) => s.marker === "`" && s.from < from && to < s.to);
+}
+
+// `marker` toggled on [from, to], or null where marks mean nothing.
+export function markPlan(doc, from, to, marker) {
+  return markBlockedAt(doc, from, to, marker) ? null : toggleMark(doc, from, to, marker);
+}
+
+// [from, to] made a link with the caret in its empty (…) slot, or null
+// where marks mean nothing.
+export function linkPlan(doc, from, to) {
+  return markBlockedAt(doc, from, to, "") ? null : insertLink(doc, from, to);
 }
 
 // The insert menu without typing (the touch editing bar, editor/EditBar.jsx):
@@ -56,20 +69,13 @@ function runInsert(view, plan) {
 export const runInsertSlash = (view) => runInsert(view, slashInsertAt);
 export const runInsertMath = (view) => runInsert(view, mathInsertAt);
 
-export function runToggleMark(view, marker) {
-  const doc = view.state.doc.toString();
-  const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, marker)) return true;
-  const r = toggleMark(doc, from, to, marker);
-  if (r) view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
-  return true;
-}
+export const runToggleMark = (view, marker) => runInsert(view, (doc, from, to) => markPlan(doc, from, to, marker));
 
 export function runInsertLink(view) {
   const doc = view.state.doc.toString();
   const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, "")) return true;
-  const r = insertLink(doc, from, to);
+  const r = linkPlan(doc, from, to);
+  if (!r) return true;
   view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
   // A URL on the clipboard fills the empty (…) slot — read asynchronously
   // (and not at all on plain-HTTP origins, where navigator.clipboard is
