@@ -6,7 +6,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import accounts, billing, connect, db, identities, oidc, pages, pages_billing, providers, servers, sessions
+from .. import (accounts, billing, connect, db, entrance, identities, oidc, pages, pages_billing, providers, servers,
+                sessions)
 from .external import sign_in_page
 
 router = APIRouter()
@@ -17,8 +18,9 @@ def _app_page(request: Request, render):
     """An app page: ``render(account, data)`` gives its HTML, or None for a
     404; ``data`` holds ``devices`` (live grants), ``servers`` (them merged
     with the linked servers, ``servers.merge``), ``identities``,
-    ``browsers``, ``connected`` (the servers this account connected) and
-    ``billing`` (``billing.summary``). Signed out goes to the login page
+    ``browsers``, ``connected`` (the servers this account connected),
+    ``billing`` (``billing.summary``) and ``places``
+    (``entrance.destinations``). Signed out goes to the login page
     and comes back here."""
     with closing(db.connect()) as conn:
         account = sessions.resolve(conn, request)
@@ -30,7 +32,8 @@ def _app_page(request: Request, render):
                 "identities": identities.of_account(conn, account["id"]),
                 "browsers": sessions.of_account(conn, account["id"], request),
                 "connected": connect.of_account(conn, account["id"]),
-                "billing": billing.summary(conn, account["id"])}
+                "billing": billing.summary(conn, account["id"]),
+                "places": entrance.destinations(conn, account["id"])}
         public = accounts.public(account, conn)
         conn.commit()
     html = render(public, data)
@@ -43,7 +46,29 @@ def _app_page(request: Request, render):
 def home(request: Request, mail: str = ""):
     """``?mail=failed``: registration could not send the confirmation mail."""
     return _app_page(request, lambda account, d: pages.overview_page(
-        account, d["devices"], d["servers"], d["billing"], mail_failed=mail == "failed"))
+        account, d["devices"], d["servers"], d["billing"], mail_failed=mail == "failed", can_open=bool(d["places"])))
+
+
+@router.get("/open")
+def open_gamma(request: Request):
+    """The portal's Open Gamma: straight to the account's Gamma when it has
+    one place to go (``entrance.destinations``), through that server's
+    cloud sign-in, so the person lands signed in; a card to choose from
+    when it has several. Signed out goes to the login page and comes back;
+    an account with nowhere to go yet, or an unconfirmed address, gets the
+    Overview, which says what is missing."""
+    with closing(db.connect()) as conn:
+        account = sessions.resolve(conn, request)
+        if not account:
+            return RedirectResponse("/login?" + urlencode({"next": "/open"}), status_code=302)
+        places = entrance.destinations(conn, account["id"]) if account["email_verified_at"] else []
+        public = accounts.public(account, conn)
+        conn.commit()
+    if not places:
+        return RedirectResponse("/", status_code=302)
+    if len(places) == 1:
+        return RedirectResponse(entrance.start_url(places[0]["url"]), status_code=302, headers=NO_STORE)
+    return HTMLResponse(pages.where_page(public, places), headers=NO_STORE)
 
 
 @router.get("/devices", response_class=HTMLResponse)

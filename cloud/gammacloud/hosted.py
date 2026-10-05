@@ -1,6 +1,6 @@
 """Hosted servers: one Gamma container per account on a plan that has one
-(``config.PLAN_LIMITS`` ``hosted``: Pro) at ``<label>.<HOSTED_DOMAIN>``
-(docs/dev/hosted.md). A Lite or Plus account has no container: its library
+(``config.PLAN_LIMITS`` ``hosted``: Pro) at
+``<label><HOSTED_SUFFIX>.<HOSTED_DOMAIN>`` (docs/dev/hosted.md). A Lite or Plus account has no container: its library
 is an account on the shared server.
 
 The row in ``hosted_servers`` follows the account's effective plan and its
@@ -55,7 +55,18 @@ def _container_plan(*plans) -> str:
 
 
 def url_of(label: str) -> str:
-    return f"https://{label}.{config.HOSTED_DOMAIN}" if config.HOSTED_DOMAIN else ""
+    return f"https://{label}{config.HOSTED_SUFFIX}.{config.HOSTED_DOMAIN}" if config.HOSTED_DOMAIN else ""
+
+
+def is_server_url(conn, url: str) -> bool:
+    """Whether ``url`` is the address of a hosted server that exists."""
+    tail = f"{config.HOSTED_SUFFIX}.{config.HOSTED_DOMAIN}"
+    host = urlsplit(url).hostname or ""
+    if not config.HOSTED_DOMAIN or not host.endswith(tail):
+        return False
+    row = conn.execute("SELECT 1 FROM hosted_servers WHERE label = ? AND state != 'deleted'",
+                       (host[:-len(tail)],)).fetchone()
+    return row is not None and url.rstrip("/") == url_of(host[:-len(tail)])
 
 
 def _day(ts: str) -> str:

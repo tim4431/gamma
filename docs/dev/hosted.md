@@ -1,8 +1,13 @@
 # Hosted servers and the fleet
 
 A Pro account on Gamma Cloud gets a Gamma container of its own at
-`<username>.<GAMMA_CLOUD_HOSTED_DOMAIN>`: the plans marked `hosted` in
-`config.PLAN_LIMITS`. Lite and Plus have none; their library is an account
+`<username>-user.<GAMMA_CLOUD_HOSTED_DOMAIN>`: the plans marked `hosted` in
+`config.PLAN_LIMITS`. The suffix (`GAMMA_CLOUD_HOSTED_SUFFIX`, `-user`) is
+part of every hosted server's name (`hosted.url_of`), so no username can
+take a service's name in the zone (`account`, `app`, `share`, `demo`, the
+`-pages` hosts). Its owner reaches it through the entrance
+([cloud_accounts.md](cloud_accounts.md) "The entrance") and need not know
+the address. Lite and Plus have none; their library is an account
 on the shared server ([cloud_accounts.md](cloud_accounts.md) "Plans on the
 share host"). The account server
 ([cloud_accounts.md](cloud_accounts.md)) decides which containers should
@@ -494,9 +499,10 @@ Two compose projects share the work, joined by one external network:
   ("Hosted servers" there): `GAMMA_CLOUD_HOSTED_DOMAIN` set to the zone
   of the Caddyfile's wildcard site, `GAMMA_CLOUD_FLEET_IMAGE` and
   `_IMAGE_TAG` for what a new server runs, and Caddy on `gamma-fleet`.
-  The Caddyfile routes every `<label>.gammapdf.com` that is not `share`,
-  `demo` or a `-pages` host to `gamma-{http.request.host.labels.2}:9001`,
-  passing Cloudflare's `CF-Connecting-IP` as `X-Forwarded-For`. A stopped
+  The Caddyfile routes every `<label>-user.gammapdf.com` to
+  `gamma-<label>:9001` (the `@hosted` rule, which must agree with
+  `GAMMA_CLOUD_HOSTED_SUFFIX`), passing Cloudflare's `CF-Connecting-IP` as
+  `X-Forwarded-For`. A stopped
   server is a 502 for its name;
 - the agent's own, [cloud/fleet/deploy/](../../cloud/fleet/deploy/README.md)
   (`/root/Container/gamma-fleet/` on the VPS):

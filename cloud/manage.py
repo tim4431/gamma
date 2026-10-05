@@ -190,6 +190,16 @@ def cmd_create_client(args):
     print(f"client_id={client_id}\nclient_secret={secret}\n(the secret is shown once)")
 
 
+def cmd_client_redirect(args):
+    with closing(db.connect()) as conn:
+        try:
+            uris = oidc.add_redirect(conn, args.client_id, args.redirect_uri, actor="cli")
+        except Problem as e:
+            sys.exit(e.detail)
+        conn.commit()
+    print("\n".join(uris))
+
+
 def cmd_clients(args):
     with closing(db.connect()) as conn:
         for r in conn.execute("SELECT * FROM oauth_clients ORDER BY created_at").fetchall():
@@ -348,6 +358,8 @@ def main(argv=None):
     sub.add_parser("invites").set_defaults(fn=cmd_invites)
     cc = sub.add_parser("create-client"); cc.add_argument("name"); cc.add_argument("kind", choices=("share-host", "container"))
     cc.add_argument("redirect_uri", nargs="+"); cc.add_argument("--server-id"); cc.set_defaults(fn=cmd_create_client)
+    cr = sub.add_parser("client-redirect", help="add a redirect URI to a client (a server with a second address)")
+    cr.add_argument("client_id"); cr.add_argument("redirect_uri"); cr.set_defaults(fn=cmd_client_redirect)
     sub.add_parser("clients").set_defaults(fn=cmd_clients)
     dc = sub.add_parser("delete-client"); dc.add_argument("client_id"); dc.set_defaults(fn=cmd_delete_client)
     sub.add_parser("rotate-key").set_defaults(fn=cmd_rotate_key)

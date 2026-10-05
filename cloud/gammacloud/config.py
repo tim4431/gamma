@@ -23,12 +23,17 @@ it on the Admin page and it lives in cloud.db (``settings.py``).
   is offered only when both of its values are set. Their callback URLs are
   ``<public url>/oauth/<provider>/callback``. ``GAMMA_CLOUD_GOOGLE_ONE_TAP=0``
   turns off Google's sign-in prompt on the sign-in pages.
-- ``GAMMA_CLOUD_SHARE_HOST_URL`` — the shared server's address (a Gamma
-  with ``GAMMA_CLOUD_SHARE_HOST=1``): every account may sign in there, free
-  accounts publish pages to it, and a Lite or Plus account's library lives
-  on it. Handed to Gamma servers as ``share_host`` in ``GET /api/me`` and
-  ``gamma_share_host`` in the discovery document, so they know where to
-  publish pages. Empty = no shared server (and no Lite or Plus checkout).
+- ``GAMMA_CLOUD_SHARE_HOST_URL`` — where Gamma servers publish pages: the
+  shared server (a Gamma with ``GAMMA_CLOUD_SHARE_HOST=1``) under the
+  address publishing has always used. Handed to Gamma servers as
+  ``share_host`` in ``GET /api/me`` and ``gamma_share_host`` in the
+  discovery document. A server that has published keeps this address in its
+  mirror and refuses another, so it does not change. Empty = no share host.
+- ``GAMMA_CLOUD_APP_URL`` — the same shared server under the address people
+  use, e.g. ``https://app.gammapdf.com``: the entrance (``entrance.py``),
+  where every account may sign in and a Lite or Plus library lives.
+  Defaults to the share host's address. Empty with no share host = no
+  shared server, and no Lite or Plus checkout.
 """
 
 import os
@@ -61,6 +66,7 @@ RETIRED_ENV = ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
 DESKTOP_CLIENT_ID = os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "") or "gamma-desktop"
 
 SHARE_HOST_URL = os.environ.get("GAMMA_CLOUD_SHARE_HOST_URL", "").strip().rstrip("/")
+APP_URL = os.environ.get("GAMMA_CLOUD_APP_URL", "").strip().rstrip("/") or SHARE_HOST_URL
 
 GOOGLE_CLIENT_ID = os.environ.get("GAMMA_CLOUD_GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GAMMA_CLOUD_GOOGLE_CLIENT_SECRET", "").strip()
@@ -88,8 +94,8 @@ PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 # What each plan buys (docs/research/cloud-plans.md "The plans"), and where
 # its library lives:
 #
-# - ``shared``: an account on the shared server (``SHARE_HOST_URL``), not
-#   its admin. The plan's ``quota_mb`` and ``max_upload_mb`` travel to that
+# - ``shared``: an account on the shared server (``APP_URL``), not its
+#   admin. The plan's ``quota_mb`` and ``max_upload_mb`` travel to that
 #   server in the ``limits`` claim (``shared_limits``).
 # - ``hosted``: a container of its own (``hosted.py``), which the account
 #   administers. ``policy`` is the Gamma sign-in policy it runs
@@ -122,10 +128,14 @@ GRACE_DAYS = 7
 READ_ONLY_DAYS = 30
 DELETE_DAYS = 90
 
-# Hosted containers answer <label>.<HOSTED_DOMAIN>; empty = hosting is off
-# (no Pro checkout, no provisioning). The fleet starts containers from
+# Hosted containers answer <label><HOSTED_SUFFIX>.<HOSTED_DOMAIN>, the
+# label being the owner's username; empty domain = hosting is off (no Pro
+# checkout, no provisioning). The suffix keeps every such name apart from
+# the service names in the same zone (account, app, share, demo, and the
+# <username>-pages hosts), whatever a person calls themselves. The fleet starts containers from
 # FLEET_IMAGE at FLEET_IMAGE_TAG unless a server pins its own tag.
 HOSTED_DOMAIN = os.environ.get("GAMMA_CLOUD_HOSTED_DOMAIN", "").strip().lower().strip(".")
+HOSTED_SUFFIX = os.environ.get("GAMMA_CLOUD_HOSTED_SUFFIX", "-user").strip().lower()
 FLEET_IMAGE = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE", "").strip() or "ghcr.io/tim4431/gamma"
 FLEET_IMAGE_TAG = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE_TAG", "").strip() or "latest"
 

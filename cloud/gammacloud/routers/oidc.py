@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import accounts, db, oidc, pages, ratelimit, sessions
+from .. import accounts, db, entrance, oidc, pages, ratelimit, sessions
 from ..oidc import OAuthError
 from .external import sign_in_page
 
@@ -69,15 +69,40 @@ def authorize(request: Request):
                 return RedirectResponse(oidc.redirect_with(params["redirect_uri"], extra), status_code=302)
             return HTMLResponse(pages.error_page("Cannot sign in", e.description), status_code=400)
         account = sessions.resolve(conn, request)
+        step = _step(conn, req, account)
         conn.commit()
-    return _authorize_page(request, req, account)
+    return _answer(request, req, account, step)
 
 
-def _authorize_page(request: Request, req: dict, account):
-    if account:
-        return HTMLResponse(pages.authorize_page(req, account, verify_needed=not account["email_verified_at"]),
-                            headers=pages.NO_STORE)
-    return sign_in_page(request, lambda social: pages.authorize_page(req, None, social=social), request_id=req["id"])
+def _step(conn, req: dict, account) -> tuple[str, object]:
+    """What the authorize step does for whoever is signed in, with its
+    writes made: ``signin`` and ``verify`` (nobody, or an unconfirmed
+    address), ``go`` with the address to send the browser to (the request
+    finished, or the person forwarded to a server of their own), and
+    ``choose`` / ``confirm`` from ``entrance.decide``."""
+    if not account:
+        return "signin", None
+    if not account["email_verified_at"]:
+        return "verify", None
+    what, value = entrance.decide(conn, req, account)
+    if what == "finish":
+        return "go", oidc.finish(conn, req, account)
+    if what == "forward":
+        oidc.drop(conn, req)
+        return "go", value
+    return what, value
+
+
+def _answer(request: Request, req: dict, account, step: tuple[str, object]):
+    what, value = step
+    if what == "signin":
+        return sign_in_page(request, lambda social: pages.authorize_page(req, None, social=social),
+                            request_id=req["id"])
+    if what == "go":
+        return RedirectResponse(value, status_code=302, headers=pages.NO_STORE)
+    if what == "choose":
+        return HTMLResponse(pages.where_page(account, value, req["id"]), headers=pages.NO_STORE)
+    return HTMLResponse(pages.authorize_page(req, account, verify_needed=what == "verify"), headers=pages.NO_STORE)
 
 
 @router.get("/authorize/resume")
@@ -88,10 +113,11 @@ def authorize_resume(request: Request, request_id: str = ""):
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, request_id)
         account = sessions.resolve(conn, request)
+        step = _step(conn, req, account) if req else None
         conn.commit()
     if not req:
         return HTMLResponse(pages.error_page("Cannot sign in", EXPIRED), status_code=400)
-    return _authorize_page(request, req, account)
+    return _answer(request, req, account, step)
 
 
 class AuthorizeLogin(BaseModel):
@@ -103,8 +129,9 @@ class AuthorizeLogin(BaseModel):
 @router.post("/authorize/login")
 def authorize_login(body: AuthorizeLogin, request: Request):
     """Sign in on the authorize page; answers ``{redirect}`` for the page to
-    follow. Also sets the portal cookie, so the next server's sign-in is one
-    click."""
+    follow: the server that asked, or where ``entrance.after_sign_in`` sends
+    the person instead. Also sets the portal cookie, so the next server's
+    sign-in is one click."""
     ip_key = f"login:ip:{ratelimit.limit_ip(request)}"
     who_key = f"login:who:{accounts.login_bucket(body.login)}"  # one window with /api/login
     ratelimit.check(ip_key, 10, 300)
@@ -122,7 +149,7 @@ def authorize_login(body: AuthorizeLogin, request: Request):
             resp = JSONResponse({"verify_needed": True, "account": accounts.public(account)})
             sessions.set_cookie(resp, token)
             return resp
-        redirect = oidc.finish(conn, req, account)
+        redirect = entrance.after_sign_in(conn, req, account)
         conn.commit()
     ratelimit.reset(ip_key)
     ratelimit.reset(who_key)
@@ -137,7 +164,8 @@ class AuthorizeContinue(BaseModel):
 
 @router.post("/authorize/continue")
 def authorize_continue(body: AuthorizeContinue, request: Request):
-    """The signed-in person confirmed the server that is asking."""
+    """The signed-in person confirmed the server that is asking (the
+    confirm card's Continue, or the shared server on the chooser)."""
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
         if not req:

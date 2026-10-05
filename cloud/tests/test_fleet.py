@@ -59,7 +59,7 @@ def test_a_create_job_runs_and_its_secret_is_blanked(client, hosting):
     assert row["payload"] == "{}" and json.loads(row["result"])["health"] == "ok" and row["attempts"] == 1
     assert server(alice)["state"] == "running"
     assert [m["subject"] for m in mail.outbox[n:]] == ["Your Gamma is ready"]
-    assert f"https://alice.{DOMAIN}" in mail.outbox[-1]["body"]
+    assert f"https://alice-user.{DOMAIN}" in mail.outbox[-1]["body"]
 
 
 def test_a_failed_create_is_retried_with_a_new_secret(client, hosting):
@@ -563,7 +563,7 @@ def test_admin_endpoints(client, hosting):
     assert client.post("/api/admin/servers/provision", json={"account_id": bob}).status_code == 409
     sid = r.json()["server"]["id"]
     [s] = client.get("/api/admin/servers").json()["servers"]
-    assert s["username"] == "bob" and s["url"] == f"https://bob.{DOMAIN}" and s["jobs"] == {"queued": 1}
+    assert s["username"] == "bob" and s["url"] == f"https://bob-user.{DOMAIN}" and s["jobs"] == {"queued": 1}
 
     jobs = client.get("/api/admin/jobs").json()["jobs"]
     assert jobs[0]["kind"] == "create" and "env" not in jobs[0]["payload"] and jobs[0]["label"] == "bob"

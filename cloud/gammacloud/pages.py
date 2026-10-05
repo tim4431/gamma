@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config, pages_billing, pages_fleet, settings
+from . import accounts, config, entrance, pages_billing, pages_fleet, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -65,6 +65,9 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .who{display:flex;align-items:center;gap:12px;margin:20px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px}.who .avatar{width:36px;height:36px;font-size:15px}.who div{min-width:0}.who b,.who span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.who b{font-weight:600}.who span{color:var(--muted);font-size:12.5px}
 .gets{font-size:12.5px;font-weight:500;color:var(--text-2);margin-bottom:10px;overflow-wrap:anywhere}.scopes{list-style:none;margin:0;padding:0;display:grid;gap:10px}.scopes li{display:flex;align-items:center;gap:10px;font-size:13.5px}
 .scopes i{width:28px;height:28px;border-radius:6px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--text-2);flex:none}.scopes svg{width:15px;height:15px}
+.dests{display:grid;gap:8px;margin:20px 0 4px}.dest{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .1s,border-color .1s}
+.dest:hover{background:var(--surface-2);border-color:var(--accent);text-decoration:none}.dest:disabled{opacity:.6;cursor:default}.dest i{width:32px;height:32px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--text-2);flex:none}.dest i svg{width:16px;height:16px}
+.dest .txt{flex:1;min-width:0}.dest .txt b,.dest .txt span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dest .txt b{font-weight:600}.dest .txt span{color:var(--muted);font-size:12.5px}.dest>svg{width:16px;height:16px;color:var(--muted);flex:none}
 .go{display:flex;justify-content:flex-end;margin-top:24px}.go .btn{min-width:112px}.alt{margin-top:10px;text-align:right;font-size:13px;color:var(--muted)}.alt .sep{margin:0 7px}
 .linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer}.linkbtn:hover{color:var(--text);text-decoration:underline}.linkbtn:disabled{opacity:.5;cursor:default}
 .consent .msg{min-height:0}.consent .msg:empty{margin:0}.consent .cfoot{padding:11px 22px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}.consent .cfoot a{color:inherit;text-decoration:underline}
@@ -80,7 +83,7 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .side .me{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;margin-top:6px;font-size:13px;color:var(--text)}.side .me:hover{background:color-mix(in srgb,var(--text) 6%,transparent);text-decoration:none}.side .me .avatar{width:30px;height:30px;font-size:13px}.side .me div{min-width:0}.side .me b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side .me span{color:var(--muted);font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);font-weight:600;display:grid;place-items:center;text-transform:uppercase;flex:none}
 .main{padding:40px 48px 64px;max-width:1040px;width:100%}.pagehead{margin-bottom:24px}.pagehead p{color:var(--text-2);margin-top:6px}
-.hello{display:flex;align-items:center;gap:16px;margin-bottom:24px}.hello .avatar{width:52px;height:52px;font-size:21px}.hello p{color:var(--text-2);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hello{display:flex;align-items:center;gap:16px;margin-bottom:24px}.hello>.btn{margin-left:auto}.hello .avatar{width:52px;height:52px;font-size:21px}.hello p{color:var(--text-2);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:start}.cols>div>.section:last-child{margin-bottom:0}.cols{margin-bottom:16px}
 .section>h2 a{font-weight:500;font-size:13px}.section>h2 select{color:var(--text);margin-left:6px}.section>.list{padding:0}
 .steps{list-style:none;margin:0;padding:0}.step{display:flex;align-items:center;gap:14px;padding:13px 16px;border-top:1px solid var(--line)}.step:first-child{border-top:0}
@@ -227,6 +230,7 @@ ICONS = {
     "user": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
     "sliders": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
     "key": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>',
+    "chevron": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
 }
 
@@ -553,16 +557,19 @@ RESEND_JS = ("document.querySelectorAll('[data-resend]').forEach(r => r.onclick 
 
 
 def overview_page(account: dict, devices: list[dict], entries: list[dict], summary: dict,
-                  mail_failed: bool = False) -> str:
+                  mail_failed: bool = False, can_open: bool = False) -> str:
     """``devices``: the live grants; ``entries``: ``servers.merge`` of them
     and the linked servers; ``summary``: ``billing.summary``, for the plan
-    card and the strip a failed payment or an ended plan gets."""
+    card and the strip a failed payment or an ended plan gets;
+    ``can_open``: the account has a Gamma to open (``/open``)."""
     verified = account["email_verified"]
     name = account["display_name"] or account["username"]
     tags = (f"<span>@{esc(account['username'])}</span><span class=pill>{esc(account['plan'].capitalize())} plan</span>"
             + ("<span class=pill>Admin</span>" if account["is_admin"] else ""))
     head = (f"<header class=hello><div class=avatar>{esc(name[:1])}</div><div><h1>Welcome back, {esc(name)}</h1>"
-            f"<p>{tags}</p></div></header>")
+            f"<p>{tags}</p></div>"
+            + ("<a class='btn btn--primary' href='/open'>Open Gamma</a>" if can_open and verified else "")
+            + "</header>")
 
     # the setup checklist: shown until every step is done
     def step(done, title, sub, action):
@@ -946,6 +953,35 @@ def connect_page(origin: str, state: str, challenge: str, account, verify_needed
         foot="Connect only a server you run or trust.",
         go_js=(f"document.getElementById('go').onclick = (e) => act(e.target, async () => {{ const d = await api('/connect-server/continue', {body}); "
                "location.href = d.redirect; }, err);"))
+
+
+def where_page(account, places: list[dict], request_id: str = "") -> str:
+    """The entrance's chooser, for a person whose libraries are on several
+    Gamma Cloud servers (``entrance.destinations``; ``account`` needs a
+    username and an e-mail). Each row signs the browser in on that server.
+    With ``request_id`` the shared server itself asked (the authorize
+    step), and its row finishes that request instead of starting another."""
+    rows = ""
+    for place in places:
+        inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
+                 f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
+        if request_id and place["kind"] == "shared":
+            rows += f"<button type=button class=dest id=stay>{inner}</button>"
+        else:
+            rows += f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
+    user = account["username"]
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            "<h1>Where to?</h1><p class=where><span>Your account has a library on more than one server.</span></p>"
+            f"<div class=dests>{rows}</div>"
+            f"<p class=alt>Signed in as {esc(user)}<span class=sep aria-hidden=true>·</span>"
+            "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
+            "<p class=cfoot>Every server you have signed in to is listed on <a href=/devices>Devices</a>.</p>")
+    script = ("const err = document.getElementById('err');"
+              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+    if request_id:
+        script += ("const stay = document.getElementById('stay'); if (stay) stay.onclick = () => act(stay, async () => { "
+                   f"const d = await api('/authorize/continue', {{request_id: {_js(request_id)}}}); location.href = d.redirect; }}, err);")
+    return _auth_shell("Where to?", card, script, cls="consent", top=False)
 
 
 def authorize_page(req: dict, account, verify_needed: bool = False, social: dict | None = None) -> str:
