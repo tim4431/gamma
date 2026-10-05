@@ -442,13 +442,20 @@ def signed_in(request, user_id: str, subject: str, tokens: dict) -> None:
 
 def check(user_id: str) -> str:
     """One account's grant check: refresh, then sync the profile and
-    refresh the server list entry. "ok", or "" when no token came back
+    refresh the server list entry. A share host also reads the account's
+    claims again, since its plan sets its storage there
+    (``cloud_auth.plan_limits``). "ok", or "" when no token came back
     (offline — nothing happens — or revoked, handled by cloud_auth)."""
     token = cloud_auth.access_token_for(user_id, fresh=True)
     if not token:
         if syncs(user_id):  # offline: the grant stays, the profile waits
             _note_failure(user_id, UNREACHABLE)
         return ""
+    if cloud_auth.settings()["share_host"]:
+        try:
+            cloud_auth.refresh_claims(user_id, token)
+        except cloud_auth.CloudAuthError as e:  # the stored claims stand until the next round
+            log.warning(f"cloud: could not refresh the claims of {cloud_auth.name_of(user_id)}: {e}")
     sync_profile(user_id, token)
     register_server(user_id, token)
     return "ok"

@@ -13,9 +13,25 @@ from gammacloud import accounts, config, db, fleet, hosted, mail, oidc
 DOMAIN = "gammapdf.test"
 
 
+# The container machinery (placement, limits, resizes, the lifecycle) is
+# tested against three sizes of container plan, as the plans were before Lite
+# and Plus moved to the shared server: a change between container plans
+# relimits and resizes the same way whatever the table says. What the real
+# table does is at the end of this file.
+CONTAINER_PLANS = {
+    "free": {},
+    "lite": {"hosted": True, "quota_mb": 1024, "max_upload_mb": 50, "max_accounts": 1,
+             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 3, "memory_mb": 512, "cpus": 1.0},
+    "plus": {"hosted": True, "quota_mb": 6 * 1024, "max_upload_mb": 100, "max_accounts": 1,
+             "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 7, "memory_mb": 768, "cpus": 1.0},
+    "pro": config.PLAN_LIMITS["pro"],
+}
+
+
 @pytest.fixture
 def hosting(monkeypatch):
     monkeypatch.setattr(config, "HOSTED_DOMAIN", DOMAIN)
+    monkeypatch.setattr(config, "PLAN_LIMITS", CONTAINER_PLANS)
 
 
 # --- helpers (test_fleet.py uses them too) --------------------------------------
@@ -271,10 +287,20 @@ def test_tick_grace_read_only_stopped_deleted(client, hosting):
 
     tick()                                                 # nothing more yet
     assert server(alice)["state"] == "read_only"
+
+    def retires():
+        with closing(db.connect()) as conn:
+            st = hosted.status_for(conn, alice)
+        return st["stops_at"], st["deletes_at"]
+    stops, gone = retires()                                # the Plan page's dates are the lifecycle's own
+    assert stops[:10] == db.after(config.READ_ONLY_DAYS * 86400)[:10]
+    assert gone[:10] == db.after(config.DELETE_DAYS * 86400)[:10]
     backdate(alice, "state_changed_at", config.READ_ONLY_DAYS + 0.1)
     tick()
     row = server(alice)
     assert row["state"] == "stopped" and json.loads(row["limits"])["status"] == "stopped"
+    stops, gone = retires()
+    assert stops is None and gone[:10] == db.after((config.DELETE_DAYS - config.READ_ONLY_DAYS) * 86400)[:10]
     assert [j["kind"] for j in jobs_of(alice) if j["state"] == "queued"] == ["stop"]
     assert len(subjects("Your Gamma server is stopped")) == 1
 
@@ -432,6 +458,62 @@ def test_status_for_and_the_status_endpoint(client, hosting):
     assert client.get("/api/hosted/status").json() == {"server": None}
     set_plan(account["id"], "pro", granted="pro")
     d = client.get("/api/hosted/status").json()["server"]
-    assert set(d) == {"id", "label", "url", "state", "read_only", "limits", "report", "reported_at", "synced_at", "host"}
+    assert set(d) == {"id", "label", "url", "state", "read_only", "limits", "report", "reported_at", "synced_at",
+                      "stops_at", "deletes_at", "host"}
+    assert d["stops_at"] is None and d["deletes_at"] is None        # only a lapsed server has them
     assert d["url"] == f"https://alice.{DOMAIN}" and d["state"] == "provisioning" and d["host"] == "vps-1"
     assert d["limits"]["plan"] == "pro" and d["read_only"] is False
+
+
+# --- the real plans: Lite and Plus live on the shared server ----------------------
+
+def test_lite_and_plus_have_no_container_and_carry_their_storage_as_a_claim(client, monkeypatch):
+    from gammacloud import oidc
+    monkeypatch.setattr(config, "HOSTED_DOMAIN", DOMAIN)
+    make_host()
+    lite, plus, pro = make_account("lena", "lite"), make_account("paul", "plus"), make_account("petra", "pro")
+    assert server(lite) is None and server(plus) is None
+    assert server(pro)["state"] == "provisioning" and json.loads(server(pro)["limits"])["plan"] == "pro"
+    # what the shared server reads: the plan's storage, none for a free account, Plus's for Pro
+    with closing(db.connect()) as conn:
+        claims = {name: oidc.claims_for(accounts.by_id(conn, a), "openid") for name, a in
+                  (("lite", lite), ("plus", plus), ("pro", pro))}
+        free = accounts.create(conn, email="fred@example.org", username="fred", password=None, verified=True)
+        assert "limits" not in oidc.claims_for(accounts.by_id(conn, free["id"]), "openid")
+    assert claims["lite"]["limits"] == {"quota_mb": 1024, "max_upload_mb": 50}
+    assert claims["plus"]["limits"] == claims["pro"]["limits"] == {"quota_mb": 6144, "max_upload_mb": 100}
+    # the admin cannot provision a container for a plan without one
+    with closing(db.connect()) as conn:
+        with pytest.raises(accounts.Problem):
+            hosted.provision(conn, plus, "admin")
+
+
+def test_a_server_whose_plan_moved_to_the_shared_server_lapses_as_it_is(client, monkeypatch):
+    """Down from Pro, or a server made while Lite and Plus had containers:
+    it turns read-only under Pro's limits, keeps its size, and no new one is
+    made; the lifecycle (or the admin's Delete) retires it."""
+    monkeypatch.setattr(config, "HOSTED_DOMAIN", DOMAIN)
+    monkeypatch.setattr(config, "PLAN_LIMITS", CONTAINER_PLANS)
+    make_host()
+    alice = make_account("alice", "lite")
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE fleet_jobs SET state = 'done' WHERE kind = 'create'")
+        conn.execute("UPDATE hosted_servers SET state = 'running' WHERE account_id = ?", (alice,))
+        conn.commit()
+    assert json.loads(server(alice)["limits"])["memory_mb"] == 512
+    monkeypatch.undo()                                    # the real table again: Lite has no container
+    monkeypatch.setattr(config, "HOSTED_DOMAIN", DOMAIN)
+    set_plan(alice, "lite")
+    row = server(alice)
+    limits = json.loads(row["limits"])
+    assert row["state"] == "read_only" and limits["plan"] == "pro" and limits["read_only"] is True
+    assert [j["kind"] for j in jobs_of(alice) if j["state"] == "queued"] == []   # not resized
+    tick()
+    assert server(alice)["state"] == "read_only"
+    with closing(db.connect()) as conn:                   # and the admin may delete it at once
+        hosted.admin_action(conn, row["id"], "delete", "admin")
+        conn.commit()
+    assert server(alice)["state"] == "deleted"
+    set_plan(alice, "plus")
+    assert server(alice)["state"] == "deleted"            # a shared plan brings no server back
+

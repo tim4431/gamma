@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, hosted, integrity, jobs, offsite, workspaces
+from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, guests, hosted, integrity, jobs, offsite, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -123,11 +123,11 @@ async def get_logs(request: Request, after: int = 0):
 def get_settings(request: Request):
     """Server-wide default storage limits (per-user overrides live on the
     users list), the public URL, the cloud sign-in and the guest settings
-    (lifetime, demo mode — each with its source) for the admin rows in the
+    (lifetime, demo mode — each with its source — and ``guest_logins``) for the admin rows in the
     Settings dialog; on a hosted container ``hosted`` (``hosted.pane``: the
     plan's limits, the Plan rows), else null."""
     require_admin(request)
-    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud(),
+    return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(),
             "max_upload_mb_range": [UPLOAD_MB_MIN, UPLOAD_MB_MAX],
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
@@ -183,7 +183,7 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud(),
+    return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane()}
 
 
@@ -199,6 +199,13 @@ def hosted_sync(request: Request):
         raise HTTPException(status_code=400, detail="This server is not a hosted Gamma server.")
     ok = hosted.sync_now() is not None
     return {"ok": ok, "hosted": hosted.pane(), **get_defaults()}
+
+
+def _guests() -> dict:
+    """The guest rows (lifetime, demo mode, each with its source) and
+    ``guest_logins``: false where this server takes no guests, so the pane
+    leaves the rows out."""
+    return {**guest_settings(), "guest_logins": guests.logins_open()}
 
 
 def _cloud() -> dict:

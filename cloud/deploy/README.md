@@ -302,8 +302,10 @@ are configured in `.env`:
 
 ## Hosted servers
 
-A Lite, Plus or Pro account gets a Gamma container of its own at
-`<username>.gammapdf.com`. The account server decides what should exist;
+A Pro account gets a Gamma container of its own at
+`<username>.gammapdf.com`. (Lite and Plus are accounts on the share host,
+"The free share host" above, which therefore needs the disk and the
+backups for their libraries.) The account server decides what should exist;
 a fleet agent on each host does the Docker work
 ([docs/dev/hosted.md](../../docs/dev/hosted.md)). The agent is a compose
 project of its own, deployed and updated as
@@ -336,7 +338,7 @@ project's side of it:
    `docker compose up -d` in its folder). Its first heartbeat shows the
    host on the Servers tab with its memory and disk; until then it takes
    no servers.
-7. **A first server by hand.** Give an account a Lite, Plus or Pro plan on the
+7. **A first server by hand.** Give an account a Pro plan on the
    Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
    The agent pulls the image, starts `gamma-<username>` with its data in
    `/srv/gamma/<username>/data`, waits for its health check, and the

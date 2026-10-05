@@ -1,17 +1,24 @@
-# Billing: plans, Stripe and the Plan page
+# Billing: plans, Stripe and the Plan & billing page
 
 How the account server sells the Lite, Plus and Pro plans: the rule that
 turns a grant and a subscription into the one plan every claim carries, the
-Stripe wiring (Checkout, the Customer Portal, the webhook, the nightly
-reconciliation), the portal's Plan page, the Admin page's Billing tab and
-the website's pricing page. The design and the reasons behind the prices
+Stripe wiring (Checkout, the Customer Portal and its flows, the webhook,
+the nightly reconciliation), the portal's Plan & billing page, the Admin
+page's Billing tab and the website's pricing and terms pages. The design and the reasons behind the prices
 are in [research/cloud-plans.md](../research/cloud-plans.md). The account
-server itself is [cloud_accounts.md](cloud_accounts.md), and what a paid
-plan provisions is [hosted.md](hosted.md).
+server itself is [cloud_accounts.md](cloud_accounts.md).
+
+Where a plan's library lives is `config.PLAN_LIMITS`. Lite and Plus
+(`shared`) are an account on the shared server, whose address is
+`GAMMA_CLOUD_SHARE_HOST_URL`; the plan's storage reaches that server as a
+claim ([cloud_accounts.md](cloud_accounts.md) "Plans on the share host").
+Pro (`hosted`) provisions a container the account administers
+([hosted.md](hosted.md)).
 
 Code: `cloud/gammacloud/billing.py` (Stripe and the rules),
-`routers/billing.py` (`/api/billing/*`), `pages_billing.py` (the Plan page
-and the Billing tab), the effective-plan rule in `accounts.py`. Tests:
+`routers/billing.py` (`/api/billing/*`), `pages_billing.py` (the Plan
+page, the Overview's plan card and the Billing tab), the effective-plan
+rule in `accounts.py`. Tests:
 `cloud/tests/test_billing.py`, against a fake Stripe client. Nothing else
 in the repository speaks Stripe's vocabulary, and a Gamma server never
 hears about money: it sees the `plan` claim and, when hosted, the limits
@@ -69,7 +76,8 @@ until it is set:
 | `GAMMA_CLOUD_STRIPE_SECRET` | the secret key (`sk_live_…` / `sk_test_…`); empty = billing off |
 | `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET` | the webhook endpoint's signing secret (`whsec_…`) |
 | `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the six recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id) |
-| `GAMMA_CLOUD_HOSTED_DOMAIN` | a paid plan is a hosted server, so checkout also needs hosting on |
+| `GAMMA_CLOUD_SHARE_HOST_URL` | the shared server's address; Lite and Plus are sold only while it is set |
+| `GAMMA_CLOUD_HOSTED_DOMAIN` | the zone of the hosted containers; Pro is sold only while it is set |
 
 `config.PLAN_PRICES_USD` is what the pages show; what is charged is the
 Price in Stripe, so the two must agree. The SDK is `stripe` in
@@ -79,39 +87,76 @@ secret set on an image without it fails billing calls (logged), not the
 server.
 
 **The client.** `billing.client()` is a small wrapper over the SDK's
-`StripeClient` with six calls (verify an event, create a Checkout
-Session, create a portal session, retrieve, cancel and list
-subscriptions) that answer plain dicts and raise `BillingError` when Stripe
-does not answer. Tests swap it with `billing.set_client(fake)`. No call is
+`StripeClient`: verify an event, create a Checkout Session, create a portal
+session, retrieve, update, cancel and list subscriptions, retrieve a
+customer and list its invoices. Each call answers plain dicts and raises
+`BillingError` when Stripe does not answer. Tests swap it with `billing.set_client(fake)`. No call is
 made while cloud.db's write lock is held: the routes commit the session
 touch first, and the webhook and refresh read Stripe before they take the
 lock.
 
 **Checkout.** `POST /api/billing/checkout {price}` (portal session only,
 rate limited per account) answers `{url}` and the page sends the browser
-there. `billing.checkout_url` refuses while billing or hosting is off (503),
-for an unknown price key or one without a price id (400), for an
-unconfirmed e-mail (403: the hosted server would not sign it in), and while
+there. `billing.checkout_url` refuses while billing is off or the plan
+cannot be sold (503; `billing.can_sell`: the plan's home, the shared server
+or the hosting domain, is configured), for an unknown price key or one
+without a price id (400), for an unconfirmed e-mail (403: a Gamma server
+would not sign it in), and while
 the account holds a subscription in `active`, `trialing`, `past_due`,
-`unpaid` or `paused` (409, pointing at Manage billing). The browser never
+`unpaid` or `paused` (409, pointing at the Plan page). The browser never
 states a plan; it names a price key the server looks up.
 
 The session is `mode: subscription` with one line item of the price and
 `client_reference_id` = the account id. It names the account's Stripe
 customer when there is one (with `customer_update` address and name
 `auto`, which Stripe Tax needs), else the account's e-mail.
-`automatic_tax` is on and promotion codes are allowed. `metadata` and
+`automatic_tax` is on and promotion codes are allowed.
+`custom_text.submit.message` is `billing.CHECKOUT_NOTE`, which says beside
+the Subscribe button that payments are not refunded. `metadata` and
 `subscription_data.metadata` are `{account_id, plan}`. The success URL is
 `/plan?checkout=success&session_id={CHECKOUT_SESSION_ID}` and the cancel
 URL `/plan`, both on `GAMMA_CLOUD_PUBLIC_URL`.
 
-**The Customer Portal.** `POST /api/billing/portal` answers a portal
-session for the account's customer (404 without one) that returns to
-`/plan`. The portal does the payment method, switching between the six
-prices, cancelling at period end, resuming and invoices; every change comes
-back through the webhook. Configure it in the Stripe dashboard (Settings →
-Billing → Customer portal) to allow exactly those, with the six prices as
-the products a customer may switch between.
+**The Customer Portal.** `POST /api/billing/portal {flow, price}` answers a
+portal session for the account's customer (404 without one) that returns
+to `/plan`. Every change made there comes back through the webhook.
+`flow` (`billing.PORTAL_FLOWS`) picks the page the portal opens on:
+
+| `flow` | opens | refused |
+|---|---|---|
+| `""` | the portal's home: invoices, billing address, tax id | |
+| `payment` | the payment method | |
+| `cancel` | cancelling this subscription at the end of its period | 409 with no held subscription, or one already set to end |
+| `switch` | Stripe's confirmation of a move to the price key `price`, with what is charged | 400 for an unknown price or the current one; 409 unless the subscription is `active` or `trialing` and not set to end |
+
+A flow ends with a redirect to `/plan?billing=<flow>`, where the page says
+what was saved. `switch` reads the subscription first for the id of the
+item it moves. A flow the portal's configuration does not allow is logged
+and the session opens on the portal's home instead.
+
+`POST /api/billing/keep` (`billing.keep`) undoes a cancellation that has
+not taken effect: it clears `cancel_at_period_end` (and a `cancel_at` date,
+which the portal may set instead), stores the answer and audits
+`billing.keep`. 409 when the plan is not set to end.
+
+Configure the portal in the Stripe dashboard (Settings → Billing → Customer
+portal): payment methods and invoice history on; cancellation on, at the
+end of the billing period; plan switching on with the six prices as the
+products a customer may switch between, upgrades prorated and charged at
+once, downgrades scheduled for the end of the period. The last setting
+keeps a downgrade from leaving a credit on the customer's balance.
+
+**No refunds.** Nothing in the account server refunds a payment, and no
+page offers one:
+
+- Checkout says so beside its button (`CHECKOUT_NOTE`), and so do the Plan
+  page's closing lines, the pricing page and the
+  [terms](../../TERMS.md) (`/terms/` on the site), which keep the one
+  exception: a refund the law gives a buyer and that cannot be excluded.
+- A cancel runs to the end of the paid period. Only an account deletion
+  ends a subscription at once ("Deleting a paying account"), and its
+  confirmation says that nothing is refunded.
+- A refund the operator decides to give is made in Stripe's dashboard.
 
 **The webhook.** `POST /api/billing/webhook` takes the raw body and the
 `Stripe-Signature` header; it has no session and no CSRF check (it is in
@@ -158,60 +203,117 @@ last run time is a `billing_reconciled_at` row in the `settings` table,
 written directly because `settings.py` reads only its own keys and ignores
 others. `manage.py billing-sync` runs it at once, and the Admin page's
 Refresh re-reads one account. `GET /api/billing/me` also re-reads a row
-older than an hour, ignoring a Stripe that does not answer; the Plan page
-itself never calls Stripe, and its script calls `/api/billing/me` after
-load and reloads the page when the plan or status moved.
+older than an hour, ignoring a Stripe that does not answer. With
+`?fresh=1` it re-reads one older than 10 seconds, which the page asks for
+when the portal has just sent the browser back. The Plan page itself never
+calls Stripe: its script calls `/api/billing/me` after load and reloads the
+page when the plan, status, interval, cancel flag or period end moved.
 
-`GET /api/billing/me` answers `billing.summary`: `enabled`,
-`checkout_open`, `plan`, `plan_source`, `granted_plan`, `has_customer`,
+`GET /api/billing/me` answers `billing.summary`: `enabled`, `sells` (the
+plans `can_sell` allows), `shared_url` (the shared server's address),
+`plan`, `plan_source`, `granted_plan`, `has_customer`,
 `subscription` (`status`, `plan`, `interval`, `amount_usd`, `renews_at`,
-`cancel_at_period_end`, `period_end`, `seats`, `past_due_since`,
-`grace_ends_at`, `ended_at`, `read_only_until`, `deletes_at`,
-`updated_at`) or null, `prices` (`config.PLAN_PRICES_USD`) and `hosted`
-(`hosted.status_for`).
+`cancel_at_period_end`, `period_end`, `seats`, `can_switch`,
+`past_due_since`, `grace_ends_at`, `ended_at`, `updated_at`) or null,
+`prices` (`config.PLAN_PRICES_USD`) and `hosted` (`hosted.status_for`,
+which carries the dates a lapsed server stops and is deleted).
 
-## The Plan page
+**The payment method and the invoices.** `GET /api/billing/details`
+(`billing.details`, 60 an hour per account) reads them from Stripe when
+the page asks, and stores nothing. `payment_method` is the one the next
+charge goes to: the subscription's `default_payment_method`, else the
+customer's `invoice_settings.default_payment_method`, as `{kind, brand,
+last4, exp_month, exp_year}` or null. `invoices` are the newest 12
+(`billing.INVOICES_SHOWN`) that are not drafts, each `{id, number,
+created, description, total, currency, status, url, pdf}`; `total` is in
+cents, `url` is Stripe's hosted page (where an open invoice is paid and a
+paid one has its receipt) and `pdf` its download. An account Stripe does
+not know answers empty lists without a call. A Stripe that does not answer
+is a 502, and the page says the history is not available.
 
-`/plan`, a portal page with the **Plan** item in the side navigation
-(`pages_billing.plan_page` inside `pages.app`). It uses the portal's shared
-classes; its own `<style>` block adds the plan cards, the Monthly/Yearly
-toggle and a danger variant of `.notice`. The route (`portal.plan`)
+## The Plan & billing page
+
+`/plan`, a portal page with the **Plan & billing** item in the side
+navigation (`pages_billing.plan_page` inside `pages.app`). It uses the
+portal's shared classes; its own `<style>` block adds the plan cards, the
+Monthly/Yearly toggle and the invoice table. The route (`portal.plan`)
 resolves the session and renders from the account and `billing.summary`
-alone: no device or server lists, and no Stripe call. Every Choose and Resume button
-follows `pages_billing.can_buy`, the same test `checkout_url` applies
-(checkout open and no held subscription), so the page never offers a
-checkout that would answer 409. It has six states
-(`pages_billing.plan_state`):
+alone: no device or server lists, and no Stripe call. The script fills in
+the payment method and the billing history from `/api/billing/details`
+after load. Every payment action is a redirect to a page at Stripe:
+Checkout for a first purchase, the portal on one flow for a change. Every
+Choose and Resume button follows `pages_billing.can_buy`, the same test
+`checkout_url` applies (the plan can be sold and the account holds no
+subscription), so the page never offers a checkout that would be refused. Every state ends with
+the terms in small print (`_fine`): payments are not refunded, a cancel
+runs to the end of the period, and a link to `/terms/`.
+
+It has six states (`pages_billing.plan_state`):
 
 - **Free.** Four cards, Free, Lite, Plus and Pro, with six lines each (the
   paid ones drawn from `config.PLAN_LIMITS`), the monthly and the yearly
   price with the yearly saving, a Monthly/Yearly toggle, and "Choose Lite" /
   "Choose Plus" / "Choose Pro", which post to checkout and follow the URL. A
-  line under the cards points to self-hosting. While checkout is closed the
-  buttons read "Not available yet" and are disabled. A granted plan shows a
+  line under the cards points to self-hosting. A plan that cannot be sold
+  reads "Not available yet", disabled. A granted plan shows a
   strip saying so, its server, and the four cards with the granted one
   marked as the current plan.
-- **Checkout returned** (`?checkout=success` on an account with a
-  subscription row or a Stripe customer, until the server runs): "Setting
-  up your server…", polling `GET /api/hosted/status` every 3 seconds until
-  the state is `running`, then the address and Open. On an account Stripe
-  does not know yet (the webhook may still be on its way) the parameter
-  only adds a "reload in a minute" strip above the free state.
-- **Active.** The server (address, storage used against the cap from
-  `limits.quota_mb` and `report.uploads_bytes`, members against
-  `max_accounts` on Pro, the last report) beside the subscription (plan and
-  interval, price, the renewal or end date, Manage billing). A read-only
-  server gets a strip.
-- **Past due.** The same, under a strip with the date the grace ends and
-  Fix payment (the portal).
+- **Checkout returned** (`?checkout=success` on an account with a Pro
+  subscription, or a Stripe customer and no row yet, until the server
+  runs; a Lite or Plus plan has nothing to set up and goes straight to
+  Active): three
+  steps, *Payment received*, *Creating your server* and *Ready*, ticked off
+  as `GET /api/hosted/status`, polled every 3 seconds, reaches `running`;
+  then the address and Open. On an account Stripe does not know yet (the
+  webhook may still be on its way) the parameter only adds a "reload in a
+  minute" strip above the free state.
+- **Active.** Two sections side by side, then two below:
+  - *Subscription*: the plan and billing period, the price, the next
+    payment date, the payment method, and the actions *Change plan* (a link
+    down to the cards), *Update payment method* and *Cancel plan*, each a
+    portal flow. A plan set to end shows *Ends* in place of the next
+    payment and *Keep my plan* in place of the change and cancel buttons.
+  - where the library lives (`pages_billing._home`). On Pro, *Your
+    server*: the address, storage used against the cap (from
+    `limits.quota_mb` and `report.uploads_bytes`), members against
+    `max_accounts`, the off-site copies, the last report. A read-only
+    server gets a strip above both. On Lite and Plus, *Your library*: the
+    shared server's address, the plan's allowance and Open, which goes
+    through that server's cloud sign-in (`/api/auth/cloud/start`), so the
+    session carries the plan as it is now. A server left from a move down
+    from Pro is listed under it until it is deleted.
+  - *Billing history*: the invoices with date, description and number,
+    amount, status, and *Receipt* and *PDF* links; an open invoice has
+    *Pay*. Its header links to the portal's home for the rest.
+  - *Change plan*, while `subscription.can_switch`: the four cards as
+    switches. Another plan reads "Upgrade to …" or "Switch to …"; the
+    current plan's card offers its other billing period. The toggle starts
+    on the period the subscription pays by.
+- **Past due.** The same without the cards, under a strip with the date
+  the grace ends and Fix payment (the portal's home, where the open invoice
+  is paid).
 - **Paused.** The same, under a "Payment collection is paused" strip whose
   button opens the Customer Portal; a paused subscription is held, so it is
   resumed there, not through a new checkout.
-- **Cancelled or read-only.** The retention countdown (readable until
-  `config.READ_ONLY_DAYS` after the end, deleted `config.DELETE_DAYS` after
-  it), Export (`<server url>/?settings=backups`) and Resume (a new checkout
-  of the same price, shown only while checkout is open), followed by the
-  plan cards. `unpaid` is still held: it offers Fix payment and no cards.
+- **Cancelled or read-only.** For Lite and Plus, a section saying that
+  the library stays where it is under the free allowance, with Open and
+  Resume. For Pro, when the server stops being readable and
+  when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
+  the lifecycle's own dates), Export (`<server url>/?settings=backups`,
+  while the server is read-only) and Resume (a new checkout of the same
+  price, shown only while checkout is open), followed by the billing
+  history and the plan cards. `unpaid` is still held: it offers Fix payment
+  and no cards.
+
+After a portal flow the page shows what was saved (`?billing=`,
+`pages_billing.RETURNED`).
+
+**The Overview.** `pages_billing.overview_plan` is its plan card: the plan,
+"Renews 3 Nov · $5 a month" or when it ends, the shared server's address
+or the hosted server's address and storage, and *Plan and billing*. `overview_alert` adds a strip above
+the page for a failed payment, a paused subscription, or a server that is
+read-only or stopped. The Settings page's delete row says that a
+subscription ends at once without a refund.
 
 ## Usernames and confirmations with a hosted server
 
@@ -230,18 +332,27 @@ at registration gets its server once the link is clicked.
 
 ## The Admin page's Billing tab
 
-`pages_billing.ADMIN_TAB` and `ADMIN_JS`. It lists
-`GET /api/admin/subscriptions?status=` (the rows joined with username,
-e-mail and the effective plan; admin only) with a status filter, the period
-end, the cancel flag and the Stripe customer id linked to
-`https://dashboard.stripe.com/customers/<id>` (`/test/customers/` with a
-test key), and a Refresh per row
-(`POST /api/admin/subscriptions/{account_id}/refresh`, a re-read from
-Stripe, audited as `billing.refresh`). Refunds, disputes and invoices stay
-in Stripe's dashboard. On the Accounts tab the plan select shows and sets
-the granted plan, with a "paid" pill when a subscription lifts the
-effective plan above it. `manage.py subscriptions [--status S]` prints the
-same list.
+`pages_billing.ADMIN_TAB` and `ADMIN_JS`, top to bottom:
+
+- **a summary strip** (`billing.admin_summary`, the `summary` of the list
+  below): the subscriptions that pay now (`active`, `trialing`,
+  `past_due`) by plan, what they bring in a month (a yearly price counts a
+  twelfth, from `config.PLAN_PRICES_USD`, so before tax and discounts), and
+  how many have a failed payment or are set to end;
+- **subscriptions**: `GET /api/admin/subscriptions?status=` (the rows
+  joined with username, e-mail and the effective plan; admin only) with a
+  status filter, the period end, the cancel flag and the Stripe customer id
+  linked to `https://dashboard.stripe.com/customers/<id>`
+  (`/test/customers/` with a test key), and a Refresh per row
+  (`POST /api/admin/subscriptions/{account_id}/refresh`, a re-read from
+  Stripe, audited as `billing.refresh`);
+- **webhook events**: `GET /api/admin/billing-events?limit=`, the newest 50
+  rows of `billing_events` with the account and the outcome.
+
+Refunds, disputes and invoices stay in Stripe's dashboard. On the Accounts
+tab the plan select shows and sets the granted plan, with a "paid" pill
+when a subscription lifts the effective plan above it. `manage.py
+subscriptions [--status S]` prints the same list.
 
 ## The website
 
@@ -250,6 +361,9 @@ same list.
 Plus and Pro to `https://account.gammapdf.com/plan`. The FAQ's "Is Gamma
 free?" says the app is free and open source and points to it. Keep its
 numbers in step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
+Its notes say that payments are not refunded and link to `/terms/`, the
+repository's [TERMS.md](../../TERMS.md) rendered by the site build. The
+footer links there too.
 
 ## Running it locally with Stripe test mode
 
@@ -306,5 +420,8 @@ the rest; `billing_events` keeps its rows.
 
 - Pro seats beyond ten, a Plus storage add-on, and mail at each billing
   transition (Stripe's own dunning mail covers failed payments).
-- Refunds on deletion: a cancel now ends the subscription without a
-  prorated refund; issue one from Stripe's dashboard if it is owed.
+- Mail of its own when a plan is cancelled or changed; Stripe's receipts
+  and the server's lifecycle mail ([hosted.md](hosted.md)) are what goes
+  out.
+- The portal's configuration is set by hand in Stripe's dashboard; nothing
+  creates or checks it from here.

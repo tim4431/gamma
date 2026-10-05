@@ -36,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from .. import cloud_auth, cloud_sync, config, hosted, ratelimit, server_settings
+from .. import cloud_auth, cloud_sync, config, guests, hosted, ratelimit, server_settings
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -52,9 +52,7 @@ def server_config():
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
     plan = hosted.limits()
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
-            # guests: refused on a share host, and when GAMMA_GUEST_MAX=0 (a hosted container)
-            "password_login": True, "registration": False,
-            "guest": not cfg["share_host"] and config.guest_max() > 0,
+            "password_login": True, "registration": False, "guest": guests.logins_open(),
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),
             "read_only": bool(plan and plan["read_only"]),

@@ -168,6 +168,10 @@ export async function cloudSignInScenarios(env) {
       await page.locator('.setRow[data-setting="Plan limits"]').getByText(/\d+ of 10 accounts/).waitFor();
       await page.locator('.setRow[data-setting="Default quota"]').getByText("The plan's cap of 1000 MB", { exact: false }).waitFor();
       await page.locator('.setRow[data-setting="Unknown cloud accounts"]').getByText("Set by this server's plan", { exact: true }).waitFor();
+      // a hosted container takes no guests, whatever GAMMA_GUEST_MAX says: no Guests section, no guest login
+      await until(() => page.locator('.setSection[data-setting="Guests"]').count().then((n) => n === 0),
+        { what: "the Guests section left out on a hosted container" });
+      assertEq((await (await fetch(`${hosted.base}/api/server-config`)).json()).guest, false, "guest logins are off");
       await assertNoProblems(page);
       // the plan lapses: Sync now brings it, and the pane says what still works
       cloud.hosted.answer = { ...active, status: "read_only", read_only: true };

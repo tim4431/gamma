@@ -19,13 +19,20 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import config, workspaces
+from . import cloud_auth, config, workspaces
 from .db import connect_users_db, format_stamp, new_account_id, page_now, parse_stamp
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
 SWEEP_INTERVAL_S = 600  # the app lifespan runs ``delete_expired`` at startup and this often
 NAME_PREFIX = "guest-"
+
+
+def logins_open() -> bool:
+    """Whether this server takes guest logins: not with ``GAMMA_GUEST_MAX=0``,
+    not on a hosted container (``config.guest_max``) and not on a share
+    host, which holds strangers' published pages."""
+    return config.guest_max() > 0 and not cloud_auth.settings()["share_host"]
 
 
 def expires_at(created_at: str, ttl_hours: int | None = None) -> str:

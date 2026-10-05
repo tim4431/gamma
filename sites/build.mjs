@@ -4,7 +4,7 @@
 //                        copied from the repository (the site keeps no copies),
 //                        plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
-//                        the privacy policy, the user guide, the developer guide
+//                        the privacy policy, the terms, the user guide, the developer guide
 //                        and the research notes (DOCS below)
 //   ./dist/sitemap.xml   every page above
 //
@@ -54,9 +54,10 @@ const MEDIA = {
 // the title is the first heading, the description the first paragraph, the
 // sidebar's order and labels are the links of the section's index page, in
 // order of appearance. A `section` puts the pages in the documentation sidebar;
-// without one the page stands alone (the privacy policy).
+// without one the page stands alone (the privacy policy, the terms).
 const DOCS = [
   { source: 'PRIVACY.md', at: 'privacy/' },
+  { source: 'TERMS.md', at: 'terms/' },
   { source: 'docs/user_guide.md', at: 'docs/', section: 'User guide' },
   { source: 'docs/dev', at: 'docs/dev/', section: 'Developer guide' },
   { source: 'docs/research', at: 'docs/research/', section: 'Research notes' },

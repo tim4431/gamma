@@ -2,7 +2,8 @@
 
 Two shells: ``auth`` (a centred card: sign in, register, verify, reset,
 the authorize page a Gamma server sends people to) and ``app`` (a sidebar
-plus a content column: Overview, Devices, Settings and, for admins, Admin).
+plus a content column: Overview, Plan & billing, Devices, Settings and, for
+admins, Admin; the plan's pieces are in ``pages_billing``).
 Server-rendered, in the gammapdf.com palette (``sites/site/styles.css``)
 with the quiet, bordered, low-radius look of a workspace tool rather than
 a marketing page; light and dark; no framework, no build. The pages carry
@@ -81,9 +82,10 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .main{padding:40px 48px 64px;max-width:1040px;width:100%}.pagehead{margin-bottom:24px}.pagehead p{color:var(--text-2);margin-top:6px}
 .hello{display:flex;align-items:center;gap:16px;margin-bottom:24px}.hello .avatar{width:52px;height:52px;font-size:21px}.hello p{color:var(--text-2);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:start}.cols>div>.section:last-child{margin-bottom:0}.cols{margin-bottom:16px}
-.section>h2 a{font-weight:500;font-size:13px}.section>.list{padding:0}
+.section>h2 a{font-weight:500;font-size:13px}.section>h2 select{color:var(--text);margin-left:6px}.section>.list{padding:0}
 .steps{list-style:none;margin:0;padding:0}.step{display:flex;align-items:center;gap:14px;padding:13px 16px;border-top:1px solid var(--line)}.step:first-child{border-top:0}
 .step .dot{width:26px;height:26px;border-radius:50%;border:1.5px solid var(--line-2);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--muted);flex:none}.step .dot svg{width:14px;height:14px}
+.step:not(.done) .dot svg{display:none}.step.now .dot{border-color:var(--accent);border-top-color:transparent;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 .step.done .dot{background:var(--ok);border-color:var(--ok);color:var(--surface)}.step.done b{color:var(--text-2);font-weight:500}.step .txt{flex:1;min-width:0}.step .txt b{font-weight:600}.step .txt span{display:block;color:var(--muted);font-size:12.5px}
 .progress{display:flex;align-items:center;gap:10px;font-weight:400;font-size:12.5px;color:var(--muted)}.progress i{display:block;width:96px;height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden}.progress i b{display:block;height:100%;background:var(--accent);border-radius:99px}
 .dev{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--line)}.dev:first-child{border-top:0}
@@ -91,9 +93,9 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .dev .txt{flex:1;min-width:0}.dev .txt b{font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dev .txt span{color:var(--muted);font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dev .when{color:var(--muted);font-size:12.5px;white-space:nowrap}.dev .when.live{color:var(--ok)}.dev .when.live::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:1px}
 .blank{padding:28px 20px;text-align:center;color:var(--text-2);font-size:13.5px}.blank svg{width:28px;height:28px;color:var(--muted);display:block;margin:0 auto 10px}.blank .actions{justify-content:center}
-.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:11px 16px;font-size:13.5px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv .progress{justify-content:flex-end}.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:11px 16px;font-size:13.5px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .copy{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 0 0 6px;font:inherit;font-size:12px}.copy:hover{color:var(--text)}
-.planname{font-size:20px;font-weight:600;text-transform:capitalize;margin-bottom:6px;display:flex;align-items:center;gap:8px}.plantext{color:var(--text-2);font-size:13.5px}
+.planname{font-size:20px;font-weight:600;text-transform:capitalize;margin-bottom:6px;display:flex;align-items:center;gap:8px}.plantext{color:var(--text-2);font-size:13.5px}.planname small{font-size:13px;font-weight:400;color:var(--muted);text-transform:none}.planname+.kv{margin-top:12px}.gap{margin-top:12px}.kv+.actions{margin-top:16px}
 .srow{display:grid;grid-template-columns:230px minmax(0,1fr);gap:24px;padding:20px;border-top:1px solid var(--line)}.srow:first-child{border-top:0}
 .srow .desc b{display:block;font-weight:600}.srow .desc span{display:block;color:var(--muted);font-size:12.5px;margin-top:3px}
 .srow form>label:first-child,.srow .fields label{margin-top:0}.srow .fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.srow .fields+.fields{margin-top:12px}.current{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:500}
@@ -102,6 +104,8 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .section{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:16px}.section>h2{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px}.section>h2 span{font-weight:400;color:var(--muted);font-size:13px}.section>.body{padding:14px 16px}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}.row:first-child{border-top:0}.row .sub{color:var(--muted);font-size:12px;display:block}.row b{font-weight:500}
 .notice{background:var(--accent-soft);color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:8px;padding:10px 14px;font-size:13.5px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.notice.bad{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
+.fine{color:var(--muted);font-size:12.5px;margin-top:20px;max-width:760px}.fine a{color:inherit;text-decoration:underline}
 .empty{color:var(--text-2);font-size:13.5px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.actions .btn{margin-top:0}
 .danger{border-color:color-mix(in srgb,var(--danger) 35%,var(--line))}.danger>h2{color:var(--danger)}
 form.inline{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}form.inline label{margin:0;flex:1;min-width:120px}form.inline .btn{margin:0}
@@ -111,6 +115,13 @@ form.inline{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}form.inline
 select.sm{width:auto;padding:3px 6px;font-size:13px}.mono{font-family:var(--mono);font-size:12px}
 .secretbox{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:6px;padding:10px 12px;margin-top:10px;font-family:var(--mono);font-size:12.5px;word-break:break-all;white-space:pre-wrap}
 .notice svg{width:16px;height:16px;flex:none;margin-right:8px;vertical-align:-3px}
+/* summary tiles (the Admin page's Servers and Billing tabs) */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}.tiles>div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-width:0}
+.tiles>div>span{display:block;color:var(--muted);font-size:12px}.tiles b{display:block;font-size:20px;font-weight:600;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tiles b.mono{font-size:16px;line-height:1.7}.tiles small{display:block;color:var(--text-2);font-size:12.5px;line-height:1.6}
+/* ask() and toast(): the pages' own confirm, prompt and alert */
+dialog.ask{border:1px solid var(--line-2);border-radius:10px;background:var(--surface);color:var(--text);padding:20px;width:min(420px,calc(100% - 32px));box-shadow:0 12px 40px rgb(0 0 0/.18)}dialog.ask::backdrop{background:rgb(0 0 0/.35)}
+dialog.ask p{overflow-wrap:anywhere}dialog.ask input{margin-top:12px}dialog.ask .actions{justify-content:flex-end;margin-top:18px}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,12px);width:max-content;max-width:min(480px,calc(100% - 32px));background:var(--text);color:var(--bg);border-radius:8px;padding:10px 14px;font-size:13.5px;box-shadow:0 8px 28px rgb(0 0 0/.2);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:20}#toast.show{opacity:1;transform:translate(-50%,0)}
 @media(max-width:820px){.app{grid-template-columns:minmax(0,1fr);align-content:start}.dev{flex-wrap:wrap;row-gap:6px}.dev .ico{display:none}.dev .txt{flex-basis:100%}.dev .txt span{white-space:normal}.dev .when{margin-right:auto}.side{position:sticky;top:0;z-index:5;height:auto;flex-direction:row;align-items:center;gap:2px;padding:8px 12px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}.side::-webkit-scrollbar{display:none}.side .brand{padding:4px 8px 4px 0}.side .brand .bw,.side .label,.side .me,.side .grow,.side .gl{display:none}.side a.item,.side button.item{width:auto;white-space:nowrap;padding:6px 10px}.main{padding:24px 16px 48px}.cols{grid-template-columns:1fr}.srow{grid-template-columns:1fr;gap:12px;padding:16px}.srow .fields{grid-template-columns:1fr}.hello .avatar{width:44px;height:44px;font-size:18px}.hello h1{font-size:21px}}
 """
 
@@ -124,14 +135,39 @@ async function api(path, body, method){
   if (!r.ok) { const err = new Error(data.detail || ('Request failed (' + r.status + ')')); err.status = r.status; throw err; }
   return data;
 }
-// A button's action: disabled while it runs; a failure is shown in msg (else an alert) and the
+// The pages' own alert, confirm and prompt. toast: a line at the foot that leaves by itself.
+// ask: a dialog answering true or false; with o.input (the field's first value) it answers the
+// text typed, '' when cancelled. o.ok names the button, o.danger colours it.
+function toast(text){
+  let t = document.getElementById('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), 6000);
+}
+function ask(text, o){
+  o = o || {};
+  return new Promise(done => {
+    const d = document.createElement('dialog'), typed = o.input !== undefined;
+    d.className = 'ask';
+    d.innerHTML = '<form method=dialog><p></p>' + (typed ? '<input aria-label="Answer" autocomplete=off required>' : '')
+      + '<div class=actions><button type=button class="btn btn--sm">Cancel</button>'
+      + '<button class="btn btn--sm ' + (o.danger ? 'btn--danger' : 'btn--primary') + '" value=yes></button></div></form>';
+    d.querySelector('p').textContent = text;
+    d.querySelector('[value=yes]').textContent = o.ok || 'OK';
+    d.querySelector('[type=button]').onclick = () => d.close('');
+    const input = d.querySelector('input'); if (input) input.value = o.input;
+    d.addEventListener('close', () => { const yes = d.returnValue === 'yes'; d.remove(); done(typed ? (yes ? input.value.trim() : '') : yes); });
+    document.body.appendChild(d); d.showModal();
+  });
+}
+// A button's action: disabled while it runs; a failure is shown in msg (else a toast) and the
 // button comes back; a lost session goes to the sign-in page and returns here.
 async function act(btn, fn, msg){
   btn.disabled = true; if (msg) { msg.textContent = ''; msg.classList.remove('ok'); }
   try { await fn(); }
   catch (e) {
     if (e.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
-    if (msg) msg.textContent = e.message; else alert(e.message);
+    if (msg) msg.textContent = e.message; else toast(e.message);
     btn.disabled = false;
   }
 }
@@ -167,7 +203,8 @@ function social(o){
 }
 const out = document.getElementById('signout'); if (out) out.onclick = (e) => { e.preventDefault(); act(out, async () => { await api('/api/logout', {}); location.href = '/login'; }); };
 // Dates and "last active" tooltips in the viewer's own time zone (the server writes UTC).
-document.querySelectorAll('time[datetime]').forEach(t => { const d = new Date(t.dateTime); if (!isNaN(d)) t.textContent = d.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}); });
+function fmtDay(iso){ const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}); }
+document.querySelectorAll('time[datetime]').forEach(t => { const day = fmtDay(t.dateTime); if (day) t.textContent = day; });
 document.querySelectorAll('[data-at]').forEach(e => { const d = new Date(e.dataset.at); if (!isNaN(d)) e.title = e.dataset.label + ' ' + d.toLocaleString(); });
 """
 
@@ -228,7 +265,7 @@ def app(title: str, lead: str, account: dict, active: str, inner: str, script: s
     (the Overview's greeting)."""
     def item(key, href, label):
         return f"<a class='item {'on' if key == active else ''}' href='{href}'>{ICONS[key]}{label}</a>"
-    nav = (item("home", "/", "Overview") + item("plan", "/plan", "Plan") + item("devices", "/devices", "Devices")
+    nav = (item("home", "/", "Overview") + item("plan", "/plan", "Plan &amp; billing") + item("devices", "/devices", "Devices")
            + item("settings", "/settings", "Settings"))
     if account["is_admin"]:
         nav += "<div class=label>Server</div>" + item("admin", "/admin", "Admin")
@@ -515,9 +552,11 @@ RESEND_JS = ("document.querySelectorAll('[data-resend]').forEach(r => r.onclick 
              "catch (e) { r.textContent = e.message; r.disabled = false; } });")
 
 
-def overview_page(account: dict, devices: list[dict], entries: list[dict], mail_failed: bool = False) -> str:
+def overview_page(account: dict, devices: list[dict], entries: list[dict], summary: dict,
+                  mail_failed: bool = False) -> str:
     """``devices``: the live grants; ``entries``: ``servers.merge`` of them
-    and the linked servers."""
+    and the linked servers; ``summary``: ``billing.summary``, for the plan
+    card and the strip a failed payment or an ended plan gets."""
     verified = account["email_verified"]
     name = account["display_name"] or account["username"]
     tags = (f"<span>@{esc(account['username'])}</span><span class=pill>{esc(account['plan'].capitalize())} plan</span>"
@@ -547,22 +586,15 @@ def overview_page(account: dict, devices: list[dict], entries: list[dict], mail_
         f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div></div>")
     more = f"<a href='/devices'>Manage{f' all {len(entries)}' if len(entries) > 5 else ''}</a>"
     signins = f"<section class=section><h2>Gamma servers <span>{more}</span></h2><div class=list>{recent}</div></section>"
-    paid = account["plan"] != "free"
-    plantext = ("Your plan includes a hosted Gamma server of your own; the Plan page shows it and the billing."
-                if paid else
-                "The desktop app is your library. A hosted Gamma server of your own comes with the Plus and Pro plans.")
-    plan = (f"<section class=section><h2>Plan</h2><div class=body><div class=planname>{esc(account['plan'])}</div>"
-            f"<p class=plantext>{plantext}</p>"
-            f"<div class=actions><a class='btn btn--primary btn--sm' href='/plan'>Plan and billing</a>"
-            + ("" if paid else f"<a class='btn btn--sm' href='{SITE}/#selfhost'>Self-host instead</a>")
-            + "</div></div></section>")
+    plan = pages_billing.overview_plan(account, summary)
     who = (f"<section class=section><h2>Account <span><a href='/settings'>Edit</a></span></h2><div class=body><dl class=kv>"
            f"<dt>Username</dt><dd title='Your name on every Gamma server'>{esc(account['username'])}</dd>"
            f"<dt>E-mail</dt><dd title='{esc(account['email'])}'>{_email_pill(account)}</dd>"
            f"<dt>Member since</dt><dd>{_date(account['created_at'])}</dd>"
            f"<dt title='What servers key on; never changes'>Account id</dt><dd><span class=mono>{esc(account['id'])}</span>"
            f"<button class=copy data-copy='{esc(account['id'])}'>Copy</button></dd></dl></div></section>")
-    inner = _notice(account, mail_failed) + setup + f"<div class=cols><div>{signins}</div><div>{plan}{who}</div></div>"
+    inner = (_notice(account, mail_failed) + pages_billing.overview_alert(summary) + setup
+             + f"<div class=cols><div>{signins}</div><div>{plan}{who}</div></div>")
     script = RESEND_JS + ("document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { "
                           "await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; "
                           "setTimeout(() => b.textContent = 'Copy', 1200); });")
@@ -599,13 +631,13 @@ document.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => act(b,
   await api('/api/servers/remove', {url: b.dataset.remove}); gone(b.closest('.dev')); }, msg));
 document.querySelectorAll('[data-endsession]').forEach(b => b.onclick = () => act(b, async () => {
   await api('/api/sessions/' + b.dataset.endsession + '/revoke', {}); gone(b.closest('.dev')); }, msg));
-document.querySelectorAll('[data-disconnect]').forEach(b => b.onclick = () => {
-  if (!confirm('Disconnect ' + b.dataset.name + '? Nobody can sign in to it with Gamma Cloud until it is connected again.')) return;
+document.querySelectorAll('[data-disconnect]').forEach(b => b.onclick = async () => {
+  if (!await ask('Disconnect ' + b.dataset.name + '? Nobody can sign in to it with Gamma Cloud until it is connected again.', {ok: 'Disconnect', danger: true})) return;
   act(b, async () => { await api('/api/connected/' + b.dataset.disconnect + '/disconnect', {}); location.reload(); }, msg);
 });
 const all = document.getElementById('revokeall');
-if (all) all.onclick = () => {
-  if (!confirm("Sign out every Gamma server and every other browser? Each server ends the sessions it opened within the hour.")) return;
+if (all) all.onclick = async () => {
+  if (!await ask('Sign out every Gamma server and every other browser? Each server ends the sessions it opened within the hour.', {ok: 'Sign out everywhere', danger: true})) return;
   act(all, async () => { await api('/api/devices/revoke-all', {}); location.reload(); }, msg);
 };
 """
@@ -669,7 +701,10 @@ def settings_page(account: dict, linked: list[dict] | None = None, enabled: list
     conns = _connections(linked or [], enabled or [])
     connected = srow("Connected accounts", "Sign in with one click instead of a password.",
                      f"{conns}<div class=msg id=smsg></div>") if conns else ""
-    delete = srow("Delete account", "Signs everything out and removes the account after a grace period. Gamma servers keep their data.",
+    paid = account["plan_source"] == "stripe"   # a subscription pays for the plan: deleting ends it now
+    delete = srow("Delete account", "Signs everything out and removes the account after a grace period. "
+                  + ("Your subscription ends at once, without a refund."
+                     if paid else "Gamma servers keep their data."),
                   "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
                   f"<form id=del class=reveal hidden>{pw}{formfoot('Delete my account', 'btn--danger')}</form>")
     inner = (_notice(account)
@@ -690,10 +725,11 @@ bind('name', async (d, msg) => { await api('/api/me', d, 'PATCH'); say(msg, 'Sav
 bind('user', async (d, msg) => { const r = await api('/api/me/username', d); say(msg, 'Your username is now ' + r.account.username + '.'); setTimeout(() => location.reload(), 900); });
 bind('em', async (d, msg) => { await api('/api/email/change', d); say(msg, 'Check the new address for a confirmation link.'); });
 bind('pw', async (d, msg) => { await api('/api/me/password', d); say(msg, 'Saved. Other devices were signed out.'); document.getElementById('pw').reset(); if (!HAS_PW) setTimeout(() => location.reload(), 900); });
-bind('del', async d => { if (!confirm('Delete this account? This cannot be undone.')) return; await api('/api/me/delete', d); location.href = '/login'; });
+bind('del', async d => { if (!await ask('Delete this account? This cannot be undone.' + (PAID ? ' Your subscription ends now and is not refunded.' : ''), {ok: 'Delete my account', danger: true})) return;
+  await api('/api/me/delete', d); location.href = '/login'; });
 """
     return app("Settings", "Your profile and how you sign in.", account, "settings", inner,
-               f"const HAS_PW = {_js(has_pw)};" + script)
+               f"const HAS_PW = {_js(has_pw)}, PAID = {_js(paid)};" + script)
 
 
 def _settings_tab() -> str:
@@ -774,23 +810,23 @@ async function loadAccounts(reset){
   wire();
 }
 function wire(){
-  document.querySelectorAll('[data-plan]').forEach(s => s.onchange = async () => { try { await api('/api/admin/accounts/' + s.dataset.plan, {plan: s.value}, 'PATCH'); } catch (e) { alert(e.message); } });
+  document.querySelectorAll('[data-plan]').forEach(s => s.onchange = async () => { try { await api('/api/admin/accounts/' + s.dataset.plan, {plan: s.value}, 'PATCH'); } catch (e) { toast(e.message); } });
   document.querySelectorAll('[data-act]').forEach(s => s.onchange = async () => {
     const id = s.dataset.act, v = s.value; s.value = '';
     try {
       if (v === 'verify') await api('/api/admin/accounts/' + id, {verified: true}, 'PATCH');
-      else if (v === 'resend') { await api('/api/admin/accounts/' + id + '/resend-verify', {}); alert('Sent.'); return; }
+      else if (v === 'resend') { await api('/api/admin/accounts/' + id + '/resend-verify', {}); toast('Sent.'); return; }
       else if (v === 'admin' || v === 'unadmin') await api('/api/admin/accounts/' + id, {is_admin: v === 'admin'}, 'PATCH');
-      else if (v === 'rename') { const u = prompt('New username (lowercase letters, digits, hyphens):'); if (!u) return; await api('/api/admin/accounts/' + id, {username: u}, 'PATCH'); }
-      else if (v === 'delete') { if (!confirm('Delete this account? It is signed out everywhere and purged after the grace period.')) return; await api('/api/admin/accounts/' + id + '/delete', {}); }
-      else if (v === 'restore') { await api('/api/admin/accounts/' + id + '/restore', {}); alert('Restored. They sign back in with a password reset, or Google/GitHub on the same e-mail.'); }
-      else if (v === 'purge') { if (!confirm('Purge this account now? Its username and e-mail become free for a new account. This cannot be undone.')) return; await api('/api/admin/accounts/' + id + '/purge', {}); }
+      else if (v === 'rename') { const u = await ask('New username (lowercase letters, digits, hyphens):', {input: '', ok: 'Rename'}); if (!u) return; await api('/api/admin/accounts/' + id, {username: u}, 'PATCH'); }
+      else if (v === 'delete') { if (!await ask('Delete this account? It is signed out everywhere and purged after the grace period. A subscription is cancelled now, without a refund.', {ok: 'Delete', danger: true})) return; await api('/api/admin/accounts/' + id + '/delete', {}); }
+      else if (v === 'restore') { await api('/api/admin/accounts/' + id + '/restore', {}); toast('Restored. They sign back in with a password reset, or Google/GitHub on the same e-mail.'); }
+      else if (v === 'purge') { if (!await ask('Purge this account now? Its username and e-mail become free for a new account. This cannot be undone.', {ok: 'Purge', danger: true})) return; await api('/api/admin/accounts/' + id + '/purge', {}); }
       else return;
       loadAccounts(true);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   });
   document.querySelectorAll('[data-delinv]').forEach(b => b.onclick = () => act(b, async () => { await api('/api/admin/invites/' + b.dataset.delinv, undefined, 'DELETE'); load('invites'); }));
-  document.querySelectorAll('[data-delcli]').forEach(b => b.onclick = () => { if (!confirm('Delete this client? Its servers can no longer sign people in.')) return; act(b, async () => { await api('/api/admin/clients/' + b.dataset.delcli, undefined, 'DELETE'); load('clients'); }); });
+  document.querySelectorAll('[data-delcli]').forEach(b => b.onclick = async () => { if (!await ask('Delete this client? Its servers can no longer sign people in.', {ok: 'Delete', danger: true})) return; act(b, async () => { await api('/api/admin/clients/' + b.dataset.delcli, undefined, 'DELETE'); load('clients'); }); });
 }
 async function load(tab){
   if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
@@ -822,7 +858,7 @@ bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
 bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, turnstile_secret: d.turnstile_secret}, msg));
 bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
 const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySelector('.msg');
-cs.onclick = () => { if (!confirm('Clear the Turnstile secret? The anti-bot check stops running.')) return;
+cs.onclick = async () => { if (!await ask('Clear the Turnstile secret? The anti-bot check stops running.', {ok: 'Clear', danger: true})) return;
   act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
 loadAccounts(true);
 """ % json.dumps(list(config.PLANS)) + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS

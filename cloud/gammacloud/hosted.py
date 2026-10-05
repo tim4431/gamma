@@ -1,5 +1,7 @@
-"""Hosted servers: one paid Gamma container per account at
-``<label>.<HOSTED_DOMAIN>`` (docs/dev/hosted.md).
+"""Hosted servers: one Gamma container per account on a plan that has one
+(``config.PLAN_LIMITS`` ``hosted``: Pro) at ``<label>.<HOSTED_DOMAIN>``
+(docs/dev/hosted.md). A Lite or Plus account has no container: its library
+is an account on the shared server.
 
 The row in ``hosted_servers`` follows the account's effective plan and its
 subscription (``plan_changed``, called by billing and the admin inside
@@ -45,6 +47,13 @@ def _hosted(plan) -> bool:
     return bool(config.PLAN_LIMITS.get(plan or "", {}).get("hosted"))
 
 
+def _container_plan(*plans) -> str:
+    """The first of ``plans`` that has a container, else Pro: the limits a
+    server keeps once its account's plan has none (a lapse, or a server
+    made for a plan that has since moved to the shared server)."""
+    return next((p for p in plans if _hosted(p)), "pro")
+
+
 def url_of(label: str) -> str:
     return f"https://{label}.{config.HOSTED_DOMAIN}" if config.HOSTED_DOMAIN else ""
 
@@ -57,6 +66,16 @@ def _day(ts: str) -> str:
 def _plus_days(ts: str, days: float) -> str:
     t = db.parse(ts) + timedelta(days=days)
     return t.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _stops_at(row) -> str:
+    """When a ``read_only`` server is stopped."""
+    return _plus_days(row["state_changed_at"], config.READ_ONLY_DAYS)
+
+
+def _gone_at(row) -> str:
+    """When a ``stopped`` server is deleted."""
+    return _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
 
 
 def _portal() -> str:
@@ -92,12 +111,11 @@ def target(account, sub, previous_plan: str = "") -> tuple[str, str, str | None]
     ``active``, ``grace`` or ``read_only``. A courtesy grant (a hosted
     ``granted_plan``) and an effective hosted plan with no subscription are
     active and never lapse; otherwise the subscription decides. ``plan`` is
-    the effective plan while it is hosted, else the last hosted plan the
-    server ran (its limits while read-only)."""
+    the effective plan while it is hosted, else ``_container_plan`` (its
+    limits while read-only)."""
     effective = account["plan"] if account is not None and not account["deleted_at"] else "free"
     if not _hosted(effective):
-        fallback = next((p for p in (previous_plan, sub["plan"] if sub else "") if _hosted(p)), "plus")
-        return fallback, "read_only", None
+        return _container_plan(previous_plan, sub["plan"] if sub else ""), "read_only", None
     if account["granted_plan"] and _hosted(account["granted_plan"]):
         return effective, "active", None
     status = sub["status"] if sub else "none"
@@ -114,12 +132,10 @@ def _message(state: str, row, grace_until: str | None) -> str:
         return (f"Payment failed; this server becomes read-only on {_day(grace_until)} unless the card is fixed "
                 f"at {_portal()}.")
     if state == "read_only":
-        stops = _plus_days(row["state_changed_at"], config.READ_ONLY_DAYS)
         return (f"This server is read-only because its plan ended. Reads and exports still work; it stops on "
-                f"{_day(stops)}. Resume the plan at {_portal()}.")
+                f"{_day(_stops_at(row))}. Resume the plan at {_portal()}.")
     if state == "stopped":
-        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
-        return f"This server is stopped and is deleted on {_day(gone)}. Resume the plan at {_portal()}."
+        return f"This server is stopped and is deleted on {_day(_gone_at(row))}. Resume the plan at {_portal()}."
     if state == "suspended":
         return "This server is suspended by Gamma Cloud. Reads and exports still work; writes are refused."
     return ""
@@ -224,7 +240,8 @@ def _apply(conn, row, actor: str) -> dict:
     if previous and previous != plan and row["state"] != "deleted":
         db.audit(conn, "hosted.limits", row["account_id"], actor, f"{row['label']} {previous} -> {plan}")
     limits = _store_limits(conn, row["id"], plan, grace_until)
-    if before.get("memory_mb"):                   # a first store has nothing to move from: create sizes it
+    # A first store has nothing to move from: create sizes it. A lapsed server keeps the size it has.
+    if before.get("memory_mb") and status != "read_only":
         _resize_if_moved(conn, row["id"], fleet.size_of(before), actor)
     return limits
 
@@ -338,12 +355,9 @@ def create(conn, account_id: str, actor: str = "system") -> None:
 
 def _plan_of(conn, row) -> str:
     """The plan a server is placed and created for: the account's effective
-    plan while it is hosted, else the last one the server ran, else Plus."""
+    plan while it is hosted, else the last one the server ran, else Pro."""
     account = _account(conn, row["account_id"])
-    for plan in (account["plan"] if account else "", fleet.json_dict(row["limits"]).get("plan")):
-        if _hosted(plan):
-            return plan
-    return "plus"
+    return _container_plan(account["plan"] if account else "", fleet.json_dict(row["limits"]).get("plan"))
 
 
 def create_payload(conn, server_id: str) -> dict:
@@ -503,18 +517,17 @@ def _tick_one(conn, row, now: str) -> None:
         _provision(conn, row)
     _apply(conn, _row(conn, row["id"]), "system")
     row = _row(conn, row["id"])
-    if row["state"] == "read_only" and now >= _plus_days(row["state_changed_at"], config.READ_ONLY_DAYS):
+    if row["state"] == "read_only" and now >= _stops_at(row):
         fleet.enqueue(conn, row["host_id"], row["id"], "stop", {"label": row["label"]})
         _set_state(conn, row, "stopped", "system", f"read-only for {config.READ_ONLY_DAYS} days")
         row = _row(conn, row["id"])
-        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
         _mail(conn, row["account_id"], "Your Gamma server is stopped", [
             f"{url_of(row['label']) or row['label']} has been read-only for {config.READ_ONLY_DAYS} days and "
-            f"is now stopped. It is deleted with all its files on {_day(gone)}.",
+            f"is now stopped. It is deleted with all its files on {_day(_gone_at(row))}.",
             "Resuming the plan before then starts it again as it was."], _plan_button())
-        _store_limits(conn, row["id"], fleet.json_dict(row["limits"]).get("plan") or "plus", None)
+        _store_limits(conn, row["id"], _container_plan(fleet.json_dict(row["limits"]).get("plan")), None)
     elif row["state"] == "stopped":
-        gone = _plus_days(row["state_changed_at"], config.DELETE_DAYS - config.READ_ONLY_DAYS)
+        gone = _gone_at(row)
         if now >= gone:
             _delete(conn, row, "system", f"{config.DELETE_DAYS} days after the plan ended")
         elif now >= _plus_days(gone, -DELETE_WARNING_DAYS) and not conn.execute(
@@ -661,11 +674,17 @@ def sync(conn, server_id: str, body: dict) -> dict:
 
 
 def status_for(conn, account_id: str) -> dict | None:
-    """The account's hosted server for the plan page, or None."""
+    """The account's hosted server for the plan page, or None. A lapsed
+    server says when the lifecycle retires it: ``stops_at`` while it is
+    read-only, and ``deletes_at`` (the stop plus the rest of
+    ``DELETE_DAYS``) from then until it is gone."""
     row = _of_account(conn, account_id)
     if row is None:
         return None
+    stops_at = _stops_at(row) if row["state"] == "read_only" else None
+    deletes_at = (_plus_days(stops_at, config.DELETE_DAYS - config.READ_ONLY_DAYS) if stops_at
+                  else _gone_at(row) if row["state"] == "stopped" else None)
     return {"id": row["id"], "label": row["label"], "url": url_of(row["label"]), "state": row["state"],
             "read_only": bool(row["read_only"]), "limits": fleet.json_dict(row["limits"]),
             "report": fleet.json_dict(row["report"]), "reported_at": row["reported_at"], "synced_at": row["synced_at"],
-            "host": _host_name(conn, row["host_id"])}
+            "stops_at": stops_at, "deletes_at": deletes_at, "host": _host_name(conn, row["host_id"])}

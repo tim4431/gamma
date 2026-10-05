@@ -201,6 +201,20 @@ def test_guest_logins_off_hide_the_button(monkeypatch):
     assert client.get("/api/server-config").json()["guest"] is True
 
 
+def test_a_hosted_container_takes_no_guests(monkeypatch):
+    """GAMMA_HOSTED turns guest logins off by itself, so a container made
+    before the account server sent GAMMA_GUEST_MAX=0 is covered too; the
+    admin's settings say so and the Server pane leaves its Guests rows out."""
+    from gamma import config, guests
+    assert guests.logins_open() is True
+    monkeypatch.setenv("GAMMA_HOSTED", "1")
+    monkeypatch.setenv("GAMMA_GUEST_MAX", "300")
+    assert config.guest_max() == 0 and guests.logins_open() is False
+    client = _new_client()
+    assert client.get("/api/server-config").json()["guest"] is False
+    assert client.post("/api/login-guest").status_code == 503
+
+
 def test_guest_logins_are_rate_limited_per_ip(monkeypatch):
     from gamma import guests, workspaces
     made = []
@@ -247,7 +261,10 @@ def test_admin_guest_settings_round_trip(gadmin, monkeypatch):
     s = gadmin.get("/api/admin/settings").json()
     assert (s["guest_ttl_hours"], s["guest_ttl_source"]) == (24, "default")
     assert (s["demo_mode"], s["demo_mode_source"]) == (False, "default")
-    assert s["guest_ttl_hours_range"] == [1, 720]
+    assert s["guest_ttl_hours_range"] == [1, 720] and s["guest_logins"] is True
+    monkeypatch.setenv("GAMMA_GUEST_MAX", "0")
+    assert gadmin.get("/api/admin/settings").json()["guest_logins"] is False  # the pane leaves the Guests rows out
+    monkeypatch.delenv("GAMMA_GUEST_MAX")
     cfg = _new_client().get("/api/server-config").json()
     assert cfg["guest_ttl_hours"] == 24 and cfg["demo"] is False and cfg["guest"] is True
     assert cfg["guest_seeded"] is False

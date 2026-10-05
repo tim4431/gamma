@@ -22,6 +22,7 @@ on:
       - ".github/workflows/site.yml"
       - ".claude/skills/build-site/**"
       - "PRIVACY.md"
+      - "TERMS.md"
 
 concurrency:
   group: check-${{ github.event.pull_request.number }}

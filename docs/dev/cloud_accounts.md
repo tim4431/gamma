@@ -19,8 +19,9 @@ Status: **v0**, plus the preference profile, the linked-server list and
 the username lookup (the account server's half of steps 7 and 8 of the
 plan). Paid plans are sold through Stripe ([billing.md](billing.md)). The
 effective plan is the higher of a grant (an admin's or an invite's) and a
-live subscription. Lite, Plus and Pro accounts get a hosted container
-([hosted.md](hosted.md)). The consumer side, "Sign in with Gamma Cloud" on
+live subscription. A Lite or Plus account's library is an account on the
+shared server ("Plans on the share host"); a Pro account gets a hosted
+container ([hosted.md](hosted.md)). The consumer side, "Sign in with Gamma Cloud" on
 every Gamma server, is under "The Gamma side" below.
 
 ## What it owns
@@ -29,7 +30,7 @@ every Gamma server, is under "The Gamma side" below.
 |---|---|
 | accounts | e-mail, username, password (bcrypt; none for an account made through Google/GitHub), display name, plan, admin flag, soft deletion; the random account id is the identity, e-mail and username both change |
 | outside sign-in | Google (OIDC + the one-tap prompt) and GitHub (OAuth), linked to accounts |
-| portal | sign in / register / verify / reset, then Overview, Plan ([billing.md](billing.md)), Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
+| portal | sign in / register / verify / reset, then Overview, Plan & billing ([billing.md](billing.md)), Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
 | identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
@@ -157,8 +158,12 @@ browser. `SameSite=Lax` alone would not do: it does not tell
 account.gammapdf.com from a sibling `*.gammapdf.com` page such as a hosted
 container, and a POST without a JSON body needs no CORS preflight. There is
 no separate token. The pages' buttons go through one script helper, `act`:
-a failure is shown next to the button and the button comes back; a lost
-session goes to `/login?next=` and returns to the page.
+a failure is shown next to the button (in a toast where the button has no
+message line) and the button comes back; a lost session goes to
+`/login?next=` and returns to the page. The pages never use the browser's
+`alert`, `confirm` or `prompt`: `ask(text, {ok, danger, input})` opens a
+`<dialog>` and answers true or false, or the text typed, and `toast(text)`
+shows a line at the foot that leaves by itself.
 
 Two shells in the gammapdf.com palette (`sites/site/styles.css`), light
 and dark, in the quiet bordered look of a workspace tool: the **auth**
@@ -171,7 +176,9 @@ page) and the **app** shell (a sidebar and a content column):
   undo it) with a progress bar, hidden once all three are done. Then
   *Gamma servers*, the first five of the Devices page's list (below)
   without its buttons. Beside them sit a plan
-  card (the plan, *Plan and billing* and *Self-host instead*)
+  card (the plan, how it renews or ends, the hosted server's address and
+  storage, *Plan and billing*, and for a free account *Self-host
+  instead*; [billing.md](billing.md) "The Overview")
   and an account summary: username, e-mail state, member since, and the
   account id with a copy button. The id is what Gamma servers key on; it
   never changes. `?mail=failed` (registration could not send the mail)
@@ -234,8 +241,9 @@ page) and the **app** shell (a sidebar and a content column):
     `server` client shows the account id that owns it.
   - Servers: the fleet's hosts, the hosted servers, upgrades in waves and
     the job queue ([hosted.md](hosted.md) "Admin").
-  - Billing: the subscription copies by status, each with a Refresh from
-    Stripe and a link into Stripe's dashboard ([billing.md](billing.md)).
+  - Billing: what the subscriptions bring in, the subscription copies by
+    status, each with a Refresh from Stripe and a link into Stripe's
+    dashboard, and the newest webhook events ([billing.md](billing.md)).
   - **Settings**: the sign-up gate above. Each row saves its own keys and
     the tab redraws from the answer (`settings.admin_view`). The Turnstile
     secret never leaves the server: the tab learns only whether one is
@@ -530,8 +538,9 @@ trace.
 **The ID token** is signed EdDSA with the active key (`kid` in the header)
 and carries `iss`, `sub` (the account id), `aud` (the client id), `exp`
 (10 min), `iat`, `auth_time`, `nonce`, and the identity claims:
-`preferred_username` and `plan` always (a Gamma server needs the username
-and the quota),
+`preferred_username` and `plan` always (a Gamma server needs the
+username), `limits` on a paid plan (`{quota_mb, max_upload_mb}`, the
+storage it gives the account on the shared server, `config.shared_limits`),
 `email` + `email_verified` for the `email` scope, `name` for `profile`.
 `/userinfo` answers the same claims for an access token. Keys are Ed25519
 in `signing_keys`; `manage.py rotate-key` retires the active one, which
@@ -920,6 +929,35 @@ before the account server is asked. The publishing side is
 Two more settings shape what a share host serves, both environment only
 ([mirror.md](mirror.md) "Publishing" has the mechanics).
 
+**Plans on the share host.** The share host is also where a Lite or Plus
+library lives: the person signs in there like anyone else and is an
+ordinary account, not an admin. What the plan adds is storage. The account
+server sends it as the `limits` claim, and
+`server_settings.user_limits` uses it as the account's default quota and
+per-file cap in place of the server's defaults
+(`cloud_auth.plan_limits`). An admin's override for the account still wins.
+Three rules keep it honest:
+
+- only a share host reads the claim. On any other server a cloud plan
+  changes no limit;
+- the claim counts only while the identity holds a live grant (a refresh
+  token, not revoked). The hourly grant check reads the account's claims
+  again from `/userinfo` on a share host (`cloud_auth.refresh_claims`), so
+  a plan that lapsed loses its allowance within the hour, and a new plan
+  arrives within the hour or at the next sign-in, which is why the Plan
+  page's Open goes through the cloud sign-in. A grant signed out on the
+  account server loses the allowance with it;
+- an identity made by a publish exchange alone holds no grant, so it has
+  the server's defaults until the person signs in on the share host.
+
+A free account, and a plan that ended, have the server's defaults: nothing
+is deleted, and uploads are refused while the account holds more than its
+quota ([user_db.md](user_db.md)). A Pro account's claim carries Plus's
+storage (`config.SHARED_FALLBACK`), for the library it may still have
+there. Not built: the share host reporting each account's usage to the
+account server, so the Plan page shows the allowance but not what is used;
+and deleting files beyond the free allowance after a plan ended.
+
 **The plan's cap.** How many pages each plan may publish is
 `config.PLAN_PAGE_LIMITS` in `gamma/config.py`:
 
@@ -986,9 +1024,11 @@ nothing. Two first-run behaviours of the image are off there:
   set, `seed.ensure_admin_seed` creates no `admin` account. The owner
   becomes admin at their first cloud sign-in as the admin subject; a
   seeded login would belong to nobody and take one of the plan's accounts.
-- **No guests.** The account server starts every container with
-  `GAMMA_GUEST_MAX=0` ([guests.md](guests.md)), since a guest would not
-  count against the plan's accounts.
+- **No guests.** `GAMMA_HOSTED` turns guest logins off by itself
+  (`config.guest_max`, [guests.md](guests.md)), since a guest would not
+  count against the plan's accounts. The account server also starts every
+  container with `GAMMA_GUEST_MAX=0`, which covers an image older than
+  that rule. Settings → Server shows no Guests section there.
 
 **The sync.** At startup and then every hour (the app's `every()` loop,
 `hosted.tick`) the container posts its report to

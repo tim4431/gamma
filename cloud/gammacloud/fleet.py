@@ -78,10 +78,10 @@ def default_image() -> str:
 
 def size_of(limits: dict) -> tuple[int, float]:
     """``(memory_mb, cpus)`` a server is sized to: its stored limits, else
-    its plan's (Plus when the plan is unknown)."""
+    its plan's (Pro when the plan is unknown or has no container)."""
     plan = config.PLAN_LIMITS.get(limits.get("plan") or "", {})
     if not plan.get("hosted"):
-        plan = config.PLAN_LIMITS["plus"]
+        plan = config.PLAN_LIMITS["pro"]
     return nonneg(limits.get("memory_mb")) or plan["memory_mb"], float(limits.get("cpus") or plan["cpus"])
 
 

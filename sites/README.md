@@ -2,7 +2,7 @@
 
 The product website: the front page, the pricing page, and the repository's
 documents rendered as pages (the user guide, the developer guide, the
-research notes, the privacy policy), served by a Cloudflare Worker with
+research notes, the privacy policy, the Gamma Cloud terms), served by a Cloudflare Worker with
 static assets. Nothing here is part of the app, and nothing shown on the
 site is written for the site alone: the front page's copy follows the README
 and the Store listing, the artwork is the README's, and every other page is
@@ -15,7 +15,7 @@ sites/
   site/            the hand-written pages as deployed: index.html, pricing.html,
                    styles.css, site.js, 404.html, robots.txt, _redirects, _headers
   templates/       header and footer, pulled into every page by `<!--#include name -->`;
-                   page.html wraps a Markdown page on its own (the privacy policy),
+                   page.html wraps a Markdown page on its own (the privacy policy, the terms),
                    doc.html one with the documentation sidebar
   build.mjs        assembles dist/ (see below)
   src/index.js     the Worker: sends www to the apex, serves everything else
@@ -42,6 +42,7 @@ sites/
    | Source | Page |
    |---|---|
    | `PRIVACY.md` | `/privacy/` |
+   | `TERMS.md` | `/terms/` |
    | `docs/user_guide.md` | `/docs/` |
    | `docs/dev/*.md` | `/docs/dev/` (the README) and `/docs/dev/<name>/` |
    | `docs/research/*.md` | `/docs/research/` (the README) and `/docs/research/<name>/` |
@@ -106,7 +107,7 @@ npm run deploy     # build + wrangler deploy
 ```
 
 From CI: `.github/workflows/site.yml` checks a PR that touches `sites/`,
-`docs/` or `PRIVACY.md` (a strict build, the key pages present, includes
+`docs/`, `PRIVACY.md` or `TERMS.md` (a strict build, the key pages present, includes
 expanded, a wrangler dry run), and checks + deploys on a push to `main`
 touching them or on a manual dispatch from any branch — the `build-site`
 skill (`gh workflow run site.yml --ref dev`), so the site ships without a

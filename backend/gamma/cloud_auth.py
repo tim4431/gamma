@@ -509,7 +509,53 @@ def identity_by_subject(conn, subject: str):
 def _public_claims(claims: dict) -> dict:
     out = {k: claims[k] for k in ("plan", "email", "email_verified", "name") if k in claims}
     out["username"] = claims.get("preferred_username", "")
+    limits = _claimed_limits(claims.get("limits"))
+    if limits:
+        out["limits"] = limits
     return out
+
+
+def _claimed_limits(value) -> dict:
+    """The ``limits`` claim, ``{quota_mb, max_upload_mb}`` in positive whole
+    numbers: the storage a paid Gamma Cloud plan gives the account on the
+    shared server. {} for anything else (a free plan sends none)."""
+    if not isinstance(value, dict):
+        return {}
+    out = {key: value.get(key) for key in ("quota_mb", "max_upload_mb")}
+    ok = all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in out.values())
+    return out if ok else {}
+
+
+def plan_limits(conn, user_id: str) -> dict:
+    """The storage a Gamma Cloud plan gives the account on a share host
+    (``{quota_mb, max_upload_mb}``, gamma/server_settings.py
+    ``user_limits``), {} on any other server and for an account without a
+    paid plan. It is the ``limits`` claim of an identity that holds a live
+    grant (a refresh token, not revoked): the hourly grant check keeps that
+    one current (``refresh_claims``), so a lapsed plan loses its allowance
+    within the hour, and a grant signed out on the account server loses it
+    with the grant. An identity a publish exchange made holds no grant and
+    has the server's defaults until the person signs in here."""
+    if not settings()["share_host"]:
+        return {}
+    row = conn.execute("SELECT claims, refresh_token, revoked_at FROM identities WHERE provider = ? AND user_id = ?",
+                       (PROVIDER, user_id)).fetchone()
+    if not row or not row[1] or row[2]:
+        return {}
+    try:
+        return _claimed_limits(json.loads(row[0] or "{}").get("limits"))
+    except ValueError:
+        return {}
+
+
+def refresh_claims(user_id: str, access_token: str) -> None:
+    """Store what the account server says of the account now (its
+    ``/userinfo``), so the plan and its limits follow a purchase or a lapse
+    without a new sign-in. CloudAuthError when it does not answer."""
+    claims = userinfo(access_token)
+    with _conn() as conn:
+        conn.execute("UPDATE identities SET claims = ?, email = ? WHERE provider = ? AND user_id = ? AND subject = ?",
+                     (json.dumps(_public_claims(claims)), claims.get("email", ""), PROVIDER, user_id, claims["sub"]))
 
 
 def _decrypt(stored: str) -> str:

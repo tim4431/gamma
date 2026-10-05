@@ -222,7 +222,7 @@ def test_the_devices_page(client):
     script = page[page.rindex("<script>") + 8:page.rindex("</script>")]
     for line in script.splitlines():
         assert _open_quote(line) is None, line
-    assert 'confirm("Sign out every Gamma server' in script
+    assert "ask('Sign out every Gamma server" in script
 
 
 # --- browsers -----------------------------------------------------------------
