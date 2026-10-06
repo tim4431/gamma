@@ -178,12 +178,13 @@ def suggest_username(conn, flow: dict) -> str:
 
 def create_from(conn, flow: dict, username: str, invite: str):
     """The signup form's answer: an account with the provider's verified
-    address and no password, linked to the identity."""
+    address and no password, linked to the identity. The invite rules and
+    the allowed mail domains are the password form's (``take_invite``)."""
     if settings.registration() == "closed":
         raise Problem(403, "Registration is closed.")
     username = accounts.norm_username(username)
-    plan = accounts.take_invite(conn, invite)
-    account = accounts.create(conn, email=flow["email"], username=username, password=None, plan=plan,
-                              display_name=flow.get("name", ""), verified=True)
+    taken = accounts.take_invite(conn, invite, flow["email"])
+    account = accounts.create(conn, email=flow["email"], username=username, password=None,
+                              display_name=flow.get("name", ""), verified=True, **taken)
     link(conn, account["id"], Identity(flow["provider"], flow["subject"], flow["email"], True))
     return account

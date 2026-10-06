@@ -1739,7 +1739,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             pass  # read too slowly: the helper's next line is its whole state again
 
     scope["helper"] = Helper(
-        ws=ws, scope=scope, on_usage=count_usage,
+        ws=ws, on_usage=count_usage,
         on_status=helper_status if payload.stream else None,
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),

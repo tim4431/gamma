@@ -16,6 +16,9 @@ test("the pill sums every step and names the reading ones", () => {
   assert.equal(stepsSummary(actions), "7 steps · listed, read 1 page");
   assert.equal(stepsSummary([actions[1], actions[1]]), "2 steps · read 2 pages");
   assert.equal(stepsSummary([]), "0 steps");
+  // A helper's run is one step of the chat, named as what it is.
+  assert.equal(stepsSummary([actions[1], { kind: "helper", tool: "read_paper", summary: "Helper read “A”", steps: 5 }]),
+    "2 steps · read 1 page, used 1 helper");
 });
 
 test("changes are split by where they landed; failures and no-ops are not changes", () => {
@@ -123,6 +126,12 @@ test("a chip says which copy was read, how it came and how long it took", () => 
   assert.equal(chipNote({ version: "submitted" }), "open-access, preprint");
   assert.equal(chipNote({ probe: true }), "front matter only");
   assert.equal(chipNote({ delivered: true }), "from your browser");
+  // Reads of one document are told apart by their pages; a page read says its own in its summary.
+  assert.equal(chipNote({ kind: "fetch", version: "publisher", pdf_pages: [3, 6] }), "publisher PDF · pp. 3–6");
+  assert.equal(chipNote({ kind: "fetch", pdf_pages: [7, 7], ms: 1200 }), "p. 7 · 1.2s");
+  assert.equal(chipNote({ kind: "read", pdf_pages: [1, 5] }), "");
+  // A helper's chip counts its calls.
+  assert.equal(chipNote({ kind: "helper", steps: 4, version: "preprint", ms: 50600 }), "4 steps · arXiv preprint · 50.6s");
   // Nothing worth saying: a fast call of unknown version.
   assert.equal(chipNote({ ms: 120 }), "");
   assert.equal(chipNote(null), "");

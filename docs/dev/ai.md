@@ -1141,8 +1141,10 @@ place of the "Thinking" pill, from those arguments (`runningLabel`):
 note…", "Reading notes of “A”…" when `read_block` names a page. A call
 that hands documents to helpers lists them under the pill, one row each:
 the document, then what its helper is doing now (`helperStatus`, from the
-`{"helper"}` lines). The rows go when the call's chip lands, and that chip
-expands to the helper's own calls (`children`). Only
+`{"helper"}` lines). The rows go when the call's chip lands. That chip is
+of kind `helper`: it has its own icon, counts the helper's calls beside
+its summary, adds "used 1 helper" to the pill, and expands to those calls
+(`children`). Only
 applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
@@ -1158,7 +1160,9 @@ gets the PDF
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). Every chip also
 carries `ms` (how long the call took) and, for a fetch, the `version` it
 read and whether it was a `probe` or `delivered` by the browser, which the
-chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A reply that read
+chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A
+fetch of a PDF also carries the pages its window read (`pdf_pages`), shown
+there as "pp. 3–6". A reply that read
 or named papers ends with a **Save to library** list of them
 (`chat/ReplyPapers.jsx`), saved through `POST /api/clip`. The agent's
 `save_paper` runs the same ingest itself. Its request carries the Reading

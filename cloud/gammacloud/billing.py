@@ -34,7 +34,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 
-from . import accounts, config, db, hosted
+from . import accounts, config, db, hosted, settings
 from .accounts import Problem
 from .log import log
 
@@ -147,14 +147,35 @@ def enabled() -> bool:
     return bool(config.STRIPE_SECRET)
 
 
+def why_not(plan: str) -> str:
+    """Why a paid plan cannot be bought now, in a few words for the Admin
+    page; "" when it can. The first reason found, in this order: the
+    operator holds it back (``settings.plans_on_sale``), billing is off, a
+    Stripe price id is missing (the Plan page offers both intervals, so both
+    are needed), or the place its library lives is not configured: the
+    shared server's address (``config.APP_URL``) for Lite and Plus, the
+    hosting domain (``config.HOSTED_DOMAIN``) for a plan with a container."""
+    if plan not in settings.PAID_PLANS:
+        return "not a paid plan"
+    if plan not in settings.plans_on_sale():
+        return "held back by the operator"
+    if not enabled():
+        return "billing is off (no Stripe secret)"
+    missing = [f"{interval}ly" for interval in ("month", "year")
+               if not config.STRIPE_PRICES.get(f"{plan}_{interval}", ("", "", ""))[2]]
+    if missing:
+        return f"no {' or '.join(missing)} Stripe price id"
+    if config.PLAN_LIMITS[plan].get("shared") and not config.APP_URL:
+        return "no shared server address (GAMMA_CLOUD_APP_URL)"
+    if config.PLAN_LIMITS[plan].get("hosted") and not config.HOSTED_DOMAIN:
+        return "hosting is off (GAMMA_CLOUD_HOSTED_DOMAIN)"
+    return ""
+
+
 def can_sell(plan: str) -> bool:
-    """A plan can be bought: billing is on and the place its library lives
-    is configured, the shared server's address (``config.APP_URL``) for
-    Lite and Plus and the hosting domain (``config.HOSTED_DOMAIN``) for a
-    plan with a container."""
-    limits = config.PLAN_LIMITS.get(plan, {})
-    home = config.APP_URL if limits.get("shared") else config.HOSTED_DOMAIN if limits.get("hosted") else ""
-    return enabled() and bool(home)
+    """A plan can be bought now: a checkout of it, or a subscriber's switch
+    to it, is accepted (``why_not`` says why not)."""
+    return not why_not(plan)
 
 
 # --- helpers ------------------------------------------------------------------
@@ -322,7 +343,9 @@ def _flow(sub, flow: str, price_key: str) -> dict:
     """The portal's ``flow_data`` for one of ``PORTAL_FLOWS``: the page it
     opens on instead of its home. ``switch`` opens Stripe's confirmation of
     a move to ``price_key``, which shows what is charged before the person
-    agrees; it reads the subscription for the item to move."""
+    agrees; it reads the subscription for the item to move. A move to
+    another plan needs that plan on sale (``can_sell``); the other billing
+    period of the plan already held needs only its price id."""
     if flow == "payment":
         return {"type": "payment_method_update"}
     held = sub["stripe_subscription_id"] and sub["status"] in HELD_STATUSES
@@ -330,11 +353,13 @@ def _flow(sub, flow: str, price_key: str) -> dict:
         if not held or sub["cancel_at_period_end"]:
             raise Problem(409, "There is no plan to cancel.")
         return {"type": "subscription_cancel", "subscription_cancel": {"subscription": sub["stripe_subscription_id"]}}
-    _, _, price_id = config.STRIPE_PRICES.get(price_key or "", ("", "", ""))
+    plan, _, price_id = config.STRIPE_PRICES.get(price_key or "", ("", "", ""))
     if not price_id:
         raise Problem(400, "Unknown price.")
     if price_id == sub["price_id"]:
         raise Problem(400, "That is your current plan.")
+    if plan != sub["plan"] and not can_sell(plan):
+        raise Problem(503, "This plan is not available yet.")
     if not _can_switch(sub):
         raise Problem(409, "This plan cannot be changed right now. Fix the payment or keep the plan first.")
     items = (client().retrieve_subscription(sub["stripe_subscription_id"]).get("items") or {}).get("data") or []

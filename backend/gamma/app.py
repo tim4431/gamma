@@ -191,13 +191,24 @@ async def read_only_gate(request: Request, call_next):
     state-changing /api request but ``hosted.READ_ONLY_ALLOWED`` is refused
     with 423 and the reason. Inside the session middleware, so the refusal
     is logged like any answer. Collaboration needs nothing of its own: an
-    op batch is a POST, and the page socket carries only carets."""
-    if (hosted.enabled() and request.method in hosted.WRITE_METHODS and request.url.path.startswith("/api/")
-            and not hosted.allowed_when_read_only(request.url.path)):
+    op batch is a POST, and the page socket carries only carets. A hosted
+    server also notes every answer here for the sync's report
+    (``hosted.answered``: a 5xx, an accepted write); any other server only
+    passes the request on."""
+    if not hosted.enabled():
+        return await call_next(request)
+    write = request.method in hosted.WRITE_METHODS and request.url.path.startswith("/api/")
+    if write and not hosted.allowed_when_read_only(request.url.path):
         refusal = hosted.read_only()  # from memory: tick loaded it at startup
         if refusal:
             return JSONResponse({"detail": refusal, "read_only": True}, status_code=423)
-    return await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        hosted.answered(500, write)  # the server's error handler, outside this one, answers it with a 500
+        raise
+    hosted.answered(response.status_code, write)
+    return response
 
 
 @asynccontextmanager

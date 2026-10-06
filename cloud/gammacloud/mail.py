@@ -1,4 +1,5 @@
-"""Outgoing mail: the verify, reset and change-email links. One function,
+"""Outgoing mail: the verify, reset and change-email links, and the Admin
+page's test message (``send_test``). One function,
 three backends chosen by ``GAMMA_CLOUD_MAIL``: ``console`` logs the message
 (development), ``smtp`` sends it, ``memory`` keeps it in ``outbox`` (tests).
 Every message is multipart: the plain text plus an HTML alternative built by
@@ -98,3 +99,18 @@ def send(to: str, subject: str, body: str, html: str = "") -> None:
     except (smtplib.SMTPException, OSError) as e:
         log.warning("mail to %s failed: %s", to, e)
         raise MailError(str(e)) from e
+
+
+def send_test(to: str) -> str:
+    """The Admin page's *Send test mail*: a short message to ``to`` through
+    ``send``, and what became of it in words. Raises ``MailError`` as
+    ``send`` does."""
+    backend = config.MAIL_BACKEND
+    send(to, "Gamma Cloud test message", *compose(
+        "Hello,", ["This is a test message from the Admin page of Gamma Cloud. Mail from this server reaches you."],
+        None, f"Sent through the {backend} backend."))
+    if backend == "console":
+        return f"Logged in the server's console for {to}; the console backend sends nothing."
+    if backend == "memory":
+        return f"Kept in memory for {to}; the memory backend sends nothing."
+    return f"Sent to {to} through {config.SMTP_HOST}. Check that inbox, and its spam folder."

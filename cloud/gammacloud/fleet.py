@@ -6,22 +6,25 @@ result and posts a heartbeat every five minutes. The account server never
 touches Docker.
 
 A job is ``queued`` (the agent may take it), ``held`` (a later wave of an
-upgrade run), ``running`` (handed to the agent), ``done``, ``failed`` or
-``canceled``. ``hosted.py`` decides which jobs a server's lifecycle needs;
-this module stores, hands out and completes them, places new servers on a
-host by the memory already committed there, keeps each host's orphan
-containers, and runs upgrades (one server, or every one in waves).
+upgrade or update run), ``running`` (handed to the agent), ``done``,
+``failed`` or ``canceled``. ``hosted.py`` decides which jobs a server's
+lifecycle needs; this module stores, hands out and completes them, places
+new servers on a host by the memory already committed there, keeps each
+host's orphan containers, and runs upgrades and environment updates (one
+server, or many in waves), by hand or, for outdated servers, by itself.
 """
 
 import json
+import math
 import re
 import threading
 
-from . import config, db
+from . import config, db, settings
 from .accounts import Problem
 from .log import log
 
-KINDS = ("create", "start", "stop", "restart", "delete", "upgrade", "rollback", "logs")
+KINDS = ("create", "start", "stop", "restart", "delete", "upgrade", "rollback", "logs", "update")
+SECRET_KINDS = ("create", "update")   # their payload holds secrets while it runs: blanked when the job ends
 STALE_AFTER = 15 * 60          # a host silent this long takes no new placements
 JOB_TIMEOUT = 3600             # a running job with no result after this is failed
 MAX_WAIT = 30                  # the longest a job poll is held open
@@ -71,9 +74,41 @@ def nonneg(value) -> int:
         return 0
 
 
+def _number(value) -> float | None:
+    """A non-negative number from a report, to a tenth; None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        return None
+    return round(float(value), 1)
+
+
+def default_tag() -> str:
+    """The tag a new server runs and what *outdated* compares with: the Admin
+    page's setting, else the environment's (``settings.fleet_image_tag``)."""
+    return settings.fleet_image_tag()
+
+
 def default_image() -> str:
-    """The image a new server runs, and what ``outdated`` compares with."""
-    return f"{config.FLEET_IMAGE}:{config.FLEET_IMAGE_TAG}"
+    return f"{config.FLEET_IMAGE}:{default_tag()}"
+
+
+def outdated_why(row) -> str:
+    """Why a server is outdated: ``tag`` when it runs another tag than the
+    default, ``image`` when its agent reports that the registry's image for
+    the tag it runs is not the one it runs (a container started on
+    ``latest`` months ago). "" when neither, or the server is deleted."""
+    if row["state"] == "deleted":
+        return ""
+    if (row["image_tag"] or default_tag()) != default_tag():
+        return "tag"
+    agent = json_dict(row["report"]).get("agent")
+    return "image" if isinstance(agent, dict) and agent.get("image_stale") is True else ""
+
+
+def created(conn, server_id: str) -> bool:
+    """Whether the server's container exists: its last create job is done."""
+    job = conn.execute("SELECT state FROM fleet_jobs WHERE server_id = ? AND kind = 'create' "
+                       "ORDER BY created_at DESC, rowid DESC LIMIT 1", (server_id,)).fetchone()
+    return bool(job and job["state"] == "done")
 
 
 def size_of(limits: dict) -> tuple[int, float]:

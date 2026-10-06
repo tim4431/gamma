@@ -24,14 +24,19 @@ Environment:
   names the account removes that prefix.
 
 Jobs (``kind`` → payload): ``create`` → ``{label, account_id, plan, image,
-env, data_dir, memory_mb, cpus, network, public_url}``; ``start``,
-``stop``, ``restart``, ``rollback``, ``logs`` → ``{label}``; ``delete`` →
-``{label, account_id}``; ``upgrade`` → ``{label, image?, tag?, memory_mb?,
-cpus?}`` (no image: a resize, on the image the container runs). A
-container is ``gamma-<label>``; what it was created with (image,
-environment, limits) is kept in ``<root>/<label>/container.json`` so
-``start``, ``restart`` and ``upgrade`` can rebuild it. Every handler can be
-run again after a crash midway and ends in the same place.
+env, extra_env?, data_dir, memory_mb, cpus, network, public_url}``;
+``start``, ``stop``, ``restart``, ``rollback``, ``logs`` → ``{label}``;
+``delete`` → ``{label, account_id}``; ``upgrade`` → ``{label, image?, tag?,
+memory_mb?, cpus?}`` (no image: a resize, on the image the container
+runs); ``update`` → ``{label, extra_env}`` (the whole extra environment
+from now on). A container is ``gamma-<label>``; what it was created with
+(image, environment, extra environment, limits) is kept in
+``<root>/<label>/container.json`` so ``start``, ``restart``, ``upgrade`` and
+``update`` can rebuild it. Its environment is the payload's ``env``, then
+the agent's own variables, then ``extra_env``, later winning; ``extra_env``
+never sets a name the account server or the agent sets (``RESERVED_ENV``).
+Every handler can be run again after a crash midway and ends in the same
+place.
 """
 
 import json
@@ -41,6 +46,7 @@ import re
 import shutil
 import signal
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -58,10 +64,15 @@ HEALTH_EVERY = 2
 STOP_TIMEOUT = 30
 CPU_PERIOD = 100_000           # microseconds; a container's CPU limit is a quota of this
 DATA_EVERY = 1800              # a data directory is measured at most this often
+REGISTRY_EVERY = 3600          # the registry is asked about an image reference at most this often
+REGISTRY_WAIT = 5              # and its answer waited for at most this long
 LOG_LINES = 200
 LOG_LINE_MAX = 400
 MIB = 1024 * 1024
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d\d-\d\dT\S+$")
+# what the account server (create's env) or the agent sets: extra_env never overrides it
+RESERVED_ENV = frozenset({"GAMMA_HOSTED", "GAMMA_PUBLIC_URL", "GAMMA_GUEST_MAX", "FORWARDED_ALLOW_IPS"})
+RESERVED_ENV_PREFIXES = ("GAMMA_CLOUD_", "GAMMA_S3_")
 
 
 class JobError(Exception):
@@ -175,6 +186,35 @@ def split_image(image: str) -> tuple[str, str]:
     return repo, tag
 
 
+def extra_env(raw) -> dict:
+    """A payload's ``extra_env`` as strings, less what it may not set: a
+    reserved name (``RESERVED_ENV``, ``RESERVED_ENV_PREFIXES``), and an empty
+    name or one with ``=``, which would pass for another variable."""
+    env = {}
+    for name, value in (raw or {}).items():
+        name = str(name)
+        if name and "=" not in name and name not in RESERVED_ENV and not name.startswith(RESERVED_ENV_PREFIXES):
+            env[name] = str(value)
+    return env
+
+
+def cpu_pct(stats: dict) -> float | None:
+    """CPU use in percent of one CPU between the two samples a
+    ``stats(stream=False)`` holds, as ``docker stats`` works it out: the
+    container's CPU time over the host's, times the online CPUs. None when a
+    figure is missing."""
+    try:
+        cpu, pre = stats["cpu_stats"], stats["precpu_stats"]
+        used = cpu["cpu_usage"]["total_usage"] - pre["cpu_usage"]["total_usage"]
+        system = cpu["system_cpu_usage"] - pre["system_cpu_usage"]
+        cpus = cpu.get("online_cpus") or len(cpu["cpu_usage"].get("percpu_usage") or ())
+    except (KeyError, TypeError, AttributeError):
+        return None
+    if system <= 0 or used < 0 or not cpus:
+        return None
+    return round(used / system * cpus * 100, 1)
+
+
 class S3Prefix:
     """Removes a hosted server's off-site copies (boto3, imported on use)."""
 
@@ -212,6 +252,7 @@ class Agent:
         self.stopping = False
         self._subnet = None
         self._data_mb: dict[str, tuple[float, int]] = {}   # label -> (when measured, MB)
+        self._registry: dict[str, tuple[float, str]] = {}  # image reference -> (when asked, digest or "")
 
     # --- helpers --------------------------------------------------------------
 
@@ -255,6 +296,21 @@ class Agent:
                 raise JobError(f"the Docker network {self.settings.network} does not exist") from None
         return self._subnet
 
+    def agent_env(self, env: dict, account_id: str) -> dict:
+        """``env`` with the agent's own variables, from its settings as they
+        are now: ``FORWARDED_ALLOW_IPS`` (the fleet network's subnet) unless
+        ``env`` has it, and with a bucket the ``GAMMA_S3_*`` variables under
+        the account's prefix."""
+        env = dict(env)
+        env.setdefault("FORWARDED_ALLOW_IPS", self.subnet() or "127.0.0.1")
+        if self.settings.s3:
+            s3 = self.settings.s3
+            env.update({"GAMMA_S3_BUCKET": s3["bucket"], "GAMMA_S3_ENDPOINT": s3.get("endpoint", ""),
+                        "GAMMA_S3_REGION": s3.get("region", ""), "GAMMA_S3_ACCESS_KEY": s3.get("access_key", ""),
+                        "GAMMA_S3_SECRET_KEY": s3.get("secret_key", ""),
+                        "GAMMA_S3_PREFIX": self.bucket_prefix(account_id)})
+        return env
+
     def load_spec(self, label: str) -> dict:
         try:
             with open(self.spec_path(label)) as f:
@@ -287,11 +343,16 @@ class Agent:
         return {"mem_limit": f"{memory}m", "memswap_limit": f"{2 * memory}m",
                 "cpu_period": CPU_PERIOD, "cpu_quota": int(float(spec["cpus"]) * CPU_PERIOD)}
 
-    def run(self, label: str, spec: dict):
+    def run(self, label: str, spec: dict, start: bool = True):
+        """Run the container from a spec, or with ``start`` false create it
+        stopped. Its environment is the spec's ``env`` with ``extra_env``
+        over it."""
         data = os.path.join(self.server_dir(label), "data")
         os.makedirs(data, exist_ok=True)
-        return self.docker.containers.run(
-            spec["image"], name=self.name(label), detach=True, environment=spec["env"],
+        make = self.docker.containers.run if start else self.docker.containers.create
+        return make(
+            spec["image"], name=self.name(label), detach=True,
+            environment={**spec["env"], **extra_env(spec.get("extra_env"))},
             labels={"gamma.label": label, "gamma.account": spec.get("account_id", ""), "gamma.plan": spec.get("plan", "")},
             restart_policy={"Name": "unless-stopped"}, volumes={data: {"bind": "/data", "mode": "rw"}},
             network=spec["network"], **self.limits(spec))
@@ -306,12 +367,61 @@ class Agent:
                 raise JobError(f"{self.name(label)} did not answer {url} within {HEALTH_TIMEOUT} s")
             self.sleep(HEALTH_EVERY)
 
+    def swap(self, label: str, new_spec: dict, what: str) -> str:
+        """Replace the container with one run from ``new_spec``, as an
+        upgrade does: keep the running one as ``gamma-<label>-prev`` and stop
+        it, run the new one, wait for health; then save ``new_spec`` and
+        remove the previous one. A failure stops the new one (its logs stay),
+        keeps the previous one stopped and says so; ``what`` names the job in
+        that error. Returns the image the previous container ran, or ""."""
+        name, prev_name = self.name(label), self.name(label) + "-prev"
+        old, live = self.get(prev_name), self.get(name)
+        if old is not None:
+            # A kept -prev is the last known-good container of a job that
+            # failed (or of this one, run again): it stays the fallback, and
+            # the container under the live name is what goes.
+            if live is not None:
+                live.remove(force=True)
+            old.stop(timeout=STOP_TIMEOUT)
+        elif live is not None:
+            live.rename(prev_name)
+            live.stop(timeout=STOP_TIMEOUT)
+            old = live
+        try:
+            self.run(label, new_spec)
+            self.wait_healthy(label)
+        except Exception as e:
+            new = self.get(name)
+            if new is not None:
+                try:
+                    new.stop(timeout=STOP_TIMEOUT)
+                except Exception:  # noqa: BLE001
+                    pass
+            kept = f"; the previous container is kept, stopped, as {prev_name}" if old is not None else ""
+            raise JobError(f"{what} failed: {e}{kept}") from e
+        self.save_spec(label, new_spec)
+        previous = self.image_of(old) if old is not None else ""
+        if old is not None:
+            old.remove(force=True)
+        return previous
+
+    def refuse_while_upgrade_fails(self, label: str, spec: dict, live) -> None:
+        """A failed upgrade to another image waits for its retry or rollback
+        (a ``-prev``, and a live container on another image than
+        ``container.json``): a change made now would belong to the container
+        that goes, so it is refused."""
+        name, prev_name = self.name(label), self.name(label) + "-prev"
+        if self.get(prev_name) is not None and live is not None and self.image_of(live) != spec["image"]:
+            raise JobError(f"the upgrade of {name} to {self.image_of(live)} failed and {prev_name} is kept: "
+                           "retry that upgrade or roll it back first")
+
     # --- jobs -------------------------------------------------------------------
 
     def create(self, payload: dict) -> dict:
         """Start a new container. One left by an earlier attempt is replaced,
         and so is a ``-prev`` left by an earlier life of the label; the data
-        directory stays."""
+        directory stays. ``extra_env`` is kept in ``container.json`` under
+        its own key, apart from ``env``."""
         label = self.label(payload)
         if not payload.get("image"):
             raise JobError("no image")
@@ -320,15 +430,9 @@ class Agent:
             # the bucket prefix and the container's labels are the account's;
             # without one, a later delete could not find its copies
             raise JobError("no account id")
-        env = {str(k): str(v) for k, v in (payload.get("env") or {}).items()}
-        env.setdefault("FORWARDED_ALLOW_IPS", self.subnet() or "127.0.0.1")
-        if self.settings.s3:
-            s3 = self.settings.s3
-            env.update({"GAMMA_S3_BUCKET": s3["bucket"], "GAMMA_S3_ENDPOINT": s3.get("endpoint", ""),
-                        "GAMMA_S3_REGION": s3.get("region", ""), "GAMMA_S3_ACCESS_KEY": s3.get("access_key", ""),
-                        "GAMMA_S3_SECRET_KEY": s3.get("secret_key", ""),
-                        "GAMMA_S3_PREFIX": self.bucket_prefix(account_id)})
-        spec = {"image": payload["image"], "env": env, "account_id": account_id, "plan": str(payload.get("plan") or ""),
+        env = self.agent_env({str(k): str(v) for k, v in (payload.get("env") or {}).items()}, account_id)
+        spec = {"image": payload["image"], "env": env, "extra_env": extra_env(payload.get("extra_env")),
+                "account_id": account_id, "plan": str(payload.get("plan") or ""),
                 "memory_mb": int(payload.get("memory_mb") or self.settings.memory_mb),
                 "cpus": float(payload.get("cpus") or self.settings.cpus),
                 "network": payload.get("network") or self.settings.network}
@@ -423,40 +527,12 @@ class Agent:
             raise JobError("no image")
         if not image:
             return self.resize(label, spec, size)
-        name, prev_name = self.name(label), self.name(label) + "-prev"
-        old, live = self.get(prev_name), self.get(name)
         self.pull(image)
-        if old is not None:
-            # A kept -prev is the last known-good container of an upgrade
-            # that failed (or of this job, run again): it stays the
-            # fallback, and the container under the live name is what goes.
-            if live is not None:
-                live.remove(force=True)
-            old.stop(timeout=STOP_TIMEOUT)
-        elif live is not None:
-            live.rename(prev_name)
-            live.stop(timeout=STOP_TIMEOUT)
-            old = live
         new_spec = {**spec, **size, "image": image}
         new_spec.pop("rolled_back", None)
-        try:
-            self.run(label, new_spec)
-            self.wait_healthy(label)
-        except Exception as e:
-            new = self.get(name)
-            if new is not None:
-                try:
-                    new.stop(timeout=STOP_TIMEOUT)
-                except Exception:  # noqa: BLE001
-                    pass
-            kept = f"; the previous container is kept, stopped, as {prev_name}" if old is not None else ""
-            raise JobError(f"upgrade to {image} failed: {e}{kept}") from e
-        self.save_spec(label, new_spec)
-        previous = (self.image_of(old) if old is not None else "") or spec["image"]
-        if old is not None:
-            old.remove(force=True)
-        return {"container": name, "image": image, "previous": previous, "memory_mb": new_spec["memory_mb"],
-                "cpus": new_spec["cpus"], "health": "ok"}
+        previous = self.swap(label, new_spec, f"upgrade to {image}") or spec["image"]
+        return {"container": self.name(label), "image": image, "previous": previous,
+                "memory_mb": new_spec["memory_mb"], "cpus": new_spec["cpus"], "health": "ok"}
 
     def resize(self, label: str, spec: dict, size: dict) -> dict:
         """New memory and CPU limits on the container as it is, in place
@@ -466,11 +542,9 @@ class Agent:
         container the spec alone changes. Refused while a failed upgrade to
         another image waits for its retry or rollback, since the size would
         then belong to the container that goes."""
-        name, prev_name = self.name(label), self.name(label) + "-prev"
+        name = self.name(label)
         live = self.get(name)
-        if self.get(prev_name) is not None and live is not None and self.image_of(live) != spec["image"]:
-            raise JobError(f"the upgrade of {name} to {self.image_of(live)} failed and {prev_name} is kept: "
-                           "retry that upgrade or roll it back first")
+        self.refuse_while_upgrade_fails(label, spec, live)
         new_spec = {**spec, **size}
         if live is not None:
             try:
@@ -481,6 +555,46 @@ class Agent:
         image = (self.image_of(live) if live is not None else "") or spec["image"]
         return {"container": name, "image": image, "previous": image, "memory_mb": new_spec["memory_mb"],
                 "cpus": new_spec["cpus"], "resized": live is not None, "health": "unchanged"}
+
+    def update(self, payload: dict) -> dict:
+        """A new extra environment: ``extra_env`` is the whole of it from now
+        on (a name left out goes). Docker cannot change a container's
+        environment, so the container is rebuilt on the image it runs, with
+        no pull, the way an upgrade rebuilds it (``swap``): the running one
+        is kept as ``-prev`` until the new one passed its health check, and a
+        failure has the same recovery, a retry or ``rollback``. The agent's
+        own variables are worked out again from its settings as they are
+        now, so a rotated bucket key reaches the container. ``container.json``
+        takes the new environment once the new container is healthy.
+
+        A stopped container is replaced by a stopped one that has the new
+        environment (``container.json`` first, so an agent that dies between
+        the removal and the creation leaves the spec a start runs from).
+        With no container only ``container.json`` changes. Refused while a
+        failed upgrade waits, as a resize is. Results name the variables,
+        never their values."""
+        label = self.label(payload)
+        spec = self.load_spec(label)
+        extra = extra_env(payload.get("extra_env"))
+        name = self.name(label)
+        live, prev = self.get(name), self.get(name + "-prev")
+        self.refuse_while_upgrade_fails(label, spec, live)
+        env = {k: v for k, v in spec["env"].items() if k != "FORWARDED_ALLOW_IPS" and not k.startswith("GAMMA_S3_")}
+        new_spec = {**spec, "env": self.agent_env(env, spec.get("account_id", "")), "extra_env": extra,
+                    "image": (self.image_of(live) if live is not None else "") or spec["image"]}
+        result = {"container": name, "image": new_spec["image"], "extra_env": sorted(extra)}
+        if live is None and prev is None:
+            self.save_spec(label, new_spec)
+            return {**result, "health": "unchanged", "note": "no such container: container.json alone changed"}
+        # a crash-looping container ("restarting") is meant to run; with a -prev
+        # kept, the live one is a failed attempt and this is its retry
+        if prev is None and live.status not in ("running", "restarting"):
+            self.save_spec(label, new_spec)
+            live.remove(force=True)
+            self.run(label, new_spec, start=False)
+            return {**result, "health": "unchanged", "note": "stopped: it starts with the new environment"}
+        self.swap(label, new_spec, f"update of {name}")
+        return {**result, "health": "ok"}
 
     def rollback(self, payload: dict) -> dict:
         """Back to the container an upgrade kept as ``gamma-<label>-prev``:
@@ -526,7 +640,7 @@ class Agent:
         first = lines[0].split(" ", 1)[0] if lines else ""
         return {"container": self.name(label), "lines": lines, "since": first if TIMESTAMP_RE.match(first) else ""}
 
-    HANDLERS = ("create", "start", "stop", "restart", "delete", "upgrade", "rollback", "logs")
+    HANDLERS = ("create", "start", "stop", "restart", "delete", "upgrade", "update", "rollback", "logs")
 
     def apply(self, job: dict) -> tuple[str, dict]:
         """Run one job; ``("done", result)`` or ``("failed", {"error": …})``."""
@@ -571,9 +685,48 @@ class Agent:
             self._data_mb[label] = cached
         return cached[1]
 
+    def registry_digest(self, ref: str) -> str:
+        """The digest the registry has for an image reference now
+        (``images.get_registry_data``), or "" when it failed or did not answer
+        within REGISTRY_WAIT seconds. The ask runs on a thread so a registry
+        that hangs holds the heartbeat no longer than that; any answer is
+        kept for REGISTRY_EVERY seconds."""
+        cached = self._registry.get(ref)
+        if cached is None or self.clock() - cached[0] >= REGISTRY_EVERY:
+            answer = []
+
+            def ask():
+                try:
+                    answer.append(str(self.docker.images.get_registry_data(ref).id or ""))
+                except Exception:  # noqa: BLE001 — no network, a private registry, an unknown tag
+                    pass
+            asking = threading.Thread(target=ask, name="registry", daemon=True)
+            asking.start()
+            asking.join(REGISTRY_WAIT)
+            cached = (self.clock(), answer[0] if answer else "")
+            self._registry[ref] = cached
+        return cached[1]
+
+    def image_stale(self, ref: str, image_id: str) -> bool | None:
+        """Whether the registry's image for ``ref`` is another than the one
+        the container runs (``image_id``): the registry's digest against the
+        local image's ``RepoDigests`` for that repository. None when that
+        cannot be told: an image with no digest there (built here), no answer
+        from the registry, any error."""
+        try:
+            if not ref or not image_id or ref.startswith("sha256:"):
+                return None
+            repo = split_image(ref)[0]
+            digests = {d.partition("@")[2] for d in self.docker.images.get(image_id).attrs.get("RepoDigests") or []
+                       if d.partition("@")[0] == repo}
+            current = self.registry_digest(ref) if digests else ""
+            return current not in digests if current else None
+        except Exception:  # noqa: BLE001 — never fails the heartbeat
+            return None
+
     def heartbeat_body(self) -> dict:
         body = {"agent_version": VERSION, **self.stats(self.settings.data_root), "containers": []}
-        seen = set()
+        seen, refs = set(), set()
         for c in self.docker.containers.list(all=True, filters={"label": "gamma.label"}):
             label = (c.labels or {}).get("gamma.label", "")
             if c.name != self.name(label):
@@ -581,18 +734,26 @@ class Agent:
             seen.add(label)
             running = c.status == "running"
             attrs = c.attrs or {}
-            memory = 0
+            state = attrs.get("State") or {}
+            memory, cpu = 0, None
             if running:                                    # stats() takes a second or two per container
                 try:
-                    memory = int((c.stats(stream=False).get("memory_stats") or {}).get("usage") or 0) // MIB
+                    stats = c.stats(stream=False) or {}
+                    memory = int((stats.get("memory_stats") or {}).get("usage") or 0) // MIB
+                    cpu = cpu_pct(stats)
                 except Exception:  # noqa: BLE001
-                    memory = 0
+                    memory, cpu = 0, None
+            image = self.image_of(c)
+            refs.add(image)
             body["containers"].append({
-                "label": label, "running": running,
-                "health": ((attrs.get("State") or {}).get("Health") or {}).get("Status") or c.status,
+                "label": label, "running": running, "health": (state.get("Health") or {}).get("Status") or c.status,
                 "memory_mb": memory, "memory_limit_mb": int((attrs.get("HostConfig") or {}).get("Memory") or 0) // MIB,
-                "data_mb": self.data_mb(label), "image": self.image_of(c)})
+                "cpu_pct": cpu, "restarts": int(attrs.get("RestartCount") or 0),
+                "started_at": str(state.get("StartedAt") or ""), "oom_killed": bool(state.get("OOMKilled")),
+                "data_mb": self.data_mb(label), "image": image,
+                "image_stale": self.image_stale(image, str(attrs.get("Image") or ""))})
         self._data_mb = {k: v for k, v in self._data_mb.items() if k in seen}
+        self._registry = {k: v for k, v in self._registry.items() if k in refs}
         return body
 
     # --- the loop ---------------------------------------------------------------

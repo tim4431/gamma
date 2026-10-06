@@ -7,13 +7,15 @@ behind HTTP Basic auth by the container's own client."""
 
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import account_of, drop_user, login, make_page, make_user
+from conftest import account_of, drop_user, fresh_client, login, make_page, make_user, workspace_of
+from fastapi import HTTPException
 from test_cloud_auth import ISSUER, cloud  # noqa: F401  (the fake account server fixture)
 
-from gamma import cloud_auth, hosted, server_settings, workspaces
-from gamma.db import connect_users_db, page_now
+from gamma import cloud_auth, guests, hosted, server_settings, workspaces
+from gamma.db import connect_pages_db, connect_users_db, format_stamp, page_now
 from gamma.server_settings import _get_raw, _set_raw
 
 CLIENT_ID, SECRET = "gc_hosted", "hosted-secret"
@@ -89,8 +91,12 @@ def test_sync_stores_the_answer_and_reports_the_server(plan):
     assert found["plan"] == "pro" and found["policy"] == "invited" and found["quota_mb"] == 1000
     assert found["offsite"] == {"interval_s": 3600, "keep": 30} and found["synced_at"]
     report = plan.reports[-1]
-    assert set(report) == {"version", "schema", "accounts", "uploads_bytes", "data_bytes", "public_url"}
+    assert set(report) == {"version", "schema", "accounts", "active_accounts", "uploads_bytes", "data_bytes",
+                           "public_url", "last_write_at", "errors", "uptime_s"}
     assert report["accounts"] == _accounts() and report["data_bytes"] > 0 and report["schema"]
+    assert 0 <= report["active_accounts"] <= report["accounts"]
+    assert report["last_write_at"] is None and report["errors"] == 0  # forget() cleared both
+    assert isinstance(report["uptime_s"], int) and report["uptime_s"] >= 0
     # kept in the settings KV: a restart reads it back
     assert json.loads(_get_raw(hosted.SETTINGS_KEY))["limits"]["plan"] == "pro"
     assert hosted.limits() == found
@@ -105,8 +111,21 @@ def test_nothing_happens_off_a_hosted_server(plan, admin, monkeypatch):
     hosted.tick()
     assert hosted.sync_now() is None and hosted.limits() is None and hosted.pane() is None
     assert not [path for _method, path in plan.calls if path == hosted.SYNC_PATH]
-    config = login("ho_member", "ho-member-pw1").get("/api/server-config").json()
+    member = login("ho_member", "ho-member-pw1")
+    config = member.get("/api/server-config").json()
     assert config["read_only"] is False and config["hosted"] is None
+    # nor is anything noted for the report: neither a write nor a 5xx
+    assert member.post("/api/blocks", json={"parent_id": "root", "content": "ho unhosted"}).status_code == 200
+    _broken(monkeypatch)
+    assert fresh_client(raise_server_exceptions=False).get("/api/server-config").status_code == 500
+    assert (hosted._errors, hosted._last_write, _get_raw(hosted.LAST_WRITE_KEY)) == (0, None, "")
+
+
+def _broken(monkeypatch):
+    """GET /api/server-config fails with an exception (a 500)."""
+    def boom():
+        raise RuntimeError("ho: a bug")
+    monkeypatch.setattr(guests, "logins_open", boom)
 
 
 def test_a_failed_sync_keeps_the_last_answer(plan, monkeypatch):
@@ -296,6 +315,73 @@ def test_the_answer_is_kept_in_memory(plan, admin, monkeypatch):
     assert hosted.limits()["plan"] == "pro"
     hosted.reset()
     assert hosted.limits()["plan"] == "plus" and reads == [1]
+
+
+@pytest.mark.usefixtures("admin")  # the app is up first: its startup sync would report the errors
+def test_errors_count_until_a_sync_reports_them(plan, monkeypatch):
+    anyone = fresh_client(raise_server_exceptions=False)
+    _broken(monkeypatch)
+    assert anyone.get("/api/server-config").status_code == 500  # an exception
+
+    def unavailable():
+        raise HTTPException(503, "ho: not now")
+    monkeypatch.setattr(guests, "logins_open", unavailable)
+    assert anyone.get("/api/server-config").status_code == 503  # an answer
+    hosted.sync_now()
+    assert plan.reports[-1]["errors"] == 2
+    hosted.sync_now()
+    assert plan.reports[-1]["errors"] == 0  # the sync that reported them took them off
+    assert anyone.get("/api/server-config").status_code == 503
+    plan.offline = True
+    assert hosted.sync_now() is None  # a failed sync leaves them
+    plan.offline = False
+    hosted.sync_now()
+    assert plan.reports[-1]["errors"] == 1
+
+
+def test_the_last_write(plan, admin, monkeypatch):
+    hosted.sync_now()
+    assert plan.reports[-1]["last_write_at"] is None
+    # a read and a write that failed leave it
+    assert admin.get("/api/notices").status_code == 200
+    assert admin.post("/api/blocks", json={}).status_code == 422
+    hosted.sync_now()
+    assert plan.reports[-1]["last_write_at"] is None
+    before = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert admin.post("/api/blocks", json={"parent_id": "root", "content": "ho last write"}).status_code == 200
+    hosted.sync_now()
+    at = plan.reports[-1]["last_write_at"]
+    assert at and at >= before
+    # a restart: nothing in memory, the time the last sync saved
+    monkeypatch.setattr(hosted, "_last_write", None)
+    hosted.sync_now()
+    assert plan.reports[-1]["last_write_at"] == at == _get_raw(hosted.LAST_WRITE_KEY)
+
+
+def test_active_accounts(plan):
+    make_user("ho_quiet", "ho-quiet-pw1")
+    quiet = account_of("ho_quiet")
+    week_ago = format_stamp(datetime.now(timezone.utc) - timedelta(days=hosted.ACTIVE_DAYS, hours=1))
+
+    def active():
+        hosted.sync_now()
+        return plan.reports[-1]["active_accounts"]
+
+    before = active()  # an account that has done nothing is not active
+    client = login("ho_quiet", "ho-quiet-pw1")
+    assert active() == before + 1  # a sign-in
+    with connect_users_db() as conn:
+        conn.execute("UPDATE sessions SET created_at = ? WHERE user_id = ?", (week_ago, quiet))
+        conn.commit()
+    assert active() == before
+    assert client.put("/api/prefs/recent-views", json={"value": []}).status_code == 200
+    assert active() == before + 1  # a page opened: the app saves the recents
+    with connect_pages_db(workspace_of("ho_quiet")) as conn:
+        conn.execute("UPDATE workspace_prefs SET updated_at = ? WHERE user_id = ?", (week_ago, quiet))
+        conn.commit()
+    assert active() == before
+    make_page(client, "HO quiet page")
+    assert active() == before + 1  # a page written
 
 
 def test_the_off_site_copies_follow_the_plan_where_it_is_stricter(plan, monkeypatch):

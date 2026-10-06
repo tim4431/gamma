@@ -1145,13 +1145,39 @@ through `cloud_auth._http` and its user agent:
 
 ```json
 {"version": "v1.4.0 (abc123def456)", "schema": 31, "accounts": 4,
- "uploads_bytes": 734003200, "data_bytes": 912680550,
- "public_url": "https://alice.gammapdf.com"}
+ "active_accounts": 2, "uploads_bytes": 734003200, "data_bytes": 912680550,
+ "public_url": "https://alice.gammapdf.com",
+ "last_write_at": "2026-10-05T08:41:17Z", "errors": 0, "uptime_s": 259200}
 ```
 
 `accounts` counts non-guest accounts, `uploads_bytes` sums the uploads of
 every workspace (`storage.usage`), `data_bytes` is the size of the whole
 data directory and `public_url` the confirmed public URL ("" without one).
+The last four say whether the server is used and failing, in counts and
+times only:
+
+- `active_accounts` counts the non-guest accounts that, in the last 7
+  days, signed in (a session made then), had a preference saved (the app
+  saves the open tabs and the recently viewed pages as a person opens
+  pages) or were the newest writer of a page (`page_changes`). The sync
+  reads these from users.db and each workspace's pages.db; nothing is
+  written to learn them. Someone who only reads in a tab left open is not
+  counted.
+- `last_write_at` is when the server last answered a POST, PUT, PATCH or
+  DELETE under `/api/` below 400 (a sign-in and a read sent as a POST
+  count too), null when there was none. It is kept in memory and
+  saved in the `settings` KV under `hosted_last_write` at each sync, so a
+  restart loses at most the writes since the last sync.
+- `errors` counts the answers with a 5xx status (an uncaught exception, or
+  a 502 or 503 the server chose) since the last successful sync. A
+  successful sync takes off the ones it reported; a failed one leaves
+  them. It is kept in memory only and starts at 0 after a restart.
+- `uptime_s` is the seconds since this process started.
+
+`app.read_only_gate` notes each answer (`hosted.answered`: a comparison and
+an assignment, no database write). Off a hosted server it passes every
+request on and notes nothing.
+
 The answer is the plan's limits:
 
 ```json

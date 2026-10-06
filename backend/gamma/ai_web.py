@@ -644,15 +644,35 @@ def window(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple
     page's text is prefixed ``[p. N]`` so the model can cite pages), the offset
     a follow-up read continues from (None = the document ended inside this
     window), and the total chars from start_page on."""
-    pages = doc["pages"]
-    start = max(1, min(start_page, len(pages)))
-    if doc["kind"] == "pdf":
-        full = "\n\n".join(f"[p. {n}]\n{t}" for n, t in enumerate(pages[start - 1:], start) if t.strip())
-    else:
-        full = "\n\n".join(pages)
+    full = _PAGE_GAP.join(text for _, text in _page_texts(doc, start_page))
     text = full[offset:offset + limit]
     next_offset = offset + limit if len(full) > offset + limit else None
     return text, next_offset, len(full)
+
+
+def window_pages(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[int, int] | None:
+    """The PDF pages that same window holds text of, ``(first, last)``; None
+    for a web page, which has no pages, and for a window past the end."""
+    at, held = 0, []
+    for page, text in _page_texts(doc, start_page):
+        if page and at < offset + limit and at + len(text) > offset:
+            held.append(page)
+        at += len(text) + len(_PAGE_GAP)
+    return (held[0], held[-1]) if held else None
+
+
+_PAGE_GAP = "\n\n"
+
+
+def _page_texts(doc: dict, start_page: int) -> list:
+    """What a window is cut from: ``(page, text)`` for each PDF page with
+    text from ``start_page`` on, its text under its ``[p. N]`` line; a web
+    page's text as page 0."""
+    pages = doc["pages"]
+    if doc["kind"] != "pdf":
+        return [(0, text) for text in pages]
+    start = max(1, min(start_page, len(pages)))
+    return [(n, f"[p. {n}]\n{text}") for n, text in enumerate(pages[start - 1:], start) if text.strip()]
 
 
 def clear_cache():

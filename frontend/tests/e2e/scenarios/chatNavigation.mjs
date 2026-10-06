@@ -605,20 +605,25 @@ export async function chatNavigationScenarios(env) {
       assertEq(await rows.locator(".transferSpin").count(), 0, "nothing spins once both ended");
       assertEq(await page.locator(".chatThinking").count(), 0, "the running call still stands in for the Thinking pill");
       // The call's chips land: the rows go, and the helper's own calls stay under its chip.
-      await push({ action: { kind: "fetch", tool: "read_paper", summary: "Read “Cat qubits” with a helper",
+      await push({ action: { kind: "helper", tool: "read_paper", summary: "Helper read “Cat qubits”", steps: 2,
         args: { source: "arXiv:1905.00450", question: "what do they measure?" }, result: "A helper read arXiv:1905.00450…",
-        children: [{ kind: "fetch", tool: "fetch_paper", summary: "Fetched “Cat qubits” — pages 1–4", version: "preprint" }] } },
+        children: [{ kind: "fetch", tool: "fetch_paper", summary: "Fetched “Cat qubits”", version: "preprint", pdf_pages: [1, 4] },
+          { kind: "fetch", tool: "fetch_paper", summary: "Fetched “Cat qubits”", version: "preprint", pdf_pages: [4, 9] }] } },
       { action: { kind: "error", tool: "read_paper", summary: "error: the provider did not answer", args: {}, result: "error", error: true } },
       { delta: "They measure the bit-flip time." });
       await page.evaluate(() => window.chatStream.finish());
-      await pill.filter({ hasText: "2 steps · fetched 1 document" }).waitFor();
+      await pill.filter({ hasText: "2 steps · used 1 helper" }).waitFor();
       assertEq(await rows.count(), 0);
       await pill.click();
-      await page.locator(".chatToolActionHead", { hasText: "Read “Cat qubits” with a helper" }).click();
+      // The helper's chip says it is one and how much it did; its reads are told apart by their pages.
+      const chip = page.locator(".chatToolActionHead", { hasText: "Helper read “Cat qubits”" });
+      assert((await chip.innerText()).includes("2 steps"), "the helper's chip counts its calls");
+      await chip.click();
       const child = page.locator(".chatToolChildren .chatToolActionHead");
-      assertEq(await child.count(), 1);
-      assert((await child.innerText()).includes("Fetched “Cat qubits” — pages 1–4"), "the helper's fetch is listed under its chip");
-      assert((await child.innerText()).includes("arXiv preprint"), "with the copy it read");
+      assertEq(await child.count(), 2);
+      assert((await child.first().innerText()).includes("pp. 1–4"), "the helper's reads are listed under its chip");
+      assert((await child.last().innerText()).includes("pp. 4–9"), "each with the pages it read");
+      assert((await child.first().innerText()).includes("arXiv preprint"), "and the copy it read");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

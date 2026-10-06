@@ -15,7 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import accounts, billing, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions, settings
+from .. import (accounts, billing, captcha, config, connect, db, mail, oidc, pages, ratelimit, servers, sessions,
+                settings)
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -75,6 +76,17 @@ def public_config():
             "issuer": config.PUBLIC_URL, "plans": list(config.PLANS)}
 
 
+@router.get("/plans")
+def plans_on_sale():
+    """Which paid plans can be bought now (``billing.can_sell``), for the
+    website's pricing page: no session, readable from the website's origin
+    and cached for a few minutes (the middleware's ``no-store`` is only a
+    default)."""
+    body = {"plans": {plan: {"on_sale": billing.can_sell(plan)} for plan in settings.PAID_PLANS}}
+    return JSONResponse(body, headers={"Access-Control-Allow-Origin": pages.SITE,
+                                       "Cache-Control": "public, max-age=300"})
+
+
 # --- register / login ---------------------------------------------------------
 
 class RegisterBody(BaseModel):
@@ -99,9 +111,9 @@ def register(body: RegisterBody, request: Request):
     username = accounts.norm_username(body.username)
     password = accounts.check_password(body.password)
     with closing(db.connect()) as conn:
-        plan = accounts.take_invite(conn, body.invite)
-        account = accounts.create(conn, email=email, username=username, password=password, plan=plan,
-                                  display_name=body.display_name)
+        taken = accounts.take_invite(conn, body.invite, email)
+        account = accounts.create(conn, email=email, username=username, password=password,
+                                  display_name=body.display_name, **taken)
         message = verify_message(conn, account)
         token = sessions.create(conn, account["id"], request)
         conn.commit()
