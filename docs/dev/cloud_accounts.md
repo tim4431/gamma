@@ -516,8 +516,9 @@ who asks and what it gets. Gamma Cloud's own servers do not show it
 
 `entrance.py`, with the authorize step in `routers/oidc.py` and `/open` in
 `routers/portal.py`. People start at one address, the shared server's
-(`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). Most live there. A Pro account
-has a server of its own, and anyone may be a member of somebody else's. No
+(`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). A Lite or Plus library lives
+there. A Pro account has a server of its own, anyone may be a member of
+somebody else's, and a free account has no library online. No
 server sits behind another's address: a Gamma server is one hostname (its
 API is rooted at `/`, its session cookie has one name, its tokens and share
 links carry no server), and separate hostnames are what keeps one
@@ -531,14 +532,16 @@ account has a library on, the one to open first at the head:
 | kind | which | when |
 |---|---|---|
 | `own` | the account's hosted server | while it answers (`running`, `grace`, `read_only`, `suspended`) |
-| `shared` | the shared server | the account has no server of its own, or has signed in on the shared server as well (the library it had before Pro) |
+| `shared` | the shared server | the plan gives a library there (`config.shared_limits`: Lite, Plus, and Pro for the library it had before), and the account has no server of its own that answers, or has signed in on the shared server as well |
 | `team` | another person's hosted server | the account has signed in there (it is on its server list) |
 
-Servers people run themselves are never listed. `entrance.decide` is what
-a signed-in, verified account gets at the authorize step:
+A free account has neither of the first two. Servers people run
+themselves are never listed. `entrance.decide` is what a signed-in,
+verified account gets at the authorize step:
 
 | the client asking | answer |
 |---|---|
+| the shared server, and the account has no library (`own` or `shared`): a free plan | the no-library page (`pages.no_library_page`) in place of a sign-in: the plan has no library online, *See plans* (`/plan`), *Get the desktop app*, and the servers it is a member of, if any. No code is issued, and nothing on the page leads into the shared server |
 | the shared server, one destination and it is the shared server | the code, with no page in between |
 | the shared server, one destination and it is the account's own server | a redirect to that server's cloud sign-in (`<server>/api/auth/cloud/start?next=/`); the pending request is dropped |
 | the shared server, several destinations | the chooser (`pages.where_page`, "Where to?"): a row per server; the shared server's row finishes the pending request (`POST /authorize/continue`), the others start a sign-in there |
@@ -553,8 +556,38 @@ forward and the chooser to them and finishes otherwise.
 
 `GET /open` is the portal's *Open Gamma* (a button on the Overview while
 the account has a destination): one destination redirects to that server's
-cloud sign-in, several show the chooser, none goes to the Overview. Signed
-out goes to `/login?next=/open`.
+cloud sign-in, several show the chooser, none goes to the Plan page (the
+Overview for an unconfirmed address). Signed out goes to
+`/login?next=/open`.
+
+**Who the shared server takes.** `accounts.on_shared` is the rule: an
+account whose plan gives a library there (`config.shared_limits`: Lite,
+Plus, and Pro for the library it had before), and a Gamma Cloud admin, who
+runs that server. A free account is not one. `oidc.admits(client, account)`
+applies the rule to the shared server's client and lets every other client
+through. It is asked in the three places the account server could sign
+someone in there:
+
+- `entrance.decide`: the no-library page instead of a code;
+- `POST /authorize/continue`: 403, for a request no page makes;
+- the `refresh_token` grant: `invalid_grant`, and the grant is revoked.
+
+The last closes a session that already exists. The shared server refreshes
+every grant hourly and ends the sessions of one that is refused ("The
+grant check"), so a plan that ended is signed out within the hour, as is
+a free account that signed in before the rule. Nothing is deleted, and a
+new plan opens the library as it was.
+
+A free account still publishes: the exchange runs on the grant of the
+person's own Gamma, never the shared server's ("The exchange"), and its
+pages are stored under the shared server's default quota ("The plan's
+cap"). Keep that default small: it is the whole of a free account's
+storage there. A person on a free plan cannot open a page shared with
+them by username on the shared server; a share link needs no account.
+
+Not built: ending the integration tokens an account made on the shared
+server while it had a plan (an offline copy, the extension, an assistant
+over MCP). They outlive the sessions until they are deleted there.
 
 `entrance.shared_home(account_id)` is the one place that says which shared
 server an account lives on. It answers `config.APP_URL` for everyone; a
@@ -577,7 +610,9 @@ grant's access tokens die, a new pair is issued. For
 more, for a client whose answer was lost; used later, it means two parties
 hold the device's key, and the grant is revoked (`grant.reuse` in the
 audit). A client must therefore refresh one request at a time and keep the
-newest token. Revoking a device on the account page, changing the password
+newest token. A refresh for the shared server is refused, and its grant
+revoked, once the account is not one that server takes (`oidc.admits`,
+"The entrance"). Revoking a device on the account page, changing the password
 or deleting the account revokes the grant; `/revoke` accepts the current
 refresh token or any one the grant rotated away from.
 
@@ -998,8 +1033,9 @@ its OIDC client lists both callbacks (`manage.py client-redirect` adds
 one).
 
 **Plans on the share host.** The share host is also where a Lite or Plus
-library lives: the person signs in there like anyone else and is an
-ordinary account, not an admin. What the plan adds is storage. The account
+library lives: the person signs in there and is an ordinary account, not
+an admin. Only an account on a plan is signed in ("The entrance", "Who
+the shared server takes"). What the plan adds is storage. The account
 server sends it as the `limits` claim, and
 `server_settings.user_limits` uses it as the account's default quota and
 per-file cap in place of the server's defaults
@@ -1011,20 +1047,24 @@ Three rules keep it honest:
 - the claim counts only while the identity holds a live grant (a refresh
   token, not revoked). The hourly grant check reads the account's claims
   again from `/userinfo` on a share host (`cloud_auth.refresh_claims`), so
-  a plan that lapsed loses its allowance within the hour, and a new plan
-  arrives within the hour or at the next sign-in, which is why the Plan
+  a plan that changed is followed within the hour or at the next sign-in
+  (a plan that ended has its refresh refused instead, which ends the
+  sessions and the allowance together), which is why the Plan
   page's Open goes through the cloud sign-in. A grant signed out on the
   account server loses the allowance with it;
 - an identity made by a publish exchange alone holds no grant, so it has
   the server's defaults until the person signs in on the share host.
 
-A free account, and a plan that ended, have the server's defaults: nothing
-is deleted, and uploads are refused while the account holds more than its
-quota ([user_db.md](user_db.md)). A Pro account's claim carries Plus's
+A free account, and a plan that ended, have the server's defaults for what
+they publish: nothing is deleted, and uploads are refused while the
+account holds more than its quota ([user_db.md](user_db.md)). Neither can
+sign in, so a library left by a plan that ended is closed until a new plan
+opens it. A Pro account's claim carries Plus's
 storage (`config.SHARED_FALLBACK`), for the library it may still have
 there. Not built: the share host reporting each account's usage to the
 account server, so the Plan page shows the allowance but not what is used;
-and deleting files beyond the free allowance after a plan ended.
+and deleting a closed library, or its files beyond the free allowance,
+after a plan ended.
 
 **The plan's cap.** How many pages each plan may publish is
 `config.PLAN_PAGE_LIMITS` in `gamma/config.py`:

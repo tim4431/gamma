@@ -68,6 +68,7 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .dests{display:grid;gap:8px;margin:20px 0 4px}.dest{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .1s,border-color .1s}
 .dest:hover{background:var(--surface-2);border-color:var(--accent);text-decoration:none}.dest:disabled{opacity:.6;cursor:default}.dest i{width:32px;height:32px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--text-2);flex:none}.dest i svg{width:16px;height:16px}
 .dest .txt{flex:1;min-width:0}.dest .txt b,.dest .txt span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dest .txt b{font-weight:600}.dest .txt span{color:var(--muted);font-size:12.5px}.dest>svg{width:16px;height:16px;color:var(--muted);flex:none}
+.consent .actions+.gets{margin-top:22px}.gets+.dests{margin-top:0}
 .go{display:flex;justify-content:flex-end;margin-top:24px}.go .btn{min-width:112px}.alt{margin-top:10px;text-align:right;font-size:13px;color:var(--muted)}.alt .sep{margin:0 7px}
 .linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer}.linkbtn:hover{color:var(--text);text-decoration:underline}.linkbtn:disabled{opacity:.5;cursor:default}
 .consent .msg{min-height:0}.consent .msg:empty{margin:0}.consent .cfoot{padding:11px 22px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}.consent .cfoot a{color:inherit;text-decoration:underline}
@@ -955,20 +956,47 @@ def connect_page(origin: str, state: str, challenge: str, account, verify_needed
                "location.href = d.redirect; }, err);"))
 
 
+def _place_row(place: dict, stay: bool = False) -> str:
+    """One server on the entrance's cards: a link that signs the browser in
+    there, or with ``stay`` the button that finishes the pending request."""
+    inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
+             f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
+    if stay:
+        return f"<button type=button class=dest id=stay>{inner}</button>"
+    return f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
+
+
+ENTRANCE_JS = ("const err = document.getElementById('err');"
+               "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+
+
+def no_library_page(account, places: list[dict]) -> str:
+    """What a free account gets at the entrance in place of a sign-in
+    (``entrance.decide``'s ``upgrade``): its plan has no library online,
+    the plans, the desktop app, and the servers it is a member of
+    (``places``), if any. Nothing on it leads into the shared server."""
+    team = ("<p class=gets>Servers you are a member of</p><div class=dests>"
+            + "".join(_place_row(p) for p in places) + "</div>") if places else ""
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            "<h1>Your plan has no online library</h1>"
+            f"<p class=lead>You are on the <b>{esc(account['plan'].capitalize())}</b> plan: your library lives in the "
+            "desktop app. Lite, Plus and Pro add one that is always on, so your devices stay in sync and share "
+            "links work with the laptop closed.</p>"
+            f"<div class=actions><a class='btn btn--primary' href='/plan'>See plans</a>"
+            f"<a class=btn href='{SITE}/download'>Get the desktop app</a></div>{team}"
+            f"<p class=alt>Signed in as {esc(account['username'])}<span class=sep aria-hidden=true>·</span>"
+            "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
+            "<p class=cfoot>Publishing pages from the desktop app works on every plan.</p>")
+    return _auth_shell("No online library", card, ENTRANCE_JS, cls="consent", top=False)
+
+
 def where_page(account, places: list[dict], request_id: str = "") -> str:
     """The entrance's chooser, for a person whose libraries are on several
     Gamma Cloud servers (``entrance.destinations``; ``account`` needs a
     username and an e-mail). Each row signs the browser in on that server.
     With ``request_id`` the shared server itself asked (the authorize
     step), and its row finishes that request instead of starting another."""
-    rows = ""
-    for place in places:
-        inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
-                 f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
-        if request_id and place["kind"] == "shared":
-            rows += f"<button type=button class=dest id=stay>{inner}</button>"
-        else:
-            rows += f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
+    rows = "".join(_place_row(p, stay=bool(request_id) and p["kind"] == "shared") for p in places)
     user = account["username"]
     card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
             "<h1>Where to?</h1><p class=where><span>Your account has a library on more than one server.</span></p>"
@@ -976,8 +1004,7 @@ def where_page(account, places: list[dict], request_id: str = "") -> str:
             f"<p class=alt>Signed in as {esc(user)}<span class=sep aria-hidden=true>·</span>"
             "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
             "<p class=cfoot>Every server you have signed in to is listed on <a href=/devices>Devices</a>.</p>")
-    script = ("const err = document.getElementById('err');"
-              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+    script = ENTRANCE_JS
     if request_id:
         script += ("const stay = document.getElementById('stay'); if (stay) stay.onclick = () => act(stay, async () => { "
                    f"const d = await api('/authorize/continue', {{request_id: {_js(request_id)}}}); location.href = d.redirect; }}, err);")

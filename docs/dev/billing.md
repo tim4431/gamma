@@ -296,8 +296,9 @@ It has six states (`pages_billing.plan_state`):
   button opens the Customer Portal; a paused subscription is held, so it is
   resumed there, not through a new checkout.
 - **Cancelled or read-only.** For Lite and Plus, a section saying that
-  the library stays where it is under the free allowance, with Open and
-  Resume. For Pro, when the server stops being readable and
+  the library is kept but closed until a plan opens it again
+  ([cloud_accounts.md](cloud_accounts.md) "Who the shared server takes"),
+  with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
   while the server is read-only) and Resume (a new checkout of the same

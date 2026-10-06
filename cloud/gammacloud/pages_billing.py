@@ -290,7 +290,7 @@ def _subscription(sub: dict, summary: dict) -> str:
     else:
         change = "<a class='btn btn--sm' href='#plans'>Change plan</a>" if sub["can_switch"] else ""
         actions = change + pay + "<button class='btn btn--sm btn--danger' data-portal=cancel>Cancel plan</button>"
-    after = ("your library goes back to the free allowance" if _shared(sub["plan"])
+    after = ("your library closes" if _shared(sub["plan"])
              else "your server turns read-only")
     ends = (f"<p class='plantext gap'>Your plan ends with this period and {after} then. "
             "Keep my plan lets it renew as before.</p>" if ending else "")
@@ -345,7 +345,8 @@ def _ended(sub: dict, summary: dict, hosted: dict | None) -> str:
     library, and Resume (a new checkout) or Fix payment. A server of the
     account's own says when it stops and is deleted (its own dates,
     ``hosted.status_for``) and offers Export; a library on the shared
-    server stays, under the free allowance."""
+    server is kept but closed, since that server signs in only an account
+    on a plan (``accounts.on_shared``)."""
     hosted = hosted or {}
     url = hosted.get("url") or ""
     if sub["status"] == "unpaid":
@@ -358,13 +359,11 @@ def _ended(sub: dict, summary: dict, hosted: dict | None) -> str:
         action = (f"<button class='btn btn--primary btn--sm' data-resume='{pages.esc(price)}'>Resume</button>"
                   if can_buy(summary, sub["plan"]) else "")
     if _shared(sub["plan"]) and not hosted:
-        shared_url = summary["shared_url"]
-        open_btn = f"<a class='btn btn--sm' href='{pages.esc(shared_url)}'>Open</a>" if shared_url else ""
         return (_strip(head, "", bad=True)
                 + "<section class=section><h2>What happens to your library</h2><div class=body><p class=plantext>"
-                "Everything in it stays where it is and stays readable. New uploads are refused while it holds "
-                "more than the free allowance; resume the plan to keep adding to it.</p>"
-                f"<div class=actions>{open_btn}{action}</div></div></section>")
+                "Everything in it is kept where it is, but it is closed: you cannot sign in to it without a plan. "
+                "Resume the plan to open it again as it was. Pages you published stay online.</p>"
+                f"<div class=actions>{action}</div></div></section>")
     rows = ""
     if hosted.get("stops_at"):
         left = _days_left(hosted["stops_at"])
@@ -590,7 +589,7 @@ def overview_plan(account: dict, summary: dict) -> str:
     else:
         text = ""
     if plan == "free" and sub and sub["status"] in ("canceled", "incomplete_expired"):
-        text = f"Your {pages.esc(sub['plan'].capitalize())} plan ended. Resume it to keep adding to your library."
+        text = f"Your {pages.esc(sub['plan'].capitalize())} plan ended. Resume it to open your library again."
     rows = ""
     if _shared(plan) and summary["shared_url"]:
         url = summary["shared_url"]

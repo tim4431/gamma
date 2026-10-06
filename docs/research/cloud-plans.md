@@ -497,7 +497,13 @@ the browser provides between hostnames, which is most of what a container
 per customer is for. So the account server routes at sign-in instead
 ([dev/cloud_accounts.md](../dev/cloud_accounts.md) "The entrance"): a Pro
 owner is sent on to their own server, a person with several libraries
-chooses, and everyone else stays. Hosted servers took the name
+chooses, a Lite or Plus account stays, and a free account is shown the
+plans and is not signed in: it has no library online, only its published
+pages. The same rule closes a Lite or Plus library when its plan ends,
+within the hour and with nothing deleted. A read-only month like Pro's
+was weighed and left unbuilt: the account server can only refuse the
+sign-in, and a library that stays readable needs the Gamma server to
+tell a lapsed account from a paid one. Hosted servers took the name
 `<username>-user.gammapdf.com`, so that no username can shadow a service
 name; a separate domain for them would add cookie isolation from the
 account server and remains open. Not built: routing to a second fleet

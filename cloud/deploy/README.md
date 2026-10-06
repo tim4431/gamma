@@ -250,8 +250,9 @@ The compose file also runs `share`: one Gamma in cloud mode
 answers at three kinds of address ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
 "The share host" and "The entrance"):
 
-- `app.gammapdf.com`, the one people use: every account signs in there,
-  and a Lite or Plus library lives there (`GAMMA_PUBLIC_URL` in
+- `app.gammapdf.com`, the one people use: every account starts there, a
+  Lite or Plus library lives there, and a free account is shown the plans
+  instead of being signed in (`GAMMA_PUBLIC_URL` in
   `share.env`, `GAMMA_CLOUD_APP_URL` in `.env`);
 - `share.gammapdf.com`, where Gamma servers publish pages
   (`GAMMA_CLOUD_SHARE_HOST_URL`). A server that has published keeps this

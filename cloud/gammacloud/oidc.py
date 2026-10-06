@@ -236,6 +236,16 @@ def authenticate_client(conn, client_id: str, secret: str | None) -> dict:
     return client
 
 
+def admits(client: dict, account) -> bool:
+    """Whether ``account`` may be signed in to ``client``. Only the shared
+    server refuses anyone: it takes the accounts ``accounts.on_shared``
+    names. The authorize step asks before a code is made (the entrance
+    shows the plans instead, ``entrance.decide``), and ``refresh_grant``
+    asks at every refresh, so a session there ends within the hour of the
+    plan's end."""
+    return client["kind"] != "share-host" or accounts.on_shared(account)
+
+
 # --- authorize ----------------------------------------------------------------
 
 def parse_scope(raw: str, client: dict) -> str:
@@ -380,6 +390,11 @@ def refresh_grant(conn, client: dict, refresh_token: str, request=None) -> dict:
     account = accounts.by_id(conn, row["account_id"])
     if not account:
         raise OAuthError("invalid_grant", "account gone")
+    if not admits(client, account):
+        # No plan gives the account a library on the shared server any more:
+        # the grant goes, and that server ends the sessions it stood for.
+        revoke_grant(conn, row["id"], "system")
+        raise OAuthError("invalid_grant", "the account's plan has no library on this server")
     refresh = new_token(32)
     ts = now()
     conn.execute("INSERT OR REPLACE INTO refresh_history (refresh_hash, grant_id, replaced_at) VALUES (?, ?, ?)",
