@@ -95,10 +95,11 @@ def _servers(conn, public_ip: dict[str, str]) -> list[dict]:
 def _hosts(hosts: list[dict]) -> list[dict]:
     """A host silent past ``fleet.STALE_AFTER``, or close to full: its
     committed memory near what can be placed on it, or its disk. And a
-    container of the host's own (not a hosted server's, whose ``down:``
-    alert covers it) that its restart policy keeps up, found restarting,
-    stopped or unhealthy; a ``-prev`` a failed update kept is meant to be
-    stopped. Each links to the host on the Machines tab."""
+    container of the host's own that is Gamma's (``fleet.is_gamma``; not a
+    hosted server's, whose ``down:`` alert covers it) that its restart
+    policy keeps up, found restarting, stopped or unhealthy; a ``-prev`` a
+    failed update kept is meant to be stopped. Each links to the host on
+    the Machines tab."""
     out = []
     for h in hosts:
         link = f"#machines/{h['id']}"
@@ -115,7 +116,8 @@ def _hosts(hosts: list[dict]) -> list[dict]:
         names = {c.get("name") for c in h["containers"]}
         for c in h["containers"]:
             name = c.get("name", "")
-            if c.get("managed") or c.get("restart_policy") not in KEEP_UP or fleet.is_kept(name, names):
+            if (not c.get("gamma") or c.get("managed") or c.get("restart_policy") not in KEEP_UP
+                    or fleet.is_kept(name, names)):
                 continue
             status = (c.get("status") if c.get("status") in DOWN
                       else "unhealthy" if c.get("health") == "unhealthy" else "")

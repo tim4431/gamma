@@ -1,7 +1,7 @@
 """The fleet's history (docs/dev/hosted.md "History"): samples merged by
 the hour with errors summed, series, the purge, what the heartbeat (every
-container too) and the sync record, the trends on the Servers and Machines
-tabs' rows and the metrics endpoint."""
+container too) and the sync record, the trends on the Servers tab's rows,
+a host's latest CPU figure on the Machines tab and the metrics endpoint."""
 
 import json
 from contextlib import closing
@@ -67,12 +67,14 @@ def test_the_heartbeat_and_the_sync_feed_the_history(client, hosting):
     alice = make_account("alice", "plus")
     sid = server(alice)["id"]
     body = {"agent_version": "1", "memory_mb": 8192, "disk_mb": 500_000, "memory_used_mb": 2000, "disk_used_mb": 30_000,
-            "containers": [{"label": "alice", "running": True, "health": "healthy", "memory_mb": 300, "data_mb": 42,
-                            "cpu_pct": 12.34, "restarts": 1}, {"label": "stranger", "running": True}]}
+            "cpu_pct": 7.66, "containers": [{"label": "alice", "running": True, "health": "healthy", "memory_mb": 300,
+                                             "data_mb": 42, "cpu_pct": 12.34, "restarts": 1},
+                                            {"label": "stranger", "running": True}]}
     assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
     [host] = rows("host")
     assert host["ref"] == host_id
-    assert host["data"] == {"memory_used_mb": 2000, "disk_used_mb": 30_000, "committed_mb": 768, "servers": 1}
+    assert host["data"] == {"memory_used_mb": 2000, "disk_used_mb": 30_000, "cpu_pct": 7.7, "committed_mb": 768,
+                            "servers": 1}
     auth = basic(*credentials(alice))
     for extra in ({"errors": 2, "active_accounts": 1}, {"errors": 3, "accounts": 2}):
         assert client.post("/api/hosted/sync", json={**REPORT, **extra}, headers=auth).status_code == 200
@@ -92,10 +94,6 @@ def test_the_heartbeat_samples_every_container(client, hosting):
     assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
     assert {r["ref"]: r["data"] for r in rows("container")} == {f"{host_id}:share": {"memory_mb": 300, "cpu_pct": 1.2},
                                                                  f"{host_id}:caddy": {"memory_mb": 0}}
-    [m] = client.get("/api/admin/machines").json()["machines"]
-    share = next(c for c in m["containers"] if c["name"] == "share")
-    assert share["trend"] == [{"at": metrics.hour(), "memory_mb": 300, "cpu_pct": 1.2}]
-    assert [p["at"] for p in m["trend"]] == [metrics.hour()]                 # and the host's own
     r = client.get("/api/admin/metrics", params={"kind": "container", "ref": f"{host_id}:share"}).json()
     assert [p["memory_mb"] for p in r["points"]] == [300]
     put("container", f"{host_id}:share", 24 * 31, {"memory_mb": 5})
@@ -103,6 +101,35 @@ def test_the_heartbeat_samples_every_container(client, hosting):
         metrics.purge(conn)
         conn.commit()
     assert len(rows("container")) == 2
+
+
+def test_a_hosts_cpu_use_is_its_latest_samples(client, hosting):
+    """The Machines tab's CPU figure: ``cpu_pct`` of the host's newest
+    sample, which keeps the hour's last value the agent knew."""
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    other, _ = make_host("vps-2")
+
+    def beat(**over):
+        body = {"memory_mb": 8192, "disk_mb": 500_000, **over}
+        assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
+
+    def cpu():
+        return {m["name"]: m["cpu_pct"] for m in client.get("/api/admin/machines").json()["machines"]}
+    put("host", host_id, 5, {"cpu_pct": 80.0})
+    beat()                                    # an agent before 0.3.1, or a first heartbeat: none this hour
+    assert cpu() == {"vps-1": None, "vps-2": None}
+    beat(cpu_pct=12.34)
+    assert cpu()["vps-1"] == 12.3
+    for unknown in (None, "busy", -3):
+        beat(cpu_pct=unknown)
+        assert cpu()["vps-1"] == 12.3
+    with closing(db.connect()) as conn:
+        latest = metrics.latest(conn, "host")
+    assert latest[host_id] == {"at": metrics.hour(), "memory_used_mb": 0, "disk_used_mb": 0, "cpu_pct": 12.3,
+                               "committed_mb": 0, "servers": 0}
+    assert set(latest) == {host_id, other} and "cpu_pct" not in latest[other]
 
 
 def test_the_trends_and_the_metrics_endpoint(client, hosting):

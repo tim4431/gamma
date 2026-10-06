@@ -15,7 +15,8 @@ server, or many in waves), by hand or, for outdated servers, by itself.
 
 It also keeps every container each agent reports, the host's own services
 (the account server, the share host, Caddy, the demo, the agent itself)
-as well as the hosted servers, and queues the jobs the Machines tab sends
+as well as the hosted servers, tells Gamma's from whatever else the
+machine runs (``is_gamma``), and queues the jobs the Machines tab sends
 one of them by its name (``container_job``).
 """
 
@@ -44,6 +45,7 @@ RESULT_MAX = 4000              # a job's stored result, in characters
 LOGS_RESULT_MAX = 100_000      # a logs job's (its oldest lines go first)
 LOG_LINES_MAX = 5000           # the most lines a container_logs job asks for
 CONTAINERS_MAX = 200           # the containers of a host kept from one heartbeat
+GAMMA_REPO = "ghcr.io/tim4431/gamma"   # Gamma's images are under it: the server's, gamma-cloud and gamma-fleet
 UPGRADABLE = ("running", "grace", "read_only", "suspended")
 TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 HOST_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
@@ -290,7 +292,7 @@ def public_host(row, placed: dict | None = None) -> dict:
     out["free_mb"] = _free_mb(row, use["committed_mb"])
     # a server placed since the heartbeat is no orphan any more
     out["orphans"] = [label for label in _json_list(row["orphans"]) if label not in use["labels"]]
-    out["containers"] = _json_list(row["containers"])
+    out["containers"] = _host_containers(row["containers"])
     # a routed host: "on", or "off" while DNS is, which keeps it out of placement
     out["dns"] = ("on" if dns.enabled() else "off") if row["public_ip"] else ""
     return out
@@ -326,11 +328,44 @@ def place(conn, need: int, quota: int):
     return max(fits, key=lambda f: f[0])[1] if fits else None
 
 
+def _image_repo(image: str) -> str:
+    """An image reference's repository: less its digest, and less its tag
+    (a ``:`` after the last ``/``; one before it is a registry's port)."""
+    repo = image.partition("@")[0]
+    head, colon, tail = repo.rpartition(":")
+    return head if colon and "/" not in tail else repo
+
+
+def is_gamma(c: dict) -> bool:
+    """Whether a container of a host's list is Gamma's, rather than
+    something else the machine runs: its name starts with ``gamma-``, its
+    Compose project with ``gamma``, its image's repository is FLEET_IMAGE
+    or under GAMMA_REPO, or it is a hosted server's (``managed``) or the
+    agent's own (``self``). The Machines tab shows the others only when
+    asked; *Update all* and the ``container_down`` alert leave them out."""
+    compose = c["compose"] if isinstance(c.get("compose"), dict) else {}
+    repo = _image_repo(str(c.get("image") or ""))
+    return (str(c.get("name") or "").startswith("gamma-") or str(compose.get("project") or "").startswith("gamma")
+            or repo == config.FLEET_IMAGE or repo.startswith(GAMMA_REPO)
+            or c.get("managed") is True or c.get("self") is True)
+
+
+def _host_containers(raw) -> list[dict]:
+    """A host's stored ``containers``, each with ``gamma``: an entry kept
+    before the heartbeat stored it is classified as it is read."""
+    out = [c for c in _json_list(raw) if isinstance(c, dict)]
+    for c in out:
+        if not isinstance(c.get("gamma"), bool):
+            c["gamma"] = is_gamma(c)
+    return out
+
+
 def _docker_entry(c) -> dict | None:
     """One container of a heartbeat's ``docker`` list as it is kept: every
     field checked, text cut to length, numbers from 0, a flag true only
     when it is ``true``, and what an agent does not send (or sends as
-    nonsense) unknown. None for an entry with no usable name."""
+    nonsense) unknown; then whether it is Gamma's (``gamma``, ``is_gamma``).
+    None for an entry with no usable name."""
     if not isinstance(c, dict):
         return None
     name = _text(c.get("name"), 130).lstrip("/")
@@ -339,18 +374,20 @@ def _docker_entry(c) -> dict | None:
     compose, ports = c.get("compose"), c.get("ports")
     compose = ({"project": _text(compose.get("project"), 64), "service": _text(compose.get("service"), 64)}
                if isinstance(compose, dict) else None)
-    return {"id": _text(c.get("id"), 64), "name": name, "image": _text(c.get("image"), 200),
-            "image_id": _text(c.get("image_id"), 80),
-            "status": c["status"] if c.get("status") in STATUSES else "",
-            "health": c["health"] if c.get("health") in HEALTHS else "",
-            "created_at": _text(c.get("created_at"), 40), "started_at": _text(c.get("started_at"), 40),
-            "restarts": nonneg(c.get("restarts")), "restart_policy": _text(c.get("restart_policy"), 20),
-            "memory_mb": nonneg(c.get("memory_mb")), "memory_limit_mb": nonneg(c.get("memory_limit_mb")),
-            "cpu_pct": _number(c.get("cpu_pct")),
-            "image_stale": c["image_stale"] if isinstance(c.get("image_stale"), bool) else None,
-            "managed": c.get("managed") is True, "self": c.get("self") is True,
-            "compose": compose if compose and (compose["project"] or compose["service"]) else None,
-            "ports": [p[:80] for p in ports[:20] if isinstance(p, str)] if isinstance(ports, list) else []}
+    entry = {"id": _text(c.get("id"), 64), "name": name, "image": _text(c.get("image"), 200),
+             "image_id": _text(c.get("image_id"), 80),
+             "status": c["status"] if c.get("status") in STATUSES else "",
+             "health": c["health"] if c.get("health") in HEALTHS else "",
+             "created_at": _text(c.get("created_at"), 40), "started_at": _text(c.get("started_at"), 40),
+             "restarts": nonneg(c.get("restarts")), "restart_policy": _text(c.get("restart_policy"), 20),
+             "memory_mb": nonneg(c.get("memory_mb")), "memory_limit_mb": nonneg(c.get("memory_limit_mb")),
+             "cpu_pct": _number(c.get("cpu_pct")),
+             "image_stale": c["image_stale"] if isinstance(c.get("image_stale"), bool) else None,
+             "managed": c.get("managed") is True, "self": c.get("self") is True,
+             "compose": compose if compose and (compose["project"] or compose["service"]) else None,
+             "ports": [p[:80] for p in ports[:20] if isinstance(p, str)] if isinstance(ports, list) else []}
+    entry["gamma"] = is_gamma(entry)
+    return entry
 
 
 def heartbeat(conn, host, body: dict) -> None:
@@ -362,7 +399,8 @@ def heartbeat(conn, host, body: dict) -> None:
     kept as one of the host's ``orphans`` until it goes or a row names it.
     The ``docker`` list, every container on the host whatever runs it,
     replaces the host's ``containers`` (``_docker_entry``; CONTAINERS_MAX at
-    most, an older agent's none). The host's use, each server's container
+    most, an older agent's none). The host's use (its ``cpu_pct`` too, the
+    host's CPU since the agent's last heartbeat), each server's container
     and each container are also kept as the hour's sample
     (``metrics.record``)."""
     ts = db.now()
@@ -409,6 +447,7 @@ def heartbeat(conn, host, body: dict) -> None:
     use = _placed(conn).get(host["id"]) or {"servers": 0, "committed_mb": 0}
     metrics.record(conn, "host", host["id"], {"memory_used_mb": nonneg(body.get("memory_used_mb")),
                                               "disk_used_mb": nonneg(body.get("disk_used_mb")),
+                                              "cpu_pct": _number(body.get("cpu_pct")),
                                               "committed_mb": use["committed_mb"], "servers": use["servers"]})
 
 
@@ -465,13 +504,14 @@ def is_kept(name: str, names) -> bool:
 
 
 def updatable(containers: list[dict]) -> list[dict]:
-    """The containers *Update all* takes: not a hosted server's (an upgrade
-    run moves those), not one a failed update kept, and with a newer image
-    of their tag in the registry. The agent's own comes last: its helper
-    replaces the agent that would run the rest."""
+    """The containers *Update all* takes, of a list ``_host_containers``
+    read: Gamma's (``gamma``), not a hosted server's (an upgrade run moves
+    those), not one a failed update kept, and with a newer image of their
+    tag in the registry. The agent's own comes last: its helper replaces
+    the agent that would run the rest."""
     names = {c.get("name") for c in containers}
-    todo = [c for c in containers
-            if not c.get("managed") and c.get("image_stale") is True and not is_kept(c.get("name", ""), names)]
+    todo = [c for c in containers if c.get("gamma") and not c.get("managed") and c.get("image_stale") is True
+            and not is_kept(c.get("name", ""), names)]
     return sorted(todo, key=lambda c: bool(c.get("self")))
 
 
@@ -532,16 +572,17 @@ def container_job(conn, host_id: str, name: str, kind: str, actor: str = "", lin
 
 def update_all(conn, host_id: str, actor: str = "") -> list[dict]:
     """A ``container_update`` for each container of the host ``updatable``
-    takes, as one run: the agent's own in a second wave, held until every
-    job of the first is done (or canceled), since its helper replaces the
-    agent that runs them. A failure in the first wave so holds the agent's
-    update until the job is retried or canceled, as in any run."""
+    takes (Gamma's only), as one run: the agent's own in a second wave,
+    held until every job of the first is done (or canceled), since its
+    helper replaces the agent that runs them. A failure in the first wave
+    so holds the agent's update until the job is retried or canceled, as in
+    any run."""
     row = conn.execute("SELECT * FROM hosts WHERE id = ?", (host_id,)).fetchone()
     if not row:
         raise Problem(404, "no such host")
-    todo = updatable(_json_list(row["containers"]))
+    todo = updatable(_host_containers(row["containers"]))
     if not todo:
-        raise Problem(409, f"no container on {row['name']} has a newer image")
+        raise Problem(409, f"none of Gamma's containers on {row['name']} has a newer image")
     run, others = "c" + db.new_token(6), any(not c.get("self") for c in todo)
     out = []
     for c in todo:
@@ -565,22 +606,26 @@ def _container_image_known(conn, host_id: str, name: str, stale) -> None:
 
 def machines(conn) -> list[dict]:
     """Every host as the Machines tab shows it: ``public_host``, whose
-    containers each say whether they are a ``-prev`` a failed update kept
-    (``kept``) and, for a hosted server's (``managed``), its ``label``, the
-    ``server`` it runs (``{id, label, state, username}``, or None) and
-    whether it is an ``orphan``; then ``agent_stale`` (the agent's own
-    container's ``image_stale``), ``updates`` (how many *Update all* takes)
-    and the host's last 20 jobs. The agent's own container has ``helper``:
-    the kind of its update, restart or rollback that is done but not yet
-    followed by a heartbeat ("" when none). Such a job only starts a helper
-    container, which replaces the agent; the new one says it is there with
-    its first heartbeat."""
+    containers each say whether they are Gamma's (``gamma``) and a
+    ``-prev`` a failed update kept (``kept``) and, for a hosted server's
+    (``managed``), its ``label``, the ``server`` it runs (``{id, label,
+    state, username}``, or None) and whether it is an ``orphan``; then
+    ``others`` (how many are not Gamma's), ``cpu_pct`` (the host's CPU use
+    in its latest sample, ``metrics.latest``), ``agent_stale`` (the agent's
+    own container's ``image_stale``), ``updates`` (how many *Update all*
+    takes) and the host's last 20 jobs. The agent's own container has
+    ``helper``: the kind of its update, restart or rollback that is done
+    but not yet followed by a heartbeat ("" when none). Such a job only
+    starts a helper container, which replaces the agent; the new one says
+    it is there with its first heartbeat."""
     servers = {(r["host_id"], r["label"]): {"id": r["id"], "label": r["label"], "state": r["state"],
                                             "username": r["username"] or ""}
                for r in conn.execute("SELECT s.id, s.host_id, s.label, s.state, a.username FROM hosted_servers s "
                                      "LEFT JOIN accounts a ON a.id = s.account_id WHERE s.host_id != ''").fetchall()}
-    waves, out = _waves(conn), []
+    waves, latest, out = _waves(conn), metrics.latest(conn, "host"), []
     for h in hosts(conn):
+        h["others"] = sum(1 for c in h["containers"] if not c["gamma"])
+        h["cpu_pct"] = (latest.get(h["id"]) or {}).get("cpu_pct")
         names = {c.get("name") for c in h["containers"]}
         for c in h["containers"]:
             name = c.get("name", "")

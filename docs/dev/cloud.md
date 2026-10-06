@@ -130,7 +130,7 @@ environment variables, fleet-wide or per server, reach running
 containers the same way, through `update` jobs in waves.
 
 **Watching it.** Every heartbeat and sync becomes an hourly sample kept
-for 30 days, drawn as trends on the Servers and Machines tabs. A fixed
+for 30 days, drawn as trends on the Servers tab. A fixed
 list of problems is derived from the state on every heartbeat, job result
 and tick — a failed job, a server waiting for a host, a stale host, a host
 that is full, a hosted server or one of a host's own services that is
@@ -222,9 +222,10 @@ page, the CLI and the `/api/admin/*` API call the same functions.
 | Caddy | *Update* on its row of the Machines tab |
 | the website | the `build-site` skill |
 
-*Update all* on a machine updates each of its own containers whose tag has
-a newer image in the registry, the agent last. The skills remain the way
-to run a branch's build.
+*Update all* on a machine updates each of its own Gamma containers whose
+tag has a newer image in the registry, the agent last; whatever else the
+machine runs is left alone. The skills remain the way to run a branch's
+build.
 
 `update-needed check` says which of these is behind the code.
 

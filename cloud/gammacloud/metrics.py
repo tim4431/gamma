@@ -1,7 +1,8 @@
-"""The history the Servers and Machines tabs draw (docs/dev/hosted.md
-"History"): one sample per host, server or container and hour in the
-``metrics`` table, from the agent's heartbeats and the containers' syncs,
-kept 30 days. Counts and sizes only, never anything of a library.
+"""The fleet's history (docs/dev/hosted.md "History"): one sample per
+host, server or container and hour in the ``metrics`` table, from the
+agent's heartbeats and the containers' syncs, kept 30 days. The Servers
+tab draws a server's; the Machines tab shows a host's latest CPU figure.
+Counts and sizes only, never anything of a library.
 
 ``kind`` is ``host``, ``server`` or ``container``, ``ref`` its id (a
 container's is ``<host id>:<name>``), ``at`` the start of the hour,
@@ -72,6 +73,13 @@ def trends(conn, kind: str, keys: tuple[str, ...], hours: int = 48) -> dict[str,
         data = _data(r["data"])
         out.setdefault(r["ref"], []).append({"at": r["at"], **{k: data[k] for k in keys if k in data}})
     return out
+
+
+def latest(conn, kind: str) -> dict[str, dict]:
+    """Per ``ref`` of ``kind``: its newest sample, ``{at, ...}``, in one
+    read (SQLite takes ``data`` from the row ``MAX`` picks)."""
+    return {r["ref"]: {"at": r["at"], **_data(r["data"])} for r in conn.execute(
+        "SELECT ref, MAX(at) AS at, data FROM metrics WHERE kind = ? GROUP BY ref", (kind,)).fetchall()}
 
 
 def purge(conn, days: int = KEEP_DAYS) -> None:

@@ -8,8 +8,8 @@ machines they run on, and every other container there, are the Machines
 tab's (``pages_machines.py``).
 
 ``SHARED_STYLE`` and ``SHARED_JS`` are what both tabs draw with: the
-capacity meters, the sparklines, times and durations, a job's result and
-the log viewer. ``pages.admin_page`` includes each once, before either
+capacity meters, times and durations, a job's result and the log viewer,
+and the sparklines the Servers tab draws. ``pages.admin_page`` includes each once, before either
 tab; ``SHARED_JS`` defines ``fleetUI``. ``pages.admin_page`` also includes
 ``ADMIN_TAB`` and appends ``ADMIN_JS``, which defines ``loadServers()``,
 the tab's entry; it uses the admin script's ``api``, ``esc``, ``bind``,
@@ -157,7 +157,7 @@ function line(points, key, t0, t1, w, h, cls, title){
     + '<line x1=0 y1=' + (h - 0.5) + ' x2=' + w + ' y2=' + (h - 0.5) + ' stroke="var(--muted)" vector-effect=non-scaling-stroke />'
     + '<polyline points="' + p.map(xy).join(' ') + '" fill=none stroke="var(--accent)" stroke-width=1.5 vector-effect=non-scaling-stroke /></svg>';
 }
-// a row's sparkline (a host, a server, a container): the last 48 hours of key from its trend
+// a server's sparkline: the last 48 hours of key from its trend
 function spark(row, key, fmt, what){
   const t1 = Date.now(), last = (row.trend || []).filter(x => x[key] != null).pop();
   return last ? line(row.trend, key, t1 - 48 * 3600e3, t1, 60, 16, 'fspark', what + ' over 48 hours, now ' + fmt(last[key])) : '';

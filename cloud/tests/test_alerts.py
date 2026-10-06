@@ -142,19 +142,20 @@ def test_a_server_waiting_a_host_silent_or_full_and_a_missing_record(client, hos
 
 
 def test_a_container_of_the_machine_down_and_where_host_alerts_link(client, hosting):
-    """A container of the host's own that its restart policy keeps up is
-    reported restarting, stopped or unhealthy; a hosted server's (its own
-    alert covers it), one that should not restart, and the -prev a failed
-    update kept are not. Every alert about a host links to it on the
-    Machines tab."""
+    """A container of the host's own and Gamma's that its restart policy
+    keeps up is reported restarting, stopped or unhealthy; a hosted
+    server's (its own alert covers it), one that should not restart, the
+    -prev a failed update kept and one that is not Gamma's are not. Every
+    alert about a host links to it on the Machines tab."""
     from test_fleet import docker
     host_id, token = make_host()
     link = f"#machines/{host_id}"
-    entries = [docker("share", status="restarting"), docker("caddy", status="exited", restart_policy="always"),
-               docker("demo", health="unhealthy"), docker("account", health="healthy"),
-               docker("migrate", status="exited", restart_policy="no"),
+    own = lambda name, **over: docker(name, compose={"project": "gamma-account", "service": name}, **over)  # noqa: E731
+    entries = [own("share", status="restarting"), own("caddy", status="exited", restart_policy="always"),
+               own("demo", health="unhealthy"), own("account", health="healthy"),
+               own("migrate", status="exited", restart_policy="no"),
                docker("gamma-alice", status="exited", managed=True),
-               docker("account-prev", status="exited")]
+               own("account-prev", status="exited"), docker("nextcloud", status="restarting")]
     beat(client, token, [], docker=entries)
     found = collect()
     down = sorted(k for k in found if k.startswith("container_down:"))

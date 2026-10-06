@@ -355,19 +355,21 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   are checked, and the alerts brought up to date ("Alerts"): a failed job
   is mailed once the result is committed.
 - `POST /api/fleet/heartbeat` `{agent_version, memory_mb, disk_mb,
-  memory_used_mb, disk_used_mb, containers: [{label, running, health,
-  memory_mb, memory_limit_mb, cpu_pct, restarts, started_at, oom_killed,
-  data_mb, image, image_stale}], docker: [{id, name, image, image_id,
-  status, health, created_at, started_at, restarts, restart_policy,
-  memory_mb, memory_limit_mb, cpu_pct, image_stale, managed, self,
-  compose, ports}]}`. `containers` are the hosted servers; `docker` is
-  every container on the host, the hosted ones included (agent 0.3.0 on;
-  what each field is: [The agent](#the-agent)). The body updates the host
-  (`last_seen_at` too) and, for each container of a server on this host,
-  the server's `report.agent` (with its own `last_seen_at`). A field an
-  older agent does not send, or sends as nonsense, is kept as unknown:
-  `cpu_pct` and `image_stale` null, `restarts` 0, `started_at` `""`,
-  `oom_killed` false. A label that
+  memory_used_mb, disk_used_mb, cpu_pct, containers: [{label, running,
+  health, memory_mb, memory_limit_mb, cpu_pct, restarts, started_at,
+  oom_killed, data_mb, image, image_stale}], docker: [{id, name, image,
+  image_id, status, health, created_at, started_at, restarts,
+  restart_policy, memory_mb, memory_limit_mb, cpu_pct, image_stale,
+  managed, self, compose, ports}]}`. The top-level `cpu_pct` is the
+  host's CPU use since the agent's previous heartbeat, in percent of all
+  its cores (agent 0.3.1 on). `containers` are the hosted servers;
+  `docker` is every container on the host, the hosted ones included
+  (agent 0.3.0 on; what each field is: [The agent](#the-agent)). The body
+  updates the host (`last_seen_at` too) and, for each container of a
+  server on this host, the server's `report.agent` (with its own
+  `last_seen_at`). A field an older agent does not send, or sends as
+  nonsense, is kept as unknown: `cpu_pct` and `image_stale` null,
+  `restarts` 0, `started_at` `""`, `oom_killed` false. A label that
   no server row on this host names, in any state, is an orphan. Each
   heartbeat replaces the host's `orphans`, and the admin's view leaves out
   a label a row has named since. The `docker` list replaces the host's
@@ -375,11 +377,13 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   to length, numbers from 0, a flag true only when it is `true`, a
   `status` or `health` Docker does not use `""`; an entry with no usable
   name (Docker's rule, a leading `/` dropped) or a name seen already is
-  skipped, and 200 are kept at most. A heartbeat with no `docker` (an
-  agent before 0.3.0) leaves the list empty. The host's use, each
-  server's container and each entry of `docker` go into the hour's
-  samples ("History"), the waiting servers are placed, and the alerts are
-  brought up to date ("Alerts").
+  skipped, and 200 are kept at most. Each entry kept also gets `gamma`,
+  whether it is Gamma's ("A machine's containers"); the agent does not
+  say. A heartbeat with no `docker` (an agent before 0.3.0) leaves the
+  list empty. The host's use (its `cpu_pct` too), each server's container
+  and each entry of `docker` go into the hour's samples ("History"), the
+  waiting servers are placed, and the alerts are brought up to date
+  ("Alerts").
 
 Job payloads and results:
 
@@ -465,7 +469,17 @@ delete that server's container and data.
 
 **A machine's containers.** The host's `containers` are every container
 its agent reports: the hosted servers' and the host's own services (the
-account server, the share host, Caddy, the demo, the agent itself).
+account server, the share host, Caddy, the demo, the agent itself), and
+whatever else the machine runs. `fleet.is_gamma` tells Gamma's from the
+rest: an entry is Gamma's when its name starts with `gamma-`, its Compose
+project starts with `gamma`, its image's repository (the reference less
+its tag and digest) is `config.FLEET_IMAGE` or starts with
+`ghcr.io/tim4431/gamma` (the server's image, `gamma-cloud` and
+`gamma-fleet`), or it is `managed` or `self`. The verdict is stored with
+the entry as `gamma` when the heartbeat is saved, and a list stored
+before that is classified as it is read. Only Gamma's count on the
+Machines tab and for *Update all* and the `container_down` alert; the
+others are listed, and take every job, all the same.
 `fleet.container_job(host_id, name, kind, actor, lines?)` queues a job
 for one of them by its name in that list (404 for a name not there), with
 no server, audited `fleet.container` (`<host id> <name> <kind>`). What the
@@ -486,13 +500,13 @@ on the host").
   ask for another number of lines.
 
 `fleet.update_all(host_id)` is *Update all*: a `container_update` for
-each container `fleet.updatable` takes, which is not a hosted server's (an
-upgrade run moves those), not a `-prev` a failed update kept, and has
-`image_stale` true. They are one run on the wave code (run ids start
-`c`): the agent's own is its second wave, `held` until every job of the
-first is done or canceled, since its helper replaces the agent that would
-run them. A failure in the first wave holds it, as in any run. 409 when
-no container has a newer image.
+each container `fleet.updatable` takes, which is Gamma's, not a hosted
+server's (an upgrade run moves those), not a `-prev` a failed update
+kept, and has `image_stale` true. They are one run on the wave code (run
+ids start `c`): the agent's own is its second wave, `held` until every
+job of the first is done or canceled, since its helper replaces the agent
+that would run them. A failure in the first wave holds it, as in any run.
+409 when none of Gamma's containers has a newer image.
 
 An update of the account server's own container is not refused, but a
 failed one leaves the account server down: the new container is stopped
@@ -645,16 +659,22 @@ next `start` runs the container from it.
 
 Health is `GET http://gamma-<label>:9001/api/health` answering 200 within
 120 seconds, polled every 2 seconds. The agent joins the fleet network so
-the name resolves. The heartbeat reads memory from `/proc/meminfo` and
-disk from the data root's file system, and for each `gamma-<label>`
-container its status, Docker health, memory limit (`HostConfig.Memory`),
-memory use, CPU use, Docker's restart count (`RestartCount`, 0 when
-unknown), `State.StartedAt` as Docker has it (`""` when unknown),
-`State.OOMKilled` (false when unknown), data-directory size and image.
-Memory and CPU use come from one `stats(stream=False)` call, a second or
-two per running container, four containers at a time on a thread pool;
-one call that fails gives that container 0 MB and no CPU figure, and the
-rest stand. `cpu_pct` is in percent of one CPU (150.0 is
+the name resolves. The heartbeat reads memory from `/proc/meminfo`, disk
+from the data root's file system, and the host's CPU from the `cpu` line
+of `/proc/stat`: the busy share (all but idle and iowait) of the CPU time
+counted since the previous heartbeat, summed over every core, in percent
+to one decimal (`host_cpu_pct`; the last sample is kept in memory). It is
+null on the agent's first heartbeat, and when `/proc/stat` cannot be read
+(the heartbeat after that is a first one again). For each `gamma-<label>`
+container it reads its status, Docker health, memory limit
+(`HostConfig.Memory`), memory use, CPU use, Docker's restart count
+(`RestartCount`, 0 when unknown), `State.StartedAt` as Docker has it
+(`""` when unknown), `State.OOMKilled` (false when unknown),
+data-directory size and image. Memory and CPU use come from one
+`stats(stream=False)` call, a second or two per running container, four
+containers at a time on a thread pool; one call that fails gives that
+container 0 MB and no CPU figure, and the rest stand. A container's
+`cpu_pct` is in percent of one CPU (150.0 is
 one and a half), as `docker stats` works it out from that call's two
 samples: the container's CPU time over the host's, times the online
 CPUs, to one decimal; null for a container that is not running or when
@@ -802,7 +822,7 @@ last before it is mailed.
 | `host_stale:<host id>` | a host that has reported once is silent past `fleet.STALE_AFTER` | 0 |
 | `host_full:<host id>:memory` | the memory committed to its servers is 90% or more of what can be placed on it (`memory_mb` less the reserve) | 0 |
 | `host_full:<host id>:disk` | `disk_used_mb` is 85% or more of `disk_mb` | 0 |
-| `container_down:<host id>:<name>` | a container of the host's own (not a hosted server's, which has `down:`, nor a `-prev` a failed update kept) whose `restart_policy` is `always` or `unless-stopped` is reported `restarting`, `exited` or `dead`, or `unhealthy`: "gamma-account-share-1 on vps-1 is restarting". It resolves when it runs again | 10 min |
+| `container_down:<host id>:<name>` | a container of the host's own and Gamma's (not a hosted server's, which has `down:`, nor a `-prev` a failed update kept, nor one that is not Gamma's: "A machine's containers") whose `restart_policy` is `always` or `unless-stopped` is reported `restarting`, `exited` or `dead`, or `unhealthy`: "gamma-account-share-1 on vps-1 is restarting". It resolves when it runs again | 10 min |
 | `billing:<event id>` | a webhook event of the last 7 days recorded as `mismatch` or `unknown` | 0 |
 | `signup:unguarded` | registration is open with the anti-bot check off | 0 |
 
@@ -859,7 +879,7 @@ report does not know (`cpu_pct` of a stopped container) is left out.
 
 | kind | from | fields |
 |---|---|---|
-| `host` | the heartbeat | `memory_used_mb`, `disk_used_mb`, `committed_mb`, `servers` |
+| `host` | the heartbeat | `memory_used_mb`, `disk_used_mb`, `cpu_pct`, `committed_mb`, `servers` |
 | `server` | the heartbeat, per container of a server on the host | `memory_mb`, `cpu_pct`, `data_mb`, `restarts` |
 | `server` | the sync | `uploads_bytes`, `data_bytes`, `accounts`, `active_accounts`, `errors` |
 | `container` | the heartbeat, per entry of its `docker` list; `ref` is `<host id>:<name>` | `memory_mb`, `cpu_pct` |
@@ -867,7 +887,9 @@ report does not know (`cpu_pct` of a stopped container) is left out.
 `series(conn, kind, ref, hours)` is the samples of the last `hours`, the
 current one included, oldest first; an hour with no report has no point.
 `trends` reads a few series of every host, server or container at once
-for the rows of the Servers and Machines tabs. Samples are kept 30 days
+for the rows of the Servers tab, and `latest(conn, kind)` the newest
+sample of each, from which the Machines tab takes a host's `cpu_pct`.
+Samples are kept 30 days
 (`metrics.purge`, from the tick). Counts and sizes only, never anything of
 a library.
 
@@ -897,55 +919,68 @@ selects it when the tab is open already. An unknown hash opens the
 Overview.
 
 The **Machines** tab (`pages_machines.py`) is the hosts and every
-container on them:
+container on them, Gamma's first ("A machine's containers"):
 
 - **a card per machine**, in a grid: its name; pills for where it sits
   (*entrance*, the one behind the account server's Caddy, or *routed* and
   its public IP, with *no dns token: closed* while DNS is off), its last
   heartbeat (*seen 2 min ago*, or *stale* past 15 minutes), *closed* when
   it takes no new servers, and the agent's version with *update* when the
-  registry has a newer image of it; two thin meters with a sparkline of
-  the last 48 hours each, memory committed to servers of the total (then
-  the reserve) and disk used of the total; "N containers · M running", and
-  *K updates* when containers of its own have a newer image. A card is a
-  link to `#machines/<host id>`, which selects it. The last card, *Add
-  machine*, opens a form for a name, a note and the public IP; the new
-  machine is selected and shows its agent token once, with the line that
-  installs the agent with it (`--edge` when it has a public IP);
+  registry has a newer image of it; three plain rows, each a label, a
+  figure and a thin meter: *CPU 12.4 %* (the host's `cpu_pct` of all its
+  cores, *unknown* before an agent 0.3.1 reports it), *Memory 1.2 of 1.9
+  GB* (what the machine uses of its total) and *Disk 10.3 of 19.6 GB*;
+  "N containers · M running" of Gamma's, and *K updates* when containers
+  of its own have a newer image. Memory committed to servers is not on the
+  card: the line under the selected machine's buttons gives what is free
+  for new servers. A card is a link to `#machines/<host id>`, which
+  selects it. The last card, *Add machine*, opens a form for a name, a
+  note and the public IP; the new machine is selected and shows its agent
+  token once, with the line that installs the agent with it (`--edge`
+  when it has a public IP);
 - **the machine selected**, under the cards: its pills again; *Open* or
   *Close placement*, *Public IP…* (blank takes it away), *Rename…*,
   *Rotate token…* (which shows the new token and the line, once),
   *Remove…* (only while no server is on it) and *Update all (K)*, whose
   question names the containers it updates, the agent last; one line of
-  its id, note, servers and free memory;
-- **containers**: the machine's own first, then the hosted servers', each
-  group by name. Each row has the name, with an *agent* pill for the
-  agent itself, *kept* for a `-prev` a failed update kept, *orphan* for a
-  hosted container no server row names, and under it the Compose project
-  and service, or for a hosted one a link to the Servers tab with the
-  account's username and the server's state; the image reference, *newer
-  image* when the registry has another for its tag, and the short image
-  id; the status (*running* green; *restarting*, *exited*, *dead* or
-  *unhealthy* in the warning colour) and its health; how long it has run,
-  and when it was made; CPU and memory (of its limit) with their
-  sparklines; restarts and the restart policy; the published ports; and
-  *Logs*, *Restart…*, *Update…*, *Stop…* or *Start*, and *Roll back…* when
-  a `-prev` of it is kept. The agent has no *Stop*, and the other
-  container of its pair no *Start* while it runs; after its own update,
-  restart or rollback its status says it is being replaced through a
-  helper until the new agent's first heartbeat (`helper`). A kept `-prev`
-  has only *Logs*; a hosted server's container has a link, "managed: see
-  Servers", and an orphan *Remove…* (the orphan endpoint) and *Logs*.
-  *Restart*, *Stop*, *Update* and *Roll back* ask first, naming the
-  container. For the account server's own container (Compose service
-  `account`) and the Caddy of its project, through which this page comes,
-  the question says the page is unreachable for a few seconds and reloads
-  itself after; the page then polls the job every 2 seconds, and reloads
-  once a request has failed and one succeeds again, or the job is done
-  (five minutes at most). For an update of either it also says that a
-  failed one leaves it down, out of the agent's reach, and how to start it
-  on the host ("A machine's containers"). Stopping one of them says that
-  only the machine itself can start it again;
+  its id, note, servers, the memory free for new servers, the reserve and
+  the memory in use;
+- **containers**: Gamma's, in two groups, each by name: the machine's own,
+  headed "updated here", then the hosted servers', headed "upgraded on the
+  Servers tab". A link at the foot, *show N other containers*, adds a
+  third group, "Other containers on this machine", with the same columns
+  and actions, and hides it again. Each row has the name, with an *agent*
+  pill for the agent itself, *kept* for a `-prev` a failed update kept,
+  *orphan* for a hosted container no server row names, and under it the
+  Compose project and service, or for a hosted one a link to the Servers
+  tab with the account's username and the server's state; the image
+  reference, *newer image* when the registry has another for its tag, and
+  the short image id; the status (*running* green; *restarting*,
+  *exited*, *dead* or *unhealthy* in the warning colour) and its health;
+  how long it has run, and when it was made; *CPU 2.4 %* (of one CPU) and
+  its memory, *180 MB*, with *of 1.5 GB* when it has a limit; restarts
+  and the restart policy; the published ports; and *Logs*, *Restart…*,
+  *Update…*, *Stop…* or *Start*, and *Roll back…* when a `-prev` of it is
+  kept. The agent has no *Stop*, and the other container of its pair no
+  *Start* while it runs; after its own update, restart or rollback its
+  status says it is being replaced through a helper until the new agent's
+  first heartbeat (`helper`). A kept `-prev` has only *Logs*; a hosted
+  server's container has a link to the Servers tab, "upgraded on the
+  Servers tab →", and an orphan *Remove…* (the orphan endpoint) and
+  *Logs*. The two kinds of update do not overlap: *Update* here pulls the
+  newest image of the tag a container runs and recreates it (its title
+  says so), for the machine's own containers only, while a hosted server
+  is moved by an upgrade on the Servers tab, to a chosen tag, in waves,
+  with rollback. *Restart*, *Stop*, *Update* and *Roll back* ask first,
+  naming the container. For the account server's own container (Compose
+  service `account`) and the Caddy of its project, through which this
+  page comes, the question says the page is unreachable for a few seconds
+  and reloads itself after; the page then polls the job every 2 seconds,
+  and reloads once a request has failed and one succeeds again, or the job
+  is done (five minutes at most). For an update of either it also says
+  that a failed one leaves it down, out of the agent's reach, and how to
+  start it on the host ("A machine's containers"). Stopping one of them
+  says that only the machine itself can start it again;
 - **logs**: the viewer the Servers tab has, with 200, 1000 or 5000 lines
   (a change fetches again), *Fetch again* and *Close*; a done
   `container_logs` job in the jobs below has *View*;
@@ -1034,11 +1069,13 @@ The API behind both (`/api/admin`, admins through a portal session only):
   has `trend`: its samples of the last 48 hours, `{at, memory_used_mb,
   disk_used_mb}`;
 - `GET /machines` → `{machines, default_image}`: each host as `GET /hosts`
-  gives it, with `trend`, `agent_stale`, `updates` and its last 20 `jobs`,
-  and each of its `containers` with `kept`, `trend` (`{at, memory_mb,
-  cpu_pct}` for the last 48 hours) and, for a hosted one, `label`,
-  `server` (`{id, label, state, username}` or null) and `orphan`; the
-  agent's own with `helper` (`fleet.machines`, "A machine's containers").
+  gives it but with no `trend`, with `cpu_pct` (from its latest sample,
+  `metrics.latest`), `others` (how many of its containers are not
+  Gamma's), `agent_stale`, `updates` (what *Update all* takes, Gamma's
+  only) and its last 20 `jobs`, and each of its `containers` with `gamma`,
+  `kept` and, for a hosted one, `label`, `server` (`{id, label, state,
+  username}` or null) and `orphan`; the agent's own with `helper`
+  (`fleet.machines`, "A machine's containers").
   `POST /hosts/{id}/containers/{name}/{action}`, `action` one of
   `restart`, `start`, `stop`, `logs` (`{lines}`), `update`, `rollback` →
   `{job}` (`fleet.container_job`; 404 for another action).
@@ -1210,9 +1247,11 @@ Moving a server to another host is not built.
   job is taken, update jobs and update runs, logs and rollback jobs, stuck
   jobs with late results and retries, the job rows' durations and run
   progress, every container of a host (the heartbeat's `docker` list kept
-  and checked, a container's jobs and what is refused, a done update or
+  and checked, which containers are Gamma's and the verdict kept or worked
+  out on read, a container's jobs and what is refused, a done update or
   rollback and the image, the agent's own container and its helper,
-  *Update all* with the agent last, the machines view), a host's token
+  *Update all* with the agent last and Gamma's only, the machines view
+  with `others`), a host's token
   rotated and the host removed, schema steps 10 to 12, the admin
   endpoints and the CLI.
 - `cloud/tests/test_dns.py`: the Cloudflare client's requests and errors
@@ -1224,20 +1263,22 @@ Moving a server to another host is not built.
   while DNS is off, a kick that waits for its caller's commit, and the
   admin's fields, pills, validation and CLI.
 - `cloud/tests/test_alerts.py`: every kind of alert found and gone again
-  (a container of a machine's own down, and where a host's alerts link),
+  (a container of a machine's own down, not one that is not Gamma's, and
+  where a host's alerts link),
   the settle before a mail, one mail to every admin's confirmed address or
   to the alert address, the switch (off marks nothing), a problem that
   comes back, dismissal, the mails after a job result, a heartbeat and the
   hourly pass, the alert endpoints, the Overview and the test alert.
 - `cloud/tests/test_metrics.py`: samples merged by the hour with errors
   added up, series, trends and the purge, what the heartbeat (each
-  container too) and the sync record, the rows' `trend` and the metrics
+  container and the host's CPU too) and the sync record, a host's
+  `cpu_pct` from its latest sample, the rows' `trend` and the metrics
   endpoint.
 - `cloud/fleet/tests/test_agent.py`, run from `cloud/fleet` with
   `python -m pytest -q`: the agent against a fake Docker client and a
   fake account server, every job kind with its failures and with a second
-  run, the heartbeat and its data-size cache, the loop, the settings and
-  the HTTP client.
+  run, the heartbeat and its data-size cache, the host's CPU from a fake
+  `/proc/stat`, the loop, the settings and the HTTP client.
 
 Time is moved by backdating rows (`past_due_since`, `state_changed_at`,
 `last_seen_at`, `started_at`, an alert's `first_at`, a sample's `at`),

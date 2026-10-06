@@ -858,6 +858,49 @@ def test_the_heartbeat_keeps_every_container_checked(client, hosting):
     assert stored(host_id) == []
 
 
+def test_which_containers_are_gammas(monkeypatch):
+    """Gamma's by its name, its Compose project or its image's repository,
+    or as a hosted server's or the agent's own; anything else the machine
+    runs is not."""
+    gamma = lambda **c: fleet.is_gamma({"name": "web-1", "image": "nginx:1.27", "compose": None, **c})  # noqa: E731
+    assert not gamma()
+    assert gamma(name="gamma-demo") and not gamma(name="gamma") and not gamma(name="my-gamma-1")
+    assert gamma(compose={"project": "gamma-account", "service": "share"}) and gamma(compose={"project": "gamma"})
+    assert not gamma(compose={"project": "nextcloud", "service": "gamma"}) and not gamma(compose="gamma")
+    digest = "@sha256:" + "f" * 64
+    for image in ("ghcr.io/tim4431/gamma:sha-1", "ghcr.io/tim4431/gamma", "ghcr.io/tim4431/gamma-cloud:latest",
+                  "ghcr.io/tim4431/gamma-fleet" + digest, "ghcr.io/tim4431/gamma-fleet:latest" + digest):
+        assert gamma(image=image), image
+    for image in ("ghcr.io/someone/gamma:1", "caddy:2-alpine", "sha256:" + "a" * 64, "", "registry.example:5000/gamma"):
+        assert not gamma(image=image), image
+    monkeypatch.setattr(config, "FLEET_IMAGE", "registry.example:5000/me/gamma")      # a fleet image of one's own
+    assert gamma(image="registry.example:5000/me/gamma:sha-2") and gamma(image="registry.example:5000/me/gamma")
+    assert not gamma(image="registry.example:5000/me/gamma-other:1")
+    assert gamma(managed=True) and gamma(self=True) and not gamma(managed="yes", self=1)
+
+
+def test_the_verdict_is_kept_with_each_container(client, hosting):
+    """Stored with the heartbeat (whatever the agent says of it); a list
+    kept before that is classified as it is read, for the view and for
+    *Update all*."""
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    report(client, token, entries=[docker("gamma-demo", image_stale=True),
+                                   docker("watchtower", image="containrrr/watchtower:latest", image_stale=True,
+                                          gamma=True)])
+    assert [(c["name"], c["gamma"]) for c in stored(host_id)] == [("gamma-demo", True), ("watchtower", False)]
+    older = [{k: v for k, v in c.items() if k != "gamma"} for c in stored(host_id)]
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE hosts SET containers = ?", (json.dumps(older),))
+        conn.commit()
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    assert [(c["name"], c["gamma"]) for c in m["containers"]] == [("gamma-demo", True), ("watchtower", False)]
+    assert (m["others"], m["updates"]) == (1, 1)
+    jobs = client.post(f"/api/admin/hosts/{host_id}/update-all").json()["jobs"]
+    assert [j["label"] for j in jobs] == ["gamma-demo"]                     # not the other's newer image
+
+
 def test_a_containers_jobs_and_what_is_refused(client, hosting):
     register(client, "operator")
     make_admin("operator")
@@ -969,9 +1012,9 @@ def test_update_all_takes_the_newer_images_and_the_agents_own_last(client, hosti
     register(client, "operator")
     make_admin("operator")
     host_id, token = make_host()
-    report(client, token, entries=machine())
+    report(client, token, entries=machine() + [docker("watchtower", image="containrrr/watchtower", image_stale=True)])
     [m] = client.get("/api/admin/machines").json()["machines"]
-    assert (m["updates"], m["agent_stale"]) == (3, True)                    # not alice's, nor the kept share-1-prev
+    assert (m["updates"], m["agent_stale"]) == (3, True)    # not alice's, the kept share-1-prev's nor the other's
     r = client.post(f"/api/admin/hosts/{host_id}/update-all")
     jobs = r.json()["jobs"]
     assert r.status_code == 200 and [(j["label"], j["state"]) for j in jobs] == [
@@ -1044,7 +1087,9 @@ def test_the_machines_view(client, hosting):
     alice = make_account("alice", "plus")
     finish(client, token, next_job(client, token)["id"])
     entries = machine() + [docker("gamma-alice-prev", managed=True, status="exited"),
-                           docker("gamma-ghost", managed=True)]
+                           docker("gamma-ghost", managed=True), docker("watchtower", image_stale=True),
+                           docker("nextcloud-app-1", image="nextcloud:29", compose={"project": "nextcloud",
+                                                                                    "service": "app"})]
     report(client, token, containers=[{"label": "alice", "running": True}, {"label": "ghost", "running": True}],
            entries=entries)
     assert client.get("/api/admin/machines").status_code == 403
@@ -1061,8 +1106,8 @@ def test_the_machines_view(client, hosting):
     ghost = cs["gamma-ghost"]
     assert (ghost["orphan"], ghost["server"], ghost["label"]) == (True, None, "ghost")
     assert cs["gamma-account-share-1-prev"]["kept"] is True and "server" not in cs["gamma-account-share-1"]
-    assert cs["gamma-account-account-1"]["trend"][0]["memory_mb"] == 40
-    assert (m["agent_stale"], m["updates"], m["servers"]) == (True, 3, 1)
+    assert {n for n, c in cs.items() if not c["gamma"]} == {"watchtower", "nextcloud-app-1"} and m["others"] == 2
+    assert (m["agent_stale"], m["updates"], m["servers"], m["cpu_pct"]) == (True, 3, 1, None)   # it sent no CPU
     assert [j["kind"] for j in m["jobs"]] == ["create"]
     for _ in range(25):
         client.post(f"/api/admin/hosts/{host_id}/containers/gamma-demo/logs")

@@ -14,7 +14,7 @@ import pytest
 
 from gammafleet import VERSION, agent as agent_module, selfupdate
 from gammafleet.agent import (DATA_EVERY, HELPER_LABEL, REGISTRY_EVERY, Agent, Api, JobError, Settings, clone_config,
-                              cpu_pct, published_ports, split_image)
+                              cpu_pct, cpu_times, published_ports, split_image)
 
 MIB = 1024 * 1024
 STARTED = "2026-10-04T09:00:00.123456789Z"
@@ -777,6 +777,7 @@ def test_heartbeat_body(world, tmp_path):
     docker.containers.run("other", name="unrelated")          # no gamma labels: not reported
     body = agent.heartbeat_body()
     assert body["agent_version"] == VERSION and body["memory_mb"] == 8000 and body["disk_used_mb"] == 5000
+    assert body["cpu_pct"] is None                                          # the first heartbeat
     assert body["containers"] == [{"label": "alice", "running": True, "health": "healthy", "memory_mb": 300,
                                    "memory_limit_mb": 768, "cpu_pct": 150.0, "restarts": 0, "started_at": STARTED,
                                    "oom_killed": False, "data_mb": 3, "image": CREATE["image"], "image_stale": None}]
@@ -820,6 +821,37 @@ def test_cpu_pct():
     assert cpu_pct({**STATS, "precpu_stats": {**STATS["precpu_stats"], "system_cpu_usage": 20_000_000_000}}) is None
     assert cpu_pct({**STATS, "precpu_stats": {"cpu_usage": {"total_usage": 9e9}, "system_cpu_usage": 1}}) is None
     assert cpu_pct({**STATS, "cpu_stats": {**STATS["cpu_stats"], "system_cpu_usage": None}}) is None
+
+
+def test_the_hosts_cpu_use_between_heartbeats(world):
+    """The busy share, of every core, of the CPU time /proc/stat counted
+    since the last heartbeat. None on the first heartbeat, when no time was
+    counted, and when the file cannot be read, after which the next
+    heartbeat is a first one again."""
+    agent, _, _, _ = world
+    assert cpu_times("cpu  1 2 3 4 5 6 7 8 9 10\ncpu0 1 2 3 4 5 6 7 8 9 10") == (27, 36)   # guest is in user already
+    for bad in ("cpu  1 2 3 4", "cpu  a b c d e f", "intr 1 2 3"):
+        with pytest.raises(ValueError):
+            cpu_times(bad)
+    reads = ["cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 100 0 100 700 100 0 0 0 0 0\nintr 12345",
+             "cpu  250 0 150 1000 100 0 0 0 0 0",    # 200 of 500 ticks busy
+             "cpu  250 0 150 1000 100 0 0 0 0 0",    # no time counted
+             "cpu  350 0 150 1200 100 0 0 0 0 0",    # 100 of 300
+             OSError("no /proc/stat"), "cpu  400 0 200 1300 100 0 0 0 0 0",
+             "cpu  420 0 200 1350 100 0 0 30 0 0",   # steal is busy too: 50 of 100
+             "cpu  420 0 200 1350 40 0 0 30 0 0",    # iowait went back: none counted
+             "cpu  470 0 200 1350 0 0 0 30 0 0",     # and again: 50 busy of 10, kept to 100
+             "intr 1"]
+
+    def read():
+        text = reads.pop(0)
+        if isinstance(text, Exception):
+            raise text
+        return text
+    agent.proc_stat = read
+    assert [agent.heartbeat_body()["cpu_pct"] for _ in range(10)] == [
+        None, 40.0, None, 33.3, None, None, 50.0, None, 100.0, None]
+    assert not reads
 
 
 def test_heartbeat_image_stale(world):

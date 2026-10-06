@@ -228,7 +228,7 @@ FLEET_JOBS_INDEX = "CREATE INDEX IF NOT EXISTS fleet_jobs_host ON fleet_jobs(hos
 # keeps the mail to one per opening.
 # ``metrics``: a sample per host, server or container (``kind``, ``ref``)
 # and hour (``at`` is the start of the hour), ``data`` a JSON object of
-# numbers (``metrics.py``). The history the Servers and Machines tabs draw.
+# numbers (``metrics.py``). The history the Servers tab draws.
 ALERTS = """CREATE TABLE IF NOT EXISTS alerts (
     key TEXT PRIMARY KEY,
     kind TEXT NOT NULL,

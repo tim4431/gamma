@@ -485,16 +485,11 @@ def remove_orphan(host_id: str, label: str, request: Request):
 
 @router.get("/machines")
 def list_machines(request: Request):
-    """The Machines tab: every host with its containers (``fleet.machines``),
-    the host's and each container's ``trend``, and the default image."""
+    """The Machines tab: every host with its containers (``fleet.machines``)
+    and the default image."""
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        machines = _trended(conn, "host", fleet.machines(conn))
-        trends = metrics.trends(conn, "container", TRENDS["container"], TREND_HOURS)
-        for h in machines:
-            for c in h["containers"]:
-                c["trend"] = trends.get(f"{h['id']}:{c.get('name')}", [])
-        return {"machines": machines, "default_image": fleet.default_image()}
+        return {"machines": fleet.machines(conn), "default_image": fleet.default_image()}
 
 
 @router.post("/hosts/{host_id}/update-all")
@@ -695,15 +690,14 @@ def job_action(job_id: str, action: str, request: Request):
 # read them, so a job retried a moment ago is no longer listed; any that fall
 # due then are mailed as the next heartbeat would have mailed them.
 
-TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb"),
-          "container": ("memory_mb", "cpu_pct")}
+TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb")}
 TREND_HOURS = 48
 
 
 def _trended(conn, kind: str, rows: list[dict]) -> list[dict]:
     """``rows`` (hosts or servers), each with ``trend``: its samples of the
-    last TREND_HOURS hours in the few series the Servers and Machines tabs
-    draw inline."""
+    last TREND_HOURS hours in a few series (``TRENDS``), which the Servers
+    tab draws inline for a server."""
     trends = metrics.trends(conn, kind, TRENDS[kind], TREND_HOURS)
     for row in rows:
         row["trend"] = trends.get(row["id"], [])

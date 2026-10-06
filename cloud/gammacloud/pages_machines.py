@@ -1,10 +1,12 @@
 """The Admin page's Machines tab (docs/dev/hosted.md "Admin"): the hosts a
-fleet agent runs on, each a card with its capacity and containers, and
-under the cards the one selected: its placement, public IP, name, agent
-token and removal; every container on it, the hosted servers' and the
-host's own (the account server, the share host, Caddy, the demo, the agent
-itself) with its image, state, use and actions; their logs; and the host's
-recent jobs. All of it comes from ``GET /api/admin/machines``.
+fleet agent runs on, each a card with its CPU, memory and disk use and its
+containers, and under the cards the one selected: its placement, public
+IP, name, agent token and removal; Gamma's containers on it, the host's
+own (the account server, the share host, Caddy, the demo, the agent
+itself, updated here) and the hosted servers' (upgraded on the Servers
+tab), and behind a link whatever else the machine runs, each with its
+image, state, use and actions; their logs; and the host's recent jobs.
+All of it comes from ``GET /api/admin/machines``.
 
 ``pages.admin_page`` includes ``ADMIN_TAB`` and appends ``ADMIN_JS``,
 which defines ``loadMachines(id)``, the tab's entry, and
@@ -25,7 +27,10 @@ STYLE = """<style>
 #tab-machines .mcard{display:block;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;color:var(--text)}
 #tab-machines a.mcard:hover{border-color:var(--line-2);text-decoration:none}#tab-machines a.mcard.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 #tab-machines .mcard>b{font-size:15px;font-weight:600}#tab-machines .mpills{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 10px}
-#tab-machines .mcard .cap{max-width:none}#tab-machines .mcard .sub+.cap{margin-top:3px}#tab-machines .mcount{margin-top:10px;font-size:13px;color:var(--text-2)}
+#tab-machines .mstats{display:grid;grid-template-columns:auto auto minmax(40px,1fr);align-items:center;gap:6px 10px;font-size:13px;font-variant-numeric:tabular-nums}
+#tab-machines .mstats .sub{margin:0}#tab-machines .mstats .cap{max-width:none;margin:0}#tab-machines .mfig{white-space:nowrap}
+#tab-machines .mcount{margin-top:10px;font-size:13px;color:var(--text-2)}
+#tab-machines tr.group th span{font-weight:400;color:var(--muted)}#tab-machines td.mfoot{color:var(--muted);font-size:12.5px}
 #tab-machines .madd{border-style:dashed;display:flex;flex-direction:column;justify-content:center}#tab-machines .madd>.btn{align-self:center}
 #tab-machines .madd label{margin:8px 0 4px}#tab-machines .madd .actions{margin-top:12px}
 #tab-machines td.mname>b{white-space:nowrap}#tab-machines td.mimg{min-width:140px;max-width:240px;overflow-wrap:anywhere}
@@ -73,10 +78,10 @@ ADMIN_TAB = (
 ADMIN_JS = r"""
 // --- Machines tab (pages_machines.py) ---
 const [loadMachines, pickMachine] = (() => {
-const {plural, pct, size, ago, took, meter, spark, resultText, logViewer, JOB_PILL} = fleetUI;
+const {plural, pct, size, ago, took, meter, resultText, logViewer, JOB_PILL} = fleetUI;
 const TAB = document.getElementById('tab-machines'), $ = id => document.getElementById(id);
 const UP = ['running', 'restarting', 'paused'], DOWN = ['restarting', 'exited', 'dead'];
-let machines = [], selected = '', tokenFor = '', timer = 0, gen = 0, live = false, loaded = false;
+let machines = [], selected = '', tokenFor = '', timer = 0, gen = 0, live = false, loaded = false, showOthers = false;
 const logs = logViewer({sec: $('mlogs'), who: $('mlogwho'), state: $('mlogstate'), note: $('mlognote'), text: $('mlogtext')});
 
 const current = () => machines.find(h => h.id === selected) || null;
@@ -92,8 +97,10 @@ function front(h, c){
   const acc = (h.containers || []).find(x => x.compose && x.compose.service === 'account');
   return !!(acc && c.compose && c.compose.project === acc.compose.project && ['account', 'caddy'].includes(c.compose.service));
 }
-// what Update all takes (fleet.updatable): the host's own containers with a newer image, the agent's last
-const updatable = h => (h.containers || []).filter(c => !c.managed && c.image_stale === true && !c.kept).sort((a, b) => !!a.self - !!b.self);
+// what Update all takes (fleet.updatable): the host's own containers of Gamma's with a newer image, the agent's last
+const updatable = h => (h.containers || []).filter(c => c.gamma && !c.managed && c.image_stale === true && !c.kept)
+  .sort((a, b) => !!a.self - !!b.self);
+const gammas = h => (h.containers || []).filter(c => c.gamma);
 
 // --- the cards ---
 function pills(h){
@@ -108,21 +115,29 @@ function pills(h){
     + (h.agent_stale ? '<span class="pill pill--warn" title="the registry has a newer image of the agent">update</span>' : ''));
   return p.join('');
 }
-function memory(h){
-  const total = Number(h.memory_mb) || 0, com = Number(h.committed_mb) || 0, res = Number(h.reserve_mb) || 0, free = Number(h.free_mb) || 0;
-  return '<span class=sub>Memory: ' + size(com) + ' of ' + size(total) + ' committed' + spark(h, 'memory_used_mb', size, 'memory in use') + '</span>'
-    + meter(total, com, res, size(com) + ' committed to servers, ' + size(res) + ' kept for the machine, ' + size(free) + ' free for new servers');
+// "1.2 of 1.9 GB": used of total, both in the total's unit
+function of(used, total){
+  const gb = total >= 1024, f = v => gb ? (v / 1024).toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
+  return f(used) + ' of ' + f(total) + (gb ? ' GB' : ' MB');
 }
-function disk(h){
-  const total = Number(h.disk_mb) || 0, used = Number(h.disk_used_mb) || 0;
-  return '<span class=sub>Disk: ' + size(used) + ' of ' + size(total) + ' used' + spark(h, 'disk_used_mb', size, 'disk used') + '</span>'
-    + meter(total, used, 0, size(total - used) + ' free');
+// three rows, each a label, the figure and a thin meter of it: CPU, the memory the machine uses, its disk
+function stats(h){
+  const row = (label, fig, total, used, title) => '<span class=sub>' + label + '</span><span class=mfig>' + fig + '</span>'
+    + meter(total, used, 0, title);
+  const cpu = h.cpu_pct == null ? null : Number(h.cpu_pct), mem = Number(h.memory_mb) || 0;
+  const used = Number(h.memory_used_mb) || 0, disk = Number(h.disk_mb) || 0, full = Number(h.disk_used_mb) || 0;
+  return '<div class=mstats>'
+    + row('CPU', cpu == null ? '<span class=empty>unknown</span>' : pct(cpu), 100, cpu || 0, cpu == null
+      ? 'not reported: an agent before 0.3.1 does not, nor one on its first heartbeat'
+      : 'of all its cores, over the minutes before its last heartbeat')
+    + row('Memory', of(used, mem), mem, used, size(mem - used) + ' available')
+    + row('Disk', of(full, disk), disk, full, size(disk - full) + ' free') + '</div>';
 }
 function card(h){
-  const cs = h.containers || [], run = cs.filter(c => c.status === 'running').length;
+  const cs = gammas(h), run = cs.filter(c => c.status === 'running').length;
   return '<a class="mcard' + (h.id === selected ? ' on' : '') + '" href="#machines/' + esc(h.id) + '"><b>' + esc(h.name) + '</b>'
     + '<div class=mpills>' + pills(h) + '</div>'
-    + (Number(h.memory_mb) ? memory(h) + disk(h) : h.last_seen_at ? '<span class=empty>no capacity reported</span>' : '')
+    + (Number(h.memory_mb) ? stats(h) : h.last_seen_at ? '<span class=empty>no capacity reported</span>' : '')
     + '<div class=mcount>' + plural(cs.length, 'container', 'containers') + ' · ' + run + ' running'
     + (h.updates ? ' · <span class="pill pill--warn">' + plural(h.updates, 'update', 'updates') + '</span>' : '') + '</div></a>';
 }
@@ -178,17 +193,19 @@ function twin(h, c){
 }
 function useCell(c){
   if (c.status !== 'running') return '<span class=empty>—</span>';
-  const mem = size(c.memory_mb) + (Number(c.memory_limit_mb) ? ' / ' + size(c.memory_limit_mb) : '');
-  return (c.cpu_pct != null ? 'CPU ' + c.cpu_pct + ' %' : 'CPU unknown') + spark(c, 'cpu_pct', pct, 'CPU')
-    + '<span class=sub>' + mem + spark(c, 'memory_mb', size, 'memory') + '</span>';
+  return '<span title="in percent of one CPU">' + (c.cpu_pct != null ? 'CPU ' + pct(c.cpu_pct) : 'CPU unknown') + '</span>'
+    + '<span class=sub>' + size(c.memory_mb) + (Number(c.memory_limit_mb) ? ' of ' + size(c.memory_limit_mb) : '') + '</span>';
 }
+// Update here pulls the newest image of the tag a container runs; a hosted server is moved by an upgrade on the Servers tab
 function actsCell(h, c){
-  const btn = (m, text, cls) => '<button type=button class="btn btn--sm' + (cls ? ' ' + cls : '') + '" data-m=' + m + ' data-name="' + esc(c.name) + '">' + text + '</button>';
+  const btn = (m, text, cls, title) => '<button type=button class="btn btn--sm' + (cls ? ' ' + cls : '') + '" data-m=' + m
+    + ' data-name="' + esc(c.name) + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + text + '</button>';
   if (c.orphan) return btn('orphan', 'Remove…', 'btn--danger') + ' ' + btn('logs', 'Logs');
-  if (c.managed) return c.server ? '<a href="#servers">managed: see Servers</a>' : '<span class=empty>managed</span>';
+  if (c.managed) return c.server ? '<a href="#servers">upgraded on the Servers tab →</a>' : '<span class=empty>a hosted server\'s</span>';
   if (c.kept) return btn('logs', 'Logs');
   const prev = (h.containers || []).some(x => x.name === c.name + '-prev');
-  return [btn('logs', 'Logs'), btn('restart', 'Restart…'), btn('update', 'Update…', c.image_stale ? 'btn--primary' : ''),
+  return [btn('logs', 'Logs'), btn('restart', 'Restart…'), btn('update', 'Update…', c.image_stale ? 'btn--primary' : '',
+      'Pull the newest image of the tag it runs, ' + (c.image || '?') + ', and recreate it with the same configuration'),
     UP.includes(c.status) ? (c.self ? '' : btn('stop', 'Stop…')) : twin(h, c) ? '' : btn('start', 'Start'),
     prev ? btn('rollback', 'Roll back…') : ''].filter(Boolean).join(' ');
 }
@@ -198,11 +215,16 @@ function containerRow(h, c){
     + '<td class=nw>' + (up || '<span class=empty>—</span>') + (c.created_at ? '<span class=sub>made ' + ago(c.created_at) + '</span>' : '') + '</td>'
     + '<td class=nw>' + useCell(c) + '</td><td class=macts><span>' + actsCell(h, c) + '</span></td></tr>';
 }
+// Gamma's: the machine's own, then the hosted servers'; the others (fleet.is_gamma) only once asked for, by the link at the foot
 function containers(h){
-  const cs = h.containers || [], own = cs.filter(c => !c.managed).sort(byName), hosted = cs.filter(c => c.managed).sort(byName);
+  const cs = h.containers || [], pick = f => cs.filter(f).sort(byName), others = pick(c => !c.gamma);
+  if (!cs.length) return '<tr><td colspan=6 class=empty>' + (h.last_seen_at ? 'Its agent reports no containers (an agent before 0.3.0 does not list them).' : 'No heartbeat yet.') + '</td></tr>';
   const group = (title, list) => list.length ? '<tr class=group><th colspan=6>' + title + '</th></tr>' + list.map(c => containerRow(h, c)).join('') : '';
-  return group('The machine\'s own', own) + group('Hosted servers', hosted)
-    || '<tr><td colspan=6 class=empty>' + (h.last_seen_at ? 'Its agent reports no containers (an agent before 0.3.0 does not list them).' : 'No heartbeat yet.') + '</td></tr>';
+  return group('The machine\'s own <span>· updated here</span>', pick(c => c.gamma && !c.managed))
+    + group('Hosted servers <span>· <a href="#servers">upgraded on the Servers tab</a></span>', pick(c => c.managed))
+    + (showOthers ? group('Other containers on this machine', others) : '')
+    + (others.length ? '<tr><td colspan=6 class=mfoot><button type=button class=linkbtn data-m=others>' + (showOthers ? 'hide the ' : 'show ')
+      + plural(others.length, 'other container', 'other containers') + '</button></td></tr>' : '');
 }
 function jobRow(j){
   const full = resultText(j), short = full.length > 160 ? full.slice(0, 160) + '…' : full, id = esc(j.id);
@@ -224,7 +246,7 @@ function render(){
   $('msel').hidden = !h;
   live = !!h && (h.jobs || []).some(j => j.state === 'queued' || j.state === 'running');
   if (!h) return;
-  const cs = h.containers || [];
+  const cs = gammas(h);
   $('mhead').textContent = h.name; $('mpills').innerHTML = pills(h);
   $('mseen').textContent = live ? 'refreshing every 10 s' : '';
   $('mtools').innerHTML = tools(h);
@@ -352,6 +374,7 @@ TAB.addEventListener('click', async (ev) => {
       break;
     }
     case 'tokendone': tokenFor = ''; $('mtoken').hidden = true; break;
+    case 'others': showOthers = !showOthers; render(); break;
     case 'logs': logs.show(name + ' on ' + h.name, containerLogs(h, name)); break;
     case 'view': logs.watch(b.dataset.id, name + ' on ' + h.name, containerLogs(h, name)); break;
     case 'logagain': logs.again(); break;

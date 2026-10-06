@@ -193,6 +193,25 @@ def host_stats(data_root: str) -> dict:
     return {"memory_mb": memory, "memory_used_mb": max(0, used), "disk_mb": disk_mb, "disk_used_mb": disk_used}
 
 
+def read_proc_stat() -> str:
+    with open("/proc/stat") as f:
+        return f.read()
+
+
+def cpu_times(text: str) -> tuple[int, int]:
+    """The host's CPU time as (busy, total) clock ticks, summed over every
+    core, from the ``cpu`` line of /proc/stat: total is user, nice, system,
+    idle, iowait, irq, softirq and steal (guest time is in user already),
+    busy all of it but idle and iowait. ValueError when there is no such
+    line."""
+    for line in text.splitlines():
+        fields = line.split()
+        if fields[:1] == ["cpu"] and len(fields) >= 6:
+            ticks = [int(v) for v in fields[1:9]]
+            return sum(ticks) - ticks[3] - ticks[4], sum(ticks)
+    raise ValueError("no cpu line in /proc/stat")
+
+
 def dir_mb(path: str) -> int:
     total, stack = 0, [path]
     while stack:
@@ -393,12 +412,12 @@ class Agent:
     container."""
 
     def __init__(self, settings: Settings, docker, api, *, not_found=None, health=http_health, sleep=time.sleep,
-                 clock=time.monotonic, stats=host_stats, s3=None, hostname=None):
+                 clock=time.monotonic, stats=host_stats, proc_stat=read_proc_stat, s3=None, hostname=None):
         self.settings, self.docker, self.api = settings, docker, api
         if not_found is None:
             from docker.errors import NotFound as not_found
         self.not_found = not_found
-        self.health, self.sleep, self.clock, self.stats = health, sleep, clock, stats
+        self.health, self.sleep, self.clock, self.stats, self.proc_stat = health, sleep, clock, stats, proc_stat
         self.hostname = own_hostname() if hostname is None else hostname
         self.s3 = s3 if s3 is not None else (S3Prefix(settings.s3) if settings.s3 else None)
         self.busy = False
@@ -406,6 +425,7 @@ class Agent:
         self._subnet = None
         self._data_mb: dict[str, tuple[float, int]] = {}   # label -> (when measured, MB)
         self._registry: dict[str, tuple[float, str]] = {}  # image reference -> (when asked, digest or "")
+        self._cpu: tuple[int, int] | None = None           # the host's cpu_times at the last heartbeat
 
     # --- helpers --------------------------------------------------------------
 
@@ -1214,6 +1234,23 @@ class Agent:
         with ThreadPoolExecutor(min(STATS_THREADS, len(running)), thread_name_prefix="stats") as pool:
             return dict(zip([c.id for c in running], pool.map(self.usage, running)))
 
+    def host_cpu_pct(self) -> float | None:
+        """The host's CPU use since the last heartbeat, in percent of all its
+        cores (100.0: every core busy all along), to one decimal: the busy
+        share of the CPU time /proc/stat counted in between (``cpu_times``).
+        None on the first heartbeat, when /proc/stat cannot be read (the
+        heartbeat after it is then a first one again), and when no time was
+        counted."""
+        try:
+            now = cpu_times(self.proc_stat())
+        except (OSError, ValueError):
+            now = None
+        before, self._cpu = self._cpu, now
+        if before is None or now is None or now[1] <= before[1]:
+            return None
+        # iowait, counted as idle, can go back on some kernels: the share is kept within 0 to 100
+        return round(min(100.0, max(0.0, (now[0] - before[0]) / (now[1] - before[1]) * 100)), 1)
+
     def docker_entry(self, c, usage: tuple, stale, own_id: str) -> dict:
         """One container of the host as the heartbeat's ``docker`` list has it."""
         attrs = c.attrs or {}
@@ -1232,11 +1269,13 @@ class Agent:
             "ports": published_ports((attrs.get("NetworkSettings") or {}).get("Ports"))}
 
     def heartbeat_body(self) -> dict:
-        """The host's memory and disk; ``containers``, the hosted servers;
+        """The host's memory and disk, and its CPU use since the last
+        heartbeat (``host_cpu_pct``); ``containers``, the hosted servers;
         ``docker``, every container on the host (``docker_entry``). Each
         running container's stats are read once (``usage_of``) for both. A
         container whose entry fails is left out, and logged."""
-        body = {"agent_version": VERSION, **self.stats(self.settings.data_root), "containers": [], "docker": []}
+        body = {"agent_version": VERSION, **self.stats(self.settings.data_root), "cpu_pct": self.host_cpu_pct(),
+                "containers": [], "docker": []}
         containers = sorted(self.docker.containers.list(all=True, ignore_removed=True), key=lambda c: c.name or "")
         usage, own_id = self.usage_of(containers), self.own_id(containers)
         seen, refs = set(), set()
