@@ -230,6 +230,15 @@ def _settings_shown() -> dict:
     return shown
 
 
+def _one_line(value) -> str:
+    """A setting on one line: a list by its words, a switch as on / off."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, list):
+        return " ".join(value)
+    return value.replace(chr(10), ", ")
+
+
 def cmd_settings(args):
     if args.key:
         with closing(db.connect()) as conn:
@@ -241,7 +250,7 @@ def cmd_settings(args):
         settings.invalidate()
     for key, value in _settings_shown().items():
         if not args.key or key == args.key:
-            print(f"{key:<22} {value.replace(chr(10), ', ')}")
+            print(f"{key:<22} {_one_line(value)}")
     if settings.unguarded_registration():
         print("warning: registration is open without Turnstile; only the rate limits stop a script")
 

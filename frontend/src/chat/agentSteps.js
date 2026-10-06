@@ -45,6 +45,7 @@ const READ_VERBS = {
   search: (n) => tn("searched", "searched {n} times", n),
   websearch: (n) => tn("searched online", "searched online {n} times", n),
   fetch: (n) => tn("fetched {n} document", "fetched {n} documents", n),
+  helper: (n) => tn("used {n} helper", "used {n} helpers", n),
 };
 
 export function stepsSummary(actions = []) {
@@ -59,6 +60,9 @@ export function stepsSummary(actions = []) {
 // How long a call took and what it turned out to be, shown beside its chip:
 // a fetch that waited twenty seconds on a publisher and one served from the
 // cache read very differently, and the version says which copy was read.
+// A helper's chip counts the calls it made, and a fetch names the PDF pages
+// its window read — all that tells two reads of one document apart, so it
+// stands here, where a narrow chat never cuts it off.
 const VERSIONS = {
   publisher: t("publisher PDF"),
   preprint: t("arXiv preprint"),
@@ -69,7 +73,12 @@ const VERSIONS = {
 
 export function chipNote(a) {
   const parts = [];
+  if (a?.steps) parts.push(tn("{n} step", "{n} steps", a.steps));
   if (a?.version && VERSIONS[a.version]) parts.push(VERSIONS[a.version]);
+  if (a?.kind === "fetch" && a.pdf_pages) {
+    const [from, to] = a.pdf_pages;
+    parts.push(from === to ? t("p. {page}", { page: from }) : t("pp. {from}–{to}", { from, to }));
+  }
   if (a?.probe) parts.push(t("front matter only"));
   if (a?.delivered) parts.push(t("from your browser"));
   if (a?.ms >= 1000) parts.push(t("{n}s", { n: (a.ms / 1000).toFixed(1) }));

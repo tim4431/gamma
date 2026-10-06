@@ -57,6 +57,7 @@ def get_account(account_id: str, request: Request):
 
 class AccountPatch(BaseModel):
     plan: str | None = None
+    granted_until: str | None = None
     is_admin: bool | None = None
     verified: bool | None = None
     username: str | None = None
@@ -64,13 +65,17 @@ class AccountPatch(BaseModel):
 
 @router.patch("/accounts/{account_id}")
 def patch_account(account_id: str, body: AccountPatch, request: Request):
+    """``plan`` replaces the grant, with no end unless ``granted_until``
+    comes with it; ``granted_until`` alone dates the grant the account has
+    (an ISO date or date and time; null clears it)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
         account = accounts.by_id(conn, account_id)
         if not account:
             raise HTTPException(404, "no such account")
-        if body.plan is not None:
-            accounts.set_plan(conn, account_id, body.plan, admin["id"])
+        if body.plan is not None or "granted_until" in body.model_fields_set:
+            accounts.set_plan(conn, account_id, account["granted_plan"] if body.plan is None else body.plan,
+                              admin["id"], until=accounts.until_from(body.granted_until))
         if body.is_admin is not None:
             if account_id == admin["id"] and not body.is_admin:
                 raise Problem(400, "you cannot demote yourself")

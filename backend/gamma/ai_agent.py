@@ -60,6 +60,9 @@ MAX_PARALLEL_CALLS = 4
 HELPER_ROUNDS = 12
 # The document's name in a Helper's status: a title, cut to one line.
 STATUS_LABEL_MAX = 120
+# What a Helper reads under the last result before its final round.
+LAST_ROUND = ("\n[This was your last read. Answer now from what you have read, and say what "
+              "you did not get to.]")
 
 # Note edits are previewed in the notes panel while the model writes them
 # (the "progress" event). No other tool's arguments are streamed.
@@ -396,6 +399,11 @@ class AgentLoop:
         return progress
 
 
+def _rounds(talk: Conversation) -> int:
+    """The rounds of a conversation that called tools."""
+    return sum(1 for message in talk.messages if message.get("tool_calls"))
+
+
 class Helper:
     """A second, smaller agent the chat can hand one job to.
 
@@ -409,7 +417,9 @@ class Helper:
     no settle: nothing it does can change the library, and a wall it meets
     is reported up to the chat, whose card and wait already exist. Its
     token counts are metered like any other call and handed back so the
-    reply's footer can say what the whole answer cost.
+    reply's footer can say what the whole answer cost. It has
+    :data:`HELPER_ROUNDS` rounds; before the last it is told to answer, and
+    one that still asks for more has no answer.
 
     While it works it tells ``on_status`` what it is doing, its whole state
     each time: ``{id, label, state, steps, step?, blocked?}`` — ``state`` is
@@ -421,24 +431,25 @@ class Helper:
     caller with someone watching puts it on its own stream.
     """
 
-    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None, on_status=None):
+    def __init__(self, *, ws: str, open_call, read_events, on_usage=None, on_status=None):
         self.ws = ws
-        self.scope = scope
         self.open_call = open_call
         self.read_events = read_events
         self.on_usage = on_usage
         self.on_status = on_status
         self._ids = itertools.count(1)
 
-    def run(self, *, question: str, system: str, tools: list, label: str) -> dict:
-        """Answer ``question`` with ``tools`` armed; ``label`` names the job
-        in its status (the document's title). Returns ``{"text", "actions",
-        "usage"}`` — the answer, the calls it made (for the parent's chip)
-        and what it cost."""
+    def run(self, *, scope: dict, question: str, system: str, tools: list, label: str) -> dict:
+        """Answer ``question`` with ``tools`` armed, in ``scope`` (the
+        calling tool's, with what this job changes in it); ``label`` names
+        the job in its status (the document's title). Returns ``{"text",
+        "actions", "usage"}`` — the answer, the calls it made (for the
+        parent's chip) and what it cost. A helper that used every round
+        without answering returns no text."""
         talk = Conversation([{"role": "user", "content": question}], system)
         usage = {}
-        loop = AgentLoop(ws=self.ws, scope=self.scope, tools=tools, conversation=talk,
-                         open_round=lambda c: self.open_call(c, tools),
+        loop = AgentLoop(ws=self.ws, scope=scope, tools=tools, conversation=talk,
+                         open_round=lambda c: self._reopen(c, tools),
                          read_events=self.read_events, on_usage=self._meter(usage),
                          max_rounds=HELPER_ROUNDS)
         text, actions = [], []
@@ -462,9 +473,18 @@ class Helper:
         except BaseException:
             self._say(status, state="failed", step=None)
             raise
-        answer = "".join(text).strip()
+        # Out of rounds, the loop's own closing line is all it said: no answer.
+        answer = "" if _rounds(talk) >= HELPER_ROUNDS else "".join(text).strip()
         self._say(status, state="done" if answer else "failed", step=None)
         return {"text": answer, "actions": actions, "usage": usage}
+
+    def _reopen(self, talk: Conversation, tools: list):
+        """The helper's next turn. Before its last one, the result it just
+        got says so: a turn spent asking for another read ends the job
+        without an answer."""
+        if _rounds(talk) == HELPER_ROUNDS - 1:
+            talk.messages[-1]["content"] += LAST_ROUND
+        return self.open_call(talk, tools)
 
     def _say(self, status: dict, **changes) -> None:
         status.update(changes)

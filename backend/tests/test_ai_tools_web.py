@@ -301,13 +301,14 @@ class _FakeHelper:
     and answers with a fixed sentence — the wire and the model are covered
     by the chat's own tests, the point here is what crosses the boundary."""
 
-    def __init__(self, ws, scope, answer="Cat qubits, p. 1. Read from an arXiv preprint."):
-        self.ws, self.scope, self.answer, self.asked = ws, scope, answer, []
+    def __init__(self, ws, answer="Cat qubits, p. 1. Read from an arXiv preprint."):
+        self.ws, self.answer, self.asked = ws, answer, []
 
-    def run(self, *, question, system, tools, label):
+    def run(self, *, scope, question, system, tools, label):
         self.asked.append({"question": question, "system": system, "label": label,
-                           "tools": [t["name"] for t in tools]})
-        _, action = run_agent_tool(self.ws, {**self.scope, "helper": None},
+                           "tools": [t["name"] for t in tools], "scope": scope,
+                           "spec": tools[0]["description"]})
+        _, action = run_agent_tool(self.ws, {**scope, "helper": None},
                                    "fetch_paper", {"source": "arXiv:1905.00450"},
                                    allowed_tools={"fetch_paper"})
         return {"text": self.answer, "actions": [action], "usage": {"input": 900, "output": 40}}
@@ -316,7 +317,7 @@ class _FakeHelper:
 def test_read_paper_hands_the_document_to_a_helper_and_keeps_only_its_answer(org, upstream):
     ws = org[1]["ws"]
     scope = {"type": "page", "page_id": "p1", "read_chars": 20000, "delegates": True}
-    scope["helper"] = helper = _FakeHelper(ws, scope)
+    scope["helper"] = helper = _FakeHelper(ws)
     text, action = run_agent_tool(ws, scope, "read_paper",
                                   {"source": "arXiv:1905.00450", "question": "what do they measure?",
                                    "title": "Bias-Preserving Gates with Cat Qubits"})
@@ -328,17 +329,40 @@ def test_read_paper_hands_the_document_to_a_helper_and_keeps_only_its_answer(org
     assert asked["tools"] == ["fetch_paper"], "the helper reaches nothing else"
     assert "ONE document" in asked["system"]
     assert asked["label"] == "Bias-Preserving Gates with Cat Qubits", "its status names the paper"
-    # The chip names the document the helper read, its calls, and the cost.
-    assert action["kind"] == "fetch" and action["url"] == "https://arxiv.org/pdf/1905.00450"
+    # It reads in the widest window the chat allows, and its tool says so.
+    assert asked["scope"]["read_default"] == 20000 and "default 20000, up to 20000" in asked["spec"]
+    # The chip names the helper, the document it read, its calls, and the cost.
+    assert action["kind"] == "helper" and action["url"] == "https://arxiv.org/pdf/1905.00450"
+    assert action["summary"] == "Helper read “Bias-Preserving Gates with Cat Qubits”" and action["steps"] == 1
     assert [c["tool"] for c in action["children"]] == ["fetch_paper"]
     assert "result" not in action["children"][0], "a child's output is the helper's, not the chat's"
+    assert action["children"][0]["pdf_pages"] == [1, 3], "each read says which pages it covered"
     assert action["spent"] == {"input": 900, "output": 40}
+
+
+def test_a_fetch_says_which_pages_its_window_read(org, upstream):
+    """Several reads of one document differ only in their window, so each
+    chip carries the PDF pages it held (the test PDF's page 2 has no text)."""
+    ws = org[1]["ws"]
+    args = {"source": "arXiv:1905.00450"}
+    _, action = run_agent_tool(ws, folder(""), "fetch_paper", {**args, "pdf_chars": 20})
+    assert action["pdf_pages"] == [1, 1]
+    _, action = run_agent_tool(ws, folder(""), "fetch_paper", {**args, "pdf_page": 3})
+    assert action["pdf_pages"] == [3, 3]
+    # A scope's own default window (a helper's) replaces the short one.
+    text, action = run_agent_tool(ws, {**folder(""), "read_default": 20}, "fetch_paper", args)
+    assert action["pdf_pages"] == [1, 1] and "pdf_offset=20" in text
+    # A web page has no pages to name, and neither has a window past the end.
+    _, action = run_agent_tool(ws, folder(""), "fetch_paper", {"source": "doi:10.1000/xyz"})
+    assert "pdf_pages" not in action
+    _, action = run_agent_tool(ws, folder(""), "fetch_paper", {**args, "pdf_offset": 5000})
+    assert "pdf_pages" not in action
 
 
 def test_read_paper_needs_a_helper_and_a_question(org, upstream):
     ws = org[1]["ws"]
     scope = {"type": "page", "page_id": "p1", "read_chars": 20000, "delegates": True}
-    scope["helper"] = _FakeHelper(ws, scope)
+    scope["helper"] = _FakeHelper(ws)
     text, _ = run_agent_tool(ws, scope, "read_paper", {"source": "arXiv:1905.00450"})
     assert text.startswith("error") and "what the helper should find out" in text
     # No helper in this chat: the model is told to read it itself.
@@ -359,7 +383,7 @@ def test_a_wall_inside_the_helper_becomes_the_chats_own_card(org, upstream, monk
              "handoff_user": "someone"}
 
     class Blocked(_FakeHelper):
-        def run(self, *, question, system, tools, label):
+        def run(self, *, scope, question, system, tools, label):
             from gamma import fetch_handoff
             req = fetch_handoff.open_request("someone", "doi:10.5555/x", wall="captcha",
                                              url="https://journals.example.org/doi/10.5555/x")
@@ -369,7 +393,7 @@ def test_a_wall_inside_the_helper_becomes_the_chats_own_card(org, upstream, monk
                                              "wall": "captcha", "source": "doi:10.5555/x"}}],
                     "usage": {}}
 
-    scope["helper"] = Blocked(ws, scope)
+    scope["helper"] = Blocked(ws)
     _, action = run_agent_tool(ws, scope, "read_paper",
                                {"source": "doi:10.5555/x", "question": "what?"})
     assert action["handoff"]["host"] == "journals.example.org"

@@ -794,11 +794,26 @@ does not answer it). Nothing it does can change the library, its pictures
 never leave it, and its cache key is the conversation's with `:helper`
 appended so the two prompts do not fight over one prefix cache.
 
-The parent's chip carries the document the helper actually read (`url`,
-`title`, `pdf`, `version`), its calls as `children` (up to 12, without
-their output — a child's text is the helper's, not the chat's), and
+The helper reads in the widest window the user's read cap allows. The tool
+passes it a scope with `read_default` set to that cap, which `_window_args`
+and the tool's description use in place of `READ_CHARS_DEFAULT` (6 000). A
+150 000-character review is then about eight reads at the default cap of
+20 000, where the short window needs twenty-five. The result the helper
+gets before its last round ends with `LAST_ROUND`, which tells it to
+answer. A helper that still asks for another read has no answer: the call
+fails with "the helper did not get to an answer", and the loop's own line
+about the round limit is not passed on.
+
+The parent's chip has its own kind, `helper`, and its summary names the
+helper ("Helper read “…”"). It carries the document the helper actually
+read (`url`, `title`, `pdf`, `version`), how many calls it made (`steps`),
+those calls as `children` (up to 12, without their output — a child's text
+is the helper's, not the chat's), and
 `spent`, the helper's token counts, which the loop yields as a `usage`
-event so the reply's footer counts the whole answer. A wall the helper met
+event so the reply's footer counts the whole answer. Each `fetch_paper`
+child names the PDF pages its window read (`pdf_pages`, from
+`ai_web.window_pages`), which the chat shows beside its summary. That is
+what tells reads of one document apart. A wall the helper met
 cannot show a card from in there, so its request rides up on the parent
 action as the `handoff`, and the chat's own card and wait take over
 ([above](#walls-and-the-browser-handoff)).

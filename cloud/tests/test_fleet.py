@@ -530,10 +530,36 @@ def test_step_10_adds_the_orphans_column():
         conn.execute("ALTER TABLE hosts DROP COLUMN orphans")
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
-    assert db.ensure_current() == steps_after(9) == ["fleet_orphans"]
+    assert db.ensure_current() == steps_after(9) == ["fleet_orphans", "operations"]
     with closing(db.connect()) as conn:
         host, _ = fleet.add_host(conn, "vps-1")
         assert host["orphans"] == []
+
+
+def test_step_11_adds_the_operations_columns_and_tables():
+    """Back to the shape of step 10, with an invite made then: the upgrade
+    adds every column and table, and the code's total is what was left."""
+    added = {"invites": ("uses_total", "expires_at", "disabled", "grant_days"),
+             "accounts": ("invite_code", "granted_until"), "hosts": ("public_ip",),
+             "hosted_servers": ("overrides", "env", "dns_record_id", "dns_target")}
+    with closing(db.connect()) as conn:
+        for table, columns in added.items():
+            for column in columns:
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        conn.execute("DROP TABLE alerts")
+        conn.execute("DROP TABLE metrics")
+        conn.execute("INSERT INTO invites (code, uses_left, plan, created_at) VALUES ('old', 3, 'free', ?)", (db.now(),))
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+    assert db.ensure_current() == steps_after(10) == ["operations"]
+    with closing(db.connect()) as conn:
+        for table, columns in added.items():
+            have = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            assert all(column in have for column in columns), table
+        invite = conn.execute("SELECT * FROM invites WHERE code = 'old'").fetchone()
+        assert invite["uses_total"] == 3 and invite["disabled"] == 0 and invite["expires_at"] is None
+        assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 0
 
 
 # --- admin --------------------------------------------------------------------

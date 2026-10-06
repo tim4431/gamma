@@ -5,8 +5,11 @@ containers") learns its plan's limits from the account server.
 ``sync_now`` POSTs this server's report to ``<issuer>/api/hosted/sync``
 with HTTP Basic auth by its own OIDC client (``GAMMA_CLOUD_CLIENT_ID`` /
 ``GAMMA_CLOUD_CLIENT_SECRET``): build and schema version, non-guest
-accounts, upload bytes over every workspace, the data directory's bytes and
-the confirmed public URL. The answer is the limits (``plan``, ``status``,
+accounts, upload bytes over every workspace, the data directory's bytes,
+the confirmed public URL, and whether the server is used and failing (the
+accounts active in the last week, the last write, the 5xx answers since
+the last sync and the uptime; the read-only gate notes the answers through
+``answered``). The answer is the limits (``plan``, ``status``,
 ``read_only``, ``policy``, ``max_accounts``, ``quota_mb``,
 ``max_upload_mb``, ``offsite``, ``grace_until``, ``message``), checked
 field by field and kept with the time in the users.db ``settings`` KV
@@ -49,11 +52,12 @@ import base64
 import json
 import os
 import threading
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 
-from . import cloud_auth, cloud_sync, config, db
+from . import cloud_auth, cloud_sync, config, db, version
 from .cloud_auth import CloudAuthError
-from .db import connect_users_db, workspace_ids
+from .db import connect_pages_db, connect_users_db, format_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .server_settings import (QUOTA_MB_MAX, UPLOAD_MB_MAX, _get_raw, _set_raw, public_url_settings,
                               workspace_bytes)
@@ -61,6 +65,8 @@ from .server_settings import (QUOTA_MB_MAX, UPLOAD_MB_MAX, _get_raw, _set_raw, p
 SYNC_INTERVAL = 3600          # seconds between syncs (the app lifespan runs tick)
 SYNC_PATH = "/api/hosted/sync"
 SETTINGS_KEY = "hosted_limits"
+LAST_WRITE_KEY = "hosted_last_write"  # the report's last_write_at, kept over a restart
+ACTIVE_DAYS = 7               # the window active_accounts counts
 STATUSES = ("active", "grace", "read_only", "stopped")
 READ_ONLY_MESSAGE = ("This server is read-only: its plan has lapsed. You can still sign in, read and export "
                      "your data.")
@@ -85,6 +91,10 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _lock = threading.Lock()      # one sync at a time
 _last_failure: dict = {}      # {at, error} of the newest failed attempt since the last success (memory only)
+# What the gate notes for the report (``answered``), in memory, on a hosted
+# server only.
+_errors = 0                   # 5xx answers since the last successful sync
+_last_write: float | None = None  # time.time() of this process's newest accepted write
 # The stored answer in memory: (the users.db it was read from, the stored
 # record or None). A users.db at another path (a test's own data
 # directory) is read afresh.
@@ -238,14 +248,82 @@ def _data_bytes() -> int:
     return total
 
 
+# --- how the server is used --------------------------------------------------------
+
+def answered(status: int, write: bool) -> None:
+    """The read-only gate's note of one answer on a hosted server: a 5xx
+    counts toward ``errors``, and a write (a POST, PUT, PATCH or DELETE
+    under /api/) answered below 400 moves the last write. A comparison and
+    an assignment in memory, on the event loop. No lock: a 5xx noted while
+    a sync subtracts the ones it reported may be lost, one in an hour's
+    figure."""
+    global _errors, _last_write
+    if status >= 500:
+        _errors += 1
+    elif write and status < 400:
+        _last_write = time.time()
+
+
+def _last_write_at() -> str | None:
+    """``last_write_at``: this process's newest accepted write, else the one
+    an earlier sync saved (after a restart, or from ``manage.py
+    hosted-sync`` in a process of its own). Saved to the KV when it moved,
+    so a restart loses at most the writes since the last sync. None when
+    nothing was ever written."""
+    seen = _last_write
+    at = datetime.fromtimestamp(seen, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if seen else ""
+    stored = _get_raw(LAST_WRITE_KEY)
+    if at > stored:
+        _set_raw(LAST_WRITE_KEY, at)
+        stored = at
+    return stored or None
+
+
+def _active_accounts() -> int:
+    """The non-guest accounts active in the last ``ACTIVE_DAYS`` days, from
+    what the server records anyway (nothing is written to learn it): a
+    sign-in (a session made then), a preference saved (account-wide, or in
+    a workspace: the app saves the open tabs and the recently viewed pages
+    as a person opens pages) or a page whose newest write is theirs
+    (``page_changes`` keeps one writer per page, so a later edit by someone
+    else hides it). Someone who only reads in a tab left open, or reads
+    through an integration token, is not seen. One query on users.db and
+    one on each workspace's pages.db."""
+    since = format_stamp(datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS))
+    with connect_users_db() as conn:
+        accounts = {row[0] for row in conn.execute("SELECT id FROM users WHERE is_guest = 0")}
+        seen = {row[0] for row in conn.execute(
+            "SELECT user_id FROM sessions WHERE created_at >= ? "
+            "UNION SELECT user_id FROM user_prefs WHERE updated_at >= ?", (since, since))}
+    for ws in workspace_ids():
+        if not (ws_dir(ws) / "pages.db").is_file():
+            continue
+        try:
+            with connect_pages_db(ws) as conn:
+                seen.update(row[0] for row in conn.execute(
+                    "SELECT user_id FROM workspace_prefs WHERE updated_at >= ? "
+                    "UNION SELECT actor FROM page_changes WHERE at >= ?", (since, since)))
+        except Exception as e:  # noqa: BLE001 — one workspace never stops the report
+            log.warning(f"[hosted] workspace {ws}: {e}")
+    return len(seen & accounts)
+
+
 def report() -> dict:
-    """The body of a sync: what the account server shows on its Servers tab."""
+    """The body of a sync: what the account server shows on its Servers tab.
+    Besides the server's size, whether it is used and failing:
+    ``active_accounts`` (``_active_accounts``), ``last_write_at``
+    (``_last_write_at``), ``errors`` (the 5xx answers since the last
+    successful sync) and ``uptime_s`` (this process's). Counts and times
+    only: nothing about who, which page or what was written."""
     with connect_users_db() as conn:
         accounts = _accounts(conn)
     build = cloud_sync._build_report()
     return {"version": build["version"], "schema": build.get("schema"), "accounts": accounts,
+            "active_accounts": _active_accounts(),
             "uploads_bytes": sum(workspace_bytes(ws) for ws in workspace_ids()),
-            "data_bytes": _data_bytes(), "public_url": public_url_settings()["public_url"]}
+            "data_bytes": _data_bytes(), "public_url": public_url_settings()["public_url"],
+            "last_write_at": _last_write_at(), "errors": _errors,
+            "uptime_s": int((datetime.now(timezone.utc) - version.STARTED_AT).total_seconds())}
 
 
 def _failed(error: str) -> None:
@@ -256,7 +334,10 @@ def _failed(error: str) -> None:
 
 def sync_now() -> dict | None:
     """One sync: the new limits (``limits``), or None when this is no
-    hosted server or the call failed (a warning; the cached answer stands)."""
+    hosted server or the call failed (a warning; the cached answer stands).
+    A success takes the errors it reported off ``errors``; a failure leaves
+    them for the next."""
+    global _errors
     if not enabled():
         return None
     with _lock:
@@ -268,9 +349,9 @@ def sync_now() -> dict | None:
             return None
         basic = base64.b64encode(f"{cfg['client_id']}:{secret}".encode()).decode("ascii")
         try:
-            body = json.dumps(report()).encode()
+            sent = report()
             answer = _normalized(cloud_auth._http(
-                cfg["issuer"] + SYNC_PATH, data=body, method="POST",
+                cfg["issuer"] + SYNC_PATH, data=json.dumps(sent).encode(), method="POST",
                 headers={"Authorization": f"Basic {basic}", "Content-Type": "application/json"}))
         except CloudAuthError as e:
             _failed(str(e))
@@ -284,6 +365,7 @@ def sync_now() -> dict | None:
         since = before.get("status_since", now) if same else now
         _remember({"limits": answer, "synced_at": now, "status_since": since})
         _last_failure.clear()
+        _errors -= sent["errors"]  # any noted since the report wait for the next
         if not before or before["limits"] != answer:
             log.info(f"[hosted] plan {answer['plan']}, status {answer['status']}"
                      + (" (read-only)" if answer["read_only"] else ""))
@@ -314,10 +396,13 @@ def pane() -> dict | None:
 
 
 def forget() -> None:
-    """Drop the stored answer, in the KV and in memory, and the failure
-    (the tests)."""
+    """Drop the stored answer, in the KV and in memory, the failure and
+    what the report counts (the tests)."""
+    global _errors, _last_write
     _remember(None)
+    _set_raw(LAST_WRITE_KEY, "")
     _last_failure.clear()
+    _errors, _last_write = 0, None
 
 
 def reset() -> None:

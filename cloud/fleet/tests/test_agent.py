@@ -3,13 +3,20 @@ no Docker, no network."""
 
 import json
 import os
+import threading
+import time
 
 import pytest
 
-from gammafleet import VERSION
-from gammafleet.agent import DATA_EVERY, Agent, Api, JobError, Settings, split_image
+from gammafleet import VERSION, agent as agent_module
+from gammafleet.agent import DATA_EVERY, REGISTRY_EVERY, Agent, Api, JobError, Settings, cpu_pct, split_image
 
 MIB = 1024 * 1024
+STARTED = "2026-10-04T09:00:00.123456789Z"
+# 0.75 s of CPU over 2 s of the host's 4 CPUs: one and a half CPUs
+STATS = {"memory_stats": {"usage": 300 * MIB},
+         "cpu_stats": {"cpu_usage": {"total_usage": 2_750_000_000}, "system_cpu_usage": 20_000_000_000, "online_cpus": 4},
+         "precpu_stats": {"cpu_usage": {"total_usage": 2_000_000_000}, "system_cpu_usage": 18_000_000_000}}
 
 
 class NotFound(Exception):
@@ -17,16 +24,24 @@ class NotFound(Exception):
 
 
 class FakeContainer:
-    def __init__(self, docker, name, image, kwargs):
+    def __init__(self, docker, name, image, kwargs, status="running"):
         self.docker, self.name, self.image, self.kwargs = docker, name, image, kwargs
-        self.status = "running"
+        self.status = status
         self.labels = kwargs.get("labels", {})
+        self.stats_reply = STATS
+        self.inspect = {}                                # replaces keys of attrs: what Docker left out
 
     @property
     def attrs(self):
         memory = int(str(self.kwargs.get("mem_limit", "0m")).rstrip("m")) * MIB
-        return {"State": {"Health": {"Status": "healthy" if self.status == "running" else ""}},
-                "Config": {"Image": self.image}, "HostConfig": {"Memory": memory}}
+        return {"Image": f"sha256:{self.image}", "RestartCount": 0,
+                "State": {"Health": {"Status": "healthy" if self.status == "running" else ""},
+                          "StartedAt": STARTED, "OOMKilled": False},
+                "Config": {"Image": self.image}, "HostConfig": {"Memory": memory}, **self.inspect}
+
+    @property
+    def env(self):
+        return self.kwargs["environment"]
 
     def start(self):
         self.docker.log.append(("start", self.name))
@@ -55,7 +70,9 @@ class FakeContainer:
         self.docker.containers.by_name[new] = self
 
     def stats(self, stream=False):
-        return {"memory_stats": {"usage": 300 * MIB}}
+        if isinstance(self.stats_reply, Exception):
+            raise self.stats_reply
+        return self.stats_reply
 
     def logs(self, tail=None, timestamps=False):
         lines = [f"2026-10-04T09:00:{i:02d}.000000000Z line {i}" for i in range(250)][-tail:]
@@ -72,10 +89,13 @@ class FakeContainers:
         return self.by_name[name]
 
     def run(self, image, name, **kwargs):
+        return self.create(image, name, _verb="run", **kwargs)
+
+    def create(self, image, name, _verb="create", **kwargs):
         if name in self.by_name:
             raise RuntimeError(f"name {name} in use")
-        self.docker.log.append(("run", name, image))
-        c = FakeContainer(self.docker, name, image, kwargs)
+        self.docker.log.append((_verb, name, image))
+        c = FakeContainer(self.docker, name, image, kwargs, status="running" if _verb == "run" else "created")
         self.by_name[name] = c
         return c
 
@@ -83,14 +103,37 @@ class FakeContainers:
         return [c for c in self.by_name.values() if "gamma.label" in c.labels]
 
 
+class FakeImage:
+    def __init__(self, attrs):
+        self.attrs = attrs
+
+
+class FakeRegistryData:
+    def __init__(self, digest):
+        self.id = digest
+
+
 class FakeImages:
+    """``digests``: a local image's RepoDigests by image ID; ``registry``: the
+    digest the registry has for a reference (none: the registry fails)."""
+
     def __init__(self, docker):
         self.docker, self.fail = docker, False
+        self.digests, self.registry, self.asked = {}, {}, []
 
     def pull(self, repo, tag=None):
         if self.fail:
             raise RuntimeError("manifest unknown")
         self.docker.log.append(("pull", f"{repo}:{tag}"))
+
+    def get(self, image_id):
+        return FakeImage({"Id": image_id, "RepoDigests": self.digests.get(image_id, [])})
+
+    def get_registry_data(self, ref):
+        self.asked.append(ref)
+        if ref not in self.registry:
+            raise RuntimeError("unauthorized")
+        return FakeRegistryData(self.registry[ref])
 
 
 class FakeNetwork:
@@ -412,7 +455,8 @@ def test_heartbeat_body(world, tmp_path):
     body = agent.heartbeat_body()
     assert body["agent_version"] == VERSION and body["memory_mb"] == 8000 and body["disk_used_mb"] == 5000
     assert body["containers"] == [{"label": "alice", "running": True, "health": "healthy", "memory_mb": 300,
-                                   "memory_limit_mb": 768, "data_mb": 3, "image": CREATE["image"]}]
+                                   "memory_limit_mb": 768, "cpu_pct": 150.0, "restarts": 0, "started_at": STARTED,
+                                   "oom_killed": False, "data_mb": 3, "image": CREATE["image"], "image_stale": None}]
     # the data directory is walked at most every DATA_EVERY seconds
     (tmp_path / "alice" / "data" / "more").write_bytes(b"x" * (2 * MIB))
     assert agent.heartbeat_body()["containers"][0]["data_mb"] == 3
