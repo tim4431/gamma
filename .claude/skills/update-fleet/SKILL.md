@@ -78,7 +78,7 @@ ssh root@69.63.206.178 "cd /root/Container/gamma-fleet && docker inspect --forma
 - The log starts with `gamma-fleet <version>: https://account.gammapdf.com, network gamma-fleet, data /srv/gamma`
   and shows no `heartbeat failed` or `job poll failed` after it.
 - The revision label equals the run's `headSha`.
-- The Admin page's Servers tab shows the host seen *just now* with its
+- The Admin page's Machines tab shows the host seen *just now* with its
   memory and disk (the first heartbeat goes out at start) and the new
   agent version.
 

@@ -478,7 +478,11 @@ allowance, **Allowance per account** and **Allowance per guest**: tokens per
 rolling 24 hours on the shared entries, 0 = unlimited, each saved on Enter
 or blur as
 `PUT /api/admin/ai-providers {allowance: {accounts | guests}}`
-([guests.md](guests.md) "The shared AI allowance").
+([guests.md](guests.md) "The shared AI allowance"). The boxes count in
+millions ("M tokens", decimals allowed: `0.1` is 100k, the 10^9 ceiling is
+`1000`) because a real daily budget runs to eight or nine digits; the API
+stays in whole tokens, so the row converts both ways and a figure out of
+range snaps back to the stored one.
 
 **Guests** (Server, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
 has two rows over `/api/admin/settings`: **Guest workspaces last** (a

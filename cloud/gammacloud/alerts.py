@@ -30,6 +30,8 @@ FULL_DISK = 0.85
 EVENT_DAYS = 7            # a webhook event older than this no longer raises an alert
 KEEP_DAYS = 30            # a resolved alert is kept this long
 UP_STATES = ("running", "grace", "read_only", "suspended")   # a server whose container should be up
+KEEP_UP = ("always", "unless-stopped")      # the restart policies of a container meant to run
+DOWN = ("restarting", "exited", "dead")     # the statuses of one that does not
 
 
 def _alert(key: str, text: str, link: str, settle: int = 0) -> dict:
@@ -45,14 +47,19 @@ def _hours(ts: str) -> int:
 
 
 def _jobs(conn) -> list[dict]:
+    """A failed job (but one that only read logs). A server's links to the
+    Servers tab; one with no server (an orphan's removal, a container's job)
+    to its machine."""
     out = []
-    for r in conn.execute("SELECT j.id, j.kind, j.payload, j.result, s.label FROM fleet_jobs j "
-                          "LEFT JOIN hosted_servers s ON s.id = j.server_id "
-                          "WHERE j.state = 'failed' AND j.kind != 'logs'").fetchall():
-        # an orphan's removal has no server, only the label in its payload
-        label = r["label"] or fleet.json_dict(r["payload"]).get("label") or "a host"
+    for r in conn.execute("SELECT j.id, j.kind, j.host_id, j.server_id, j.payload, j.result, s.label "
+                          "FROM fleet_jobs j LEFT JOIN hosted_servers s ON s.id = j.server_id "
+                          "WHERE j.state = 'failed' AND j.kind NOT IN (%s)" % ",".join("?" * len(fleet.LOG_KINDS)),
+                          fleet.LOG_KINDS).fetchall():
+        payload = fleet.json_dict(r["payload"])
+        label = r["label"] or payload.get("label") or payload.get("container") or "a host"
         error = str(fleet.json_dict(r["result"]).get("error") or "no error given")[:200]
-        out.append(_alert(f"job:{r['id']}", f"{r['kind']} job for {label} failed: {error}", "#servers"))
+        out.append(_alert(f"job:{r['id']}", f"{r['kind']} job for {label} failed: {error}",
+                          "#servers" if r["server_id"] else f"#machines/{r['host_id']}"))
     return out
 
 
@@ -87,19 +94,34 @@ def _servers(conn, public_ip: dict[str, str]) -> list[dict]:
 
 def _hosts(hosts: list[dict]) -> list[dict]:
     """A host silent past ``fleet.STALE_AFTER``, or close to full: its
-    committed memory near what can be placed on it, or its disk."""
+    committed memory near what can be placed on it, or its disk. And a
+    container of the host's own (not a hosted server's, whose ``down:``
+    alert covers it) that its restart policy keeps up, found restarting,
+    stopped or unhealthy; a ``-prev`` a failed update kept is meant to be
+    stopped. Each links to the host on the Machines tab."""
     out = []
     for h in hosts:
+        link = f"#machines/{h['id']}"
         if h["stale"] and h["last_seen_at"]:
             out.append(_alert(f"host_stale:{h['id']}", f"{h['name']} has not reported since {_when(h['last_seen_at'])}",
-                              "#servers"))
+                              link))
         placeable = h["memory_mb"] - h["reserve_mb"]
         if placeable > 0 and h["committed_mb"] >= FULL_MEMORY * placeable:
             out.append(_alert(f"host_full:{h['id']}:memory", f"{h['name']} has {h['committed_mb']} of the "
-                              f"{placeable} MB it can place committed to servers", "#servers"))
+                              f"{placeable} MB it can place committed to servers", link))
         if h["disk_mb"] > 0 and h["disk_used_mb"] >= FULL_DISK * h["disk_mb"]:
             out.append(_alert(f"host_full:{h['id']}:disk", f"{h['name']}'s disk is "
-                              f"{round(h['disk_used_mb'] / h['disk_mb'] * 100)}% full", "#servers"))
+                              f"{round(h['disk_used_mb'] / h['disk_mb'] * 100)}% full", link))
+        names = {c.get("name") for c in h["containers"]}
+        for c in h["containers"]:
+            name = c.get("name", "")
+            if c.get("managed") or c.get("restart_policy") not in KEEP_UP or fleet.is_kept(name, names):
+                continue
+            status = (c.get("status") if c.get("status") in DOWN
+                      else "unhealthy" if c.get("health") == "unhealthy" else "")
+            if status:
+                out.append(_alert(f"container_down:{h['id']}:{name}", f"{name} on {h['name']} is {status}", link,
+                                  SETTLE))
     return out
 
 

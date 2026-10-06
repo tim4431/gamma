@@ -37,11 +37,11 @@ account server's `/root/Container/gamma-account/` and the demo's
 name on `gamma-fleet`, and a Docker network's names resolve only on its
 own host, so every host needs a proxy beside its servers:
 
-- **The account server's VPS** has no public IP on the Servers tab. The
+- **The account server's VPS** has no public IP on the Machines tab. The
   account project's Caddy routes its servers, and the zone's wildcard
   record points there. Its agent runs without the `edge` profile: that
   Caddy already holds ports 80 and 443, and a second one would not start.
-- **Any other host** has its public IP set on the Servers tab: a *routed*
+- **Any other host** has its public IP set on the Machines tab: a *routed*
   host. It runs its own Caddy (the `edge` profile, this folder's
   `Caddyfile`), and the account server gives each server placed on it a
   proxied DNS record of its own at Cloudflare,
@@ -49,7 +49,7 @@ own host, so every host needs a proxy beside its servers:
   wildcard ([docs/dev/hosted.md](../../../docs/dev/hosted.md)
   "Deployment"). That needs `GAMMA_CLOUD_CF_API_TOKEN` and
   `GAMMA_CLOUD_CF_ZONE_ID` in the account server's `.env`; without them a
-  routed host takes no servers, and the Servers tab says *no dns token:
+  routed host takes no servers, and the Machines tab says *no dns token:
   closed*.
 
 ## First deployment
@@ -66,7 +66,7 @@ own host, so every host needs a proxy beside its servers:
    The subnet is pinned because every hosted container trusts it for
    `X-Forwarded-For` (the agent hands it over as `FORWARDED_ALLOW_IPS`).
 2. **The data root.** `mkdir -p /srv/gamma`.
-3. **The host.** On the portal, Admin → Servers → *Add host* with a name
+3. **The host.** On the portal, Admin → Machines → *Add machine* with a name
    (`vps-1`), or from the account project:
 
    ```bash
@@ -90,7 +90,7 @@ own host, so every host needs a proxy beside its servers:
    `gamma-fleet <version>: https://account.gammapdf.com, network
    gamma-fleet, data /srv/gamma` and has no `heartbeat failed` or `job poll
    failed` after it. The first heartbeat goes out at start, so the
-   Servers tab shows the host seen *just now* with its memory and disk. A
+   Machines tab shows the host seen *just now* with its memory and disk. A
    host takes servers only after that first heartbeat.
 
 `bootstrap.sh` without `--edge` ("On a fresh host" below) does steps 1, 2,
@@ -121,7 +121,7 @@ would work the same Docker daemon, so stop the old one first:
 
 ### On a fresh host
 
-*Add host* on the Servers tab (each host has its own name and token)
+*Add machine* on the Machines tab (each host has its own name and token)
 answers with the token and one line to run on the host as root:
 
 ```bash
@@ -160,7 +160,7 @@ so a host without `--edge` needs no open port and no DNS record.
    `GAMMA_CLOUD_CF_API_TOKEN` and `GAMMA_CLOUD_CF_ZONE_ID` in its `.env`,
    then `docker compose up -d` there. Admin → Settings → Configuration
    shows *DNS records* on.
-2. **The host**: *Add host* with its **public IP** (IPv4 or IPv6), then the
+2. **The host**: *Add machine* with its **public IP** (IPv4 or IPv6), then the
    line it shows, which has `--edge`, on the host. A host added without
    one gets it with *Public IP…* in its row. `--domain` is needed only
    when the hosting domain is not `gammapdf.com`, and
@@ -184,7 +184,7 @@ name that is a 404 here is not `<label>-user.<domain>`.
 Never use `--edge` (or `COMPOSE_PROFILES=edge`) on the account server's
 VPS: its account project's Caddy holds 80 and 443, and its servers are
 reached through the wildcard record. Leave its public IP blank on the
-Servers tab for the same reason.
+Machines tab for the same reason.
 
 ## Updating
 

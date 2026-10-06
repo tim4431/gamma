@@ -1,7 +1,7 @@
 """What the operator is told (docs/dev/hosted.md "Alerts"): every kind of
-problem found and resolved, the settle before a mail, one mail to the
-right addresses, the switch, a problem that comes back, dismissal, the
-Overview and the test alert."""
+problem found and resolved (a container of a machine's own among them), the
+settle before a mail, one mail to the right addresses, the switch, a
+problem that comes back, dismissal, the Overview and the test alert."""
 
 import json
 from contextlib import closing
@@ -139,6 +139,46 @@ def test_a_server_waiting_a_host_silent_or_full_and_a_missing_record(client, hos
         conn.execute("UPDATE hosted_servers SET dns_target = '203.0.113.7'")
         conn.commit()
     assert f"dns:{sid}" not in collect()
+
+
+def test_a_container_of_the_machine_down_and_where_host_alerts_link(client, hosting):
+    """A container of the host's own that its restart policy keeps up is
+    reported restarting, stopped or unhealthy; a hosted server's (its own
+    alert covers it), one that should not restart, and the -prev a failed
+    update kept are not. Every alert about a host links to it on the
+    Machines tab."""
+    from test_fleet import docker
+    host_id, token = make_host()
+    link = f"#machines/{host_id}"
+    entries = [docker("share", status="restarting"), docker("caddy", status="exited", restart_policy="always"),
+               docker("demo", health="unhealthy"), docker("account", health="healthy"),
+               docker("migrate", status="exited", restart_policy="no"),
+               docker("gamma-alice", status="exited", managed=True),
+               docker("account-prev", status="exited")]
+    beat(client, token, [], docker=entries)
+    found = collect()
+    down = sorted(k for k in found if k.startswith("container_down:"))
+    assert down == [f"container_down:{host_id}:{n}" for n in ("caddy", "demo", "share")]
+    share = found[f"container_down:{host_id}:share"]
+    assert (share["kind"], share["text"], share["link"], share["settle"]) == (
+        "container_down", "share on vps-1 is restarting", link, alerts.SETTLE)
+    assert found[f"container_down:{host_id}:demo"]["text"] == "demo on vps-1 is unhealthy"
+    assert found[f"container_down:{host_id}:caddy"]["text"] == "caddy on vps-1 is exited"
+    beat(client, token, [], docker=[docker("share"), docker("caddy"), docker("demo")])
+    assert not [k for k in collect() if k.startswith("container_down:")]   # running again
+    # the host's own alerts, and a failed job of a container, point at the machine
+    beat(client, token, [], disk_mb=1000, disk_used_mb=900, docker=[docker("share")])
+    assert collect()[f"host_full:{host_id}:disk"]["link"] == link
+    with closing(db.connect()) as conn:
+        job = fleet.container_job(conn, host_id, "share", "container_update", "test")
+        conn.commit()
+    finish(client, token, next_job(client, token)["id"], "failed", {"error": "pull failed"})
+    failed = collect()[f"job:{job['id']}"]
+    assert (failed["text"], failed["link"]) == ("container_update job for share failed: pull failed", link)
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE hosts SET last_seen_at = ?", (db.after(-20 * 60),))
+        conn.commit()
+    assert collect()[f"host_stale:{host_id}"]["link"] == link
 
 
 def test_an_unmatched_webhook_and_open_sign_up(client):

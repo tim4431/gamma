@@ -130,10 +130,11 @@ environment variables, fleet-wide or per server, reach running
 containers the same way, through `update` jobs in waves.
 
 **Watching it.** Every heartbeat and sync becomes an hourly sample kept
-for 30 days, drawn as trends on the Servers tab. A fixed list of problems
-is derived from the state on every heartbeat, job result and tick — a
-failed job, a server waiting for a host, a stale host, a host that is
-full, a container that is down, a missing DNS record, a Stripe event
+for 30 days, drawn as trends on the Servers and Machines tabs. A fixed
+list of problems is derived from the state on every heartbeat, job result
+and tick — a failed job, a server waiting for a host, a stale host, a host
+that is full, a hosted server or one of a host's own services that is
+down, a missing DNS record, a Stripe event
 that matched no account, open registration without Turnstile — and each
 new one is mailed to the operator once, after it has persisted for the
 time its kind allows. The Overview tab lists what needs attention.
@@ -149,7 +150,7 @@ for it. Two kinds:
   DNS record covers every hostname. This host has no `public_ip`;
 - **a routed host** elsewhere: its agent's compose project also runs a
   Caddy (`COMPOSE_PROFILES=edge`), the host has a `public_ip` on the
-  Servers tab, and every server placed there gets a Cloudflare DNS record
+  Machines tab, and every server placed there gets a Cloudflare DNS record
   of its own, made and removed by the account server (`dns.py`, with a
   token in its environment). Without that token a routed host takes no
   servers.
@@ -180,7 +181,8 @@ that deep-link by hash:
 | Accounts | search; the granted plan and when it ends; verify, rename, admin, delete, restore, purge |
 | Invites | codes with uses, plan, expiry, grant length, who used them; on/off; a copyable sign-up link |
 | Clients | the OIDC clients of hosted servers and the share host, and the ones people connected themselves |
-| Servers | hosts and their capacity; every hosted server with its state, version, data, trends and actions (restart, stop, suspend, limits, environment, logs, history, upgrade, rollback, delete); the default image and upgrade runs; fleet-wide environment; the job queue |
+| Machines | a card per host with its capacity and containers; for the one selected, every container on it (the account server, the share host, Caddy, the demo, the agent, the hosted servers) with its image, state, use and actions (logs, restart, stop, start, update, rollback, *Update all*), the host's placement, public IP, name, token and removal, and its recent jobs |
+| Servers | every hosted server with its state, version, data, trends and actions (restart, stop, suspend, limits, environment, logs, history, upgrade, rollback, delete); the default image and upgrade runs; fleet-wide environment; the job queue |
 | Billing | subscriptions by status with a link into Stripe, the newest webhook events |
 | Settings | sign-up, plans on sale, alerts, and the read-only configuration panel with a test mail |
 | Audit log | every account-changing event, with its actor |
@@ -212,12 +214,17 @@ page, the CLI and the `/api/admin/*` API call the same functions.
 
 | part | how |
 |---|---|
-| the account server | the `update-account-server` skill: build from a branch, pull on the VPS, restart; `cloud.db` upgrades itself at start with a copy taken first |
-| the fleet agent | the `update-fleet` skill, or the daily pull `bootstrap.sh --auto-update` installs; hosted containers keep running through it |
+| the account server | *Update* on its row of the Machines tab, which pulls the newest image of the tag it runs; from a branch, the `update-account-server` skill: build, pull on the VPS, restart. `cloud.db` upgrades itself at start with a copy taken first. A failed update from the Machines tab leaves it down until it is started on the VPS ([hosted.md](hosted.md) "A machine's containers") |
+| the fleet agent | *Update* on its row of the Machines tab (a helper replaces it), the `update-fleet` skill from a branch, or the daily pull `bootstrap.sh --auto-update` installs; hosted containers keep running through it |
 | hosted containers | an upgrade run on the Servers tab, or automatic upgrades |
-| the shared server | the image tag pinned in the account project's `compose.yml` |
-| the demo | the `update-demo-server` skill |
+| the shared server | the image tag pinned in the account project's `compose.yml`; *Update* on its row of the Machines tab pulls the newest image of that tag |
+| the demo | *Update* on its row of the Machines tab for the newest image of its tag; the `update-demo-server` skill to pin it to main's newest |
+| Caddy | *Update* on its row of the Machines tab |
 | the website | the `build-site` skill |
+
+*Update all* on a machine updates each of its own containers whose tag has
+a newer image in the registry, the agent last. The skills remain the way
+to run a branch's build.
 
 `update-needed check` says which of these is behind the code.
 
@@ -229,7 +236,8 @@ page, the CLI and the `/api/admin/*` API call the same functions.
 - [billing.md](billing.md): the effective-plan rule, Stripe, the Plan
   page, the Billing tab, running it locally in test mode.
 - [hosted.md](hosted.md): the tables, server states and the lifecycle, the
-  sync, the fleet API and the agent, alerts and history, the Servers tab.
+  sync, the fleet API and the agent, alerts and history, the Machines and
+  Servers tabs.
 - [research/cloud-plans.md](../research/cloud-plans.md) and
   [research/cloud-operations.md](../research/cloud-operations.md): why it
   is shaped this way, and what was found missing before the operator's

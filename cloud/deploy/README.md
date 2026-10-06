@@ -375,10 +375,11 @@ project's side of it:
 5. `docker compose up -d`, then `docker compose exec caddy caddy reload
    --config /etc/caddy/Caddyfile`.
 6. **The agent**, on this host: [cloud/fleet/deploy/README.md](../fleet/deploy/README.md)
-   (*Add host* on the Servers tab with no public IP, then its token into
-   the agent's own `.env` and `docker compose up -d` in its folder, or the
-   bootstrap line it shows). Its first heartbeat shows the host on the
-   Servers tab with its memory and disk; until then it takes no servers.
+   (*Add machine* on the Machines tab with no public IP, then its token
+   into the agent's own `.env` and `docker compose up -d` in its folder, or
+   the bootstrap line it shows). Its first heartbeat shows the machine on
+   the Machines tab with its memory, disk and containers; until then it
+   takes no servers.
 7. **A first server by hand.** Give an account a Pro plan on the
    Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
    The agent pulls the image, starts `gamma-<username>` with its data in
@@ -394,19 +395,22 @@ account server makes at Cloudflare and which wins over the wildcard
 (the fleet README's "A second host, with its own Caddy"). For that,
 `.env` holds `GAMMA_CLOUD_CF_API_TOKEN` (a token with *Zone → DNS → Edit*
 on this zone only) and `GAMMA_CLOUD_CF_ZONE_ID`, and the host has its
-public IP on the Servers tab. Without the token a host with a public IP
-takes no servers, and its row says *no dns token: closed*. This host's
-own row keeps the public IP blank.
+public IP on the Machines tab. Without the token a host with a public IP
+takes no servers, and its card says *no dns token: closed*. This host's
+own card keeps the public IP blank.
 
-The Servers tab is the operator's view of the fleet
-([docs/dev/hosted.md](../../docs/dev/hosted.md) "Admin"). It shows each
-host's capacity, heartbeat, public IP and orphan containers, each server's
-state, version and data (and, on a host with a public IP, whether its DNS
-record is in place), the actions (logs, upgrade and rollback among them),
-upgrade runs and the job queue. A host silent for 15 minutes shows
-*stale* and takes no new servers until it reports again. `manage.py
-hosts`, `servers`, `jobs`, `add-host` and `provision` do the same from
-the shell.
+The Machines and Servers tabs are the operator's view of the fleet
+([docs/dev/hosted.md](../../docs/dev/hosted.md) "Admin"). Machines shows
+each host's capacity, heartbeat and public IP, and every container on it,
+this project's own among them, with its image, state and use and the
+actions (logs, restart, stop, start, update, rollback, *Update all*), the
+host's orphan containers, token and recent jobs. Servers shows each
+server's state, version and data (and, on a host with a public IP,
+whether its DNS record is in place), its actions (logs, upgrade and
+rollback among them), upgrade runs and the job queue. A host silent for
+15 minutes shows *stale* and takes no new servers until it reports again.
+`manage.py hosts`, `servers`, `jobs`, `add-host` and `provision` do the
+same from the shell.
 
 ## Updating
 

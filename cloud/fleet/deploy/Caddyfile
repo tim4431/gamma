@@ -5,7 +5,7 @@
 #
 # Every hosted server on this host has a DNS record of its own at Cloudflare,
 # <label>-user.gammapdf.com -> this host's address, proxied, which the account
-# server makes once the host's public IP is set on the Servers tab. The public
+# server makes once the host's public IP is set on the Machines tab. The public
 # certificate is Cloudflare's; between Cloudflare and this host Caddy serves
 # its own internal one (`tls internal`, Cloudflare SSL/TLS mode "Full"), as
 # the account project's Caddyfile does.

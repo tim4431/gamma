@@ -418,12 +418,16 @@ A step with `do: [...]` acts on the UI itself instead of asking the user to.
 The first tour's second step clicks Add, types the address of the demo paper,
 presses Enter, waits for the page to open and moves on; the user's first task
 is then a highlight on a real paper rather than a menu. The demo paper is the
-seeded Welcome page's own PDF (`/api/uploads/<hash>.pdf`, App's `welcomePdf`
-fact) while the library has that page, so the tour needs no network; without
-it, the arXiv link of *Attention Is All You Need*.
+arXiv link of *Attention Is All You Need* (the tour's `demoUrl` var), the
+paper the later steps are written for: its abstract sentence and its
+attention formula.
 If the link identifies a paper with a PDF already in the library, Add opens
-that saved copy without resolving or downloading the source again. Reopening
-the current paper also emits `page.opened`, so replaying the tour completes.
+that saved copy without resolving or downloading the source again — so a
+library that already has this paper gets no second copy of it, and the step
+needs no network. Otherwise the step fetches the paper, and a fetch that
+cannot finish (no network) ends like any demo whose event times out: the
+card says "couldn't finish" and offers Skip. Reopening the current paper
+also emits `page.opened`, so replaying the tour completes.
 
 Before the user's highlight step, `{previewHighlight: true}` demonstrates a
 drag across visible, rendered PDF text and points to the real colour palette.
@@ -472,10 +476,10 @@ step completes only for its matching type.
   note block App's `prepareNote` opens, through CodeMirror, resuming an
   unfinished example and never replacing the user's own writing.
 - Typed text (`type`, `note`) is `T()`-marked in the tour and translated
-  when typed. `{name}` in it is filled from the tour's `vars` (an object, or
-  a function of the facts: the first tour's `demoUrl`), which the
-  localStorage key `gamma-guide-vars` overrides — how the browser suite
-  points the demo at an uploaded PDF of its own.
+  when typed. `{name}` in it is filled from the tour's `vars` (the first
+  tour's `demoUrl`), which the localStorage key `gamma-guide-vars`
+  overrides — how the browser suite points the demo at an uploaded PDF of
+  its own.
 - From the demo's initial pause through its final action, the sheet swallows
   clicks, the card shows ▶ Watch and a thin line of the actions done so far,
   and Back/Next are hidden. **Skip this demo** stops the actions (their
@@ -614,7 +618,7 @@ call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
-`cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
+`cloudLinkable`, `prefsChanged`, `demo`), the
 services demos, scenes and tour ends call (`show`, `restore`, `openSettings`,
 `findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`, `dockZone`)
 and `tidy`.
@@ -822,11 +826,11 @@ preference, synced with the profile ([settings.md](settings.md)).
   still hold `data.db` open when a guest who just arrived logs out.
   `/api/pdf-info` makes the manifest on first open. A PDF the storage limits
   refuse leaves the page without one.
-- Its last section is a practice passage. Its plain-text formula line is
-  what the first tour's box demo encircles (`findEquation` looks for
-  `Attention(` and `softmax`). The page's own `meta` record (`source:
-  manual`) and `ppt_cite` mean opening it looks nothing up and asks no AI
-  for a citation.
+- Its last section is a practice passage: a sentence to highlight and a
+  plain-text formula line to Ctrl+drag a box around, the two gestures the
+  first tour demonstrates on its own paper. The page's own `meta` record
+  (`source: manual`) and `ppt_cite` mean opening it looks nothing up and
+  asks no AI for a citation.
 - `seed.seed_welcome(ws, actor=, guest=)` seeds it into a workspace with no
   pages yet. Every account-creating path asks for it through
   `workspaces.ensure_personal(..., welcome=True)`: `seed.create_account`
@@ -840,9 +844,8 @@ preference, synced with the profile ([settings.md](settings.md)).
   ([cloud_accounts.md](cloud_accounts.md)).
 - A guest's page ends with a callout naming the lifetime; a
   `GAMMA_GUEST_SEED` zip replaces the whole workspace ([guests.md](guests.md)).
-- The page has `properties.seeded: "welcome"`, so the first tour finds its
-  PDF and the library can tell a fresh one (no pages but seeded ones) from a
-  used one. Deleting it is fine; the tour then falls back to arXiv.
+- The page has `properties.seeded: "welcome"`, so the library can tell a
+  fresh one (no pages but seeded ones) from a used one. Deleting it is fine.
 - The notes go in as one op batch (`apply_ops` + `after_commit`, what
   `commit_ops` does, on a connection closed right there) after
   `blocks_store.create_page` made the page ([collab.md](collab.md)).
@@ -924,10 +927,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   demo, both highlights with their demos and the light hand-over, the note
   and label demo, Home, the finish card's items and tiles), Skip on a
   highlight demo stays for the try, and the tour replays on the paper
-  already open; without the
-  vars override its demo opens the Welcome page's PDF with no resolver call,
-  and falls back to arXiv once that page is deleted; a new account's empty
-  library is offered the tour once.
+  already open; without the vars override its demo opens the library's own
+  copy of the arXiv paper, with no resolver call and no second page; a new
+  account's empty library is offered the tour once.
 - `contextualGuide.mjs`: Arrange windows — its double-click scene lands on
   the real title and changes nothing, the steps keep Next, the drag scene's
   drop preview is the left dock zone clear of the card, the sheet lifts and

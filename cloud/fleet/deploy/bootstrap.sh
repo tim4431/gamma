@@ -32,7 +32,7 @@ usage: bootstrap.sh --token gf_... [--edge] [--domain gammapdf.com]
                     [--account-url https://account.gammapdf.com] [--dir ~/Container/gamma-fleet]
                     [--ref main] [--auto-update]
 
-  --token        this host's token, from Admin > Servers > Add host (needed unless .env has one)
+  --token        this host's token, from Admin > Machines > Add machine (needed unless .env has one)
   --edge         also run this host's own Caddy on 80/443: a host with a public IP of its own
   --domain       the hosted servers' zone, for that Caddy (default gammapdf.com)
   --account-url  the account server (default https://account.gammapdf.com)
@@ -107,7 +107,7 @@ main() {
 	done
 
 	[ "$(id -u)" -eq 0 ] || die "run it as root (curl ... | sudo bash -s -- ...)"
-	case "$token" in ""|gf_*) ;; *) die "--token is the gf_... token Add host showed" ;; esac
+	case "$token" in ""|gf_*) ;; *) die "--token is the gf_... token Add machine showed" ;; esac
 	case "$account_url" in ""|https://*|http://*) ;; *) die "--account-url is an http(s) address" ;; esac
 	command -v curl >/dev/null 2>&1 || die "curl is missing"
 
@@ -151,7 +151,7 @@ main() {
 	if [ "$edge" -eq 1 ]; then set_env COMPOSE_PROFILES edge; fi
 	chmod 600 .env
 	umask 022
-	grep -q '^GAMMA_FLEET_HOST_TOKEN=gf_' .env || die "no token in $dir/.env: pass --token gf_... (Admin > Servers > Add host)"
+	grep -q '^GAMMA_FLEET_HOST_TOKEN=gf_' .env || die "no token in $dir/.env: pass --token gf_... (Admin > Machines > Add machine)"
 
 	if [ "$auto_update" -eq 1 ]; then install_timer "$dir"; fi
 

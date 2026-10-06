@@ -1,19 +1,20 @@
-"""The history the Servers tab draws (docs/dev/hosted.md "History"): one
-sample per host or server and hour in the ``metrics`` table, from the
-agent's heartbeats and the containers' syncs, kept 30 days. Counts and
-sizes only, never anything of a library.
+"""The history the Servers and Machines tabs draw (docs/dev/hosted.md
+"History"): one sample per host, server or container and hour in the
+``metrics`` table, from the agent's heartbeats and the containers' syncs,
+kept 30 days. Counts and sizes only, never anything of a library.
 
-``kind`` is ``host`` or ``server``, ``ref`` its id, ``at`` the start of the
-hour, ``data`` a JSON object of numbers. Every report in an hour merges
-into that hour's row: a gauge keeps the last value, and a count of events
-since the report before (``SUMMED``) adds up.
+``kind`` is ``host``, ``server`` or ``container``, ``ref`` its id (a
+container's is ``<host id>:<name>``), ``at`` the start of the hour,
+``data`` a JSON object of numbers. Every report in an hour merges into that
+hour's row: a gauge keeps the last value, and a count of events since the
+report before (``SUMMED``) adds up.
 """
 
 import json
 
 from . import db
 
-KINDS = ("host", "server")
+KINDS = ("host", "server", "container")
 SUMMED = ("errors",)
 KEEP_DAYS = 30
 MAX_HOURS = 720

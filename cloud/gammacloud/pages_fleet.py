@@ -1,21 +1,26 @@
 """The Admin page's Servers tab (docs/dev/hosted.md "Admin"): a summary
-strip, the hosts with their capacity, public IP and orphan containers,
-the hosted servers with their actions and DNS state, a log viewer, a server's history and its own
-limits, the extra environment (every server's, or one server's), the
-default image tag with automatic upgrades and upgrade runs in waves, and
-the job queue. Hosts and servers carry the last 48 hours of a few series
-(``trend``), drawn as sparklines in their cells.
-``pages.admin_page`` includes ``ADMIN_TAB`` and appends
-``ADMIN_JS``, which defines ``loadServers()``, the tab's entry; it uses the
-admin script's ``api``, ``esc``, ``bind``, ``say``, ``act``, ``ask`` and
-``toast``.
+strip, the hosted servers with their actions and DNS state, a log viewer,
+a server's history and its own limits, the extra environment (every
+server's, or one server's), the default image tag with automatic upgrades
+and upgrade runs in waves, and the job queue. Servers carry the last 48
+hours of a few series (``trend``), drawn as sparklines in their cells. The
+machines they run on, and every other container there, are the Machines
+tab's (``pages_machines.py``).
+
+``SHARED_STYLE`` and ``SHARED_JS`` are what both tabs draw with: the
+capacity meters, the sparklines, times and durations, a job's result and
+the log viewer. ``pages.admin_page`` includes each once, before either
+tab; ``SHARED_JS`` defines ``fleetUI``. ``pages.admin_page`` also includes
+``ADMIN_TAB`` and appends ``ADMIN_JS``, which defines ``loadServers()``,
+the tab's entry; it uses the admin script's ``api``, ``esc``, ``bind``,
+``say``, ``act``, ``ask`` and ``toast``.
 
 The tables are re-rendered every 4 s while a job is queued or running and
 the tab is in view, and not at all otherwise. Clicks and selects are
 delegated to the tab through ``data-f`` attributes, which the other tabs'
-``wire()`` never selects. The ``<style>`` block below holds only what the
-portal's stylesheet has no class for: the capacity meters, the log
-viewer, the sparklines and history charts, and the notes under a form."""
+``wire()`` never selects. The tab's own ``<style>`` block holds only what
+neither the portal's stylesheet nor ``SHARED_STYLE`` has: the history
+charts and a deleted server's row."""
 
 import json
 
@@ -25,37 +30,29 @@ JOB_STATES = ("queued", "held", "running", "done", "failed", "canceled")
 # plan -> quota_mb, for the hosted plans: the quota a server shows before its first sync
 _QUOTAS = {plan: lim["quota_mb"] for plan, lim in config.PLAN_LIMITS.items() if lim.get("hosted")}
 
+# Both fleet tabs carry the class ``fleet``: the notes under a value, the tables' cells, the capacity meters, the
+# sparklines, the notes under a form and the log viewer.
+SHARED_STYLE = """<style>
+.fleet .sub{display:block;color:var(--muted);font-size:12px;margin-top:1px}.fleet .sub.fnw{white-space:nowrap}
+.fleet .tbl{overflow-x:auto}.fleet th{white-space:nowrap}.fleet td{vertical-align:top}.fleet td.nw,.fleet td.nw .sub{white-space:nowrap}.fleet td.fres{max-width:260px;overflow-wrap:anywhere}
+.fleet .cap{display:flex;width:100%;max-width:190px;height:5px;margin:5px 0 3px;border-radius:99px;background:var(--accent-soft);overflow:hidden}
+.fleet .cap b{display:block;background:var(--accent)}.fleet .cap i{display:block;background:color-mix(in srgb,var(--accent) 40%,var(--accent-soft))}
+.fleet .cap b+i{border-left:2px solid var(--surface)}.fleet .cap.hot b{background:var(--danger)}
+.fleet .section>.body+.body{border-top:1px solid var(--line)}
+.fleet .flognote{margin:0}.fleet .fnote{margin:10px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
+.fleet .flog{margin:0;max-height:440px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-all}
+.fleet .fspark{display:inline-block;width:60px;height:16px;margin-left:6px;vertical-align:-3px}
+</style>"""
+
 STYLE = """<style>
-#tab-servers .sub{display:block;color:var(--muted);font-size:12px;margin-top:1px}
-#tab-servers .tbl{overflow-x:auto}#tab-servers th{white-space:nowrap}#tab-servers td{vertical-align:top}#tab-servers td.nw,#tab-servers td.nw .sub{white-space:nowrap}#tab-servers td.fres{max-width:260px;overflow-wrap:anywhere}
-#tab-servers tr.fgrp td{border-bottom:0;padding-bottom:2px}#tab-servers tr.fgone td{opacity:.6}
-#tab-servers .forph{display:inline-flex;align-items:center;gap:6px;margin:3px 12px 0 0}
-#tab-servers .cap{display:flex;width:100%;max-width:190px;height:5px;margin:5px 0 3px;border-radius:99px;background:var(--accent-soft);overflow:hidden}
-#tab-servers .cap b{display:block;background:var(--accent)}#tab-servers .cap i{display:block;background:color-mix(in srgb,var(--accent) 40%,var(--accent-soft))}
-#tab-servers .cap b+i{border-left:2px solid var(--surface)}#tab-servers .cap.hot b{background:var(--danger)}
-#tab-servers .section>.body+.body{border-top:1px solid var(--line)}
-#tab-servers #flognote{margin:0}#tab-servers .fnote{margin:10px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
-#tab-servers .flog{margin:0;max-height:440px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-all}
-#tab-servers .fspark{display:inline-block;width:60px;height:16px;margin-left:6px;vertical-align:-3px}#tab-servers .sub.fnw{white-space:nowrap}
+#tab-servers tr.fgone td{opacity:.6}
 #tab-servers .fcharts{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}#tab-servers .fcharts b{font-weight:500}
 #tab-servers .fchart{display:block;width:100%;height:60px;margin-top:6px}
 </style>"""
 
 ADMIN_TAB = (
-    "<div id=tab-servers hidden>" + STYLE
+    "<div id=tab-servers class=fleet hidden>" + STYLE
     + "<div class=notice id=ferr hidden></div><div class=tiles id=fsum></div>"
-    # hosts
-    "<div class=section><h2>Hosts <span>the machines a fleet agent runs on</span></h2>"
-    "<div class='body tbl'><table><thead><tr><th>Host</th><th>Heartbeat</th><th>Memory</th><th>Disk</th>"
-    "<th>Servers</th><th>Placement</th></tr></thead><tbody id=fhosts></tbody></table></div>"
-    "<div class=body><form id=fhost class=inline autocomplete=off><label>Name<input name=name required placeholder='vps-1'></label>"
-    "<label>Address<input name=address placeholder='optional, for your notes'></label>"
-    "<label>Public IP<input name=public_ip placeholder='blank: behind this Caddy' spellcheck=false></label>"
-    "<button type=submit class='btn btn--primary btn--sm'>Add host</button><div class=msg></div></form>"
-    "<p class=fnote>A host with a public IP runs a Caddy of its own, and each server on it gets a DNS record of "
-    "its own at Cloudflare, so it takes servers only while the Cloudflare token is set. Leave it blank for the "
-    "host that runs beside the account server's Caddy.</p>"
-    "<div id=fhosttoken hidden class=secretbox></div></div></div>"
     # hosted servers
     "<div class=section><h2>Hosted servers <span id=fsrvhead>one per account on a hosted plan</span></h2>"
     "<div class='body tbl'><table><thead><tr><th>Server</th><th>Account</th><th>Plan</th><th>State</th>"
@@ -69,7 +66,7 @@ ADMIN_TAB = (
     "<div class=toolbar><span class=empty id=flogstate></span><span class=spacer></span>"
     "<button type=button class='btn btn--sm' data-f=logagain>Fetch again</button>"
     "<button type=button class='btn btn--sm' data-f=logclose>Close</button></div>"
-    "<div class=notice id=flognote hidden></div><pre class=flog id=flogtext hidden></pre></div></div>"
+    "<div class='notice flognote' id=flognote hidden></div><pre class=flog id=flogtext hidden></pre></div></div>"
     # a server's history, opened by its History
     "<div class=section id=fhist hidden><h2>History <span id=fhistwho></span></h2><div class=body>"
     "<div class=toolbar><select id=fhistdays class=sm aria-label='Period'><option value=168>7 days</option>"
@@ -121,22 +118,12 @@ ADMIN_TAB = (
     "<th>Host</th><th>State</th><th>Took</th><th>Result</th><th></th></tr></thead><tbody id=fjobs></tbody></table></div></div>"
     "</div>")
 
-ADMIN_JS = r"""
-// --- Servers tab (pages_fleet.py) ---
-const loadServers = (() => {
-const QUOTAS = __QUOTAS__;   // the hosted plans, for the Provision form's hint
-const TAB = document.getElementById('tab-servers'), $ = id => document.getElementById(id);
-const SRV_PILL = {running: 'pill pill--ok', grace: 'pill pill--warn', read_only: 'pill pill--warn', stopped: 'pill pill--warn', suspended: 'pill pill--warn'};
-const JOB_PILL = {done: 'pill pill--ok', failed: 'pill pill--warn'};
-const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];
-const UPGRADABLE = ['running', 'grace', 'read_only', 'suspended'];   // fleet.UPGRADABLE: the states a run takes
-const LIMITS = ['quota_mb', 'max_upload_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
-const KIND_WORD = {update: 'environment'};
-let timer = 0, live = false, gen = 0, showDeleted = false, defImage = '', defTag = '', servers = [], autoOn = false;
-let logJob = '', logFor = null, logTimer = 0, limFor = null, envFor = null, fleetEnv = [];
-
-const words = s => String(s || '').replace(/_/g, '-');
+SHARED_JS = r"""
+// --- what the Servers and Machines tabs share (pages_fleet.py) ---
+const fleetUI = (() => {
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+const pct = v => v + ' %';
+const JOB_PILL = {done: 'pill pill--ok', failed: 'pill pill--warn'};
 function size(mb){ mb = Math.max(0, Number(mb) || 0); return mb >= 1024 ? (mb / 1024).toFixed(1).replace(/\.0$/, '') + ' GB' : Math.round(mb) + ' MB'; }
 function ago(ts){
   if (!ts) return '<span class=empty>never</span>';
@@ -170,15 +157,11 @@ function line(points, key, t0, t1, w, h, cls, title){
     + '<line x1=0 y1=' + (h - 0.5) + ' x2=' + w + ' y2=' + (h - 0.5) + ' stroke="var(--muted)" vector-effect=non-scaling-stroke />'
     + '<polyline points="' + p.map(xy).join(' ') + '" fill=none stroke="var(--accent)" stroke-width=1.5 vector-effect=non-scaling-stroke /></svg>';
 }
-// a host's or server's sparkline: the last 48 hours of key from its trend
+// a row's sparkline (a host, a server, a container): the last 48 hours of key from its trend
 function spark(row, key, fmt, what){
   const t1 = Date.now(), last = (row.trend || []).filter(x => x[key] != null).pop();
   return last ? line(row.trend, key, t1 - 48 * 3600e3, t1, 60, 16, 'fspark', what + ' over 48 hours, now ' + fmt(last[key])) : '';
 }
-const pct = v => v + ' %';
-function tagOf(image){ image = String(image || ''); const i = image.lastIndexOf(':'); return i > image.lastIndexOf('/') ? image.slice(i + 1) : image; }
-const tagRun = s => s.image_tag || tagOf(s.image);
-function outdated(s){ return s.state !== 'deleted' && !!s.outdated; }
 function resultText(j){
   let r = j.result;
   if (typeof r === 'string') { if (!r) return ''; try { r = JSON.parse(r); } catch (e) { return r; } }
@@ -186,47 +169,71 @@ function resultText(j){
   if (typeof r !== 'object') return String(r);
   const count = Array.isArray(r.lines) ? r.lines.length : r.line_count;
   if (count != null) return plural(Number(count) || 0, 'log line', 'log lines') + (r.container ? ' of ' + r.container : '');
-  if (r.error || r.message) return String(r.error || r.message);
+  if (r.error || r.message || r.note) return String(r.error || r.message || r.note);
   return Object.entries(r).map(([k, v]) => k + ': ' + (v && typeof v === 'object' ? JSON.stringify(v) : v)).join(', ');
 }
+// A log viewer in a section (el.sec) with a title (el.who), a status line (el.state), a notice (el.note) and a block for
+// the lines (el.text). show(label, start) asks for a log with start(), which answers the logs job, and polls that job
+// every 2 s (for three minutes at most) until its lines are there; watch(jobId, label, start) follows a job already made;
+// again() asks once more the way the last one was asked; close() hides it.
+function logViewer(el){
+  let jobId = '', timer = 0, label = '', start = null;
+  const note = t => { el.note.hidden = !t; el.note.textContent = t || ''; };
+  function open(l, s){
+    clearTimeout(timer); jobId = ''; label = l; start = s || start;
+    el.sec.hidden = false; el.who.textContent = l; el.text.hidden = true; el.state.textContent = '';
+    note('Fetching the log of ' + l + '…'); el.sec.scrollIntoView({block: 'nearest'});
+  }
+  async function show(l, s){
+    open(l, s);
+    try { const j = await s(); watch(j.id, l, s); }
+    catch (e) { note('Could not ask for the log: ' + e.message); }
+  }
+  function watch(id, l, s){ open(l, s); jobId = id; poll(id, 0); }
+  async function poll(id, n){
+    if (id !== jobId) return;
+    let j;
+    try { j = (await api('/api/admin/jobs/' + encodeURIComponent(id), undefined, 'GET')).job; }
+    catch (e) { if (id === jobId) note('Could not read the job: ' + e.message); return; }
+    if (id !== jobId) return;
+    if (j.state === 'done') {
+      let r = j.result; if (typeof r === 'string') { try { r = JSON.parse(r); } catch (e) { r = {lines: [r]}; } }
+      const lines = r && Array.isArray(r.lines) ? r.lines : [], since = r && r.since ? new Date(r.since) : null;
+      el.text.textContent = lines.join('\n') || '(the log is empty)'; el.text.hidden = false; note('');
+      el.state.textContent = 'The last ' + plural(lines.length, 'line', 'lines') + (r && r.container ? ' of ' + r.container : '')
+        + (since && !isNaN(since) ? ', since ' + since.toLocaleString() : '') + (r && r.truncated ? ' (the oldest cut)' : '')
+        + ' · fetched ' + new Date(j.finished_at || Date.now()).toLocaleTimeString();
+      el.text.scrollTop = el.text.scrollHeight;
+    } else if (j.state === 'failed' || j.state === 'canceled') note('The log could not be fetched: ' + (resultText(j) || j.state) + '.');
+    else if (n >= 90) note('No answer from the agent after three minutes; is its host stale? The job stays ' + j.state + ' in the jobs table.');
+    else { note('Fetching the log of ' + label + '… (' + j.state + ')'); timer = setTimeout(() => poll(id, n + 1), 2000); }
+  }
+  function close(){ clearTimeout(timer); jobId = ''; start = null; el.sec.hidden = true; }
+  return {show, watch, again: () => { if (start) show(label, start); }, close};
+}
+return {plural, pct, size, ago, took, meter, line, spark, resultText, logViewer, JOB_PILL};
+})();
+"""
 
-// --- hosts ---
-function memory(h){
-  const total = Number(h.memory_mb) || 0, used = Number(h.memory_used_mb) || 0;
-  if (!total) return '<span class=empty>no heartbeat yet</span>';
-  const com = Number(h.committed_mb) || 0, res = Number(h.reserve_mb) || 0, free = Number(h.free_mb) || 0;
-  return size(com) + ' / ' + size(total) + ' committed'
-    + meter(total, com, res, size(com) + ' committed to servers, ' + size(res) + ' kept for the host, ' + size(free) + ' free for new servers')
-    + '<span class=sub>' + (free > 0 ? size(free) + ' free' : 'full') + ' · ' + size(res) + ' reserve · ' + size(used) + ' in use'
-    + spark(h, 'memory_used_mb', size, 'memory in use') + '</span>';
-}
-function disk(h){
-  const total = Number(h.disk_mb) || 0, used = Number(h.disk_used_mb) || 0;
-  if (!total) return '<span class=empty>no heartbeat yet</span>';
-  return size(used) + ' / ' + size(total) + spark(h, 'disk_used_mb', size, 'disk used') + meter(total, used, 0, size(used) + ' of ' + size(total) + ' used')
-    + '<span class=sub>' + size(total - used) + ' free</span>';
-}
-// a routed host (its own Caddy and a DNS record per server): its address, and whether placement may use it
-function route(h){
-  if (!h.public_ip) return '';
-  const pill = h.dns === 'on' ? '<span class="pill pill--ok" title="its own Caddy; each server on it gets a DNS record of its own">dns on</span>'
-    : '<span class="pill pill--warn" title="GAMMA_CLOUD_CF_API_TOKEN and _ZONE_ID are not set: placement skips this host">no dns token: closed</span>';
-  return '<span class=sub><span class=mono>' + esc(h.public_ip) + '</span> ' + pill + '</span>';
-}
-function hostRow(h){
-  const orphans = h.orphans || [], id = esc(h.id);
-  return '<tr' + (orphans.length ? ' class=fgrp' : '') + '><td><b>' + esc(h.name) + '</b>' + (h.agent_version ? ' <span class=empty>agent ' + esc(h.agent_version) + '</span>' : '')
-      + '<span class="sub mono">' + id + '</span>' + (h.address ? '<span class=sub>' + esc(h.address) + '</span>' : '') + route(h) + '</td>'
-    + '<td>' + ago(h.last_seen_at) + (h.stale ? ' <span class="pill pill--warn">stale</span>' : '') + '</td>'
-    + '<td class=nw>' + memory(h) + '</td><td class=nw>' + disk(h) + '</td><td>' + (Number(h.servers) || 0) + '</td>'
-    + '<td>' + (h.accepting ? '<span class="pill pill--ok">open</span>' : '<span class=pill>closed</span>')
-    + ' <button type=button class="btn btn--sm" data-f=accept data-id="' + id + '" data-on=' + (h.accepting ? 0 : 1) + '>' + (h.accepting ? 'Close' : 'Open') + '</button>'
-    + ' <button type=button class="btn btn--sm" data-f=hostip data-id="' + id + '" data-label="' + esc(h.name) + '" data-ip="' + esc(h.public_ip || '') + '">Public IP…</button></td></tr>'
-    + (orphans.length ? '<tr><td colspan=6><span class="pill pill--warn">' + plural(orphans.length, 'orphan', 'orphans') + '</span> '
-      + '<span class=empty>containers on ' + esc(h.name) + ' that no server names:</span> '
-      + orphans.map(l => '<span class=forph><span class=mono>' + esc(l) + '</span><button type=button class="btn btn--sm" data-f=orphan data-id="' + id
-        + '" data-label="' + esc(l) + '">Remove</button></span>').join('') + '</td></tr>' : '');
-}
+ADMIN_JS = r"""
+// --- Servers tab (pages_fleet.py) ---
+const loadServers = (() => {
+const {plural, pct, size, ago, took, meter, line, spark, resultText, logViewer, JOB_PILL} = fleetUI;
+const QUOTAS = __QUOTAS__;   // the hosted plans, for the Provision form's hint
+const TAB = document.getElementById('tab-servers'), $ = id => document.getElementById(id);
+const SRV_PILL = {running: 'pill pill--ok', grace: 'pill pill--warn', read_only: 'pill pill--warn', stopped: 'pill pill--warn', suspended: 'pill pill--warn'};
+const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];
+const UPGRADABLE = ['running', 'grace', 'read_only', 'suspended'];   // fleet.UPGRADABLE: the states a run takes
+const LIMITS = ['quota_mb', 'max_upload_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
+const KIND_WORD = {update: 'environment'};
+let timer = 0, live = false, gen = 0, showDeleted = false, defImage = '', defTag = '', servers = [], autoOn = false;
+let limFor = null, envFor = null, fleetEnv = [];
+const logs = logViewer({sec: $('flogs'), who: $('flogwho'), state: $('flogstate'), note: $('flognote'), text: $('flogtext')});
+
+const words = s => String(s || '').replace(/_/g, '-');
+function tagOf(image){ image = String(image || ''); const i = image.lastIndexOf(':'); return i > image.lastIndexOf('/') ? image.slice(i + 1) : image; }
+const tagRun = s => s.image_tag || tagOf(s.image);
+function outdated(s){ return s.state !== 'deleted' && !!s.outdated; }
 
 // --- hosted servers ---
 function planCell(s){
@@ -309,7 +316,8 @@ function dnsPill(s){
 function serverRow(s){
   const gone = s.state === 'deleted';
   const name = s.url && !gone ? '<a href="' + esc(s.url) + '" target=_blank rel=noopener><b>' + esc(s.label) + '</b></a>' : '<b>' + esc(s.label) + '</b>';
-  return '<tr' + (gone ? ' class=fgone' : '') + '><td>' + name + '<span class="sub mono">' + esc(s.id) + '</span>' + (s.host ? '<span class=sub>on ' + esc(s.host) + dnsPill(s) + '</span>' : '') + '</td>'
+  const host = s.host ? '<span class=sub>on <a href="#machines/' + esc(s.host_id) + '">' + esc(s.host) + '</a>' + dnsPill(s) + '</span>' : '';
+  return '<tr' + (gone ? ' class=fgone' : '') + '><td>' + name + '<span class="sub mono">' + esc(s.id) + '</span>' + host + '</td>'
     + '<td>' + esc(s.username || '(deleted account)') + '<span class="sub mono">' + esc(s.account_id) + '</span></td>'
     + '<td class=nw>' + planCell(s) + '</td><td>' + stateCell(s) + '</td><td>' + versionCell(s) + '</td><td class=nw>' + dataCell(s) + '</td>'
     + '<td class=nw>' + reportCell(s) + '</td><td>' + actionsCell(s) + '</td></tr>';
@@ -344,11 +352,11 @@ function summary(hosts, list, jobs){
   alive.forEach(s => { by[s.state] = (by[s.state] || 0) + 1; });
   const jc = {queued: 0, running: 0, failed: 0};
   list.forEach(s => { for (const k in jc) jc[k] += Number((s.jobs || {})[k]) || 0; });
-  jobs.forEach(j => { if (!j.server_id && j.state in jc) jc[j.state]++; });   // a host's own jobs (an orphan's removal)
+  jobs.forEach(j => { if (!j.server_id && j.state in jc) jc[j.state]++; });   // a host's own jobs (a container's, an orphan's removal)
   live = jc.queued + jc.running > 0 || jobs.some(j => j.state === 'queued' || j.state === 'running');
   const old = alive.filter(outdated).length, repo = defImage.slice(0, defImage.length - defTag.length).replace(/:$/, '');
   const tile = (label, value, detail, cls) => '<div><span>' + label + '</span><b' + (cls ? ' class=' + cls : '') + '>' + value + '</b><small>' + detail + '</small></div>';
-  $('fsum').innerHTML = tile('Hosts', hosts.length, hosts.length ? (hosts.length - stale) + ' fresh' + (stale ? ' · <span class="pill pill--warn">' + stale + ' stale</span>' : '') : 'none yet')
+  $('fsum').innerHTML = tile('<a href="#machines">Machines</a>', hosts.length, hosts.length ? (hosts.length - stale) + ' fresh' + (stale ? ' · <span class="pill pill--warn">' + stale + ' stale</span>' : '') : 'none yet')
     + tile('Servers', alive.length, ORDER.filter(k => by[k]).map(k => by[k] + ' ' + words(k)).join(' · ') || 'none yet')
     + tile('Jobs in flight', jc.queued + jc.running, jc.queued + ' queued · ' + jc.running + ' running'
       + (jc.failed ? ' · <span class="pill pill--warn">' + jc.failed + ' failed</span>' : '') + (live ? '<span class=sub>refreshing every 4 s</span>' : ''))
@@ -383,7 +391,6 @@ async function refresh(){
   showEnv();
   const old = servers.filter(x => outdated(x) && x.host_id && UPGRADABLE.includes(x.state)).length, ob = TAB.querySelector('[data-f=upgold]');
   ob.textContent = 'Upgrade all outdated (' + old + ')'; ob.disabled = !old; ob.dataset.n = old;
-  $('fhosts').innerHTML = hosts.map(hostRow).join('') || '<tr><td colspan=6 class=empty>No hosts. Add one below, then start its agent with the token (cloud/fleet/deploy/README.md).</td></tr>';
   const rows = servers.filter(x => showDeleted || x.state !== 'deleted');
   $('fservers').innerHTML = rows.map(serverRow).join('') || '<tr><td colspan=8 class=empty>No hosted servers.</td></tr>';
   $('fsrvhead').innerHTML = 'one per account on a hosted plan' + (gone ? ' · <button type=button class=linkbtn data-f=deleted>' + (showDeleted ? 'hide' : 'show') + ' ' + gone + ' deleted</button>' : '');
@@ -393,40 +400,8 @@ async function refresh(){
 document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(timer); timer = 0; } else if (live && shown()) refresh(); });
 $('fjstate').onchange = () => refresh();
 
-// --- the log viewer: Logs enqueues a job, the job is polled every 2 s ---
-function logNote(text){ const n = $('flognote'); n.hidden = !text; n.textContent = text || ''; }
-function logOpen(label){ $('flogs').hidden = false; $('flogwho').textContent = label; $('flogtext').hidden = true; $('flogstate').textContent = ''; }
-async function openLogs(id, label){
-  clearTimeout(logTimer); logJob = ''; logFor = {id, label};
-  logOpen(label); logNote('Fetching the log of ' + label + '…'); $('flogs').scrollIntoView({block: 'nearest'});
-  try { const r = await api('/api/admin/servers/' + id + '/logs', {}); watchLog(r.job.id, id, label); refresh(); }
-  catch (e) { logNote('Could not ask for the log: ' + e.message); }
-}
-function watchLog(jobId, id, label){
-  clearTimeout(logTimer); logJob = jobId; logFor = {id, label};
-  logOpen(label); logNote('Fetching the log of ' + label + '…'); $('flogs').scrollIntoView({block: 'nearest'});
-  pollLog(jobId, 0);
-}
-async function pollLog(jobId, n){
-  if (jobId !== logJob) return;
-  let j;
-  try { j = (await api('/api/admin/jobs/' + encodeURIComponent(jobId), undefined, 'GET')).job; }
-  catch (e) { if (jobId === logJob) logNote('Could not read the job: ' + e.message); return; }
-  if (jobId !== logJob) return;
-  if (j.state === 'done') {
-    let r = j.result; if (typeof r === 'string') { try { r = JSON.parse(r); } catch (e) { r = {lines: [r]}; } }
-    const lines = r && Array.isArray(r.lines) ? r.lines : [], pre = $('flogtext');
-    pre.textContent = lines.join('\n') || '(the log is empty)'; pre.hidden = false; logNote('');
-    const since = r && r.since ? new Date(r.since) : null;
-    $('flogstate').textContent = 'The last ' + plural(lines.length, 'line', 'lines') + (r && r.container ? ' of ' + r.container : '')
-      + (since && !isNaN(since) ? ', since ' + since.toLocaleString() : '') + (r && r.truncated ? ' (the oldest cut)' : '')
-      + ' · fetched ' + new Date(j.finished_at || Date.now()).toLocaleTimeString();
-    pre.scrollTop = pre.scrollHeight;
-  } else if (j.state === 'failed' || j.state === 'canceled') logNote('The log could not be fetched: ' + (resultText(j) || j.state) + '.');
-  else if (n >= 90) logNote('No answer from the agent after three minutes; is its host stale? The job stays ' + j.state + ' in the Jobs table.');
-  else { logNote('Fetching the log of ' + logFor.label + '… (' + j.state + ')'); logTimer = setTimeout(() => pollLog(jobId, n + 1), 2000); }
-}
-function closeLog(){ clearTimeout(logTimer); logJob = ''; logFor = null; $('flogs').hidden = true; }
+// --- the log viewer (fleetUI.logViewer): Logs enqueues a job, which is polled every 2 s ---
+function serverLogs(id){ return async () => { const r = await api('/api/admin/servers/' + id + '/logs', {}); refresh(); return r.job; }; }
 
 // --- a server's history (Actions → History): its hourly samples of the last 7 or 30 days, one line each ---
 const HISTORY = [['memory_mb', 'Memory', size], ['cpu_pct', 'CPU', pct], ['data_mb', 'Data on disk', size],
@@ -514,7 +489,7 @@ const ASK = {
   rollback: l => 'Roll ' + l + ' back to the container its failed upgrade kept? The live one is removed and the kept one starts in its place. Gamma may already have migrated the data, which the older image can refuse.',
   delete: l => 'Delete ' + l + ' now? Its container, data and off-site copies are removed. This cannot be undone.'};
 async function serverAction(id, label, v){
-  if (v === 'logs') return openLogs(id, label);
+  if (v === 'logs') return logs.show(label, serverLogs(id));
   if (v === 'history') return openHistory(id, label);
   if (v === 'limits') return openLimits(id);
   if (v === 'env') return openEnv(id);
@@ -534,22 +509,13 @@ TAB.addEventListener('click', async (ev) => {
   const b = ev.target.closest('button[data-f]'); if (!b) return;
   const id = b.dataset.id, label = b.dataset.label, go = (fn) => act(b, async () => { await fn(); await refresh(); });
   switch (b.dataset.f) {
-    case 'accept': go(() => api('/api/admin/hosts/' + encodeURIComponent(id), {accepting: b.dataset.on === '1'}, 'PATCH')); break;
-    case 'hostip': {
-      const ip = await ask('The public IP of ' + label + '? With one, the host runs its own Caddy and each server on it gets a DNS record; '
-        + 'blank puts it behind the account server\'s Caddy.', {input: b.dataset.ip || '', blank: true, ok: 'Save'});
-      if (ip !== null) go(() => api('/api/admin/hosts/' + encodeURIComponent(id), {public_ip: ip}, 'PATCH'));
-      break;
-    }
-    case 'orphan': if (await ask('Remove the container ' + label + '? No server row names it; the agent removes the container and its data directory.', {ok: 'Remove', danger: true}))
-      go(() => api('/api/admin/hosts/' + encodeURIComponent(id) + '/orphans/' + encodeURIComponent(label) + '/remove', {})); break;
     case 'upgrade': if (await ask('Upgrade ' + label + ' to ' + defTag + '? Its container restarts on the new image; the old one stays until the new one is healthy.', {ok: 'Upgrade'}))
       go(() => api('/api/admin/servers/' + encodeURIComponent(id) + '/upgrade', {tag: defTag})); break;
     case 'retry': case 'cancel': go(() => api('/api/admin/jobs/' + encodeURIComponent(id) + '/' + b.dataset.f, {})); break;
-    case 'view': watchLog(id, b.dataset.sid, label); break;
+    case 'view': logs.watch(id, label, serverLogs(b.dataset.sid)); break;
     case 'deleted': showDeleted = !showDeleted; refresh(); break;
-    case 'logagain': if (logFor) openLogs(logFor.id, logFor.label); break;
-    case 'logclose': closeLog(); break;
+    case 'logagain': logs.again(); break;
+    case 'logclose': logs.close(); break;
     case 'histclose': histFor = null; $('fhist').hidden = true; break;
     case 'limplan': {
       const msg = $('flimform').querySelector('.msg');
@@ -581,14 +547,6 @@ TAB.addEventListener('click', async (ev) => {
 });
 
 // --- the forms ---
-bind('fhost', async (d, msg) => {
-  const r = await api('/api/admin/hosts', {name: d.name, address: d.address, public_ip: d.public_ip}), box = $('fhosttoken');
-  box.hidden = false;
-  box.textContent = 'GAMMA_FLEET_HOST_TOKEN=' + r.token + '\n\nShown once. On a fresh host, as root, this installs the agent with it'
-    + (r.host.public_ip ? ' and the host\'s own Caddy' : '') + ':\n\n' + r.bootstrap
-    + '\n\nOn a host that runs the agent already, the token goes into its .env (cloud/fleet/deploy/README.md), then docker compose up -d.';
-  say(msg, 'Host ' + r.host.name + ' added.'); $('fhost').reset(); refresh();
-});
 // the username search fills the account id (the id can also be pasted)
 const who = $('fwho'), whoId = $('fwhoid'), provMsg = $('fprov').querySelector('.msg');
 let found = {}, whoTimer = 0;

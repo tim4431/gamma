@@ -8,6 +8,24 @@ delete a hosted Gamma container, give it a new extra environment
 five minutes it reports the host's memory and disk and each container's
 state: memory and CPU use, restarts, start time, an out-of-memory kill,
 data size, and whether its tag names another image in the registry now.
+
+It also reports and manages every other container on the host, by name:
+the account server, the share host, Caddy, the demo and the agent itself.
+It restarts, starts and stops them, fetches their logs, and updates one:
+it pulls the image reference the container was created with and recreates
+the container under the same name, with the configuration Docker reports
+for it, as safely as an upgrade (the old one is kept as `<name>-prev`
+until the new one is up). A failed update can be rolled back.
+
+The agent cannot stop its own container, so it updates, restarts or rolls
+itself back through a helper: a one-shot container from the new image
+(`python -m gammafleet.selfupdate <container> [update|restart|rollback]`),
+with the Docker socket, on no network, removed when it exits. The job is
+done as soon as the helper starts; the new agent reports with its first
+heartbeat. Only one helper runs at a time. If the new agent does not come
+up, the helper stops it and starts the previous agent again as
+`<container>-prev`, so the host still has an agent to take a rollback.
+
 It imports nothing from `gammacloud`; the two share only the HTTP shape.
 The whole picture, including the API and the job payloads:
 [docs/dev/hosted.md](../../docs/dev/hosted.md).
@@ -15,6 +33,7 @@ The whole picture, including the API and the job payloads:
 ```
 fleet/
   gammafleet/agent.py   the loop, the job handlers, the HTTP client
+  gammafleet/selfupdate.py  the helper that updates the agent's own container
   tests/                pytest with a fake Docker client (no Docker needed)
   Dockerfile            the image (python:3.12-slim + docker + boto3)
   requirements.txt

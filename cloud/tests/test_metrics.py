@@ -1,7 +1,7 @@
 """The fleet's history (docs/dev/hosted.md "History"): samples merged by
-the hour with errors summed, series, the purge, what the heartbeat and the
-sync record, the trends on the Servers tab's rows and the metrics
-endpoint."""
+the hour with errors summed, series, the purge, what the heartbeat (every
+container too) and the sync record, the trends on the Servers and Machines
+tabs' rows and the metrics endpoint."""
 
 import json
 from contextlib import closing
@@ -80,6 +80,29 @@ def test_the_heartbeat_and_the_sync_feed_the_history(client, hosting):
     assert s["ref"] == sid
     assert s["data"] == {"memory_mb": 300, "cpu_pct": 12.3, "data_mb": 42, "restarts": 1, "uploads_bytes": 5 << 20,
                          "data_bytes": 9 << 20, "accounts": 2, "active_accounts": 0, "errors": 5}
+
+
+def test_the_heartbeat_samples_every_container(client, hosting):
+    from test_fleet import docker
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    body = {"memory_mb": 8192, "disk_mb": 500_000, "docker": [
+        docker("share", memory_mb=300, cpu_pct=1.25), docker("caddy", status="exited", memory_mb=0, cpu_pct=None)]}
+    assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
+    assert {r["ref"]: r["data"] for r in rows("container")} == {f"{host_id}:share": {"memory_mb": 300, "cpu_pct": 1.2},
+                                                                 f"{host_id}:caddy": {"memory_mb": 0}}
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    share = next(c for c in m["containers"] if c["name"] == "share")
+    assert share["trend"] == [{"at": metrics.hour(), "memory_mb": 300, "cpu_pct": 1.2}]
+    assert [p["at"] for p in m["trend"]] == [metrics.hour()]                 # and the host's own
+    r = client.get("/api/admin/metrics", params={"kind": "container", "ref": f"{host_id}:share"}).json()
+    assert [p["memory_mb"] for p in r["points"]] == [300]
+    put("container", f"{host_id}:share", 24 * 31, {"memory_mb": 5})
+    with closing(db.connect()) as conn:
+        metrics.purge(conn)
+        conn.commit()
+    assert len(rows("container")) == 2
 
 
 def test_the_trends_and_the_metrics_endpoint(client, hosting):

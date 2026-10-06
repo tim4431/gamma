@@ -1,7 +1,8 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
 the server settings with the plans on sale, the environment's configuration
-(read-only) and a test mail, the audit log, the fleet's hosts, hosted servers and
-jobs, the Overview with the operator's alerts, and the fleet's history. Only an
+(read-only) and a test mail, the audit log, the fleet's machines and every
+container on them, hosted servers and jobs, the Overview with the operator's
+alerts, and the fleet's history. Only an
 account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
@@ -374,8 +375,9 @@ def refresh_subscription(account_id: str, request: Request):
 
 
 # --- hosted servers and the fleet (docs/dev/hosted.md) ------------------------
-# Hosts, hosted servers, their limits, environment, jobs and upgrades: the
-# Servers tab. The actions that enqueue a job for the container (logs,
+# The machines and every container on them: the Machines tab. Hosted
+# servers, their limits, environment, jobs and upgrades: the Servers tab.
+# The actions that enqueue a job for a container (a container's own, logs,
 # rollback, one server's upgrade, an orphan's removal) answer with that
 # job, which the page polls at GET /jobs/{id}. An environment variable's
 # value goes in and never comes back out: only names are answered.
@@ -390,6 +392,10 @@ class HostPatch(BaseModel):
     name: str | None = None
     accepting: bool | None = None
     public_ip: str | None = None
+
+
+class ContainerBody(BaseModel):
+    lines: int | None = None
 
 
 class ProvisionBody(BaseModel):
@@ -441,6 +447,30 @@ def patch_host(host_id: str, body: HostPatch, request: Request):
     return {"host": host}
 
 
+@router.delete("/hosts/{host_id}")
+def remove_host(host_id: str, request: Request):
+    """Forget a host no server is on (409 otherwise); its unfinished and
+    failed jobs are canceled. Nothing on the machine is touched."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        fleet.remove_host(conn, host_id, actor=admin["id"])
+        conn.commit()
+    return {"ok": True}
+
+
+@router.post("/hosts/{host_id}/token")
+def rotate_host_token(host_id: str, request: Request):
+    """A new agent token for the host, in this answer only, with the line
+    that installs the agent with it; the old one stops working."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        host, token = fleet.rotate_token(conn, host_id, actor=admin["id"])
+        conn.commit()
+    return {"host": host, "token": token, "bootstrap": fleet.bootstrap_command(token, bool(host["public_ip"]))}
+
+
 @router.post("/hosts/{host_id}/orphans/{label}/remove")
 def remove_orphan(host_id: str, label: str, request: Request):
     """A container on the host that no server row names: a delete job for
@@ -449,6 +479,51 @@ def remove_orphan(host_id: str, label: str, request: Request):
         admin = require_admin(conn, request)
         db.begin_write(conn)
         job = fleet.remove_orphan(conn, host_id, label, actor=admin["id"])
+        conn.commit()
+    return {"job": job}
+
+
+@router.get("/machines")
+def list_machines(request: Request):
+    """The Machines tab: every host with its containers (``fleet.machines``),
+    the host's and each container's ``trend``, and the default image."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        machines = _trended(conn, "host", fleet.machines(conn))
+        trends = metrics.trends(conn, "container", TRENDS["container"], TREND_HOURS)
+        for h in machines:
+            for c in h["containers"]:
+                c["trend"] = trends.get(f"{h['id']}:{c.get('name')}", [])
+        return {"machines": machines, "default_image": fleet.default_image()}
+
+
+@router.post("/hosts/{host_id}/update-all")
+def update_all(host_id: str, request: Request):
+    """A ``container_update`` for every container of the host with a newer
+    image that is not a hosted server's, the agent's own last."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        jobs = fleet.update_all(conn, host_id, actor=admin["id"])
+        conn.commit()
+    return {"jobs": jobs}
+
+
+CONTAINER_ACTIONS = ("restart", "start", "stop", "logs", "update", "rollback")
+
+
+@router.post("/hosts/{host_id}/containers/{name}/{action}")
+def container_action(host_id: str, name: str, action: str, request: Request, body: ContainerBody | None = None):
+    """A job for one container of the host, by its name: ``restart``,
+    ``start``, ``stop``, ``logs`` (``{lines}``, at most 5000), ``update`` or
+    ``rollback`` (``fleet.container_job``)."""
+    if action not in CONTAINER_ACTIONS:
+        raise HTTPException(404, "no such action")
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        job = fleet.container_job(conn, host_id, name, f"container_{action}", admin["id"],
+                                  lines=body.lines if body else None)
         conn.commit()
     return {"job": job}
 
@@ -620,13 +695,15 @@ def job_action(job_id: str, action: str, request: Request):
 # read them, so a job retried a moment ago is no longer listed; any that fall
 # due then are mailed as the next heartbeat would have mailed them.
 
-TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb")}
+TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb"),
+          "container": ("memory_mb", "cpu_pct")}
 TREND_HOURS = 48
 
 
 def _trended(conn, kind: str, rows: list[dict]) -> list[dict]:
     """``rows`` (hosts or servers), each with ``trend``: its samples of the
-    last TREND_HOURS hours in the few series the Servers tab draws inline."""
+    last TREND_HOURS hours in the few series the Servers and Machines tabs
+    draw inline."""
     trends = metrics.trends(conn, kind, TRENDS[kind], TREND_HOURS)
     for row in rows:
         row["trend"] = trends.get(row["id"], [])
@@ -716,10 +793,11 @@ def dismiss_alert(key: str, request: Request):
 
 @router.get("/metrics")
 def get_metrics(request: Request, kind: str, ref: str, hours: int = 168):
-    """A host's or server's hourly samples (``metrics.series``) of the last
-    ``hours``, at most ``metrics.MAX_HOURS``."""
+    """A host's, server's or container's (``<host id>:<name>``) hourly
+    samples (``metrics.series``) of the last ``hours``, at most
+    ``metrics.MAX_HOURS``."""
     if kind not in metrics.KINDS:
-        raise HTTPException(400, "kind is host or server")
+        raise HTTPException(400, "kind is host, server or container")
     hours = max(1, min(hours, metrics.MAX_HOURS))
     with closing(db.connect()) as conn:
         require_admin(conn, request)

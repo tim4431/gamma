@@ -22,7 +22,7 @@
   python manage.py settings [<key> <value>]       show the sign-up settings, or set one (an empty value clears it)
   python manage.py subscriptions [--status S]     the Stripe subscription copies
   python manage.py billing-sync                   reconcile them with Stripe now
-  python manage.py hosts                          the fleet's hosts
+  python manage.py hosts                          the fleet's hosts, with their containers and updates available
   python manage.py add-host <name> [--address A] [--public-ip IP]
                                                   a new host; prints its agent token once
   python manage.py servers                        the hosted servers
@@ -302,7 +302,8 @@ def cmd_hosts(args):
         print(f"{h['name']:<16} {h['id']:<16} {'accepting' if h['accepting'] else 'closed':<9} "
               f"{'stale' if h['stale'] else 'fresh':<5} mem={h['memory_used_mb']}/{h['memory_mb']}MB "
               f"committed={h['committed_mb']}MB free={h['free_mb']}MB disk={h['disk_used_mb']}/{h['disk_mb']}MB "
-              f"servers={h['servers']} seen={h['last_seen_at'] or 'never'}"
+              f"servers={h['servers']} containers={len(h['containers'])} "
+              f"updates={len(fleet.updatable(h['containers']))} seen={h['last_seen_at'] or 'never'}"
               + (f" ip={h['public_ip']} dns={h['dns']}" if h["public_ip"] else "")
               + (f" orphans={','.join(h['orphans'])}" if h["orphans"] else ""))
 

@@ -260,8 +260,9 @@ page) and the **app** shell (a sidebar and a content column):
 - **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs. The
   address's hash names the open one: `/admin#servers` opens Servers, a
   click on a tab sets the hash (through the history, so the back button
-  returns to the tab before), and a link to `#billing` switches to it; no
-  hash, or an unknown one, opens the Overview.
+  returns to the tab before), and a link to `#billing` switches to it;
+  `#machines/<host id>` opens the Machines tab on that machine. No hash, or
+  an unknown one, opens the Overview.
   - **Overview**, open on load: *Needs attention*, the open alerts with
     how long each has been open, a link to its tab and *Dismiss*; then
     tiles for accounts, what is paid and brings in a month, servers by
@@ -284,9 +285,15 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
-  - Servers: the fleet's hosts, the hosted servers with their 48-hour
-    sparklines and history, upgrades in waves and the job queue
+  - Machines: the fleet's hosts as cards, and for the one selected every
+    container on it (the account server, the share host, Caddy, the demo,
+    the agent, the hosted servers) with its image, state and use, and
+    restart, stop, start, logs, update and rollback; the host's placement,
+    public IP, name, token, removal and recent jobs
     ([hosted.md](hosted.md) "Admin").
+  - Servers: the hosted servers with their 48-hour sparklines and
+    history, upgrades in waves and the job queue ([hosted.md](hosted.md)
+    "Admin").
   - Billing: what the subscriptions bring in, the subscription copies by
     status, each with a Refresh from Stripe and a link into Stripe's
     dashboard, and the newest webhook events ([billing.md](billing.md)).

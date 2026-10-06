@@ -23,7 +23,8 @@ Code:
   (`plan_changed`, `tick`), the limits answer, a server's own limits and
   environment, admin actions;
 - `cloud/gammacloud/fleet.py`: hosts, placement, the job queue, upgrade
-  and update runs in waves, *outdated* and automatic upgrades;
+  and update runs in waves, *outdated* and automatic upgrades, and every
+  container a host runs with its jobs ("A machine's containers");
 - `cloud/gammacloud/dns.py`: the Cloudflare record of each server on a
   routed host ("Deployment");
 - `cloud/gammacloud/alerts.py` and `metrics.py`: what the operator is
@@ -34,8 +35,9 @@ Code:
 - `cloud/gammacloud/routers/hosted.py` (`/api/hosted/*`),
   `routers/fleet.py` (`/api/fleet/*`), and the blocks at the end of
   `routers/admin.py`;
-- `cloud/gammacloud/pages_fleet.py` and `pages_overview.py`: the Admin
-  page's Servers and Overview tabs;
+- `cloud/gammacloud/pages_machines.py`, `pages_fleet.py` and
+  `pages_overview.py`: the Admin page's Machines, Servers and Overview
+  tabs (`pages_fleet.py` also holds what the first two share);
 - `cloud/fleet/`: the agent, package `gammafleet`, which imports nothing
   from `gammacloud`.
 
@@ -55,15 +57,16 @@ an upgrade moves that tag. The default tag is the Admin page's setting
 
 The first three were added in schema step 9 (`db.py`), `hosts.orphans`
 in step 10, `hosts.public_ip`, `hosted_servers.overrides`, `env`,
-`dns_record_id` and `dns_target`, `alerts` and `metrics` in step 11.
+`dns_record_id` and `dns_target`, `alerts` and `metrics` in step 11,
+`hosts.containers` in step 12.
 
 | table | what |
 |---|---|
-| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `orphans` (JSON list: the labels of containers its agent reported that no server row on the host names), `public_ip` (the address its own Caddy answers on, `''` for the host behind the account server's Caddy), `last_seen_at` |
+| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `orphans` (JSON list: the labels of containers its agent reported that no server row on the host names), `public_ip` (the address its own Caddy answers on, `''` for the host behind the account server's Caddy), `last_seen_at`, `containers` (JSON list: every container on the host as the last heartbeat's `docker` list gave it, hosted ones too; "A machine's containers") |
 | `hosted_servers` | one per account (`account_id` unique): `label` (the hostname label, the username at creation, unique), `host_id`, `client_id` (its OIDC client, kind `container`), `image_tag` (the tag it runs), `state`, `read_only`, `limits` (the last sync answer, JSON, which holds the container's size too), `report` (what the container last reported, plus the agent's `agent` part), `reported_at`, `synced_at`, `state_changed_at`, `created_at`, `deleted_at`, `overrides` (JSON: the operator's own numbers for this server over its plan's), `env` (JSON: its own extra environment variables), `dns_record_id` and `dns_target` (its Cloudflare record's id and the address it points at, `''` for none) |
-| `fleet_jobs` | the queue: `host_id`, `server_id` (empty for an orphan's removal), `kind`, `payload` (JSON), `state`, `attempts`, `result` (JSON text, 4000 chars at most; a `logs` job's 100,000, its oldest lines dropped first), `wave` (`<run>/<nnn>` for an upgrade or update run), `created_at`, `started_at`, `finished_at` |
-| `alerts` | one per problem the operator is told about ("Alerts"): `key` (what it is about, `job:<id>`, `down:<server id>`, …), `kind` (the key's first part), `text`, `link` (the Admin tab, `#servers`), `first_at` (when it opened), `last_at` (when it was last found), `mailed_at`, `resolved_at`, `dismissed_at` |
-| `metrics` | one sample per host or server and hour ("History"): `kind` (`host` or `server`), `ref` (its id), `at` (the start of the hour), `data` (JSON: numbers only) |
+| `fleet_jobs` | the queue: `host_id`, `server_id` (empty for an orphan's removal and a container's job), `kind`, `payload` (JSON), `state`, `attempts`, `result` (JSON text, 4000 chars at most; a `logs` or `container_logs` job's 100,000, its oldest lines dropped first), `wave` (`<run>/<nnn>` for an upgrade or update run, or *Update all* on a machine), `created_at`, `started_at`, `finished_at` |
+| `alerts` | one per problem the operator is told about ("Alerts"): `key` (what it is about, `job:<id>`, `down:<server id>`, …), `kind` (the key's first part), `text`, `link` (the Admin tab, `#servers` or `#machines/<host id>`), `first_at` (when it opened), `last_at` (when it was last found), `mailed_at`, `resolved_at`, `dismissed_at` |
+| `metrics` | one sample per host, server or container and hour ("History"): `kind` (`host`, `server` or `container`), `ref` (its id; a container's is `<host id>:<name>`), `at` (the start of the hour), `data` (JSON: numbers only) |
 
 A job is `queued` (the agent may take it), `held` (a later wave of an
 upgrade or update run), `running` (handed to the agent), `done`, `failed`
@@ -346,14 +349,20 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   pulled the newest image), and a done `rollback` whose reported image is
   `FLEET_IMAGE:<tag>` sets `image_tag`, with `image_stale` null until
   the next heartbeat. A done `delete` with no server drops its label from
-  the host's orphans. Then the waves are checked, and the alerts brought
-  up to date ("Alerts"): a failed job is mailed once the result is
-  committed.
+  the host's orphans. A done `container_update` sets that container's
+  `image_stale` to false in the host's `containers`, and a done
+  `container_rollback` to null, until the next heartbeat. Then the waves
+  are checked, and the alerts brought up to date ("Alerts"): a failed job
+  is mailed once the result is committed.
 - `POST /api/fleet/heartbeat` `{agent_version, memory_mb, disk_mb,
   memory_used_mb, disk_used_mb, containers: [{label, running, health,
   memory_mb, memory_limit_mb, cpu_pct, restarts, started_at, oom_killed,
-  data_mb, image, image_stale}]}` (what each container field is: [The
-  agent](#the-agent)) updates the host
+  data_mb, image, image_stale}], docker: [{id, name, image, image_id,
+  status, health, created_at, started_at, restarts, restart_policy,
+  memory_mb, memory_limit_mb, cpu_pct, image_stale, managed, self,
+  compose, ports}]}`. `containers` are the hosted servers; `docker` is
+  every container on the host, the hosted ones included (agent 0.3.0 on;
+  what each field is: [The agent](#the-agent)). The body updates the host
   (`last_seen_at` too) and, for each container of a server on this host,
   the server's `report.agent` (with its own `last_seen_at`). A field an
   older agent does not send, or sends as nonsense, is kept as unknown:
@@ -361,9 +370,16 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   `oom_killed` false. A label that
   no server row on this host names, in any state, is an orphan. Each
   heartbeat replaces the host's `orphans`, and the admin's view leaves out
-  a label a row has named since. The host's use and each server's
-  container go into the hour's samples ("History"), the waiting servers
-  are placed, and the alerts are brought up to date ("Alerts").
+  a label a row has named since. The `docker` list replaces the host's
+  `containers` (`fleet._docker_entry`): every field is checked, text cut
+  to length, numbers from 0, a flag true only when it is `true`, a
+  `status` or `health` Docker does not use `""`; an entry with no usable
+  name (Docker's rule, a leading `/` dropped) or a name seen already is
+  skipped, and 200 are kept at most. A heartbeat with no `docker` (an
+  agent before 0.3.0) leaves the list empty. The host's use, each
+  server's container and each entry of `docker` go into the hour's
+  samples ("History"), the waiting servers are placed, and the alerts are
+  brought up to date ("Alerts").
 
 Job payloads and results:
 
@@ -376,6 +392,11 @@ Job payloads and results:
 | `rollback` | `{label}` | `{container, image, previous, health}` (or a `note`: already rolled back) |
 | `logs` | `{label}` | `{container, lines, since}`: the last 200 lines, each with its Docker timestamp; `since` is the oldest one's, or `""` |
 | `update` | `{label, extra_env}`: the whole extra environment from now on (a name left out goes). Queued as `{label}`; `extra_env` is added when the agent takes it | `{container, image, extra_env, health}`, `extra_env` the names; or a `note` when there is no container |
+| `container_restart` | `{container}`: a name from the host's `containers`; no server ("A machine's containers") | `{container, status, health}` |
+| `container_start`, `container_stop` | `{container}` | `{container, status}`, with a `note` when it was so already |
+| `container_logs` | `{container, lines?}`, `lines` at most 5000 | `{container, lines, since}` |
+| `container_update` | `{container}` | `{container, image, previous_image_id, image_id, health}`; for the agent's own, at once, `{container, image, note}` |
+| `container_rollback` | `{container}` | `{container, image_id}` |
 
 A failed job's result is `{"error": "..."}`.
 
@@ -442,6 +463,61 @@ made again when the job would be handed to the agent (`claim` cancels it,
 naming the server) and when it is retried (409). Running it then would
 delete that server's container and data.
 
+**A machine's containers.** The host's `containers` are every container
+its agent reports: the hosted servers' and the host's own services (the
+account server, the share host, Caddy, the demo, the agent itself).
+`fleet.container_job(host_id, name, kind, actor, lines?)` queues a job
+for one of them by its name in that list (404 for a name not there), with
+no server, audited `fleet.container` (`<host id> <name> <kind>`). What the
+agent does with each kind is in [The agent](#the-agent) ("Every container
+on the host").
+
+- A hosted server's container (`managed`) only gives its log: starting,
+  stopping, restarting, updating and rolling it back are its server's own
+  actions, which keep the row in step (409, naming the Servers tab).
+- The agent's own (`self`) is never stopped: it would take no more jobs
+  (409). While it runs, the other container of its pair (its `-prev`, or
+  the container whose `-prev` it is, when a failed update left the old
+  agent running under that name) is not started: that would be a second
+  agent (409).
+- `lines` is a whole number from 1 to 5000.
+- The same job already queued, held or running for the container is
+  answered rather than doubled. A logs job is always new, since it may
+  ask for another number of lines.
+
+`fleet.update_all(host_id)` is *Update all*: a `container_update` for
+each container `fleet.updatable` takes, which is not a hosted server's (an
+upgrade run moves those), not a `-prev` a failed update kept, and has
+`image_stale` true. They are one run on the wave code (run ids start
+`c`): the agent's own is its second wave, `held` until every job of the
+first is done or canceled, since its helper replaces the agent that would
+run them. A failure in the first wave holds it, as in any run. 409 when
+no container has a newer image.
+
+An update of the account server's own container is not refused, but a
+failed one leaves the account server down: the new container is stopped
+and `-prev` kept stopped, so the agent can neither report the result nor
+receive a rollback. The same holds for the Caddy of its project, through
+which the agents reach it. Then it is started on the host itself: `docker
+compose up -d` in `/root/Container/gamma-account`, after pinning the
+previous image tag in its `compose.yml` if the new image is at fault. The
+Machines tab says so before it asks for the update.
+
+An update, restart or rollback of the agent's own container starts a
+helper and is done at once ([The agent](#the-agent)); the new agent is
+there with its first heartbeat, up to a minute later. Until that
+heartbeat, `fleet.machines` gives the agent's container `helper`, the
+kind of that job, and the Machines tab says the agent is being replaced.
+
+`fleet.rotate_token(host_id)` gives the host a new agent token, shown once
+(audited `fleet.host_token`); the old one is refused at once.
+`fleet.remove_host(host_id)` forgets a host that no server is on (a
+deleted server's row may still name it; 409 otherwise). Its jobs that are
+queued, held, running or failed are canceled, since no agent reports on
+them any more and a failed one's alert would stay open; the row goes,
+and its token with it. Nothing on the machine is touched. Audited
+`fleet.host_remove`.
+
 **Retries and timeouts.** `fleet.retry` queues a `failed` or `canceled`
 job again under its id. It refuses any job of a deleted (or purged) server
 but its `delete` job, and a `create` job that a later one replaced (a
@@ -462,9 +538,12 @@ bucket `GAMMA_FLEET_S3_*`.
 The loop: a heartbeat when due (every five minutes, a minute after a
 failed one), one long poll, the job it got. A poll that comes back empty
 within two seconds (a server that does not long-poll) or fails is
-followed by a 10-second sleep. A result that cannot be delivered is
-retried five times. Every failure becomes a `failed` result with the
-error text and is never raised.
+followed by a 10-second sleep. A result that cannot be delivered is sent
+again for about three minutes, the waits doubling from 2 seconds up to 30
+(`REPORT_FOR`): an update of the account server's own container restarts
+it while that very result is due. A 4xx answer (another host's job, or
+one no longer running) ends the tries at once. Every failure becomes a
+`failed` result with the error text and is never raised.
 
 A server's container is `gamma-<label>`, labelled `gamma.label`,
 `gamma.account` and `gamma.plan`, restart `unless-stopped`, with
@@ -542,7 +621,8 @@ data directory, [migrations.md](migrations.md)). A retry while a `-prev`
 exists keeps that one as the fallback and replaces only the failed
 container under the live name. The last known-good container is removed
 only after a new one passed its health check. A failed `update` is the
-same (both share `swap`): the new container stopped, the previous one
+same (both share `swap`, and `container_update` its sequence,
+`swap_container`): the new container stopped, the previous one
 kept, a retry replacing only the failed container, `rollback` bringing
 back the previous one with its old environment. A resize or an `update`
 while a failed upgrade waits (a `-prev`, and a live container on another
@@ -572,7 +652,9 @@ memory use, CPU use, Docker's restart count (`RestartCount`, 0 when
 unknown), `State.StartedAt` as Docker has it (`""` when unknown),
 `State.OOMKilled` (false when unknown), data-directory size and image.
 Memory and CPU use come from one `stats(stream=False)` call, a second or
-two per running container. `cpu_pct` is in percent of one CPU (150.0 is
+two per running container, four containers at a time on a thread pool;
+one call that fails gives that container 0 MB and no CPU figure, and the
+rest stand. `cpu_pct` is in percent of one CPU (150.0 is
 one and a half), as `docker stats` works it out from that call's two
 samples: the container's CPU time over the host's, times the online
 CPUs, to one decimal; null for a container that is not running or when
@@ -585,11 +667,123 @@ reference the container runs (say `ghcr.io/tim4431/gamma:latest`): the
 digest of `images.get_registry_data(ref)` against the `RepoDigests` of
 the local image the container runs, for that repository. True when it
 differs, false when it is the same, null when that cannot be told (an
-image built on the host has no digest, a private registry or no network
-gives no answer, any error). The registry is asked about a reference at
-most once an hour (`REGISTRY_EVERY`), a failure included, and on a
-thread waited for at most 5 seconds, so a registry that hangs never holds
-the heartbeat longer.
+image built on the host has no digest, a reference with no tag and no
+digest or an image id names nothing to compare, a private registry or no
+network gives no answer, any error). A reference pinned to a digest is
+compared with that digest, without asking. The registry is asked about a
+reference at most once an hour (`REGISTRY_EVERY`), a failure included,
+and on a thread waited for at most 5 seconds, so a registry that hangs
+never holds the heartbeat longer.
+
+**Every container on the host.** The heartbeat's `docker` list has one
+entry per container on the host (`containers.list(all=True)`), the hosted
+ones and a kept `-prev` included, sorted by name:
+
+- `id`: the first 12 characters of its id; `name`; `image`: `Config.Image`,
+  the reference it was created with; `image_id`: `sha256:` and the first
+  12 characters of the image it runs;
+- `status`: Docker's (`running`, `exited`, `restarting`, `paused`,
+  `created`, `dead`); `health`: Docker's (`healthy`, `unhealthy`,
+  `starting`), or `""` when the image defines no HEALTHCHECK;
+- `created_at`, `started_at`: Docker's own strings, `""` when unknown or
+  never started; `restarts`: `RestartCount`; `restart_policy`:
+  `HostConfig.RestartPolicy.Name`, `""` for none;
+- `memory_mb`, `cpu_pct`: from the same `stats` call as the hosted
+  entries (0 and null when not running); `memory_limit_mb`:
+  `HostConfig.Memory`, 0 for none;
+- `image_stale`: as above;
+- `managed`: it carries `gamma.label`; `self`: it is the agent's own
+  container, the one whose id starts with the agent's hostname (Docker
+  makes a container's hostname its short id), else the running service
+  `fleet` of the Compose project `gamma-fleet`;
+- `compose`: `{project, service}` from the `com.docker.compose.*` labels,
+  or null; `ports`: the published ports as `docker ps` shows them
+  (`0.0.0.0:443->443/tcp`, `[::]:443->443/tcp`), `[]` for none.
+
+Jobs on any container take its name, `{container}`, with no `server_id`.
+A name that resolves to another container (Docker's lookup also takes an
+id or the start of one) is no container.
+
+- `container_restart`: Docker's restart; `{container, status, health}`.
+- `container_start`, `container_stop`: `{container, status}`, with a
+  `note` when it is already in that state. The agent never stops its own
+  container: nothing could start it again.
+- `container_logs` `{container, lines?}`: the last `lines` lines (200
+  unless named, at most 5000) as `logs` gives them; `{container, lines,
+  since}`.
+- `container_update`: pull the reference in `Config.Image`, then recreate
+  the container under its name on the image pulled (`recreate`), with
+  `swap_container`'s sequence: rename the old one to `<name>-prev` and stop
+  it, create and start the new one, wait, remove `-prev`. The wait is
+  Docker's own health check when the image defines one (healthy within
+  120 seconds, failing at once on `unhealthy`), else still running, not
+  restarted, after 10 seconds. A failure stops the new one (its logs stay)
+  and keeps `-prev` stopped, and the error says so; a retry clones from
+  that `-prev` and replaces only the failed container. A container already
+  on the image pulled, with no `-prev`, is left alone (a `note`); a
+  stopped one is replaced by a stopped one (a `note`). Refused: a hosted
+  server (its own jobs upgrade it), a container Docker removes as it stops
+  (`--rm`, no `-prev` to keep), an image id, a reference pinned to a
+  digest or with no tag, and a local build (no registry in the name and no
+  digest from one on the image; an image pulled from Docker Hub, such as
+  `caddy:2-alpine`, has one). The result is `{container, image,
+  previous_image_id, image_id, health}`.
+- `container_rollback`: with a `-prev`, stop and remove the container
+  under the name, start `-prev`, rename it back, wait as above; `{container,
+  image_id}`. Without one: "nothing to roll back to". A hosted server is
+  refused.
+
+The new container's configuration is cloned from the old one's inspect
+data (`clone_config`), and created through the low-level API
+(`api.create_container_from_config`):
+
+- `Config`: `Hostname`, `Domainname`, `User`, `AttachStdin`,
+  `AttachStdout`, `AttachStderr`, `ExposedPorts`, `Tty`, `OpenStdin`,
+  `StdinOnce`, `Env`, `Cmd`, `Healthcheck`, `ArgsEscaped`, `Image`,
+  `Volumes`, `WorkingDir`, `Entrypoint`, `NetworkDisabled`, `OnBuild`,
+  `Labels`, `StopSignal`, `StopTimeout`, `Shell`. Docker merges the image's
+  own settings into a container's, so what the old image supplied, and
+  the container has unchanged, is left out: its environment entries and
+  labels, its entrypoint and command, working directory, user, health
+  check, stop signal and shell. The new image's own apply instead. Left
+  out too: a `Hostname` that is the old short id, and `MacAddress`.
+- `HostConfig` as it is. An anonymous volume (one Docker made for an
+  image's VOLUME, in no bind or mount of `HostConfig`) is mounted again by
+  its name, as Compose does, so its data stays; the old container is
+  removed without its volumes.
+- `NetworkingConfig`: the network of `HostConfig.NetworkMode` at create,
+  each other one connected before the start (an older daemon takes one
+  network at create). Each keeps `Aliases` (less the old short id),
+  `IPAMConfig`, `Links` and `DriverOpts`; the rest (address, MAC address,
+  ids) was the old endpoint's own and is left out.
+- Compose's labels stay, so a later `docker compose up -d` finds its
+  configuration hash unchanged. `com.docker.compose.image`, the image id
+  Compose created the container on, takes the new image's id, so Compose
+  finds no new image either.
+
+**The agent's own container.** Stopping it would stop the agent midway,
+so a `container_update`, `container_restart` or `container_rollback` of it
+starts a helper and is done at once: a one-shot container from the image
+pulled (or the one the agent runs, for a restart or a rollback), `python
+-m gammafleet.selfupdate <name> update|restart|rollback`
+(`cloud/fleet/gammafleet/selfupdate.py`), with the agent's Docker socket,
+on no network, removed when it exits, labelled `gamma.fleet.selfupdate`.
+The result is `{container, image, note}`; the new agent reports with its
+first heartbeat. While a helper runs, the job does not start a second
+one. The helper runs the same `recreate` and `restore`. The agent it stops
+finishes reporting its job first: on SIGTERM it exits once the job in
+hand is done. If the new agent does not come up, the helper stops it and
+starts the previous one again, still named `<name>-prev`, so the host keeps
+an agent. That agent can roll itself back (`container_rollback`, since
+nothing then stops it) or retry the update. An agent already on the image
+pulled starts no helper.
+
+These handlers can run again too: an update that died after the rename
+finds `-prev` and goes on; one run again after it finished finds the
+newest image and does nothing; a rollback starts `-prev` before it
+renames it, so one that died midway finds it under either name and goes
+on (one run again after it finished has no `-prev`: "nothing to roll back
+to").
 
 ## Alerts
 
@@ -600,7 +794,7 @@ last before it is mailed.
 
 | key | when | settle |
 |---|---|---|
-| `job:<id>` | a job is `failed` (any kind but `logs`): "create job for alice failed: pull failed". A retry or a cancel ends it | 0 |
+| `job:<id>` | a job is `failed` (any kind but `logs` and `container_logs`): "create job for alice failed: pull failed". A retry or a cancel ends it | 0 |
 | `waiting:<server id>` | a `provisioning` server has no host | 10 min |
 | `stuck:<server id>` | a `provisioning` server has had a host for over an hour (`state_changed_at`) | 0 |
 | `down:<server id>` | a server in `running`, `grace`, `read_only` or `suspended` whose agent last reported its container not running ("is down") or `unhealthy`. An admin's *Stop* counts too | 10 min |
@@ -608,10 +802,14 @@ last before it is mailed.
 | `host_stale:<host id>` | a host that has reported once is silent past `fleet.STALE_AFTER` | 0 |
 | `host_full:<host id>:memory` | the memory committed to its servers is 90% or more of what can be placed on it (`memory_mb` less the reserve) | 0 |
 | `host_full:<host id>:disk` | `disk_used_mb` is 85% or more of `disk_mb` | 0 |
+| `container_down:<host id>:<name>` | a container of the host's own (not a hosted server's, which has `down:`, nor a `-prev` a failed update kept) whose `restart_policy` is `always` or `unless-stopped` is reported `restarting`, `exited` or `dead`, or `unhealthy`: "gamma-account-share-1 on vps-1 is restarting". It resolves when it runs again | 10 min |
 | `billing:<event id>` | a webhook event of the last 7 days recorded as `mismatch` or `unknown` | 0 |
 | `signup:unguarded` | registration is open with the anti-bot check off | 0 |
 
-All but the last two link to `#servers`; those to `#billing` and
+A server's alerts and a failed job of a server link to `#servers`. A
+host's (`host_stale`, `host_full`, `container_down`) and a failed job with
+no server (a container's, an orphan's removal) link to the machine on the
+Machines tab, `#machines/<host id>`. The last two link to `#billing` and
 `#settings`. A settle of 10 minutes covers two heartbeats, so one bad
 report is not a mail.
 
@@ -652,7 +850,8 @@ comes back.
 
 ## History
 
-`metrics.py` keeps one sample per host or server and hour in `metrics`:
+`metrics.py` keeps one sample per host, server or container and hour in
+`metrics`:
 `record(conn, kind, ref, data)` merges `data` into the row of the current
 hour (`at` is the hour's start). A gauge keeps the last value of the hour,
 and `errors`, a count since the report before, is added up. A value the
@@ -663,12 +862,14 @@ report does not know (`cpu_pct` of a stopped container) is left out.
 | `host` | the heartbeat | `memory_used_mb`, `disk_used_mb`, `committed_mb`, `servers` |
 | `server` | the heartbeat, per container of a server on the host | `memory_mb`, `cpu_pct`, `data_mb`, `restarts` |
 | `server` | the sync | `uploads_bytes`, `data_bytes`, `accounts`, `active_accounts`, `errors` |
+| `container` | the heartbeat, per entry of its `docker` list; `ref` is `<host id>:<name>` | `memory_mb`, `cpu_pct` |
 
 `series(conn, kind, ref, hours)` is the samples of the last `hours`, the
 current one included, oldest first; an hour with no report has no point.
-`trends` reads a few series of every host or server at once for the
-Servers tab's rows. Samples are kept 30 days (`metrics.purge`, from the
-tick). Counts and sizes only, never anything of a library.
+`trends` reads a few series of every host, server or container at once
+for the rows of the Servers and Machines tabs. Samples are kept 30 days
+(`metrics.purge`, from the tick). Counts and sizes only, never anything of
+a library.
 
 ## Admin
 
@@ -676,7 +877,8 @@ The Admin page opens on its **Overview** tab (`pages_overview.py`):
 
 - **Needs attention**: each open alert an admin has not dismissed, with
   how long it has been open, whether it was mailed, a link to the tab that
-  shows it, and *Dismiss*; "Nothing needs attention." when there is none.
+  shows it (for a host's, the machine on the Machines tab), and *Dismiss*;
+  "Nothing needs attention." when there is none.
   The heading says where alerts are mailed, or that they are off;
 - a strip of tiles: accounts (new this week, unverified, deleted), paying
   subscriptions by plan, what they bring in a month, servers by state with
@@ -690,28 +892,84 @@ It reloads every 60 seconds while it is the open tab of a visible page.
 The page's tabs follow the address's hash: `/admin#servers` opens the
 Servers tab, a click on a tab sets the hash (through the history, so the
 back button goes to the tab before), and a link to `#billing` switches
-tabs. An unknown hash opens the Overview.
+tabs. `#machines/<host id>` opens the Machines tab on that machine, and
+selects it when the tab is open already. An unknown hash opens the
+Overview.
+
+The **Machines** tab (`pages_machines.py`) is the hosts and every
+container on them:
+
+- **a card per machine**, in a grid: its name; pills for where it sits
+  (*entrance*, the one behind the account server's Caddy, or *routed* and
+  its public IP, with *no dns token: closed* while DNS is off), its last
+  heartbeat (*seen 2 min ago*, or *stale* past 15 minutes), *closed* when
+  it takes no new servers, and the agent's version with *update* when the
+  registry has a newer image of it; two thin meters with a sparkline of
+  the last 48 hours each, memory committed to servers of the total (then
+  the reserve) and disk used of the total; "N containers · M running", and
+  *K updates* when containers of its own have a newer image. A card is a
+  link to `#machines/<host id>`, which selects it. The last card, *Add
+  machine*, opens a form for a name, a note and the public IP; the new
+  machine is selected and shows its agent token once, with the line that
+  installs the agent with it (`--edge` when it has a public IP);
+- **the machine selected**, under the cards: its pills again; *Open* or
+  *Close placement*, *Public IP…* (blank takes it away), *Rename…*,
+  *Rotate token…* (which shows the new token and the line, once),
+  *Remove…* (only while no server is on it) and *Update all (K)*, whose
+  question names the containers it updates, the agent last; one line of
+  its id, note, servers and free memory;
+- **containers**: the machine's own first, then the hosted servers', each
+  group by name. Each row has the name, with an *agent* pill for the
+  agent itself, *kept* for a `-prev` a failed update kept, *orphan* for a
+  hosted container no server row names, and under it the Compose project
+  and service, or for a hosted one a link to the Servers tab with the
+  account's username and the server's state; the image reference, *newer
+  image* when the registry has another for its tag, and the short image
+  id; the status (*running* green; *restarting*, *exited*, *dead* or
+  *unhealthy* in the warning colour) and its health; how long it has run,
+  and when it was made; CPU and memory (of its limit) with their
+  sparklines; restarts and the restart policy; the published ports; and
+  *Logs*, *Restart…*, *Update…*, *Stop…* or *Start*, and *Roll back…* when
+  a `-prev` of it is kept. The agent has no *Stop*, and the other
+  container of its pair no *Start* while it runs; after its own update,
+  restart or rollback its status says it is being replaced through a
+  helper until the new agent's first heartbeat (`helper`). A kept `-prev`
+  has only *Logs*; a hosted server's container has a link, "managed: see
+  Servers", and an orphan *Remove…* (the orphan endpoint) and *Logs*.
+  *Restart*, *Stop*, *Update* and *Roll back* ask first, naming the
+  container. For the account server's own container (Compose service
+  `account`) and the Caddy of its project, through which this page comes,
+  the question says the page is unreachable for a few seconds and reloads
+  itself after; the page then polls the job every 2 seconds, and reloads
+  once a request has failed and one succeeds again, or the job is done
+  (five minutes at most). For an update of either it also says that a
+  failed one leaves it down, out of the agent's reach, and how to start it
+  on the host ("A machine's containers"). Stopping one of them says that
+  only the machine itself can start it again;
+- **logs**: the viewer the Servers tab has, with 200, 1000 or 5000 lines
+  (a change fetches again), *Fetch again* and *Close*; a done
+  `container_logs` job in the jobs below has *View*;
+- **recent jobs**: the machine's last 20, its servers' and its
+  containers', each with its age, kind (a container's without its
+  `container_` prefix, an `update` as *environment*), wave, the container
+  or server, state, duration and the first 160 characters of the result,
+  with *Retry* and *Cancel* as on the Servers tab.
+
+The tab reloads every 10 seconds while a job of the machine selected is
+queued or running, and only while it is the open tab of a visible page.
+Otherwise nothing polls.
 
 The **Servers** tab (`pages_fleet.py`), top to bottom:
 
 - **a summary strip** (the portal's shared `.tiles`, as on the Billing
-  tab): hosts (fresh and stale), servers by state, jobs
-  queued, running and failed, and the default image with the number of
-  servers that are *outdated* (and whether they are upgraded
-  automatically);
-- **hosts**: name, agent version, id and address; a routed host's public
-  IP with *dns on*, or *no dns token: closed* while DNS is off; the last
-  heartbeat, *stale* past 15 minutes; memory as committed of total, with
-  what is free, the reserve and what is in use, over a thin meter
-  (committed, then the reserve); disk used of total over another, each
-  with a sparkline of the last 48 hours of its use; the server count; *Open* / *Close* for placement and *Public IP…* (blank
-  takes it away). A host with orphans gets a row under it with each label
-  and *Remove*. *Add host* takes a name, a note and the public IP, and
-  shows the agent token once with the line that installs the agent with
-  it (`--edge` when the host has a public IP);
-- **hosted servers**: the label linked to its address, its id and host,
-  and on a routed host *dns ok* once its record points at the host's IP,
-  else *dns pending* (the last error on hover);
+  tab): machines (fresh and stale; the label links to the Machines tab),
+  servers by state, jobs queued, running and failed, and the default image
+  with the number of servers that are *outdated* (and whether they are
+  upgraded automatically);
+- **hosted servers**: the label linked to its address, its id and host
+  (a link to it on the Machines tab), and on a routed host *dns ok* once
+  its record points at the host's IP, else *dns pending* (the last error on
+  hover);
   the account (username and id); the plan with its quota, memory and
   CPUs, and a *custom* pill when it has limits of its own; pills for the
   lifecycle state, *read-only* where the state does not say it, *up*,
@@ -729,9 +987,10 @@ The **Servers** tab (`pages_fleet.py`), top to bottom:
   fills the account id. It says so when the account already has a
   server, is on a plan without one, or has not confirmed its address;
 - **logs**: *Logs* enqueues a `logs` job. The viewer under the servers
-  shows a "fetching" strip and polls `GET /jobs/{id}` every 2 seconds (for
-  three minutes at most), then the lines in a scrolling monospace block,
-  with *Fetch again* and *Close*. A done `logs` job in the Jobs table has
+  (`fleetUI.logViewer`, which the Machines tab uses too) shows a
+  "fetching" strip and polls `GET /jobs/{id}` every 2 seconds (for three
+  minutes at most), then the lines in a scrolling monospace block, with
+  *Fetch again* and *Close*. A done `logs` job in the Jobs table has
   *View*;
 - **history**: *History* opens the server's samples of the last 7 or 30
   days under the servers, like the log viewer: memory, CPU, data on disk,
@@ -750,29 +1009,43 @@ The **Servers** tab (`pages_fleet.py`), top to bottom:
   placeholder and the note name) and automatic upgrades on or off, saved
   through `PATCH /settings`; an image tag and a wave size, for every
   running server, and *Upgrade all outdated (N)* with that wave size;
-- **jobs**: the last 100, filtered by state. Each row has its age, the
-  kind (an `update` reads *environment*; an upgrade's tag or *resize*; for
-  a run, the job's wave and the run's servers done of total), server,
-  host, state, duration and the first 160 characters of the result (all
-  of it on hover), with *Retry* (failed or canceled) and *Cancel* (queued,
-  held or failed).
+- **jobs**: the last 100 of every machine, filtered by state. Each row has
+  its age, the kind (an `update` reads *environment*; an upgrade's tag or
+  *resize*; for a run, the job's wave and the run's servers done of
+  total), the server (or the container a container's job names), host,
+  state, duration and the first 160 characters of the result (all of it
+  on hover), with *Retry* (failed or canceled) and *Cancel* (queued, held
+  or failed).
 
 The tab reloads every 4 seconds while a job is queued or running, and
 only while it is the open tab of a visible page. Otherwise nothing polls.
 A reload waits while an *Actions* menu has the focus.
 
-The API behind it (`/api/admin`, admins through a portal session only):
+The API behind both (`/api/admin`, admins through a portal session only):
 
 - `GET /hosts`: each host with `servers`, `committed_mb`, `reserve_mb`,
-  `free_mb`, `orphans`, `public_ip` and `dns` (`on`, `off` while DNS is
-  off, `""` for a host with no public IP). `POST /hosts` `{name, address,
-  public_ip}` → `{host, token, bootstrap}` (the token, and the
-  `bootstrap.sh` line with it, are in this answer only),
+  `free_mb`, `orphans`, `containers`, `public_ip` and `dns` (`on`, `off`
+  while DNS is off, `""` for a host with no public IP). `POST /hosts`
+  `{name, address, public_ip}` → `{host, token, bootstrap}` (the token, and
+  the `bootstrap.sh` line with it, are in this answer only),
   `PATCH /hosts/{id}` (`name`, `accepting`, `public_ip`); a public IP that
   is not an IPv4 or IPv6 address is a 400, and one is stored in its usual
   form. `POST /hosts/{id}/orphans/{label}/remove` → `{job}`. Each host
   has `trend`: its samples of the last 48 hours, `{at, memory_used_mb,
   disk_used_mb}`;
+- `GET /machines` → `{machines, default_image}`: each host as `GET /hosts`
+  gives it, with `trend`, `agent_stale`, `updates` and its last 20 `jobs`,
+  and each of its `containers` with `kept`, `trend` (`{at, memory_mb,
+  cpu_pct}` for the last 48 hours) and, for a hosted one, `label`,
+  `server` (`{id, label, state, username}` or null) and `orphan`; the
+  agent's own with `helper` (`fleet.machines`, "A machine's containers").
+  `POST /hosts/{id}/containers/{name}/{action}`, `action` one of
+  `restart`, `start`, `stop`, `logs` (`{lines}`), `update`, `rollback` →
+  `{job}` (`fleet.container_job`; 404 for another action).
+  `POST /hosts/{id}/update-all` → `{jobs}` (`fleet.update_all`).
+  `POST /hosts/{id}/token` → `{host, token, bootstrap}`, the new token in
+  this answer only. `DELETE /hosts/{id}` → `{ok}` (409 while a server is
+  on it);
 - `GET /servers` → `{servers, default_image, auto_upgrade}`, each server
   with `memory_mb`, `cpus`, `quota_mb`, `image`, `outdated` and
   `outdated_why` (`tag`, `image` or `""`), `overrides` and `plan_limits`
@@ -795,12 +1068,13 @@ The API behind it (`/api/admin`, admins through a portal session only):
   unset: [NAME]}` → `{names}` (400 for a bad or reserved name or value);
 - `GET /jobs?state=&limit=`: each job with `duration_s`, and for one of
   an upgrade or update run `wave_total` and `wave_done` (the run's jobs,
-  and how many are done). A `logs` job's lines are only counted there
-  (`line_count`); `GET /jobs/{id}` has the whole result.
-  `POST /jobs/{id}/retry|cancel`;
-- `GET /metrics?kind=host|server&ref=<id>&hours=<n>` → `{kind, ref, hours,
-  points}` (`metrics.series`; `hours` 168 by default, at most 720; 400 for
-  another kind);
+  and how many are done). A `logs` or `container_logs` job's lines are
+  only counted there (`line_count`); `GET /jobs/{id}` has the whole
+  result. A job with no server has the label or container its payload
+  names as `label`. `POST /jobs/{id}/retry|cancel`;
+- `GET /metrics?kind=host|server|container&ref=<id>&hours=<n>` → `{kind,
+  ref, hours, points}` (`metrics.series`; a container's `ref` is `<host
+  id>:<name>`; `hours` 168 by default, at most 720; 400 for another kind);
 - `GET /overview` → `{alerts, accounts: {total, new_7d, unverified,
   deleted}, billing: {…billing.admin_summary, enabled}, fleet: {hosts:
   {fresh, stale}, servers: {by_state, outdated}, jobs: {queued, running,
@@ -830,8 +1104,9 @@ The server actions:
   save through `PATCH /servers/{id}`; *History* opens its history, read
   from `GET /metrics`.
 
-`manage.py`: `hosts` (with committed and free memory, `ip=… dns=on|off`
-for a routed host, and any orphans), `add-host <name> [--address A]
+`manage.py`: `hosts` (with committed and free memory, `containers=N` and
+`updates=K` (what *Update all* would take), `ip=… dns=on|off` for a routed
+host, and any orphans), `add-host <name> [--address A]
 [--public-ip IP]` (prints `GAMMA_FLEET_HOST_TOKEN=…` once, with the
 bootstrap line),
 `servers` (with size, tag, `(outdated: tag)` or `(outdated: image)`, and
@@ -867,7 +1142,7 @@ Two compose projects share the work, joined by one external network:
   subnet `10.203.0.0/24`. Caddy, the agent and every hosted container
   join it, and each container trusts it for `X-Forwarded-For`.
 
-A host is added on the Servers tab or with `manage.py add-host`, which
+A host is added on the Machines tab or with `manage.py add-host`, which
 show its token once with the line that installs the agent on a fresh host
 with it (`fleet.bootstrap_command`: `cloud/fleet/deploy/bootstrap.sh
 --token …`, plus `--edge` for a host with a public IP, and
@@ -879,7 +1154,7 @@ on a host anywhere it needs the token and nothing else.
 name on `gamma-fleet`, which resolves only on its own host. The account
 server's VPS keeps `public_ip` empty: its servers are reached through the
 zone's wildcard record and the account project's Caddy. Every other host
-is *routed*: its `public_ip` (an IPv4 or IPv6 address, set on the Servers
+is *routed*: its `public_ip` (an IPv4 or IPv6 address, set on the Machines
 tab) is where its own Caddy answers (the `edge` profile, with
 `cloud/fleet/deploy/Caddyfile`: a `*.<domain>` site with `tls internal`
 that routes `<label><suffix>.<domain>` to `gamma-<label>:9001` with
@@ -934,7 +1209,12 @@ Moving a server to another host is not built.
   upgrades and the failure that stops them, extra variables read when a
   job is taken, update jobs and update runs, logs and rollback jobs, stuck
   jobs with late results and retries, the job rows' durations and run
-  progress, schema steps 10 and 11, the admin endpoints and the CLI.
+  progress, every container of a host (the heartbeat's `docker` list kept
+  and checked, a container's jobs and what is refused, a done update or
+  rollback and the image, the agent's own container and its helper,
+  *Update all* with the agent last, the machines view), a host's token
+  rotated and the host removed, schema steps 10 to 12, the admin
+  endpoints and the CLI.
 - `cloud/tests/test_dns.py`: the Cloudflare client's requests and errors
   (with `urlopen` replaced), and against a fake zone: a record made once
   and left alone, moved with the host's address and removed with it,
@@ -943,14 +1223,16 @@ Moving a server to another host is not built.
   a purged account's record, no call and no placement on a routed host
   while DNS is off, a kick that waits for its caller's commit, and the
   admin's fields, pills, validation and CLI.
-- `cloud/tests/test_alerts.py`: every kind of alert found and gone again,
+- `cloud/tests/test_alerts.py`: every kind of alert found and gone again
+  (a container of a machine's own down, and where a host's alerts link),
   the settle before a mail, one mail to every admin's confirmed address or
   to the alert address, the switch (off marks nothing), a problem that
   comes back, dismissal, the mails after a job result, a heartbeat and the
   hourly pass, the alert endpoints, the Overview and the test alert.
 - `cloud/tests/test_metrics.py`: samples merged by the hour with errors
-  added up, series, trends and the purge, what the heartbeat and the sync
-  record, the rows' `trend` and the metrics endpoint.
+  added up, series, trends and the purge, what the heartbeat (each
+  container too) and the sync record, the rows' `trend` and the metrics
+  endpoint.
 - `cloud/fleet/tests/test_agent.py`, run from `cloud/fleet` with
   `python -m pytest -q`: the agent against a fake Docker client and a
   fake account server, every job kind with its failures and with a second
