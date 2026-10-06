@@ -378,6 +378,19 @@ def data_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _no_timed_upload_pass():
+    """The upload GC's full pass over every workspace runs only when a test
+    calls it (``upload_gc.reconcile_all``). On the timer the app's start
+    sets (``FIRST_PASS_S`` after the import) it lands in whichever test runs
+    then, and opens the pages.db of that test's own ``data_dir`` — giving
+    a database the test built by hand the whole schema while it checks it."""
+    import gamma.app  # noqa: F401 — create_app starts the thread and the timer
+    from gamma import upload_gc
+    with upload_gc._cond:
+        upload_gc._next_full = None
+
+
 def make_page(guest, title="Test page", properties=None):
     r = guest.post("/api/blocks", json={"parent_id": "root", "content": title})
     assert r.status_code == 200, r.text

@@ -178,7 +178,8 @@ export async function folderScenarios(env) {
 
       await field.click();
       await page.locator('[data-guide="page.labelInput"]').fill("beta");
-      await page.locator(".categorySuggestionItem.categorySuggestionFolder", { hasText: "Beta" }).first().waitFor();
+      // the folder itself, by its whole name: "New label “beta”" holds it too
+      await page.locator(".categorySuggestionItem", { hasText: /^Beta$/ }).waitFor();
       await page.keyboard.press("Enter");
       await field.locator(".categoryBadge.folderChip", { hasText: "Beta" }).waitFor();
       const beta = await user.folder("Beta");

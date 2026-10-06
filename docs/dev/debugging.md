@@ -354,7 +354,9 @@ puzzling path count.
 
 `conftest.py` also holds what several files share: the `data_dir` fixture
 (a data directory of the test's own, for the migration, backup and startup
-tests that must not touch the worker's shared one), `at_once` / `together`
+tests that must not touch the worker's shared one; the upload GC's timed
+full pass is off for the session, since it would open whichever test's
+databases are current a minute after import), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
