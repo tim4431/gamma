@@ -1531,6 +1531,7 @@
   "Lost the connection to Gamma": "与 Gamma 的连接已断开",
   "Low": "低",
   "Low makes reasoning models translate much faster": "“低”让推理模型翻译得快很多",
+  "M tokens": "百万 Token",
   "Made on that server: Settings → Integrations → Manual setup, with the “Read and write” scope, for the workspace to clone": "在那台服务器上创建：设置 → 集成 → 手动设置，选择“读写”范围，针对要克隆的工作区",
   "Maintenance": "维护",
   "Make \"{name}\" a shared workspace? {personal_of} stays its owner and can invite people; it stops counting against their storage. If it is their default, another personal workspace becomes the default.": "将“{name}”设为共享工作区？{personal_of} 仍是其所有者并可以邀请他人；它不再计入对方的存储。如果它是对方的默认工作区，另一个个人工作区将成为默认。",

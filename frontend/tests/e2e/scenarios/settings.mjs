@@ -1736,15 +1736,17 @@ export async function settingsScenarios(env) {
       await until(() => dialog.count().then((n) => n === 0));
       await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).getByText(/working · lab-model/).waitFor();
       assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
-      // The shared allowance: tokens per account / guest per day, 0 = unlimited.
+      // The shared allowance: millions of tokens per account / guest per
+      // day, stored in tokens; 0 = unlimited.
       const perAccount = row(page, "Allowance per account").locator("input");
       assertEq(await perAccount.inputValue(), "0", "unlimited by default");
-      await perAccount.fill("50000");
+      await perAccount.fill("0.05");
       await perAccount.press("Enter");
-      await row(page, "Allowance per guest").locator("input").fill("2000");
+      await row(page, "Allowance per guest").locator("input").fill("0.002");
       await row(page, "Allowance per guest").locator("input").press("Enter");
       await until(() => user.api("/api/admin/ai-providers").then((v) => v.allowance?.accounts === 50000 && v.allowance?.guests === 2000),
         { what: "the allowance saved" });
+      assertEq(await perAccount.inputValue(), "0.05", "the saved allowance reads back in millions");
       const metered = (await member.api("/api/ai/usage")).allowance;
       assertEq(JSON.stringify(metered), JSON.stringify({ limit: 50000, used: 0, exhausted: false }), "the member's allowance");
 

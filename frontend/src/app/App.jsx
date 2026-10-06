@@ -6874,12 +6874,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
   const freshLibrary = useMemo(() => homeLoaded && isFreshLibrary(homeBlocks), [homeLoaded, homeBlocks]);
-  // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
-  // paper while the library still has it: no arXiv download, works offline.
-  const welcomePdf = useMemo(() => {
-    const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
-    return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
-  }, [homeBlocks]);
   // What the two "try this" hints need to know (guide/tours/hints.js), each
   // learnt once per load and never again: whether Gamma Connector is in
   // this browser (its content script answers; the desktop app's Connector
@@ -7010,7 +7004,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       prefsChanged,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
-      welcomePdf,
     },
     tidy: () => setOpenPopover(null),
   });
