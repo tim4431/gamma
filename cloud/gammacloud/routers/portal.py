@@ -55,8 +55,8 @@ def open_gamma(request: Request):
     one place to go (``entrance.destinations``), through that server's
     cloud sign-in, so the person lands signed in; a card to choose from
     when it has several. Signed out goes to the login page and comes back;
-    an account with nowhere to go yet, or an unconfirmed address, gets the
-    Overview, which says what is missing."""
+    an unconfirmed address gets the Overview, which says so, and an account
+    with nowhere to go (a free plan) the Plan page."""
     with closing(db.connect()) as conn:
         account = sessions.resolve(conn, request)
         if not account:
@@ -65,7 +65,7 @@ def open_gamma(request: Request):
         public = accounts.public(account, conn)
         conn.commit()
     if not places:
-        return RedirectResponse("/", status_code=302)
+        return RedirectResponse("/plan" if public["email_verified"] else "/", status_code=302)
     if len(places) == 1:
         return RedirectResponse(entrance.start_url(places[0]["url"]), status_code=302, headers=NO_STORE)
     return HTMLResponse(pages.where_page(public, places), headers=NO_STORE)

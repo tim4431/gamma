@@ -73,8 +73,8 @@ a claim at the next sign-in, or within the hour. For Pro,
 a `create` job, and the owner gets "Your Gamma is ready".
 
 End: a cancel runs to the end of the paid period and can be undone until
-then. After it a Lite or Plus account stays under the free allowance with
-nothing deleted, and a Pro server is read-only at once, stopped after 30
+then. After it a Lite or Plus library is closed with nothing deleted (the
+shared server signs in only an account on a plan), and a Pro server is read-only at once, stopped after 30
 days and deleted after 90, with a mail at each step. A failed payment
 keeps the plan for 7 days. Deleting an account cancels at Stripe first.
 

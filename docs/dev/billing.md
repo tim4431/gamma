@@ -346,8 +346,9 @@ It has six states (`pages_billing.plan_state`):
   button opens the Customer Portal; a paused subscription is held, so it is
   resumed there, not through a new checkout.
 - **Cancelled or read-only.** For Lite and Plus, a section saying that
-  the library stays where it is under the free allowance, with Open and
-  Resume. For Pro, when the server stops being readable and
+  the library is kept but closed until a plan opens it again
+  ([cloud_accounts.md](cloud_accounts.md) "Who the shared server takes"),
+  with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
   while the server is read-only) and Resume (a new checkout of the same
@@ -400,10 +401,12 @@ at registration gets its server once the link is clicked.
   rows of `billing_events` with the account and the outcome.
 
 Refunds, disputes and invoices stay in Stripe's dashboard. On the Accounts
-tab the plan select shows and sets the granted plan, with the day it ends
-(*Grant ends…* sets or clears it) and a "paid" pill when a subscription
-lifts the effective plan above it. Which plans are on sale is the
-Settings tab's Plans section ("Plans on sale"). `manage.py
+tab the Plan column names the plan the account is on, with "paid" when a
+subscription lifts it above the grant and "granted" when the grant gives
+it; the select under it, labelled *grant*, shows and sets the granted plan
+only, with the day it ends beside it (*Grant ends…* sets or clears it).
+Which plans are on sale is the Settings tab's Plans section ("Plans on
+sale"). `manage.py
 subscriptions [--status S]` prints the same list.
 
 ## The website

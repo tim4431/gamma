@@ -559,14 +559,15 @@ def test_plan_page_for_a_library_on_the_shared_server(client, stripe, monkeypatc
     assert "share.gammapdf.test" in client.get("/").text                               # the Overview's plan card
     stripe.subs["sub_1"]["cancel_at_period_end"] = True
     send(client, "customer.subscription.updated", {"id": "sub_1"})
-    assert "goes back to the free allowance" in client.get("/plan").text
+    assert "your library closes then" in client.get("/plan").text
     stripe.subs["sub_1"]["status"] = "past_due"
     send(client, "invoice.payment_failed", {"subscription": "sub_1"})
     assert "Your plan ends on" in client.get("/plan").text and "Your plan ends on" in client.get("/").text
     stripe.subs["sub_1"]["status"] = "canceled"
     send(client, "customer.subscription.deleted", {"id": "sub_1"})
     page = client.get("/plan").text
-    assert "What happens to your library" in page and "free allowance" in page and "data-resume='plus_month'" in page
+    assert "What happens to your library" in page and "it is closed" in page and "data-resume='plus_month'" in page
+    assert ">Open<" not in page                                                       # nothing leads into a closed library
     assert "Readable until" not in page and "Export" not in page
     # each plan is sold only while its home is configured
     monkeypatch.setattr(config, "HOSTED_DOMAIN", "")

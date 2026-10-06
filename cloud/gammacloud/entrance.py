@@ -2,10 +2,12 @@
 entrance").
 
 People start at one address, the shared server's (``app.gammapdf.com``).
-Most of them live there. A Pro account has a server of its own, and anyone
-may be a member of somebody else's. Routing is done by the account server,
-at the moment the shared server asks it to sign the person in: it is the
-one place that knows every account's plan and servers.
+A Lite or Plus library lives there. A Pro account has a server of its own,
+anyone may be a member of somebody else's, and a free account has no
+library online at all: it is shown the plans and is not signed in
+(``accounts.on_shared``). Routing is done by the account server, at the
+moment the shared server asks it to sign the person in: it is the one
+place that knows every account's plan and servers.
 
 ``destinations`` lists where an account's libraries are; ``decide`` is the
 rule the authorize step follows; ``after_sign_in`` is the same rule for a
@@ -16,7 +18,7 @@ the same list for its Open Gamma button.
 
 from urllib.parse import quote
 
-from . import config, db, hosted, oidc, servers
+from . import accounts, config, db, hosted, oidc, servers
 
 # A hosted server in one of these states answers at its address.
 OPEN_STATES = ("running", "grace", "read_only", "suspended")
@@ -40,21 +42,25 @@ def destinations(conn, account_id: str) -> list[dict]:
     open first at the head; each ``{url, kind, name}``:
 
     - ``own``: its hosted server, while that answers;
-    - ``shared``: the shared server, for an account with no server of its
-      own, and for one with a server that also signed in there (the
-      library it had before Pro);
+    - ``shared``: the shared server, for an account that may use it
+      (``accounts.on_shared``: Lite and Plus, and Pro for the library it
+      had before): while the account has no server of its own that
+      answers, or has signed in on the shared server as well;
     - ``team``: other people's hosted servers it has signed in to.
 
-    Servers people run themselves are not listed: they are reached at
-    their own addresses, and the Devices page has them."""
+    A free account has none of the first two. Servers people run
+    themselves are not listed: they are reached at their own addresses,
+    and the Devices page has them."""
     rows = servers.of_account(conn, account_id)
+    account = accounts.by_id(conn, account_id)
     out = []
     own = next((r for r in rows if r["hosted"]), None)
     if own and own["state"] in OPEN_STATES:
         out.append({"url": own["url"], "kind": "own", "name": "Your server"})
     linked = [r for r in rows if not r["hosted"] and not r["local"]]
     shared = shared_home(account_id)
-    if shared and (not out or any(r["url"] == shared for r in linked)):
+    if (shared and account and accounts.on_shared(account)
+            and (not out or any(r["url"] == shared for r in linked))):
         out.append({"url": shared, "kind": "shared", "name": "Your library on Gamma Cloud"})
     for r in linked:
         if r["url"] != shared and hosted.is_server_url(conn, r["url"]):
@@ -76,18 +82,26 @@ def decide(conn, req: dict, account) -> tuple[str, object]:
     - ``("finish", None)``: the code, with no page in between;
     - ``("forward", url)``: its own server instead of the shared one;
     - ``("choose", destinations)``: a card listing its servers;
+    - ``("upgrade", destinations)``: the page that says its plan has no
+      library online and points to the plans, with no way in
+      (``destinations``: the servers it is a member of, if any);
     - ``("confirm", None)``: the card that names the server and asks.
 
     The shared server is Gamma Cloud's own, so nothing is asked there; it
     is also the entrance, so an account whose library is elsewhere is sent
-    on (a server of its own) or shown the choice (several). A hosted
-    server signs its owner in at once, and so anyone who has signed in
+    on (a server of its own) or shown the choice (several), and one with
+    no library at all (a free plan) is shown what it would take and gets no
+    code: the shared server takes only the accounts ``oidc.admits`` lets
+    in, which ``/authorize/continue`` and every token refresh ask as well.
+    A hosted server signs its owner in at once, and so anyone who has signed in
     there before. Everything else (the desktop app, a server someone runs
     themselves, a first visit to another person's hosted server) keeps the
     confirm card: the address asking is not ours to vouch for."""
     client = req["client"]
     if client["kind"] == "share-host":
         places = destinations(conn, account["id"])
+        if not any(p["kind"] in ("own", "shared") for p in places):
+            return "upgrade", places
         if len(places) > 1:
             return "choose", places
         if places and places[0]["kind"] == "own":
@@ -107,6 +121,6 @@ def after_sign_in(conn, req: dict, account) -> str:
     if what == "forward":
         oidc.drop(conn, req)
         return value
-    if what == "choose":
+    if what in ("choose", "upgrade"):
         return f"/authorize/resume?request_id={quote(req['id'])}"
     return oidc.finish(conn, req, account)

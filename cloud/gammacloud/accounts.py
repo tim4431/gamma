@@ -244,6 +244,15 @@ def _rank(plan: str) -> int:
     return config.PLAN_RANK.get(plan, 0)
 
 
+def on_shared(account) -> bool:
+    """Whether the account may use the shared server: its plan gives a
+    library there (``config.shared_limits``: Lite and Plus, and Pro for the
+    library it had before), or it is a Gamma Cloud admin, who runs that
+    server. A free account may not; it publishes pages there from its own
+    Gamma and never signs in."""
+    return bool(config.shared_limits(account["plan"]) or account["is_admin"])
+
+
 def subscription(conn, account_id: str):
     """The account's ``subscriptions`` row, or None."""
     return conn.execute("SELECT * FROM subscriptions WHERE account_id = ?", (account_id,)).fetchone()
