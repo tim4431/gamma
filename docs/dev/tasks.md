@@ -40,12 +40,11 @@ in the worker thread and returns the result. It reports through
 `job.progress(done=, total=, unit=, phase=, item=)`:
 
 - `unit` names what `done` and `total` count: `pages`, `bytes`, `files`,
-  `items`, `papers`, `workspaces`, the research job's `steps`.
+  `items`, `papers`, `workspaces`.
 - `phase` is a short key the interface words (`packing`, `typesetting`,
   `unpacking`, `checking`, `saving`, `copying`, `restoring`, `annotations`,
-  `databases`, `files`, the research job's `searching`, `reading` and
-  `filing`, the paper-handoff row's `browser` and `connector`; `PHASES` in
-  `tasks/taskKinds.js`).
+  `databases`, `files`, the paper-handoff row's `browser` and `connector`;
+  `PHASES` in `tasks/taskKinds.js`).
 - `item` is the thing at hand, a page title or a workspace name.
 - A new phase or unit starts its own counts; a field left out is kept.
 
@@ -129,21 +128,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
 | `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page imported by link | the restore report |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
-| `research` | `research` (`routers/ai.py`) | the chat composer's + menu, "Research this in the background" | `{page_id, title, steps, blocked}` |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
-
-**Research** (`gamma/paper_research.py`) is the one kind that is not a
-transfer: a question the user hands over, answered by the same agent loop
-the chat runs ([ai.md](ai.md#the-tool-loop)) with the reading and web tools
-only, filed as a report page in the folder they started from. The user
-starts it, never the model. Nothing can ask a user who is not there, so it
-arms no changing tool and no approval card, and a paper a publisher blocks
-is reported as blocked — its request shows as a `paper-handoff` row to
-finish by hand. Every action is a progress report, so the job stops at the
-next one. The page is written past the point where stopping is possible.
-Its row opens the report page once it exists, and `onJobFinished`
-(`tasks/useAppJobs.js`) offers it
-in the pill rather than opening it over whatever the user is reading.
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
@@ -199,9 +184,8 @@ actions, where a click opens it (`open`) and how to start it again
 
 `useAppJobs.js` is App's side of the jobs, one instance over that store:
 starting what the menus and dialogs ask for (`startWorkspaceExport`,
-`runBackupImport`, the export dialog's `runExport` / `closeExport`,
-`startResearch`), opening a tray row again (`openTask`) and retrying one
-(`retryTask`). Its `onJobFinished`, which the store calls, says what a
+`runBackupImport`, the export dialog's `runExport` / `closeExport`),
+opening a tray row again (`openTask`) and retrying one (`retryTask`). Its `onJobFinished`, which the store calls, says what a
 window does not show:
 
 - A file a closed dialog left behind is offered in the pill with a
@@ -244,9 +228,7 @@ through the synchronous endpoints.
   the account lifecycle. `test_export_jobs.py` covers every export format
   as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
   snapshots, restores and server backups. The import job is tested in
-  `test_import_review.py`, the indexer in `test_search.py` and the research
-  job in `test_paper_research.py` (its prompt and tool set, the report page
-  it files, the sources it lists, stopping it, and the route).
+  `test_import_review.py` and the indexer in `test_search.py`.
 - Frontend: `tests/tasks.test.mjs` covers the model and kinds, and
   `tests/transferFormats.test.mjs` the export job's body.
 - Browser: the transfers group covers a folder's annotated PDFs closed

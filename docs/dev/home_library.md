@@ -50,6 +50,11 @@ keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
 command, [hotkeys.md](hotkeys.md); not in a share view) opens a palette over
 the library.
 
+- Its page rows are `rankLibraryPages`
+  ([librarySearch.js](../../frontend/src/library/librarySearch.js)) drawn by
+  [PageOption.jsx](../../frontend/src/library/PageOption.jsx), both shared
+  with the chat's `@` picker; the chat's `+` page picker uses the ranking
+  ([ai.md](ai.md#mentioning-library-papers)).
 - With no query it lists pages under three headings: Recent (the recents
   queue), Open tabs, and Everything else by last edit. Each row shows its
   time on the right, viewed for a recent page and modified otherwise; the
@@ -214,7 +219,7 @@ focuses it). It never drops anything: matching items float to the top
 of the current sort and the rest stay in place dimmed (`.homeDim`). A page
 matches on its title or its folder/label chips through `createLibraryMatcher`
 ([librarySearch.js](../../frontend/src/library/librarySearch.js), shared with
-Ctrl+P): the workspace search's typo-tolerant title scorer, case/diacritic-
+Ctrl+P and the chat's page pickers): the workspace search's typo-tolerant title scorer, case/diacritic-
 folded, every whitespace term must hit the title or a chip, and title hits
 outrank chip-only ones.
 

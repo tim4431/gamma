@@ -1,6 +1,6 @@
 // App's side of the background tasks (docs/dev/tasks.md): starting the
 // jobs its menus and dialogs ask for — workspace exports, backup restores,
-// the export dialog's job, research — opening a tray row again, retrying
+// the export dialog's job — opening a tray row again, retrying
 // one, and what to say when a job ends that no window shows. One instance,
 // in App.jsx, over its `useTasks` store and the state the dialogs keep
 // there; `onJobFinished` is what the store's `onFinished` calls.
@@ -13,7 +13,7 @@ import { kindOf, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
 export function useAppJobs({
-  tasks, postPill, setStatus, openBlock, setOpenPopover, setSettingsOpen,
+  tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
   // the export dialog (App's state: its JSX shows it)
   exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder,
   // the import review dialog
@@ -22,8 +22,6 @@ export function useAppJobs({
   pageId, shareMode, exportRawPdf, downloadExport,
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
-  // what a research job is started with
-  folderFilter, chatModel, agentReadChars,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
 
@@ -116,15 +114,6 @@ export function useAppJobs({
       setExportOpen(true);
     } else if (open === "import") {
       setImportReview({ jobId: task.id });
-    } else if (open === "page") {
-      // A finished research job: the report page it filed. The listing
-      // leaves results out, so ask for this one job.
-      if (isActive(task)) setStatus(t("Still working — its page appears when it finishes."));
-      else {
-        tasks.fetchJob(task.id)
-          .then((full) => { if (full?.result?.page_id) openBlock(full.result.page_id); })
-          .catch(() => {});
-      }
     } else if (open === "handoff") {
       // A paper the chat could not download: its /go page leads on to the
       // publisher, and Gamma Connector knows the tab by that address.
@@ -132,20 +121,6 @@ export function useAppJobs({
                   "_blank", "noopener");
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
-    }
-  }
-  // Hand a question to the background researcher (gamma/paper_research.py):
-  // it searches and reads for minutes and files a report page in the folder
-  // being viewed. The tray follows it, and its row opens that page.
-  async function startResearch(question) {
-    if (!question) return;
-    try {
-      await tasks.start("research", { question, folder: folderFilter || "",
-                                      model: chatModel || "", read_char_limit: agentReadChars || 0 },
-                        { pill: true });
-      setStatus(t("Researching in the background — Background tasks has it."));
-    } catch (err) {
-      setStatus(err.message || t("Could not start the research"));
     }
   }
   // Start a task's work again (a row's retry button, the export dialog's
@@ -203,23 +178,6 @@ export function useAppJobs({
       }
       return;
     }
-    if (job.kind === "research") {
-      if (job.state !== "done") {
-        if (started && job.state === "failed") setStatus(t("Research failed: {msg}", { msg: t(job.error) }));
-        return;
-      }
-      if (here) fetchHomeBlocks();
-      // Its report is a page: offer to open it rather than open it over
-      // whatever the user is reading now.
-      tasks.fetchJob(job.id).then((full) => {
-        const pageId = full?.result?.page_id;
-        if (!pageId) return;
-        postPill(`job:${job.id}`, { msg: t("Research finished: {name}.", { name: full.result.title || title }),
-          action: { label: t("Open"), run: () => { openBlock(pageId); postPill(`job:${job.id}`, null); } } },
-        { after: [60000, null] });
-      }).catch(() => {});
-      return;
-    }
     if (!started || shownInDialog) return;
     if (job.state === "done" && job.artifact) {
       if (started.download === "auto") {
@@ -235,5 +193,5 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, startResearch, onJobFinished };
+  return { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
 }

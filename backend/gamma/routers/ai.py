@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (ai_catalog, ai_permissions, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
-                paper_research, search_services, translate_engines)
+                search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -85,7 +85,7 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import actor_of, can_write, require_personal_user_id, require_user_id, require_ws
+from ..auth import actor_of, can_write, require_user_id, require_ws
 from ..blocks_store import PATH_SEP, folder_path
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
@@ -807,22 +807,6 @@ KEEPALIVE_INTERVAL = 15.0
 RELAY_LINES = 64
 
 
-def live_lines():
-    """A relayed stream's queue and a way onto it from any thread:
-    ``(inbox, say)``. ``say(kind, data)`` adds the line ``{kind: data}``
-    without waiting, so it is for status that may be lost when the client
-    reads too slowly (or has left), never for the reply itself."""
-    inbox = queue.Queue(maxsize=RELAY_LINES)
-
-    def say(kind, data):
-        try:
-            inbox.put_nowait(json.dumps({kind: data}) + "\n")
-        except queue.Full:
-            pass
-
-    return inbox, say
-
-
 def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, abandoned=None, inbox=None):
     """Relay the NDJSON line generator ``lines`` from a worker thread and put a
     ``{"ping": 1}`` line in every gap longer than ``interval`` seconds, so an
@@ -836,7 +820,7 @@ def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, abandoned=Non
     watches it to give up. ``inbox`` is the bounded queue the lines pass
     through (made here when not given): a caller that keeps it can add lines
     from other threads with ``put_nowait`` while the source is busy between
-    yields (a helper's status, live_lines)."""
+    yields (a helper's status in ai_chat)."""
     q = inbox if inbox is not None else queue.Queue(maxsize=RELAY_LINES)
     done = object()
     abandoned = abandoned if abandoned is not None else threading.Event()
@@ -1663,30 +1647,6 @@ def ai_revert_change(payload: AIRevert, request: Request):
             **({"preview": e.preview} if e.preview else {})})
 
 
-class ResearchJob(BaseModel):
-    question: str = Field(max_length=paper_research.MAX_QUESTION)
-    folder: str = ""   # the folder (an id) it reads and files the report in: the viewed one
-    model: str = ""    # the connection to answer on; "" = the account's default
-    read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
-
-
-@router.post("/jobs/research")
-def start_research_job(payload: ResearchJob, request: Request):
-    """Research one question in the background and file the report as a page
-    (kind ``research``, docs/dev/tasks.md). The user starts this, never the
-    model: it reads and searches for minutes and writes one page at the end.
-    It needs an editor's workspace (it creates that page) and a personal
-    account (it answers on the account's own AI connection)."""
-    ws = require_ws(request, write=True)
-    user_id = require_personal_user_id(request, "Background research needs a personal Gamma account")
-    try:
-        return paper_research.start(user_id=user_id, ws=ws, question=payload.question,
-                                    folder=payload.folder, model=payload.model,
-                                    read_chars=payload.read_char_limit)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from None
-
-
 class AIChatContextRequest(AIChatRequest):
     title: str = ""  # the conversation's name, the export's heading
 
@@ -1770,10 +1730,17 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # tokens are metered here like the chat's own. What it is doing goes
     # onto a streamed reply as {"helper"} lines, from the thread that runs
     # it: the loop is inside the call that started it until it answers.
-    inbox, say = live_lines()
+    inbox = queue.Queue(maxsize=RELAY_LINES)
+
+    def helper_status(status):
+        try:
+            inbox.put_nowait(json.dumps({"helper": status}) + "\n")
+        except queue.Full:
+            pass  # read too slowly: the helper's next line is its whole state again
+
     scope["helper"] = Helper(
         ws=ws, scope=scope, on_usage=count_usage,
-        on_status=(lambda status: say("helper", status)) if payload.stream else None,
+        on_status=helper_status if payload.stream else None,
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),

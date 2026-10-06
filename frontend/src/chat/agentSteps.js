@@ -156,15 +156,15 @@ export function withHelper(helpers, status) {
 }
 
 // What one helper is doing now, beside its document's name.
-export function helperStatus(h, titleOf = () => "") {
-  const steps = h?.steps ? tn("{n} step", "{n} steps", h.steps) : "";
+export function helperStatus(h) {
+  const steps = h.steps ? tn("{n} step", "{n} steps", h.steps) : "";
   if (helperOver(h)) {
     const how = h.blocked ? t("Needs your browser: {host}", { host: h.blocked })
       : h.state === "failed" ? t("Could not read it") : t("Done");
     return [how, steps].filter(Boolean).join(" · ");
   }
-  if (h?.state === "answering") return t("Writing its answer…");
-  return h?.step ? runningLabel(h.step, titleOf) : steps ? t("Thinking…") : t("Starting…");
+  if (h.state === "answering") return t("Writing its answer…");
+  return h.step ? runningLabel(h.step) : steps ? t("Thinking…") : t("Starting…");
 }
 
 // The sentence of a note change, around the link to its page ({page}).

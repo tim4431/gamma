@@ -17,8 +17,8 @@ show or save::
     ("truncated", True)   the turn hit the provider's output cap
 
 Two callers drive it: the AI chat streams these to the browser
-(``routers/ai.py``), and a background research job consumes them headless
-(``gamma/paper_research.py``). What differs between them is wired in, not
+(``routers/ai.py``), and a :class:`Helper` runs it inside one of the chat's
+calls, for one document. What differs between them is wired in, not
 branched on:
 
 - ``gate`` decides whether a call may run at all. The chat passes
@@ -28,9 +28,8 @@ branched on:
   blocked waits for the PDF from the user's own browser inside the same
   turn.
 
-A job passes neither: nothing can ask a user who is not there, and a blocked
-fetch simply reports what stopped it (its request still shows in Background
-tasks, where the user can hand the page to their browser later).
+A helper passes neither: it has no card to show, so a blocked fetch reports
+what stopped it and the chat's own wait takes over once the helper answered.
 
 Reads of one round run at the same time (:data:`MAX_PARALLEL_CALLS`), since
 four papers fetched one after another cost four round trips of waiting.
@@ -431,7 +430,7 @@ class Helper:
         self.on_status = on_status
         self._ids = itertools.count(1)
 
-    def run(self, *, question: str, system: str, tools: list, label: str = "") -> dict:
+    def run(self, *, question: str, system: str, tools: list, label: str) -> dict:
         """Answer ``question`` with ``tools`` armed; ``label`` names the job
         in its status (the document's title). Returns ``{"text", "actions",
         "usage"}`` — the answer, the calls it made (for the parent's chip)

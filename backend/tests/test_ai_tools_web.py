@@ -304,7 +304,7 @@ class _FakeHelper:
     def __init__(self, ws, scope, answer="Cat qubits, p. 1. Read from an arXiv preprint."):
         self.ws, self.scope, self.answer, self.asked = ws, scope, answer, []
 
-    def run(self, *, question, system, tools, label=""):
+    def run(self, *, question, system, tools, label):
         self.asked.append({"question": question, "system": system, "label": label,
                            "tools": [t["name"] for t in tools]})
         _, action = run_agent_tool(self.ws, {**self.scope, "helper": None},
@@ -359,7 +359,7 @@ def test_a_wall_inside_the_helper_becomes_the_chats_own_card(org, upstream, monk
              "handoff_user": "someone"}
 
     class Blocked(_FakeHelper):
-        def run(self, *, question, system, tools, label=""):
+        def run(self, *, question, system, tools, label):
             from gamma import fetch_handoff
             req = fetch_handoff.open_request("someone", "doi:10.5555/x", wall="captcha",
                                              url="https://journals.example.org/doi/10.5555/x")

@@ -319,7 +319,8 @@ What was built, with its reasoning:
   loop headless, filing a report page. The user starts it; a model that
   could put itself to work for ten minutes unasked is a different product,
   and the reasoning that made changes ask before they run
-  ([ai-permissions.md](ai-permissions.md)) applies here too.
+  ([ai-permissions.md](ai-permissions.md)) applies here too. Removed again
+  in October 2026, with its test file; the chat and its helpers remain.
 
 The two loop pauses are now one mechanism with two policies, which is why
 the extraction came first: `AgentLoop` takes a `gate` (before a call) and a

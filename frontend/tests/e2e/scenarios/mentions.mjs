@@ -122,7 +122,7 @@ export async function mentionScenarios(env) {
       assertEq(await page.getByRole("listbox").count(), 0, "Escape stays dismissed while continuing prose");
       await input.fill("");
       await input.fill("@no-such-paper-xyz");
-      await page.getByText("No matching pages. Try another title.").waitFor();
+      await page.getByText("No matching pages.", { exact: true }).waitFor();
       await input.press("Enter");
       assertEq(requests.length, 0);
       for (const paper of papers.slice(0, 6)) {
@@ -139,6 +139,31 @@ export async function mentionScenarios(env) {
       await input.press("Tab");
       assertEq(await page.locator(".chatReferenceChip").count(), 6);
       assertEq(await input.inputValue(), "@“Cavity readout” ");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("mentions: the picker lists and ranks like quick open — recents first, a label matches", async () => {
+    await user.file(papers[3].id, { labels: ["horlogerie"] });
+    const { ctx, page, input } = await setup();
+    try {
+      // Nothing typed after the @: the recents under their heading, the open page first.
+      await input.fill("@");
+      const list = page.getByRole("listbox", { name: "Library pages" });
+      await list.waitFor();
+      assertEq(await list.locator(".quickOpenSection").first().textContent(), "Recent", "the recents lead an empty query");
+      assertEq(await list.getByRole("option").first().locator(".quickOpenTag").textContent(), "Current", "the open page is tagged");
+      // A label matches like a title, typos included ("horlogerie" is only a label).
+      await input.fill("@horlogeire");
+      const rows = list.getByRole("option");
+      await until(async () => (await rows.count()) === 1, { what: "the label's page alone" });
+      assertEq(await rows.locator(".labelTagBadge").textContent(), "horlogerie", "the row shows its label");
+      await input.press("Enter");
+      assertEq(await input.inputValue(), "@“Atomic clocks” ");
+      // The exact characters a title matched on are marked.
+      await input.fill("@cavity read");
+      await until(async () => (await rows.first().locator("mark").allTextContents()).join("").replace(" ", "") === "Cavityread",
+        { what: "the matches are marked" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

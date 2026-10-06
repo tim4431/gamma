@@ -19,7 +19,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `ink.py`      | `/api/upload-ink`                   | handwriting uploads: one `gamma-ink` file per ink group, stored like any upload |
 | `pdf.py`      | `/api/resolve-pdf`, `/pdf`          | find a real PDF url (arXiv → meta tag → Unpaywall OA), and proxy it (optional local cache) |
 | `metadata.py` | `/api/metadata/*` (`fetch`, `update`, `verify`, `status`, `cite`) | paper metadata + BibTeX + PPT citation (cached on the page) |
-| `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, translate, transcribe, search services, ChatGPT OAuth), `/translate/engines*`, `/jobs/research` | chat orchestration, AI settings, OAuth, translation, background research |
+| `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, translate, transcribe, search services, ChatGPT OAuth), `/translate/engines*` | chat orchestration, AI settings, OAuth, translation |
 | `ai_handoffs.py` | `/api/ai/handoffs/{id}*`         | the chat's fetch handoffs (gamma/fetch_handoff.py): a PDF the user's browser fetches for the chat, from the card or the Gamma Connector |
 | `chats.py`    | `/api/chats/*`, `/api/chat-history*` | the AI chats per bucket (a page, a folder, `home`) and their history (workspace data) |
 | `collab.py`   | `/api/pages/{id}/ops`, `/api/ws/page/{id}` | the op write path + the page websocket (pages, and the `folders` / `labels` trees) |

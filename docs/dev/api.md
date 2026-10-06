@@ -548,7 +548,6 @@ Session accounts only (401 without one; integration tokens 403). A job is its st
 | POST | `/jobs/export` | `{page_id \| folder, mode, pdf, highlights, notes}` (`folder` a folder id) — a page or folder export in any `/pages/{id}/export` mode (`routers/export.py`; any member); its file is the download, its result `{pages, skipped: [{page_id, title, reason}]}` |
 | POST | `/jobs/import` | `{review_id, selected}` — the staged review's selected items imported (`routers/imports.py`; workspace writer); its result is the import report. The same review asked again answers its job (409 with another selection) |
 | POST | `/jobs/workspace-export` | `{ws?, user?, all?, uploads}` — `/export` or `/export-all` as a job whose file is the zip |
-| POST | `/jobs/research` | `{question, folder, model, read_char_limit}` (`folder` a folder id, 400 when it is none; `""` the library) — research the question in the background and file a report page (kind `research`, [tasks.md](tasks.md)); writable workspace and a personal account, 400 without a question. The user starts this, never the model |
 | POST | `/jobs/snapshot` | `{workspaces, uploads, label}` — a snapshot of each (their owner); result `{snapshots, failed}`, failed only when every one did |
 | POST | `/jobs/restore` | multipart `file`, `mode`, `ws?`, `user?` — `/import-data` as a job; the upload is kept until the job read it |
 | POST | `/jobs/restore-snapshot` | `{ws, name, mode}` — a stored snapshot restored (owner) or merged (editor) in place |

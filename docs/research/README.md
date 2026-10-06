@@ -56,6 +56,7 @@ the dev doc named there describes how it works now.
 | [bundle.md](bundle.md) | What the frontend's one startup chunk held, what each first screen downloaded, and what splitting by surface reached. | A dated measurement. The rest of the saving needs the page surface out of `App.jsx` ([dev/frontend-refactor.md](../dev/frontend-refactor.md)). |
 | [hosting.md](hosting.md) | What running Gamma as a multi-tenant service with open registration would take, and where the code assumes one machine. | The sharded shape was not built; Gamma Cloud's hosted containers took its place. Open on a Gamma server: a real default quota, a report path for public shares, terms of service, self-service deletion, shipping logs out. |
 | [cloud-plans.md](cloud-plans.md) | What the Free, Lite, Plus and Pro plans contain and cost beside Zotero's and Obsidian Sync's price lists, and how a paid container learns and enforces its owner's limits. | The design is built, with differences listed in its status paragraph. Not built: the `update` and `sync` fleet jobs, a notice to every hosted admin. Built: [dev/billing.md](../dev/billing.md), [dev/hosted.md](../dev/hosted.md). |
+| [cloud-operations.md](cloud-operations.md) | What the operator of Gamma Cloud can and cannot do from the Admin page: holding a plan back, invites, what a payment's start and end set off, running and updating the fleet, configuring a customer's container, and what a running server reports. | Everything in its work list; a gap in the plan-switch flow is among them. |
 
 ## Onboarding, website and demos
 

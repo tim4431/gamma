@@ -19,7 +19,8 @@ import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
-import { createTitleScorer } from "../library/librarySearch";
+import { recencySections } from "../library/PageOption";
+import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
 import { menuPress } from "../shared/ui/press.js";
@@ -153,7 +154,8 @@ function ChatErrorCard({ message, compact, actions }) {
 // `waiting`: what the running call waits for — the user's answer on an
 // approval card, or a blocked paper from their browser — so nothing spins.
 // `helpers`: the helpers the running call handed documents to, a row each
-// under the pill: the document and what its helper is doing now.
+// under the pill, laid out as a chip: the document and what its helper is
+// doing now.
 function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const live = !!running;
@@ -174,11 +176,11 @@ function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, t
       {live && helpers.length ? (
         <div className="chatHelpers" role="status">
           {helpers.map((h) => (
-            <div key={h.id} className={`chatHelper${h.state === "failed" ? " err" : ""}`}>
+            <div key={h.id} className={`chatToolActionHead plain${h.state === "failed" ? " err" : ""}`} title={h.label}>
               {h.state === "done" ? <CheckIcon size={14} /> : h.state === "failed" ? <XIcon size={14} />
                 : <span className="transferSpin inline" aria-hidden="true" />}
-              <span className="chatHelperName" title={h.label}>{h.label}</span>
-              <span className="chatHelperStatus">{helperStatus(h, titleOf)}</span>
+              <span>{h.label}</span>
+              <span className="chatToolActionNote">{helperStatus(h)}</span>
             </div>
           ))}
         </div>
@@ -365,6 +367,9 @@ export default function ChatDock({
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
   docId, pageAttach, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
+  // App's recents queue ([{id, at}]): with the open tabs, what the page
+  // pickers list first (rankLibraryPages).
+  recentViews,
   pdfSelections, setPdfSelections,
   // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
   // text}], App state like pdfSelections) and the block row the user's
@@ -399,7 +404,7 @@ export default function ChatDock({
   // in a background tab (Settings → AI → Tools); paperSave: {allowOa, saveCopy,
   // fetchMetadata}, how a reply's "Save to library" and save_paper save
   // (Settings → Reading).
-  fetchInBackground = false, delegateReads = true, paperSave = {}, onResearch,
+  fetchInBackground = false, delegateReads = true, paperSave = {},
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
@@ -2089,7 +2094,8 @@ export default function ChatDock({
         <>
         <PaperMentionInput
           key={chatKey}
-          pages={homeBlocks} tree={libraryTree} openTabs={openTabs} selected={chatDocs}
+          pages={homeBlocks} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
+          currentPageId={focusedBlockId} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
           className="chatInput chatInputArea"
@@ -2140,19 +2146,6 @@ export default function ChatDock({
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                   <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
                 </button>
-                {onResearch && agentReads ? (
-                  <button type="button" className="chatPlusMenuItem" disabled={!chatInput.trim()}
-                    onClick={() => { setOpenPopover(null); onResearch(chatInput.trim()); setChatInput(""); }}>
-                    <span className="chatPlusMenuIcon">
-                      <SparklesIcon size={16} />
-                    </span>
-                    <span className="chatPlusMenuLabel">{t("Research this in the background")}</span>
-                    <span className="chatPlusMenuHint">
-                      {chatInput.trim() ? t("Searches and reads for minutes, then files a report page")
-                        : t("Type the question first")}
-                    </span>
-                  </button>
-                ) : null}
               </div>
             ) : null}
           </span>
@@ -2286,48 +2279,30 @@ export default function ChatDock({
               {(() => {
                 // Every page can be context — a page of notes as much as a
                 // paper; the server adds PDF text for pages that carry one.
-                const pages = homeBlocks;
-                if (!pages.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
-                const title = (b) => b.content || t("Untitled");
-                const byRecency = (x, y) => (y.updated_at || "").localeCompare(x.updated_at || "");
-                const row = (b, badge) => (
-                  <label key={b.id} className="docPickerItem" title={title(b)}>
-                    <input
-                      type="checkbox"
-                      checked={chatDocs.includes(b.id)}
-                      disabled={!chatDocs.includes(b.id) && chatDocs.length >= MAX_CHAT_REFERENCES}
-                      onChange={(e) => setChatDocs((prev) => e.target.checked
-                        ? [...prev, b.id]
-                        : prev.filter((id) => id !== b.id))}
-                    />
-                    <span className="attachName">{title(b)}</span>
-                    {badge || null}
-                  </label>
-                );
-                const q = docPickerQuery.trim().toLowerCase();
-                if (q) {
-                  const score = createTitleScorer(q);
-                  const hits = pages
-                    .filter((b) => score && score(b) > 0)
-                    .sort((a, b) => score(b) - score(a) || byRecency(a, b));
-                  return hits.length
-                    ? hits.map((b) => row(b))
-                    : <div className="popoverHint">{t("No pages match “{docPickerQuery}”.", { docPickerQuery: docPickerQuery.trim() })}</div>;
-                }
-                // No search: pages open as tabs first (the likely candidates),
-                // then the rest of the library by recency.
-                const tabIds = (openTabs || []).map((t) => t.id);
-                const inTabs = tabIds.map((id) => pages.find((b) => b.id === id)).filter(Boolean);
-                const rest = pages.filter((b) => !tabIds.includes(b.id)).sort(byRecency);
-                return (
-                  <>
-                    {inTabs.length ? <div className="popoverSection">{t("Open tabs")}</div> : null}
-                    {inTabs.map((b) => row(b, b.id === focusedBlockId
-                      ? <span className="docPickerBadge">{t("current")}</span> : null))}
-                    {rest.length ? <div className="popoverSection">{t("Library")}</div> : null}
-                    {rest.map((b) => row(b))}
-                  </>
-                );
+                if (!homeBlocks.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
+                // Quick open's ranking, as the @ picker's: the query's matches,
+                // or recents, open tabs and the rest under their headings.
+                const rows = rankLibraryPages(homeBlocks, libraryTree, docPickerQuery, { recentViews, openTabs, limit: Infinity });
+                if (!rows.length) return <div className="popoverHint">{t("No pages match “{docPickerQuery}”.", { docPickerQuery: docPickerQuery.trim() })}</div>;
+                const sectionTitle = recencySections();
+                return rows.map(({ page: b, section }, i) => (
+                  <React.Fragment key={b.id}>
+                    {section !== rows[i - 1]?.section && sectionTitle[section]
+                      ? <div className="popoverSection">{sectionTitle[section]}</div> : null}
+                    <label className="docPickerItem" title={b.content || t("Untitled")}>
+                      <input
+                        type="checkbox"
+                        checked={chatDocs.includes(b.id)}
+                        disabled={!chatDocs.includes(b.id) && chatDocs.length >= MAX_CHAT_REFERENCES}
+                        onChange={(e) => setChatDocs((prev) => e.target.checked
+                          ? [...prev, b.id]
+                          : prev.filter((id) => id !== b.id))}
+                      />
+                      <span className="attachName">{b.content || t("Untitled")}</span>
+                      {b.id === focusedBlockId ? <span className="docPickerBadge">{t("current")}</span> : null}
+                    </label>
+                  </React.Fragment>
+                ));
               })()}
             </div>
             <label className="docPickerItem docPickerNotes">

@@ -631,8 +631,9 @@
 .quickOpenInput .searchInput { flex: 1; }
 .quickOpenList { max-height: min(420px, 55vh); overflow-y: auto; }
 .quickOpenRow { border-radius: var(--radius-xs); }
-/* the chip line keeps its file-row cap; the option style would stretch it */
-.quickOpenRow .fileRowLabels { flex: 0 1 auto; }
+/* A page option's chip line (PageOption: here and in the chat's @ picker)
+   keeps its file-row cap; the option style would stretch it. */
+.chatMentionOption .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); }
 /* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
    Actions) and the time or count on a row's right. */

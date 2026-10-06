@@ -4276,6 +4276,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionHeading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; border-bottom: 1px solid var(--border); }
 .chatMentionHeading span, .chatMentionHint { color: var(--text-dim); }
 .chatMentionPicker [role="listbox"] { max-height: min(260px, 35vh); overflow-y: auto; }
+/* Its rows are quick open's page rows (PageOption) in a dock that is often
+   narrow: there a row gives up its time and part of its chip line to the title. */
+.chatMentionPicker { container-type: inline-size; }
+@container (max-width: 440px) {
+  .chatMentionPicker .quickOpenTime { display: none; }
+  .chatMentionPicker .fileRowLabels { max-width: 34%; }
+}
 /* Option rows are slash-menu rows (`slashMenuItem`) with a two-line label. */
 .chatMentionOption { border-radius: 0; color: inherit; }
 .chatMentionOption[aria-disabled="true"] { opacity: .5; cursor: default; }
@@ -4794,7 +4801,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatStepsFailed { flex: none; color: var(--danger); }
 .chatStepsDeclined { flex: none; color: var(--text-secondary); }
 :is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
-.chatSteps .transferSpin.inline { flex: none; }
+.chatStepsWrap .transferSpin.inline { flex: none; }
 .chatChanges {
   display: flex;
   flex-direction: column;
@@ -4866,25 +4873,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatToolChildren { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 20px; }
 .chatToolActionHead.err { color: var(--danger); }
 /* The helpers a running call handed documents to, a row each under the steps
-   pill: the document, then what its helper is doing now (chat/agentSteps.js
-   helperStatus). */
+   pill, laid out as the chips are: the document, then what its helper is
+   doing now (chat/agentSteps.js helperStatus). That can be a long address,
+   so it is cut where a chip's note never needs to be. */
 .chatHelpers { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 10px; }
-.chatHelper {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
-  color: var(--text-muted);
-}
-.chatHelper.err { color: var(--danger); }
-.chatHelper > :is(svg, .transferSpin) { flex: none; }
-.chatHelper span:not(.transferSpin) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The name gives way first: what the helper is doing is the news. */
-.chatHelperName { flex: 0 1 auto; color: var(--text-secondary); }
-.chatHelper.err .chatHelperName { color: inherit; }
-.chatHelperStatus { flex: none; max-width: 65%; }
-.chatHelperStatus::before { content: "·"; margin-right: 6px; }
+.chatHelpers .chatToolActionNote { max-width: 65%; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */

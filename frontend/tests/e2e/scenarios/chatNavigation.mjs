@@ -584,7 +584,7 @@ export async function chatNavigationScenarios(env) {
       await page.waitForFunction(() => !!window.chatStream);
       const push = (...events) => page.evaluate((list) => list.forEach((event) => window.chatStream.push(event)), events);
       const pill = page.locator(".chatSteps");
-      const rows = page.locator(".chatHelper");
+      const rows = page.locator(".chatHelpers .chatToolActionHead");
       const cat = { id: "h1", label: "Cat qubits", state: "reading", steps: 0 };
       const transmon = { id: "h2", label: "Transmon readout", state: "reading", steps: 0 };
       // The pill says helpers are at work; each has a row from the moment it starts.
@@ -599,7 +599,7 @@ export async function chatNavigationScenarios(env) {
       await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Fetching arXiv:1905.00450…" }).waitFor();
       await push({ helper: { ...cat, state: "answering", steps: 1 } }, { helper: { ...transmon, state: "failed" } });
       await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Writing its answer…" }).waitFor();
-      await page.locator(".chatHelper.err", { hasText: "Could not read it" }).waitFor();
+      await rows.and(page.locator(".err")).filter({ hasText: "Could not read it" }).waitFor();
       await push({ helper: { ...cat, state: "done", steps: 1 } });
       await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Done · 1 step" }).waitFor();
       assertEq(await rows.locator(".transferSpin").count(), 0, "nothing spins once both ended");

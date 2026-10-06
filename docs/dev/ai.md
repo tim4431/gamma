@@ -746,13 +746,21 @@ and `MAX_CHAT_REFERENCES`, shared with `chat/ChatDock.jsx`. The six-reference UI
 mirrors the API's seven-page limit (`pages`, de-duplicated server-side),
 leaving one slot for the current page.
 
-Type `@` in the chat composer to search library titles with the same ranking,
-typo tolerance, and separator matching as library search (`library/librarySearch.js`).
-Arrow keys choose a result; Enter or Tab attaches it, Escape dismisses the
-query, and clicking or tapping a result also works. Results include author,
-year, venue, and folder details. A completed mention inserts the title and
-adds a removable context chip; the chip controls which page IDs are sent.
-The `+` menu offers the same library search.
+Type `@` in the chat composer to pick a library page the way quick open
+(Ctrl+P, [home_library.md](home_library.md)) does. Both lists are
+`rankLibraryPages` (`library/librarySearch.js`) drawn by
+`library/PageOption.jsx`: with nothing typed, the recent pages, the open tabs
+and the rest under their headings; a query matches the title or a
+folder/label chip, typos forgiven, recency breaking ties, with the matched
+characters marked. A row shows authors and year, the page's folder and label
+chips, and a check once attached, "Current" on the open page, or else its
+time; in a narrow dock the time goes and the chip line shortens
+(`.chatMentionPicker`'s container query). Arrow keys choose a result; Enter
+or Tab attaches it, Escape dismisses the query, and clicking or tapping a
+result also works. A completed mention inserts the title and adds a removable
+context chip; the chip controls which page IDs are sent. The `+` menu's page
+picker lists and searches through the same `rankLibraryPages`, as rows to
+tick.
 
 References persist for follow-up questions and are saved as `contextPages`
 on each user message. Loading a conversation restores its last references;
@@ -1084,8 +1092,8 @@ user. `gate` is `ApprovalGate` — a permission set to Ask shows its card
 first. `settle` is `PaperWait` — a fetch a publisher blocked waits for the
 PDF from the user's own browser
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A caller with
-no user to ask passes neither: the background research job drives the same
-loop headless ([tasks.md](tasks.md)).
+no card to show passes neither: `read_paper`'s helper runs the same loop
+inside one of the chat's calls ([ai_tools.md](ai_tools.md#read_paper)).
 
 **A round's reads run together.** The calls of one turn are grouped
 (`AgentLoop._groups`): a run of armed reads that cannot stop on a card is

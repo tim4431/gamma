@@ -3,10 +3,11 @@ the source's exception relayed, and a consumer that leaves early stopping the
 source at its next yield."""
 
 import json
+import queue
 import threading
 import time
 
-from gamma.routers.ai import RELAY_LINES, keepalive_lines, live_lines
+from gamma.routers.ai import keepalive_lines
 
 
 def test_pings_fill_silent_gaps():
@@ -72,8 +73,8 @@ def test_abandoned_consumer_stops_the_source():
 
 def test_another_thread_adds_lines_while_the_source_is_busy():
     """A source inside a long tool call yields nothing, so what runs in that
-    call (a helper) puts its status on the stream itself."""
-    inbox, say = live_lines()
+    call (a helper) puts its status on the stream's queue itself."""
+    inbox = queue.Queue()
     release = threading.Event()
 
     def source():
@@ -83,14 +84,7 @@ def test_another_thread_adds_lines_while_the_source_is_busy():
 
     gen = keepalive_lines(source(), "t", interval=1, inbox=inbox)
     assert next(gen) == '{"step": 1}\n'
-    say("helper", {"state": "reading"})
-    assert json.loads(next(gen)) == {"helper": {"state": "reading"}}
+    inbox.put_nowait('{"helper": 1}\n')
+    assert next(gen) == '{"helper": 1}\n'
     release.set()
     assert list(gen) == ['{"action": 1}\n']
-
-
-def test_status_nobody_reads_is_dropped_not_waited_for():
-    inbox, say = live_lines()
-    for n in range(RELAY_LINES + 5):
-        say("helper", {"n": n})
-    assert inbox.qsize() == RELAY_LINES

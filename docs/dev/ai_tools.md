@@ -805,19 +805,22 @@ action as the `handoff`, and the chat's own card and wait take over
 
 While it works, the helper reports its status (`Helper.on_status`), its
 whole state each time it changes: `{id, label, state, steps, step?,
-blocked?}`. `label` is the paper's title, or its source when the call
-gave none. `state` is `reading`, `answering`, `done` or `failed`, `steps`
-counts the calls it finished, `step` is the call running now (the loop's
-own step payload) and `blocked` the host that stopped a fetch. The chat's
-loop cannot carry these, because it is inside the `read_paper` call until
-the helper answers. So a streamed chat puts them on its stream itself, as
-`{"helper"}` lines: the relay's queue is made up front
-(`routers/ai.py` `live_lines`) and the helper's thread adds to it without
-waiting. A line the client reads too slowly for is dropped, which costs
-nothing because the next one carries the whole state again. The chat keeps
+blocked?}`.
+
+- `label` is the paper's title, or its source when the call gave none.
+- `state` is `reading`, `answering`, `done` or `failed`.
+- `steps` counts the calls it finished, and `step` is the call running
+  now (the loop's own step payload).
+- `blocked` is the host that stopped a fetch.
+
+The chat's loop cannot carry these: it is inside the `read_paper` call
+until the helper answers. A streamed chat puts them on its stream itself,
+as `{"helper"}` lines. `ai_chat` makes the relay's queue and hands it to
+`keepalive_lines` as `inbox`, and the helper's thread adds to it without
+waiting. A line is dropped when the client reads too slowly; each line
+carries the whole state, so the next one makes up for it. The chat keeps
 the newest state per `id` and shows a row per helper under the steps pill
-until the call's chip lands ([ai.md](ai.md#the-tool-loop)). The research
-job passes no `on_status`, so its helpers work unseen.
+until the call's chip lands ([ai.md](ai.md#the-tool-loop)).
 
 The tool is offered only when **Read long papers with a helper**
 (`gamma-ai-delegate-reads`, account-wide, on by default) is set — the

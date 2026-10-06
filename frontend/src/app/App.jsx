@@ -2616,11 +2616,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, startResearch, onJobFinished } = useAppJobs({
-    tasks, postPill, setStatus, openBlock, setOpenPopover, setSettingsOpen,
+  const { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
+    tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, downloadExport,
-    workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, folderFilter, chatModel, agentReadChars,
+    workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks,
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
@@ -9285,7 +9285,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           canSave={canWriteWorkspace}
           onClose={closeChat}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
-          openTabs={openTabs}
+          openTabs={openTabs} recentViews={recentViews}
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
@@ -9309,7 +9309,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
-          onResearch={startResearch}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
