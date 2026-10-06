@@ -26,7 +26,7 @@ import { menuPress } from "../shared/ui/press.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { chipNote, isChange, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -34,7 +34,7 @@ import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from
 import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
-import { effortFor, speedFor } from "./modelPrefs";
+import { effortFor, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
@@ -152,7 +152,9 @@ function ChatErrorCard({ message, compact, actions }) {
 // pill names the step running now.
 // `waiting`: what the running call waits for — the user's answer on an
 // approval card, or a blocked paper from their browser — so nothing spins.
-function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, children }) {
+// `helpers`: the helpers the running call handed documents to, a row each
+// under the pill: the document and what its helper is doing now.
+function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const live = !!running;
   return (
@@ -169,6 +171,18 @@ function AgentSteps({ actions, running, waiting, open, onToggle, titleOf, childr
         {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
       </button>
+      {live && helpers.length ? (
+        <div className="chatHelpers" role="status">
+          {helpers.map((h) => (
+            <div key={h.id} className={`chatHelper${h.state === "failed" ? " err" : ""}`}>
+              {h.state === "done" ? <CheckIcon size={14} /> : h.state === "failed" ? <XIcon size={14} />
+                : <span className="transferSpin inline" aria-hidden="true" />}
+              <span className="chatHelperName" title={h.label}>{h.label}</span>
+              <span className="chatHelperStatus">{helperStatus(h, titleOf)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {open ? children : null}
     </div>
   );
@@ -549,15 +563,9 @@ export default function ChatDock({
   // default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   // The header's model list is scoped to the active key (Settings → AI ›
-  // Connections); all models only when no key is selected or the selected one is gone.
-  const headerModels = aiInfo?.models?.length
-    ? (aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
-      ? aiInfo.models.filter((m) => m.provider === aiProvider) : aiInfo.models)
-    : [];
+  // Connections); the first key's when none is selected or the selected one is gone.
+  const headerModels = providerModels(aiInfo?.models, aiProvider);
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
-  // A model's name in the pickers, with its connection's when there are several.
-  const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
-  const modelLabel = (m) => (multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model);
   const modelInfo = useModelInfo(!aiOff && aiInfo ? headerModel?.id : "");
   // The context ring: the latest reply's size against the model's window.
   const ctxUsed = contextUsed(chatMessages);
@@ -1163,6 +1171,7 @@ export default function ChatDock({
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
+    let helpers = []; // the helpers that call started ({"helper"} lines), each one's latest state
     let approval = null; // its approval card ({"approval"} line), while the user decides
     const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
@@ -1210,6 +1219,9 @@ export default function ChatDock({
           if (ev.error) throw chatFailure(ev.error, ev);
           if (ev.step) {
             running = ev.step;
+            helpers = [];
+          } else if (ev.helper) {
+            helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
           } else if (ev.handoff) {
@@ -1218,6 +1230,7 @@ export default function ChatDock({
             handoffs.push(ev.handoff);
           } else if (ev.action) {
             running = null;
+            helpers = [];
             approval = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
@@ -1252,6 +1265,7 @@ export default function ChatDock({
         }
         if (acc || actions.length || usage || running || handoffs.length) {
           showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}),
+            ...(helpers.length ? { helpers } : {}),
             ...(approval ? { approval } : {}),
             ...(handoffs.length ? { handoffs: [...handoffs] } : {}) }));
         }
@@ -1499,7 +1513,7 @@ export default function ChatDock({
       const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
       if (others.length) {
         out.push(<ActionMenu key="switch" label={t("Switch model")} items={others.map((x) => ({
-          label: modelLabel(x),
+          label: x.model,
           title: t("Switch to this model and retry"),
           onClick: () => { setChatModel(x.id); retryReply(idx, x.id); },
         }))} />);
@@ -1850,6 +1864,7 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
+                        helpers={m.helpers}
                         waiting={!isResponding ? ""
                           : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"
                             : m.handoffs?.length ? "paper" : ""}
@@ -1880,6 +1895,21 @@ export default function ChatDock({
                                   <span>{a.summary}</span>
                                 </div>
                               )}
+                              {open && a.children?.length ? (
+                                // What a helper did for this call: its own calls, without their output.
+                                <div className="chatToolChildren">
+                                  {a.children.map((child, k) => {
+                                    const ChildIcon = ACTION_ICONS[child.kind] || FolderIcon;
+                                    return (
+                                      <div key={k} className={`chatToolActionHead plain${child.error ? " err" : ""}`} title={child.summary}>
+                                        <ChildIcon size={14} />
+                                        <span>{child.summary}</span>
+                                        {chipNote(child) ? <span className="chatToolActionNote">{chipNote(child)}</span> : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
                               {open ? <pre className="chatToolDetail">{toolCallText(a)}</pre> : null}
                             </div>
                           );
@@ -2176,7 +2206,7 @@ export default function ChatDock({
                   <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
                   <SpeedGlyph speed={speed} />
                 </>}
-                options={headerModels.map((m) => [m.id, modelLabel(m)])}
+                options={headerModels.map((m) => [m.id, m.model])}
                 sections={[
                   ...(effortLevels.length ? [{
                     label: t("Reasoning effort"),

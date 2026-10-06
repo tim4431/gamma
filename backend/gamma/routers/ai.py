@@ -803,9 +803,27 @@ def ai_health(payload: AIHealthRequest, request: Request):
 # "network error" mid-reply and nothing reaches the server log. A tool loop
 # over a long context is quiet for exactly that long while the model thinks.
 KEEPALIVE_INTERVAL = 15.0
+# Lines a relayed stream holds for a client that reads slower than they come.
+RELAY_LINES = 64
 
 
-def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, abandoned=None):
+def live_lines():
+    """A relayed stream's queue and a way onto it from any thread:
+    ``(inbox, say)``. ``say(kind, data)`` adds the line ``{kind: data}``
+    without waiting, so it is for status that may be lost when the client
+    reads too slowly (or has left), never for the reply itself."""
+    inbox = queue.Queue(maxsize=RELAY_LINES)
+
+    def say(kind, data):
+        try:
+            inbox.put_nowait(json.dumps({kind: data}) + "\n")
+        except queue.Full:
+            pass
+
+    return inbox, say
+
+
+def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, abandoned=None, inbox=None):
     """Relay the NDJSON line generator ``lines`` from a worker thread and put a
     ``{"ping": 1}`` line in every gap longer than ``interval`` seconds, so an
     idle proxy or browser keeps the response open while the provider is still
@@ -815,8 +833,11 @@ def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL, abandoned=Non
     generator would have been abandoned at — and the log says so. The
     ``abandoned`` event (made here when not given) is set then: a source
     that waits between yields (a tool call waiting on its approval card)
-    watches it to give up."""
-    q = queue.Queue(maxsize=64)
+    watches it to give up. ``inbox`` is the bounded queue the lines pass
+    through (made here when not given): a caller that keeps it can add lines
+    from other threads with ``put_nowait`` while the source is busy between
+    yields (a helper's status, live_lines)."""
+    q = inbox if inbox is not None else queue.Queue(maxsize=RELAY_LINES)
     done = object()
     abandoned = abandoned if abandoned is not None else threading.Event()
 
@@ -1746,9 +1767,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
     proto = _wire_protocol(rt, entry, tools) if tools else None
     # The second agent read_paper hands a document to (gamma/ai_agent.py).
     # It answers on the same connection, in its own conversation, and its
-    # tokens are metered here like the chat's own.
+    # tokens are metered here like the chat's own. What it is doing goes
+    # onto a streamed reply as {"helper"} lines, from the thread that runs
+    # it: the loop is inside the call that started it until it answers.
+    inbox, say = live_lines()
     scope["helper"] = Helper(
         ws=ws, scope=scope, on_usage=count_usage,
+        on_status=(lambda status: say("helper", status)) if payload.stream else None,
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),
@@ -1869,8 +1894,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         log.warning(f"[ai_chat] agent stream error: {e}")
                         yield json.dumps({"error": _failure(e), **_failure_info(e, rt, entry)}) + "\n"
 
-                return WatchedStream(keepalive_lines(agent_ndjson(), "ai_chat", abandoned=stopped), stopped,
-                                     media_type="application/x-ndjson")
+                return WatchedStream(keepalive_lines(agent_ndjson(), "ai_chat", abandoned=stopped, inbox=inbox),
+                                     stopped, media_type="application/x-ndjson")
 
             def ndjson():
                 usage = []

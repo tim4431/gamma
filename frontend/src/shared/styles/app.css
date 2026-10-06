@@ -4862,6 +4862,29 @@ a.shareBrand:hover { background: var(--bg-hover); }
    how long it took (chat/agentSteps.js chipNote). */
 .chatToolActionNote { flex: none; color: var(--text-muted); opacity: 0.8; }
 .chatToolActionNote::before { content: "·"; margin-right: 6px; }
+/* What a helper did for a call (read_paper), under its chip: its own calls. */
+.chatToolChildren { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 20px; }
+.chatToolActionHead.err { color: var(--danger); }
+/* The helpers a running call handed documents to, a row each under the steps
+   pill: the document, then what its helper is doing now (chat/agentSteps.js
+   helperStatus). */
+.chatHelpers { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 10px; }
+.chatHelper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
+  color: var(--text-muted);
+}
+.chatHelper.err { color: var(--danger); }
+.chatHelper > :is(svg, .transferSpin) { flex: none; }
+.chatHelper span:not(.transferSpin) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The name gives way first: what the helper is doing is the news. */
+.chatHelperName { flex: 0 1 auto; color: var(--text-secondary); }
+.chatHelper.err .chatHelperName { color: inherit; }
+.chatHelperStatus { flex: none; max-width: 65%; }
+.chatHelperStatus::before { content: "·"; margin-right: 6px; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */

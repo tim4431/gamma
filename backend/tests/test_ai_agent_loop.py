@@ -691,6 +691,56 @@ def test_an_asking_tool_is_never_batched(org):
         ["read_page"], ["fetch_paper"], ["read_page"]]
 
 
+# --- a helper's status -----------------------------------------------------------
+
+def test_a_helper_says_what_it_is_doing_while_its_call_runs(org, monkeypatch):
+    """read_paper's helper works inside one call of the chat, so the stream
+    carries its status between that call's step and its action: reading,
+    the call it is on, how many it finished, answering, done."""
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+
+    turns = []
+
+    def text(said):
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": said}}])
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        who = "helper" if "ONE document" in system else "chat"
+        turns.append(who)
+        if who == "helper":
+            assert [t["name"] for t in kw["tools"]] == ["fetch_paper"]
+            if turns.count("helper") == 1:
+                return FakeResp(_calls(("f1", "fetch_paper", {"source": "https://example.org/p.pdf"})))
+            return text("They measure T1, p. 1.")
+        if turns.count("chat") == 1:
+            return FakeResp(_calls(("r1", "read_paper", {"source": "https://example.org/p.pdf",
+                                                         "question": "what do they measure?",
+                                                         "title": "A paper"})))
+        return text("A helper read it: T1.")
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    monkeypatch.setattr("gamma.ai_web.fetch_document", lambda source, published_only=False: {
+        "kind": "pdf", "url": source, "title": "A paper", "pages": ["[p. 1]\ntext"],
+        "chars": 4, "version": "publisher", "note": ""})
+    r = c.post("/api/ai/chat", json={"prompt": "what does it measure?", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    assert turns == ["chat", "helper", "helper", "chat"]
+    kinds = [next(iter(line)) for line in lines if next(iter(line)) in ("step", "helper", "action")]
+    assert kinds == ["step"] + ["helper"] * 5 + ["action"]
+    said = [line["helper"] for line in lines if "helper" in line]
+    assert [(s["state"], s["steps"]) for s in said] == [
+        ("reading", 0), ("reading", 0), ("reading", 1), ("answering", 1), ("done", 1)]
+    assert {(s["id"], s["label"]) for s in said} == {("h1", "A paper")}
+    # Only the call running now is named: before it and once it ran there is none.
+    assert [s.get("step", {}).get("tool") for s in said] == [None, "fetch_paper", None, None, None]
+    action, = [line["action"] for line in lines if "action" in line]
+    assert action["tool"] == "read_paper" and [child["tool"] for child in action["children"]] == ["fetch_paper"]
+    assert "They measure T1" in action["result"]
+
+
 # --- other OpenAI-compatible services --------------------------------------------
 
 def _deepseek(c) -> str:

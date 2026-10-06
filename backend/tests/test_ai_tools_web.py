@@ -304,8 +304,8 @@ class _FakeHelper:
     def __init__(self, ws, scope, answer="Cat qubits, p. 1. Read from an arXiv preprint."):
         self.ws, self.scope, self.answer, self.asked = ws, scope, answer, []
 
-    def run(self, *, question, system, tools):
-        self.asked.append({"question": question, "system": system,
+    def run(self, *, question, system, tools, label=""):
+        self.asked.append({"question": question, "system": system, "label": label,
                            "tools": [t["name"] for t in tools]})
         _, action = run_agent_tool(self.ws, {**self.scope, "helper": None},
                                    "fetch_paper", {"source": "arXiv:1905.00450"},
@@ -327,6 +327,7 @@ def test_read_paper_hands_the_document_to_a_helper_and_keeps_only_its_answer(org
     assert "what do they measure?" in asked["question"] and "Bias-Preserving Gates" in asked["question"]
     assert asked["tools"] == ["fetch_paper"], "the helper reaches nothing else"
     assert "ONE document" in asked["system"]
+    assert asked["label"] == "Bias-Preserving Gates with Cat Qubits", "its status names the paper"
     # The chip names the document the helper read, its calls, and the cost.
     assert action["kind"] == "fetch" and action["url"] == "https://arxiv.org/pdf/1905.00450"
     assert [c["tool"] for c in action["children"]] == ["fetch_paper"]
@@ -358,7 +359,7 @@ def test_a_wall_inside_the_helper_becomes_the_chats_own_card(org, upstream, monk
              "handoff_user": "someone"}
 
     class Blocked(_FakeHelper):
-        def run(self, *, question, system, tools):
+        def run(self, *, question, system, tools, label=""):
             from gamma import fetch_handoff
             req = fetch_handoff.open_request("someone", "doi:10.5555/x", wall="captcha",
                                              url="https://journals.example.org/doi/10.5555/x")

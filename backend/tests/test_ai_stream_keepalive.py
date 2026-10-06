@@ -6,7 +6,7 @@ import json
 import threading
 import time
 
-from gamma.routers.ai import keepalive_lines
+from gamma.routers.ai import RELAY_LINES, keepalive_lines, live_lines
 
 
 def test_pings_fill_silent_gaps():
@@ -68,3 +68,29 @@ def test_abandoned_consumer_stops_the_source():
     gen.close()
     assert closed.wait(2), "source generator was not closed"
     assert len(produced) < 100
+
+
+def test_another_thread_adds_lines_while_the_source_is_busy():
+    """A source inside a long tool call yields nothing, so what runs in that
+    call (a helper) puts its status on the stream itself."""
+    inbox, say = live_lines()
+    release = threading.Event()
+
+    def source():
+        yield '{"step": 1}\n'
+        release.wait(2)
+        yield '{"action": 1}\n'
+
+    gen = keepalive_lines(source(), "t", interval=1, inbox=inbox)
+    assert next(gen) == '{"step": 1}\n'
+    say("helper", {"state": "reading"})
+    assert json.loads(next(gen)) == {"helper": {"state": "reading"}}
+    release.set()
+    assert list(gen) == ['{"action": 1}\n']
+
+
+def test_status_nobody_reads_is_dropped_not_waited_for():
+    inbox, say = live_lines()
+    for n in range(RELAY_LINES + 5):
+        say("helper", {"n": n})
+    assert inbox.qsize() == RELAY_LINES

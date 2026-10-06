@@ -512,7 +512,8 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
-  saved while the user navigates away and back, before or after it finishes.
+  saved while the user navigates away and back, before or after it finishes;
+  the model menu lists one connection's models.
   `--only "chat navigation"`.
 - `publish.mjs`: publishing a page to Gamma Cloud end to end. A second
   Gamma is started as the share host (`new Server({env})` in `harness.mjs`

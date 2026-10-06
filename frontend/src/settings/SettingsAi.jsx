@@ -666,8 +666,12 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
 }
 
 export function AiSettings({ value, confirm, setStatus }) {
-  const activeKeyId = value.aiKeysInfo?.providers.some((item) => item.id === value.aiProvider)
-    ? value.aiProvider
+  // The picked connection, else the one the chat falls back to
+  // (providerModels in chat/modelPrefs.js): the first that offers models.
+  const listed = (id) => value.aiKeysInfo?.providers.some((item) => item.id === id);
+  const fallbackKeyId = value.aiModels?.[0]?.provider;
+  const activeKeyId = listed(value.aiProvider) ? value.aiProvider
+    : listed(fallbackKeyId) ? fallbackKeyId
     : value.aiKeysInfo?.providers[0]?.id;
   const canEdit = value.aiKeysInfo?.can_edit;
   const providers = value.aiKeysInfo?.providers || [];

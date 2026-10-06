@@ -70,7 +70,7 @@ const entries = [
   e("tools", t("PDF chat"), t("Tools"), t("Pages with a PDF"), "permissions tools read search edit access"),
   e("tools", t("Notes chat"), t("Tools"), t("Note pages"), "permissions tools read search edit access"),
   e("tools", t("Fetch blocked papers in the background"), t("Tools"), t("Gamma Connector tries in an unfocused tab and sends the PDF back"), "connector extension paywall sign-in captcha download"),
-  e("tools", t("Read long papers with a helper"), t("Tools"), t("A second pass reads the document and answers in a short cited paragraph"), "delegate subagent read_paper long document tokens"),
+  e("tools", t("Read long papers with a helper"), t("Tools"), t("A second pass reads the document and hands back a cited answer"), "delegate subagent read_paper long document tokens"),
   e("tools", t("Search the web with"), t("Online search"), t("Lab pages, repositories and copies the registries miss"), "web internet search engine Brave SearXNG ChatGPT OpenAI Anthropic Google"),
   e("tools", t("Online search services"), t("Online search"), t("Brave Search, SearXNG and an OpenAlex key"), "API key Brave SearXNG OpenAlex budget"),
   e("tools", t("Tool rounds"), t("Tool limits"), t("AI ↔ tool round-trips per message"), "advanced tool requests limits"),

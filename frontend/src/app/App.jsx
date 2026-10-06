@@ -36,6 +36,7 @@ import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, up
 import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
+import { providerModels } from "../chat/modelPrefs";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -2642,8 +2643,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const u = authUser?.user;
     if (!u || shareMode) return;
     const local = aiProvider;
+    // The pick is the account's, in every workspace: an answer is stale only
+    // once the account changed (not prefsUserRef, which is "user@ws").
+    let active = true;
     apiJson(`${API}/prefs/ai-provider`).then((d) => {
-      if (prefsUserRef.current !== u) return;
+      if (!active) return;
       if (d.updated_at) {
         const server = typeof d.value === "string" ? d.value : "";
         aiProviderSyncRef.current = server;
@@ -2660,6 +2664,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         aiProviderSyncRef.current = "";
       }
     }).catch(() => {});
+    return () => { active = false; };
   }, [authUser?.user, shareMode]);
   useEffect(() => {
     if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || shareMode) return;
@@ -2680,24 +2685,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Keep the selected model inside the active key's model list: switching to
   // a key restores its remembered model, or falls back to its first one.
   useEffect(() => {
-    const all = aiInfo?.models || [];
-    if (!all.length) return;
-    const scoped = aiProvider && all.some((m) => m.provider === aiProvider)
-      ? all.filter((m) => m.provider === aiProvider)
-      : all;
+    const scoped = providerModels(aiInfo?.models, aiProvider);
+    if (!scoped.length) return;
     if (!scoped.some((m) => m.id === chatModel)) {
       const remembered = chatModelMemRef.current[scoped[0].provider];
       setChatModel(scoped.some((m) => m.id === remembered) ? remembered : scoped[0].id);
     }
   }, [aiProvider, aiInfo, chatModel]);
-  // Models the active key (Settings → AI & API keys) offers — all models only
-  // when no key is selected or the selected one is gone. Model registry ids
+  // Models the active key (Settings → AI & API keys) offers — the first
+  // key's when none is selected or the selected one is gone. Model registry ids
   // are "<entryId>:<model>", so the id ROUTES the request to a key server-side;
   // every model this client sends must come from this list or an unselected
   // key would serve the call.
-  const scopedAiModels = aiProvider && (aiInfo?.models || []).some((m) => m.provider === aiProvider)
-    ? aiInfo.models.filter((m) => m.provider === aiProvider)
-    : aiInfo?.models || [];
+  const scopedAiModels = providerModels(aiInfo?.models, aiProvider);
   // The model AI calls (chat, citations, titles) actually send: chatModel
   // snapped into scope at render time — the effect above fixes the state, but
   // a request fired in the same render (or before /ai/models loads after a
@@ -2769,7 +2769,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // default "ping" mode spends no tokens; network failures reaching our own
   // server stay silent — every other request would be failing too.
   const aiHealthArgsRef = useRef({});
-  aiHealthArgsRef.current = { mode: aiLoginCheck, provider: aiProvider };
+  aiHealthArgsRef.current = { mode: aiLoginCheck, provider: scopedAiModels[0]?.provider || aiProvider };
   async function checkAiHealth() {
     const { mode, provider } = aiHealthArgsRef.current;
     if (mode === "off") { setAiHealth(null); return; }

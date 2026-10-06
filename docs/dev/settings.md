@@ -318,7 +318,9 @@ AI:
   the models with the name and test model under More options; its button is
   Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
-  without Test / Manage / delete), the login connection check, the models
+  without Test / Manage / delete; with no key picked, or the picked one
+  removed, the first connection that offers models is the active one, here
+  and in the chat's model menu), the login connection check, the models
   (default chat, metadata, dictation) and the account's token usage
   ([ai.md](ai.md) "Token usage"). While a shared entry applies, the usage
   opens with a **Shared allowance** row ("12k of 50k tokens in the last

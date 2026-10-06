@@ -77,6 +77,14 @@ each protocol's administrator-controlled default base URL
 (`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`,
 `GAMMA_AI_OPENAI_BASE_URL`, `GAMMA_AI_CHATGPT_BASE_URL`).
 
+The client offers one connection's models at a time. `providerModels` in
+`chat/modelPrefs.js` cuts the registry down to the active connection (the
+account's `ai-provider` pref, picked in Settings → AI → Connections), or to
+the first connection that offers models when nothing is picked or the pick
+is gone. The chat's model menu, the Settings model pickers, the models the
+client sends and the login check all use that one list, so the menu never
+mixes connections.
+
 Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 `services` with the settings) are form presets, data rather than code: a
 protocol plus a fixed endpoint and its key hints. An entry made from one
@@ -1096,7 +1104,9 @@ it runs; a batch sends one step with `batch: n` (and `tools` when they are
 not all the same tool), which the chat reads as "Fetching 4 documents…". A
 call that waits for the user's approval then sends an `{"approval"}` line
 ([Asking before a call](#asking-before-a-call-approvals)), and a blocked
-fetch a `{"handoff"}` line.
+fetch a `{"handoff"}` line. A call that handed a document to a helper
+(`read_paper`) sends `{"helper"}` lines while it runs, one whenever that
+helper's state changes ([ai_tools.md](ai_tools.md#read_paper)).
 The step's `args` are only the short ones the running label reads
 (`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
 `label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
@@ -1120,7 +1130,11 @@ the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
 place of the "Thinking" pill, from those arguments (`runningLabel`):
 "Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
-note…", "Reading notes of “A”…" when `read_block` names a page. Only
+note…", "Reading notes of “A”…" when `read_block` names a page. A call
+that hands documents to helpers lists them under the pill, one row each:
+the document, then what its helper is doing now (`helperStatus`, from the
+`{"helper"}` lines). The rows go when the call's chip lands, and that chip
+expands to the helper's own calls (`children`). Only
 applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { fakeAiModels, wanted } from "../harness.mjs";
+import { FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -553,6 +553,76 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("chat navigation: a call that hands papers to helpers lists each helper with what it is doing, and its chip keeps their calls", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("What do these two papers measure?");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      const push = (...events) => page.evaluate((list) => list.forEach((event) => window.chatStream.push(event)), events);
+      const pill = page.locator(".chatSteps");
+      const rows = page.locator(".chatHelper");
+      const cat = { id: "h1", label: "Cat qubits", state: "reading", steps: 0 };
+      const transmon = { id: "h2", label: "Transmon readout", state: "reading", steps: 0 };
+      // The pill says helpers are at work; each has a row from the moment it starts.
+      await push({ step: { id: "c1", tool: "read_paper", args: { source: "arXiv:1905.00450" }, batch: 2 } },
+        { helper: cat }, { helper: transmon });
+      await pill.filter({ hasText: "2 helpers are reading documents…" }).waitFor();
+      await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Starting…" }).waitFor();
+      assertEq(await rows.count(), 2);
+      assertEq(await rows.locator(".transferSpin").count(), 2, "both are still at work");
+      // A row follows its own helper: the call it is on, then its answer, then done.
+      await push({ helper: { ...cat, step: { id: "f1", tool: "fetch_paper", args: { source: "arXiv:1905.00450" } } } });
+      await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Fetching arXiv:1905.00450…" }).waitFor();
+      await push({ helper: { ...cat, state: "answering", steps: 1 } }, { helper: { ...transmon, state: "failed" } });
+      await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Writing its answer…" }).waitFor();
+      await page.locator(".chatHelper.err", { hasText: "Could not read it" }).waitFor();
+      await push({ helper: { ...cat, state: "done", steps: 1 } });
+      await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Done · 1 step" }).waitFor();
+      assertEq(await rows.locator(".transferSpin").count(), 0, "nothing spins once both ended");
+      assertEq(await page.locator(".chatThinking").count(), 0, "the running call still stands in for the Thinking pill");
+      // The call's chips land: the rows go, and the helper's own calls stay under its chip.
+      await push({ action: { kind: "fetch", tool: "read_paper", summary: "Read “Cat qubits” with a helper",
+        args: { source: "arXiv:1905.00450", question: "what do they measure?" }, result: "A helper read arXiv:1905.00450…",
+        children: [{ kind: "fetch", tool: "fetch_paper", summary: "Fetched “Cat qubits” — pages 1–4", version: "preprint" }] } },
+      { action: { kind: "error", tool: "read_paper", summary: "error: the provider did not answer", args: {}, result: "error", error: true } },
+      { delta: "They measure the bit-flip time." });
+      await page.evaluate(() => window.chatStream.finish());
+      await pill.filter({ hasText: "2 steps · fetched 1 document" }).waitFor();
+      assertEq(await rows.count(), 0);
+      await pill.click();
+      await page.locator(".chatToolActionHead", { hasText: "Read “Cat qubits” with a helper" }).click();
+      const child = page.locator(".chatToolChildren .chatToolActionHead");
+      assertEq(await child.count(), 1);
+      assert((await child.innerText()).includes("Fetched “Cat qubits” — pages 1–4"), "the helper's fetch is listed under its chip");
+      assert((await child.innerText()).includes("arXiv preprint"), "with the copy it read");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("chat navigation: the effort and speed menus offer the model's own levels, the nearest effort is sent, and a reply names them", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     // One page load per model: its levels and speed tiers (the provider's
@@ -681,6 +751,44 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
+  });
+
+  // Several connections: the menu lists one connection's models — the picked
+  // one's, else the first's (providerModels in chat/modelPrefs.js) — never all.
+  await step("chat navigation: the model menu lists one connection's models, the first's when none is picked", async () => {
+    const models = { ...FAKE_AI_MODELS, default: "a:one", models: [
+      { id: "a:one", provider: "a", provider_name: "First", model: "one" },
+      { id: "a:two", provider: "a", provider_name: "First", model: "two" },
+      { id: "b:three", provider: "b", provider_name: "Second", model: "three" },
+    ] };
+    const pick = (value) => alice.api("/api/prefs/ai-provider", { method: "PUT", body: { value } });
+    // `shown` is the chip's model once the account's pick has loaded.
+    const menu = async (shown) => {
+      const ctx = await alice.context(browser);
+      await fakeAiModels(ctx, models);
+      await ctx.route("**/api/ai/model-info?**", (route) => route.fulfill({
+        json: { model: "", context_window: null, source: "", efforts: [], efforts_source: "provider",
+                speeds: [], speeds_source: "provider" } }));
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      try {
+        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+        const chip = page.locator(".chatModelChip .uiSelectBtn");
+        await until(async () => (await chip.innerText()) === shown, { what: `the chip shows "${shown}"` });
+        await chip.click();
+        const items = await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
+        assertNoProblems(page);
+        return items.join();
+      } finally { await ctx.close(); }
+    };
+    try {
+      await pick("");
+      assertEq(await menu("one"), "one,two", "nothing picked: the first connection");
+      await pick("b");
+      assertEq(await menu("three"), "three", "the picked connection");
+      await pick("removed");
+      assertEq(await menu("one"), "one,two", "a pick that is gone: the first connection");
+    } finally { await pick(""); }
   });
 
   // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's

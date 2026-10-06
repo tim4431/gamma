@@ -5,6 +5,16 @@
 // tiers come from GET /api/ai/model-info (its provider's listing, else
 // models.dev for effort, else what the wire itself can ask for).
 
+// The models one connection offers, out of the /api/ai/models registry: the
+// picked connection's (Settings → AI › Connections), else the first one's —
+// nothing picked yet, or the pick is gone or has no models. Never several
+// connections' at once: a registry id routes the request to its connection.
+export function providerModels(models, providerId) {
+  const all = models || [];
+  const id = all.some((m) => m.provider === providerId) ? providerId : all[0]?.provider;
+  return all.filter((m) => m.provider === id);
+}
+
 // Lowest first — the order mirrors EFFORT_ORDER in gamma/routers/ai.py.
 export const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 

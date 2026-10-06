@@ -3,7 +3,9 @@
 // and the calls that changed something are listed apart, grouped by where
 // the change landed — the library (renamed, filed, saved or restored pages)
 // or the notes (edited, added or moved blocks). While a reply streams, the
-// {"step"} line the server sends before each call names what is running now.
+// {"step"} line the server sends before each call names what is running now,
+// and a call that hands a document to a helper lists each helper under the
+// pill with what it is doing ({"helper"} lines).
 // A call the user did not allow on its approval card (`declined`) counts on
 // its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -85,6 +87,7 @@ export function runningLabel(step, titleOf = () => "") {
     const n = step.batch;
     switch (step.tool) {
       case "fetch_paper": return tn("Fetching {n} document…", "Fetching {n} documents…", n);
+      case "read_paper": return tn("{n} helper is reading a document…", "{n} helpers are reading documents…", n);
       case "read_page": return tn("Reading {n} page…", "Reading {n} pages…", n);
       case "search_papers": return tn("Searching papers, {n} query…", "Searching papers, {n} queries…", n);
       case "search_web": return tn("Searching the web, {n} query…", "Searching the web, {n} queries…", n);
@@ -113,6 +116,9 @@ export function runningLabel(step, titleOf = () => "") {
     case "related_papers": return t("Following citations of {source}…", { source: args.source || t("a paper") });
     case "search_web": return t("Searching the web for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
+    case "read_paper":
+      return args.title ? t("A helper is reading “{title}”…", { title: args.title })
+        : t("A helper is reading {source}…", { source: args.source || t("a document") });
     case "save_paper": return t("Saving {source} to your library…", { source: args.title || args.source || t("a paper") });
     case "list_deleted": return t("Looking in Recently deleted…");
     case "restore_page": return title ? t("Restoring “{title}”…", { title }) : t("Restoring a page…");
@@ -135,6 +141,30 @@ export function runningLabel(step, titleOf = () => "") {
     case "move_block": return t("Moving a note…");
     default: return t("Working…");
   }
+}
+
+// The helpers a running call started (read_paper), from the stream's
+// {"helper"} lines. Each line is one helper's whole state ({id, label, state,
+// steps, step?, blocked?} — ai_agent.Helper), so the newest replaces the
+// last. A helper that starts on a document another has finished with (the
+// same call run again once the browser delivered the paper) takes its row.
+const helperOver = (h) => h.state === "done" || h.state === "failed";
+
+export function withHelper(helpers, status) {
+  if (helpers.some((h) => h.id === status.id)) return helpers.map((h) => (h.id === status.id ? status : h));
+  return [...helpers.filter((h) => !(helperOver(h) && h.label === status.label)), status];
+}
+
+// What one helper is doing now, beside its document's name.
+export function helperStatus(h, titleOf = () => "") {
+  const steps = h?.steps ? tn("{n} step", "{n} steps", h.steps) : "";
+  if (helperOver(h)) {
+    const how = h.blocked ? t("Needs your browser: {host}", { host: h.blocked })
+      : h.state === "failed" ? t("Could not read it") : t("Done");
+    return [how, steps].filter(Boolean).join(" · ");
+  }
+  if (h?.state === "answering") return t("Writing its answer…");
+  return h?.step ? runningLabel(h.step, titleOf) : steps ? t("Thinking…") : t("Starting…");
 }
 
 // The sentence of a note change, around the link to its page ({page}).

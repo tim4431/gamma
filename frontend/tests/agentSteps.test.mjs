@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, chipNote, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
+import { changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -85,6 +85,37 @@ test("a batch of calls reads as how many, not as one of them", () => {
   // One call still names what it is doing.
   assert.equal(runningLabel({ tool: "fetch_paper", batch: 1, args: { source: "doi:10.1/x" } }),
     "Fetching doi:10.1/x…");
+});
+
+test("a call that hands a document to a helper says so, and each helper says what it is doing", () => {
+  assert.equal(runningLabel({ tool: "read_paper", args: { source: "arXiv:1905.00450", title: "Cat qubits" } }),
+    "A helper is reading “Cat qubits”…");
+  assert.equal(runningLabel({ tool: "read_paper", args: { source: "arXiv:1905.00450" } }), "A helper is reading arXiv:1905.00450…");
+  assert.equal(runningLabel({ tool: "read_paper", batch: 3 }), "3 helpers are reading documents…");
+  const helper = { id: "h1", label: "Cat qubits", state: "reading", steps: 0 };
+  assert.equal(helperStatus(helper), "Starting…");
+  assert.equal(helperStatus({ ...helper, step: { tool: "fetch_paper", args: { source: "arXiv:1905.00450" } } }),
+    "Fetching arXiv:1905.00450…");
+  assert.equal(helperStatus({ ...helper, steps: 2 }), "Thinking…");
+  assert.equal(helperStatus({ ...helper, state: "answering", steps: 2 }), "Writing its answer…");
+  assert.equal(helperStatus({ ...helper, state: "done", steps: 2 }), "Done · 2 steps");
+  assert.equal(helperStatus({ ...helper, state: "failed" }), "Could not read it");
+  // A wall is what the row ends on, whatever the helper answered about it.
+  assert.equal(helperStatus({ ...helper, state: "done", steps: 1, blocked: "journals.example.org" }),
+    "Needs your browser: journals.example.org · 1 step");
+});
+
+test("a helper's newest state replaces its last; a second run on a document takes the finished row", () => {
+  const a = { id: "h1", label: "A", state: "reading", steps: 0 };
+  const b = { id: "h2", label: "B", state: "reading", steps: 0 };
+  let helpers = withHelper(withHelper([], a), b);
+  helpers = withHelper(helpers, { ...a, state: "done", steps: 1, blocked: "example.org" });
+  assert.deepEqual(helpers.map((h) => [h.id, h.state]), [["h1", "done"], ["h2", "reading"]]);
+  // The browser delivered A, so the same call runs again with a new helper.
+  helpers = withHelper(helpers, { id: "h3", label: "A", state: "reading", steps: 0 });
+  assert.deepEqual(helpers.map((h) => h.id), ["h2", "h3"]);
+  // Two helpers still at work on one document keep a row each.
+  assert.deepEqual(withHelper([a], { id: "h4", label: "A", state: "reading", steps: 0 }).map((h) => h.id), ["h1", "h4"]);
 });
 
 test("a chip says which copy was read, how it came and how long it took", () => {

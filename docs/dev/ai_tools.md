@@ -778,12 +778,13 @@ page requires **Read pages** and selecting that page as context.
 Delegation, under the same **Fetch documents** permission as `fetch_paper`.
 `read_paper(source, question, title, version)` hands one document and one
 question to a second agent (`ai_agent.Helper`): it fetches the paper, reads
-as many windows as the question needs, and hands back one cited paragraph.
-The windows stay in the helper's own conversation, so the chat carries an
-answer of at most `_HELPER_ANSWER_MAX` (4 000) characters instead of a
-forty-page paper it would have to re-send every round for the rest of the
-reply. Four papers asked the same question cost about what one full read
-would.
+as many windows as the question needs, and hands back a cited answer, as
+long as the question needs and about 1 000 words at most
+(`READ_PAPER_PROMPT`). The windows stay in the helper's own conversation,
+so the chat carries an answer of at most `_HELPER_ANSWER_MAX` (8 000)
+characters instead of a forty-page paper it would have to re-send every
+round for the rest of the reply. Four papers asked the same question cost
+about what one full read would.
 
 The helper runs the same `AgentLoop` with `fetch_paper` as its only tool,
 no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
@@ -801,6 +802,22 @@ event so the reply's footer counts the whole answer. A wall the helper met
 cannot show a card from in there, so its request rides up on the parent
 action as the `handoff`, and the chat's own card and wait take over
 ([above](#walls-and-the-browser-handoff)).
+
+While it works, the helper reports its status (`Helper.on_status`), its
+whole state each time it changes: `{id, label, state, steps, step?,
+blocked?}`. `label` is the paper's title, or its source when the call
+gave none. `state` is `reading`, `answering`, `done` or `failed`, `steps`
+counts the calls it finished, `step` is the call running now (the loop's
+own step payload) and `blocked` the host that stopped a fetch. The chat's
+loop cannot carry these, because it is inside the `read_paper` call until
+the helper answers. So a streamed chat puts them on its stream itself, as
+`{"helper"}` lines: the relay's queue is made up front
+(`routers/ai.py` `live_lines`) and the helper's thread adds to it without
+waiting. A line the client reads too slowly for is dropped, which costs
+nothing because the next one carries the whole state again. The chat keeps
+the newest state per `id` and shows a row per helper under the steps pill
+until the call's chip lands ([ai.md](ai.md#the-tool-loop)). The research
+job passes no `on_status`, so its helpers work unseen.
 
 The tool is offered only when **Read long papers with a helper**
 (`gamma-ai-delegate-reads`, account-wide, on by default) is set — the

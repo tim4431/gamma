@@ -38,6 +38,7 @@ Anything that changes the library, and anything that may stop on a card,
 runs on its own in call order.
 """
 
+import itertools
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -58,6 +59,8 @@ MAX_PARALLEL_CALLS = 4
 
 # Provider round-trips a Helper may use on the one document it was given.
 HELPER_ROUNDS = 12
+# The document's name in a Helper's status: a title, cut to one line.
+STATUS_LABEL_MAX = 120
 
 # Note edits are previewed in the notes panel while the model writes them
 # (the "progress" event). No other tool's arguments are streamed.
@@ -398,7 +401,7 @@ class Helper:
     """A second, smaller agent the chat can hand one job to.
 
     ``read_paper`` uses it: the helper fetches one document, reads as many
-    windows as the question needs, and hands back a short cited answer. The
+    windows as the question needs, and hands back a cited answer. The
     windows stay in the helper's own conversation, so a forty-page paper
     costs the chat an answer instead of forty thousand characters it has to
     carry for the rest of the reply.
@@ -408,19 +411,31 @@ class Helper:
     is reported up to the chat, whose card and wait already exist. Its
     token counts are metered like any other call and handed back so the
     reply's footer can say what the whole answer cost.
+
+    While it works it tells ``on_status`` what it is doing, its whole state
+    each time: ``{id, label, state, steps, step?, blocked?}`` — ``state`` is
+    reading, answering, done or failed, ``steps`` the calls it finished,
+    ``step`` the one running now and ``blocked`` the host that stopped a
+    fetch. The parent loop cannot carry this: it is inside the call that
+    started the helper and yields nothing until that returns. So
+    ``on_status`` is called from whichever thread runs the call, and a
+    caller with someone watching puts it on its own stream.
     """
 
-    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None):
+    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None, on_status=None):
         self.ws = ws
         self.scope = scope
         self.open_call = open_call
         self.read_events = read_events
         self.on_usage = on_usage
+        self.on_status = on_status
+        self._ids = itertools.count(1)
 
-    def run(self, *, question: str, system: str, tools: list) -> dict:
-        """Answer ``question`` with ``tools`` armed. Returns
-        ``{"text", "actions", "usage"}`` — the answer, the calls it made
-        (for the parent's chip) and what it cost."""
+    def run(self, *, question: str, system: str, tools: list, label: str = "") -> dict:
+        """Answer ``question`` with ``tools`` armed; ``label`` names the job
+        in its status (the document's title). Returns ``{"text", "actions",
+        "usage"}`` — the answer, the calls it made (for the parent's chip)
+        and what it cost."""
         talk = Conversation([{"role": "user", "content": question}], system)
         usage = {}
         loop = AgentLoop(ws=self.ws, scope=self.scope, tools=tools, conversation=talk,
@@ -428,13 +443,34 @@ class Helper:
                          read_events=self.read_events, on_usage=self._meter(usage),
                          max_rounds=HELPER_ROUNDS)
         text, actions = [], []
-        for kind, data in loop.run(self.open_call(talk, tools)):
-            if kind == "delta":
-                text.append(data)
-            elif kind == "action":
-                data.pop("images", None)   # a picture never leaves the helper
-                actions.append(data)
-        return {"text": "".join(text).strip(), "actions": actions, "usage": usage}
+        status = {"id": f"h{next(self._ids)}", "label": label[:STATUS_LABEL_MAX],
+                  "state": "reading", "steps": 0}
+        self._say(status)
+        try:
+            for kind, data in loop.run(self.open_call(talk, tools)):
+                if kind == "delta":
+                    text.append(data)
+                    if status["state"] != "answering":
+                        self._say(status, state="answering", step=None)
+                elif kind == "step":
+                    self._say(status, state="reading", step=data)
+                elif kind == "action":
+                    data.pop("images", None)   # a picture never leaves the helper
+                    actions.append(data)
+                    blocked = data.get("handoff", {}).get("host")
+                    self._say(status, steps=len(actions), step=None,
+                              **({"blocked": blocked} if blocked else {}))
+        except BaseException:
+            self._say(status, state="failed", step=None)
+            raise
+        answer = "".join(text).strip()
+        self._say(status, state="done" if answer else "failed", step=None)
+        return {"text": answer, "actions": actions, "usage": usage}
+
+    def _say(self, status: dict, **changes) -> None:
+        status.update(changes)
+        if self.on_status:
+            self.on_status({k: v for k, v in status.items() if v is not None})
 
     def _meter(self, into: dict):
         def count(one):
