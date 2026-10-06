@@ -18,11 +18,12 @@ launcher, and desktop release workflows use these locations.
 | `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, `docs/dev/` and `docs/research/` as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
-| `docs/user_guide.md` | User documentation, published at gammapdf.com/docs |
+| `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
 | `docs/assets/` | Documentation images and animations |
 | `tools/readme-media/` | README capture scripts, renderers, and recording recipes |
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
 | `tools/branding/` | Unified asset generation and consistency checks; README and Store layout recipes |
+| `tools/user_guide/` | The user guide's animations: one scene per section, generated into `docs/user_guide/assets/` |
 | `tools/*codex*`, `tools/*plugins*` | Assistant plugin (Codex, Claude Code, DeepSeek Harness) packaging, release and installer scripts with their unit tests; `codex-plugin.yml` runs them and `desktop.yml` builds the release assets |
 | `plugins/gamma/` | The assistant plugin source: the `gamma` skill, its `.codex-plugin/` and `.claude-plugin/` manifests, and the DeepSeek Harness layer (`dsh-skill.js`, `cordis.patch.yml`) |
 | `artifacts/` | Ignored local sources and outputs; [retention guide](../../artifacts/README.md) |
@@ -66,7 +67,7 @@ developer sidebar there.
 
 The root README is for users: plain headings without emoji or icons, "Read
 from any place" first, pictures linked to the matching section of the
-[user guide](../user_guide.md), and a "→ Guide:" line per feature section.
+[user guide](../user_guide/user_guide.md), and a "→ Guide:" line per feature section.
 Keep its copy consistent with the website and Store listing. Typed text in
 generated illustrations uses `branding.typewriter()`; see the
 [branding workflow](../../tools/branding/README.md).

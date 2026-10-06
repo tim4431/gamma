@@ -94,7 +94,7 @@ for the previous four at 960–1120 px. Each file is smaller than the one it rep
 
 Tried: the same three interactions (annotate + ink, notes with live math,
 library search) as animated SVG illustrations in the branding style
-(`tools/branding/build-demos.py`), to see whether "showing the idea" can
+(then `tools/branding/build-demos.py`), to see whether "showing the idea" can
 stand in for a recording.
 
 What works: a scene is ~10 KB against 1–5 MiB per WebP, renders crisp at
@@ -118,3 +118,13 @@ line, one note and one stroke.
 Decision: keep the recordings in the README, where a visitor decides
 whether the product is real, and use the abstract scenes, light only, in
 the user guide, where the reader already has the app and wants the idea.
+
+Follow-up (2026-10): the user guide was rewritten around these scenes, one
+per section, 21 in all, and they moved out of the brand build into their own
+generator, `tools/user_guide/` → `docs/user_guide/assets/`, with a frame
+renderer (`snap.mjs` pauses the SMIL clock at a given second) so a scene is
+checked from PNGs rather than by watching it. Two more rules from that round:
+the browser restarts a dash pattern at every subpath, so a handwriting line
+is one stroke per word; and the pointer needs a white outline, or it vanishes
+over the amber buttons it clicks. The three original scenes were removed from
+`docs/assets/branding/`, which the brand check reserves for its own outputs.
