@@ -161,8 +161,9 @@ def test_checkout_refused(client, stripe, monkeypatch):
     assert client.post("/api/billing/checkout", json={"price": "nope"}).status_code == 400
     assert client.post("/api/billing/checkout", json={"price": "plus_month"}).status_code == 403  # unverified
     verify(client)
-    monkeypatch.setitem(config.STRIPE_PRICES, "pro_year", ("pro", "year", ""))
-    assert client.post("/api/billing/checkout", json={"price": "pro_year"}).status_code == 400
+    with monkeypatch.context() as m:                                    # a price without an id, not Pro off sale
+        m.setitem(config.STRIPE_PRICES, "pro_year", ("pro", "year", ""))
+        assert client.post("/api/billing/checkout", json={"price": "pro_year"}).status_code == 400
     completed(client, stripe, alice["id"])
     r = client.post("/api/billing/checkout", json={"price": "pro_month"})
     assert r.status_code == 409 and "Plan page" in r.json()["detail"]
