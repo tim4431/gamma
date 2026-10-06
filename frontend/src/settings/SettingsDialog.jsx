@@ -1062,7 +1062,7 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
                 {pane === "account" ? <>
-                  <UsersSettings value={users} selfOnly />
+                  <UsersSettings value={users} selfOnly onServer={available("server") ? () => navigate("server", t("Account server")) : null} />
                   {workspace ? <SyncSettings value={workspace} /> : null}
                 </> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}

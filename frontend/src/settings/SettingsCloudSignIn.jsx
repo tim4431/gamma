@@ -12,7 +12,9 @@
 //   to its cloud account (link = a round trip through the account server,
 //   unlink = one call; refused for an account that has no password; no Link
 //   button until an admin connected the server), and under it, once linked,
-//   CloudSyncRow: the settings sync by hand.
+//   CloudSyncRow: the settings sync by hand. Unlinked, its hint says what
+//   linking gives; it shows while cloud sign-in is off too, with a Set up
+//   button for an admin.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
@@ -138,16 +140,19 @@ export function CloudSignInSettings({ setStatus, action }) {
   </>;
 }
 
-export function CloudIdentityRow({ setStatus, confirm }) {
-  const [state, setState] = React.useState(null); // {identity, enabled}
+// `onSetUp` (admins) opens Settings → Server → Sign-in, where cloud sign-in
+// that is off is turned on and a server that waits is connected.
+export function CloudIdentityRow({ setStatus, confirm, onSetUp }) {
+  const [state, setState] = React.useState(null); // {identity, enabled, issuer, connected}
   const [error, setError] = React.useState("");
   const load = React.useCallback(() => {
     apiJson(`${API}/auth/cloud/status`).then(setState).catch((err) => setError(err.message));
   }, []);
   React.useEffect(() => { load(); }, [load]);
-  if (!state || !state.enabled) return null;
+  if (!state) return null;
   const id = state.identity;
-  const waiting = !id && state.connected === false;
+  const off = !state.enabled;
+  const waiting = !off && !id && state.connected === false;
   const here = window.location.pathname + window.location.search;
   const link = () => { window.location.assign(`${API}/auth/cloud/start?link=1&next=${encodeURIComponent(here)}`); };
   async function doUnlink() {
@@ -166,18 +171,21 @@ export function CloudIdentityRow({ setStatus, confirm }) {
     <Row icon={CloudIcon} label={t("Gamma Cloud")}
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}`
         : waiting ? t("An admin connects this server to Gamma Cloud first, in Settings → Server → Sign-in")
-        : t("Sign in here with your Gamma Cloud account")}
+        : t("Publish pages for free and carry your settings to your other servers")}
       title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
+        : off ? t("Gamma Cloud sign-in is off on this server. An admin turns it on in Settings → Server → Sign-in.")
         : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
       <span className="setRowControls">
-        {id ? <span className="uiTag ok">{t("linked")}</span> : null}
+        {id ? <span className="uiTag ok">{t("linked")}</span> : off && !onSetUp ? <span className="uiTag">{t("off")}</span> : null}
         {id && state.issuer ? (
           <a className="uiBtn sm" href={`${state.issuer}/`} target="_blank" rel="noopener"
             title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
             <ExternalLinkIcon size={14} /> {t("Open account")}
           </a>) : null}
         {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
-            : waiting ? null : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}
+          : !off && !waiting ? <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>
+          : onSetUp ? <button className="uiBtn sm primary" onClick={onSetUp} title={t("Open Settings → Server → Sign-in")}>{t("Set up")}</button>
+          : null}
       </span>
     </Row>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}

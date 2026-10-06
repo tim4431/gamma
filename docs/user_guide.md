@@ -339,7 +339,7 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 
 | Group | Pane | What's there |
 |---|---|---|
-| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
+| Account card | Account & sync | Your account, storage meter and Gamma Cloud link (free publishing, and your settings on your other servers; in the desktop app it is ready to link, on a self-hosted server an admin turns it on with **Set up**); **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
 | Preferences | Appearance | Theme (system + seven), dark PDF pages, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
 | | Language and Translation | The interface language, the viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |

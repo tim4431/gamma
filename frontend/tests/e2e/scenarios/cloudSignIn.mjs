@@ -1,6 +1,7 @@
-// Sign in with Gamma Cloud (docs/dev/cloud_accounts.md): the admin turns it
-// on under Settings → Server → Sign-in, the login page grows the button, and
-// an account sees its link row. The round trip through a real account server
+// Sign in with Gamma Cloud (docs/dev/cloud_accounts.md): while it is off the
+// account pane says what it gives (with Set up for an admin), the admin turns
+// it on under Settings → Server → Sign-in, the login page grows the button,
+// and an account sees its link row. The round trip through a real account server
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
 // sent there (the button's target is asserted, not followed).
 import { Account, Server, wanted } from "../harness.mjs";
@@ -19,6 +20,37 @@ export async function cloudSignInScenarios(env) {
     await settingsNav(page, pane).click();
   }
 
+  const cloudRow = (page) => page.locator('.setRow[data-setting="Gamma Cloud"]');
+  const BENEFITS = "Publish pages for free and carry your settings to your other servers";
+
+  // Off, the account pane still says what Gamma Cloud gives: a member sees it
+  // marked off, an admin gets Set up, which lands on the switch.
+  await step("cloud sign-in: while it is off the account pane offers it", async () => {
+    server.manage("create-user", "cloud-member", "cloud-member-pw");
+    const member = await new Account(server, "cloud-member", "cloud-member-pw").login();
+    const memberCtx = await member.context(browser);
+    const ctx = await admin.context(browser);
+    try {
+      const memberPage = await openPage(memberCtx, server.base);
+      await openSettings(memberPage, "Account & sync");
+      await cloudRow(memberPage).getByText(BENEFITS, { exact: true }).waitFor();
+      await cloudRow(memberPage).locator(".uiTag").filter({ hasText: /^off$/ }).waitFor();
+      assertEq(await cloudRow(memberPage).getByRole("button").count(), 0, "nothing a member can press");
+      await assertNoProblems(memberPage);
+      const page = await openPage(ctx, server.base);
+      await openSettings(page, "Account & sync");
+      await cloudRow(page).getByText(BENEFITS, { exact: true }).waitFor();
+      await cloudRow(page).getByRole("button", { name: "Set up", exact: true }).click();
+      await page.getByRole("textbox", { name: "Account server", exact: true }).waitFor();
+      await until(() => page.evaluate(() => document.activeElement?.dataset?.setting === "Account server"),
+        { what: "Set up lands on the Account server row" });
+      await assertNoProblems(page);
+    } finally {
+      await memberCtx.close();
+      await ctx.close();
+    }
+  });
+
   await step("cloud sign-in: the admin turns it on and the login page offers it", async () => {
     const ctx = await admin.context(browser);
     try {
@@ -34,9 +66,10 @@ export async function cloudSignInScenarios(env) {
       await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
       await until(() => admin.api("/api/admin/settings").then((v) => v.cloud.enabled && v.cloud.policy === "claim"));
       await chip("on").waitFor();
-      // the account pane offers the link
+      // the account pane offers the link, saying what it gives
       await settingsNav(page, "Account & sync").click();
-      await page.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).waitFor();
+      await cloudRow(page).getByRole("button", { name: "Link Gamma Cloud account", exact: true }).waitFor();
+      await cloudRow(page).getByText(BENEFITS, { exact: true }).waitFor();
       await assertNoProblems(page);
       // a signed-out visitor sees the button, aimed at this server's start endpoint
       const anon = await browser.newContext();
@@ -88,7 +121,8 @@ export async function cloudSignInScenarios(env) {
       await openSettings(page, "Account & sync");
       await page.getByText("An admin connects this server to Gamma Cloud first", { exact: false }).waitFor();
       assertEq(await page.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).count(), 0, "no Link button yet");
-      await settingsNav(page, "Server").click();
+      // Set up takes the admin to the Connect button
+      await cloudRow(page).getByRole("button", { name: "Set up", exact: true }).click();
       await page.getByRole("button", { name: "Connect", exact: true }).click();
       await page.waitForURL((url) => !url.pathname.startsWith("/api/"));
       await page.getByRole("alert").filter({ hasText: "account server" }).waitFor();

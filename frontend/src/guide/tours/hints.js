@@ -130,7 +130,8 @@ export const connector = {
 
 // A setting that travels with the account was just changed, on a server
 // that offers Gamma Cloud sign-in to an account that has not linked one:
-// linking is what carries these settings to the user's other Gamma servers.
+// linking is what carries these settings to the user's other Gamma servers,
+// and what lets it publish pages for free.
 export const cloudAccount = {
   id: "cloud-account",
   version: 1,
@@ -138,7 +139,7 @@ export const cloudAccount = {
   requires: { cloudLinkable: true, prefsChanged: true },
   trigger: {},
   steps: [{ id: "cloud-account", anchor: "header.account", placement: "bottom",
-    title: T("Link **Gamma Cloud** (Settings → Account & sync) to take settings to your other servers.") }],
+    title: T("Link **Gamma Cloud** (Settings → Account & sync) to take settings to your other servers and publish pages for free.") }],
 };
 
 export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,

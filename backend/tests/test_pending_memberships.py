@@ -206,7 +206,7 @@ def test_lookup_transport(monkeypatch):
         workspaces.lookup_with_token(ISSUER, "tok", "other")
     # cloud sign-in off, or an inviter with no linked grant: the lookup cannot be made
     monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)
-    monkeypatch.setattr(cloud_auth, "_get_raw", lambda key: "")
+    monkeypatch.setattr(cloud_auth, "_get_raw", lambda key, default="": "")
     with pytest.raises(workspaces.CloudLookupError, match="not set up"):
         workspaces.cloud_lookup_username("known")
     monkeypatch.setenv("GAMMA_CLOUD_ISSUER", ISSUER)

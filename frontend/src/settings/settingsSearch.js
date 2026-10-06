@@ -77,7 +77,7 @@ const entries = [
   e("tools", t("Read window"), t("Tool limits"), t("Document text per read tool call"), "advanced context characters"),
   e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code plugins MCP tokens read-only revoke connections"),
   e("account", t("Account & sync"), null, t("Your account, Gamma Cloud link and settings sync"), "profile account user"),
-  e("account", t("Gamma Cloud"), null, t("Sign in here with your Gamma Cloud account"), "cloud link unlink sign-in identity plan"),
+  e("account", t("Gamma Cloud"), null, t("Publish pages for free and carry your settings to your other servers"), "cloud link unlink sign-in identity plan publish sync set up"),
   e("account", t("Settings sync"), null, t("Carry these settings to your other Gamma servers"), "sync cloud fetch push profile preferences"),
   e("account", t("Publishing"), null, t("Pages you publish to Gamma Cloud"), "sync publish published pages Gamma Cloud share stop conflicts"),
   e("workspaces", t("Workspaces"), null, t("Personal and shared workspaces, export and import"), "library libraries default new personal shared"),

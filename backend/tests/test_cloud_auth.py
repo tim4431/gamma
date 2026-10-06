@@ -408,6 +408,31 @@ def test_admin_settings_roundtrip(monkeypatch):
     assert c.put("/api/admin/settings", json={"cloud_policy": "claim"}).status_code == 400
 
 
+def test_default_issuer_until_one_is_saved(monkeypatch):
+    # the desktop app's sidecar names Gamma Cloud: on from the start, still the admin's to change
+    monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)
+    monkeypatch.setenv("GAMMA_CLOUD_DEFAULT_ISSUER", "https://account.example/")
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM settings WHERE key = 'cloud_issuer'")
+        conn.commit()
+    make_user("ca_desk", "pw-ca_desk-123", is_admin=1)
+    c = login("ca_desk", "pw-ca_desk-123")
+    try:
+        cfg = c.get("/api/admin/settings").json()["cloud"]
+        assert (cfg["issuer"], cfg["enabled"], cfg["source"]) == ("https://account.example", True, "saved")
+        assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": "https://account.example",
+                                                                "lead": False}
+        status = c.get("/api/auth/cloud/status").json()
+        assert status["enabled"] and status["connected"] and not status["identity"]
+        # a saved empty address keeps it off; a saved one replaces the default
+        assert c.put("/api/admin/settings", json={"cloud_issuer": ""}).json()["cloud"]["enabled"] is False
+        assert c.get("/api/server-config").json()["cloud"]["enabled"] is False
+        cfg = c.put("/api/admin/settings", json={"cloud_issuer": "https://other.example"}).json()["cloud"]
+        assert (cfg["issuer"], cfg["enabled"]) == ("https://other.example", True)
+    finally:
+        c.put("/api/admin/settings", json={"cloud_issuer": ""})
+
+
 def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
     # saved settings, not the environment's: connecting writes the client
     monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)

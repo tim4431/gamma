@@ -51,8 +51,12 @@ def cloud_env() -> dict:
     ``GAMMA_CLOUD_ADMIN_SUBJECT`` (the cloud account that becomes this
     server's admin on first sign-in) and ``GAMMA_CLOUD_SHARE_HOST=1`` (this
     server is the free share host: it accepts published pages, refuses the
-    guest and lists accounts only by exact name — gamma/publish.py)."""
+    guest and lists accounts only by exact name — gamma/publish.py).
+    ``GAMMA_CLOUD_DEFAULT_ISSUER`` is the account server used until an admin
+    saves one (the desktop app's sidecar sets it); unlike
+    ``GAMMA_CLOUD_ISSUER`` it leaves the settings editable."""
     return {"issuer": os.environ.get("GAMMA_CLOUD_ISSUER", "").strip().rstrip("/"),
+            "default_issuer": os.environ.get("GAMMA_CLOUD_DEFAULT_ISSUER", "").strip().rstrip("/"),
             "client_id": os.environ.get("GAMMA_CLOUD_CLIENT_ID", "").strip(),
             "client_secret": os.environ.get("GAMMA_CLOUD_CLIENT_SECRET", ""),
             "policy": os.environ.get("GAMMA_CLOUD_POLICY", "").strip().lower(),

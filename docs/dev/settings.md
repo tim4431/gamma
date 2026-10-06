@@ -514,10 +514,15 @@ row here.
 Editing shows one Save button as the section's action. Values are stored in
 the server `settings` table (`cloud_*`), read-only when `GAMMA_CLOUD_ISSUER`
 manages them. The login page reads `GET /api/server-config` and shows "Sign
-in with Gamma Cloud" while it is on. The **Account** pane gets a "Gamma
+in with Gamma Cloud" while it is on. The **Account** pane has a "Gamma
 Cloud" row (`CloudIdentityRow`): the linked username and plan with an Unlink
 button, or a "Link Gamma Cloud account" button that round-trips through the
-account server ([cloud_accounts.md](cloud_accounts.md)).
+account server ([cloud_accounts.md](cloud_accounts.md)). Unlinked, its hint
+says what linking gives: free publishing and settings carried to the
+person's other servers. While sign-in is off, or on but waiting for Connect,
+the row stays with that hint. An admin gets a *Set up* button that opens
+Server at the Account server row; anyone else gets an `off` tag, and the
+hover says an admin turns it on.
 
 Search is backed by [settingsSearch.js](../../frontend/src/settings/settingsSearch.js).
 Each entry names its pane, the setting's label, its section, its one-line

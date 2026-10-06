@@ -891,7 +891,11 @@ container gets the same through the environment — `GAMMA_CLOUD_ISSUER`,
 `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY`,
 `GAMMA_CLOUD_ADMIN_SUBJECT` — which makes the pane read-only (a hosted
 container's policy comes from its plan instead, "Hosted containers"
-below). Under the
+below). The desktop app starts with sign-in on: its sidecar sets
+`GAMMA_CLOUD_DEFAULT_ISSUER=https://account.gammapdf.com`, the address
+while `cloud_issuer` has never been saved. Unlike `GAMMA_CLOUD_ISSUER` it
+leaves the pane editable, and a saved empty address keeps sign-in off.
+A self-hosted server starts with it off. Under the
 `provision` policy the pane also offers *Accept published pages*
 (`cloud_share_host`, env `GAMMA_CLOUD_SHARE_HOST=1`), which makes the server
 the share host (below).
