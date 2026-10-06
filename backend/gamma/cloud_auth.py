@@ -33,7 +33,9 @@ account to it; the policy is not consulted for that.
 
 Configuration lives in the ``settings`` KV (issuer, client id, the secret
 Fernet-encrypted with the data directory's key, policy) with ``GAMMA_CLOUD_*``
-environment overrides for provisioned containers. Discovery and the JWKS
+environment overrides for provisioned containers. The desktop app starts
+with it on: its sidecar names Gamma Cloud in ``GAMMA_CLOUD_DEFAULT_ISSUER``,
+the issuer until an admin saves another or none. Discovery and the JWKS
 are fetched from the issuer and cached in memory; an ID token is verified
 locally (issuer, audience, nonce, expiry, ``email_verified``) — the account
 server is never called on a data request.
@@ -153,14 +155,16 @@ def settings() -> dict:
 
 
 def _configured() -> dict:
-    """``settings`` as the environment or the saved settings have it."""
+    """``settings`` as the environment or the saved settings have it. An
+    issuer never saved is ``GAMMA_CLOUD_DEFAULT_ISSUER`` (the desktop app's
+    Gamma Cloud); a saved empty one keeps cloud sign-in off."""
     env = config.cloud_env()
     if env["issuer"]:
         return {"issuer": env["issuer"], "client_id": env["client_id"] or DEFAULT_CLIENT_ID,
                 "policy": env["policy"] if env["policy"] in POLICIES else "refuse",
                 "has_secret": bool(env["client_secret"]), "enabled": True, "share_host": env["share_host"],
                 "source": "environment", "policy_source": "environment"}
-    issuer = _get_raw("cloud_issuer")
+    issuer = _get_raw("cloud_issuer", env["default_issuer"])
     client_id = _get_raw("cloud_client_id")
     policy = _get_raw("cloud_policy")
     has_secret = bool(_get_raw("cloud_client_secret"))

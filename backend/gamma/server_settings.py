@@ -81,10 +81,12 @@ def _parse(raw, default: int, lo: int, hi: int) -> int:
     return value if lo <= value <= hi else default
 
 
-def _get_raw(key: str) -> str:
+def _get_raw(key: str, default: str = "") -> str:
+    """A stored value; ``default`` when the key was never saved (a saved ""
+    stays "")."""
     with connect_users_db() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row[0] if row else ""
+    return row[0] if row else default
 
 
 def _set_raw(key: str, value: str) -> None:
