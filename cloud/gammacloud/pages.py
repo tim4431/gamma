@@ -116,7 +116,7 @@ form.inline{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}form.inline
 .section>.body.tbl{padding:0}table{width:100%;border-collapse:collapse;font-size:13.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;padding:8px 10px;border-bottom:1px solid var(--line)}td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}tr:last-child td{border-bottom:0}td .btn{margin:0}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px}.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;font:inherit;font-weight:500;color:var(--text-2);cursor:pointer;margin-bottom:-1px}.tabs button.on{color:var(--text);border-bottom-color:var(--text)}
 .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.toolbar input{max-width:320px}.toolbar .spacer{flex:1}
-select.sm{width:auto;padding:3px 6px;font-size:13px}.mono{font-family:var(--mono);font-size:12px}
+select.sm{width:auto;padding:3px 6px;font-size:13px}.grant{display:flex;align-items:center;gap:6px;margin-top:4px;color:var(--muted);font-size:12px}.mono{font-family:var(--mono);font-size:12px}
 .secretbox{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:6px;padding:10px 12px;margin-top:10px;font-family:var(--mono);font-size:12.5px;word-break:break-all;white-space:pre-wrap}
 .notice svg{width:16px;height:16px;flex:none;margin-right:8px;vertical-align:-3px}
 /* summary tiles (the Admin page's Servers and Billing tabs) */
@@ -797,11 +797,14 @@ def admin_page(account: dict) -> str:
 const PLANS = %s; let offset = 0, query = '';
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   for (const t of ['accounts','invites','clients','servers','billing','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
-// The select sets the granted plan (accounts.set_plan), so it shows that one, with the effective plan beside it when a subscription lifts it higher.
+// The plan the account is on, and where it comes from: paid (a subscription lifts it above the grant) or granted.
+// The select under it sets the grant only (accounts.set_plan): a courtesy plan, never the subscription.
 function planSelect(a){
   const g = a.granted_plan || a.plan;
-  return '<select class=sm title="Granted plan" data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === g ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'
-    + (a.plan !== g ? ' <span class="pill pill--ok" title="Paid through Stripe">' + esc(a.plan) + ' paid</span>' : '');
+  const source = a.plan !== g ? ' <span class="pill pill--ok" title="Paid through Stripe">paid</span>'
+    : a.plan !== 'free' ? ' <span class=pill title="Given by an admin or an invite">granted</span>' : '';
+  return '<b>' + esc(a.plan) + '</b>' + source + '<span class=grant>grant <select class=sm title="The plan granted by hand; the account has the higher of this and what it pays for" data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>'
+    + PLANS.map(p => '<option' + (p === g ? ' selected' : '') + '>' + p + '</option>').join('') + '</select></span>';
 }
 function accountRow(a){
   const status = (a.deleted_at ? '<span class=pill>deleted</span> ' : '') + (a.email_verified ? '<span class="pill pill--ok">verified</span>' : '<span class="pill pill--warn">unverified</span>') + (a.is_admin ? ' <span class=pill>admin</span>' : '');

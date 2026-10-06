@@ -351,8 +351,10 @@ at registration gets its server once the link is clicked.
   rows of `billing_events` with the account and the outcome.
 
 Refunds, disputes and invoices stay in Stripe's dashboard. On the Accounts
-tab the plan select shows and sets the granted plan, with a "paid" pill
-when a subscription lifts the effective plan above it. `manage.py
+tab the Plan column names the plan the account is on, with "paid" when a
+subscription lifts it above the grant and "granted" when the grant gives
+it; the select under it, labelled *grant*, shows and sets the granted plan
+only. `manage.py
 subscriptions [--status S]` prints the same list.
 
 ## The website

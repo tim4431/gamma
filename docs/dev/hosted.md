@@ -114,7 +114,7 @@ With a row, the target moves it:
 | `active` | `grace`, `read_only` | `running` |
 | `active` | `stopped` | `running`, plus a `start` job |
 | `grace` | `running`, `read_only`, `stopped` | `grace` (`stopped` also gets a `start` job) |
-| `read_only` | `provisioning`, `running`, `grace` | `read_only`, and the "read-only" mail |
+| `read_only` | `provisioning`, `running`, `grace` | `read_only`, and the "read-only" mail, which says why (`hosted._read_only_mail`): the plan ended, or it is still paid and has no server of its own, so the library belongs on the shared server |
 
 A server whose container was never made (its last `create` job is not
 `done`) returns to `provisioning` rather than `running`. `suspended` and

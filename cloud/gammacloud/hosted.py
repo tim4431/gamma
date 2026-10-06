@@ -143,8 +143,8 @@ def _message(state: str, row, grace_until: str | None) -> str:
         return (f"Payment failed; this server becomes read-only on {_day(grace_until)} unless the card is fixed "
                 f"at {_portal()}.")
     if state == "read_only":
-        return (f"This server is read-only because its plan ended. Reads and exports still work; it stops on "
-                f"{_day(_stops_at(row))}. Resume the plan at {_portal()}.")
+        return (f"This server is read-only: no plan covers it any more. Reads and exports still work; it stops "
+                f"on {_day(_stops_at(row))}. See {_portal()}.")
     if state == "stopped":
         return f"This server is stopped and is deleted on {_day(_gone_at(row))}. Resume the plan at {_portal()}."
     if state == "suspended":
@@ -242,12 +242,8 @@ def _apply(conn, row, actor: str) -> dict:
                 fleet.enqueue(conn, row["host_id"], row["id"], "start", {"label": row["label"]})
             _set_state(conn, row, new, actor, status)
             if new == "read_only":
-                stops = _plus_days(db.now(), config.READ_ONLY_DAYS)
-                _mail(conn, row["account_id"], "Your Gamma server is read-only", [
-                    f"Your plan ended, so {url_of(row['label']) or row['label']} is now read-only: you can still "
-                    "open everything and export it from Settings → Backups, but nothing new can be written.",
-                    f"It stops on {_day(stops)} and is deleted {config.DELETE_DAYS} days after today. Resuming "
-                    "the plan before then brings it back as it was."], _plan_button())
+                _mail(conn, row["account_id"], "Your Gamma server is read-only",
+                      _read_only_mail(conn, row), _plan_button())
     if previous and previous != plan and row["state"] != "deleted":
         db.audit(conn, "hosted.limits", row["account_id"], actor, f"{row['label']} {previous} -> {plan}")
     limits = _store_limits(conn, row["id"], plan, grace_until)
@@ -255,6 +251,26 @@ def _apply(conn, row, actor: str) -> dict:
     if before.get("memory_mb") and status != "read_only":
         _resize_if_moved(conn, row["id"], fleet.size_of(before), actor)
     return limits
+
+
+def _read_only_mail(conn, row) -> list[str]:
+    """What the owner is told when their server turns read-only: the plan
+    ended, or it is still paid and has no server of its own (a move down
+    from Pro), in which case the library belongs on the shared server."""
+    url = url_of(row["label"]) or row["label"]
+    stops = _plus_days(db.now(), config.READ_ONLY_DAYS)
+    account = _account(conn, row["account_id"])
+    plan = account["plan"] if account is not None and not account["deleted_at"] else "free"
+    export = "you can still open everything and export it from Settings → Backups, but nothing new can be written."
+    if config.PLAN_LIMITS.get(plan, {}).get("shared"):
+        shared = urlsplit(config.APP_URL).netloc or "Gamma Cloud's shared server"
+        return [f"Your {plan.capitalize()} plan is active. It keeps your library on {shared}, not on a server of "
+                f"your own, so {url} is now read-only: {export}",
+                f"It stops on {_day(stops)} and is deleted {config.DELETE_DAYS} days after today. To keep what is "
+                f"on it, export it before then and import it at {shared}."]
+    return [f"Your plan ended, so {url} is now read-only: {export}",
+            f"It stops on {_day(stops)} and is deleted {config.DELETE_DAYS} days after today. Resuming the plan "
+            "before then brings it back as it was."]
 
 
 def _resize_if_moved(conn, server_id: str, was: tuple[int, float] | None, actor: str) -> None:

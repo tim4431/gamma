@@ -284,6 +284,7 @@ def test_tick_grace_read_only_stopped_deleted(client, hosting):
     row = server(alice)
     assert row["state"] == "read_only" and row["read_only"] == 1
     assert len(subjects("Your Gamma server is read-only")) == 1
+    assert "Your plan ended" in mail.outbox[-1]["body"]
 
     tick()                                                 # nothing more yet
     assert server(alice)["state"] == "read_only"
@@ -507,6 +508,8 @@ def test_a_server_whose_plan_moved_to_the_shared_server_lapses_as_it_is(client, 
     row = server(alice)
     limits = json.loads(row["limits"])
     assert row["state"] == "read_only" and limits["plan"] == "pro" and limits["read_only"] is True
+    body = mail.outbox[-1]["body"]                        # the mail says why: the plan is paid, it has no server
+    assert "Your Lite plan is active" in body and "Your plan ended" not in body and "import it at" in body
     assert [j["kind"] for j in jobs_of(alice) if j["state"] == "queued"] == []   # not resized
     tick()
     assert server(alice)["state"] == "read_only"
