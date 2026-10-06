@@ -32,7 +32,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (backup_schedule, cloud_sync, hosted, integrity, logbuf, server_settings, sync_engine,
+from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, logbuf, server_settings, sync_engine,
                translate_engines, version)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
@@ -193,6 +193,33 @@ def cloud_sync_choice(user_id):
         return None
     return notice("cloud-sync-choice", "choose", "warn", "account",
                   "Your settings here and on Gamma Cloud differ: choose which to keep")
+
+
+@source()
+def cloud_link(user_id):
+    """Cloud sign-in works here and the account has linked no Gamma Cloud
+    account (info, seen once): the Account pane's Gamma Cloud row says what
+    linking gives and links it. Not on the share host, where pages are
+    published to rather than from."""
+    cfg = cloud_auth.settings()
+    if not cfg["enabled"] or cfg["share_host"] or cloud_auth.needs_connect() or cloud_auth.status_of(user_id):
+        return None
+    return notice("cloud-link", "link", "info", "account",
+                  "Publish pages for free and carry your settings to your other servers with a Gamma Cloud account")
+
+
+@source(admin_only=True)
+def cloud_setup(_user_id):
+    """Cloud sign-in is off here, or on but the server still has to be
+    connected (info, seen once per state): Server → Sign-in turns it on."""
+    cfg = cloud_auth.settings()
+    if not cfg["enabled"]:
+        return notice("cloud-setup", "off", "info", "server",
+                      "Turn on Gamma Cloud sign-in to publish pages for free and carry your settings to your other servers")
+    if cloud_auth.needs_connect():
+        return notice("cloud-setup", "connect", "info", "server",
+                      "Connect this server to Gamma Cloud to finish turning on its sign-in")
+    return None
 
 
 @source()

@@ -25,6 +25,9 @@ export const NOTICE_MESSAGES = [
   T("Gamma Cloud sync failed: {error}"),
   T("Gamma Cloud sync failed"),
   T("Your settings here and on Gamma Cloud differ: choose which to keep"),
+  T("Publish pages for free and carry your settings to your other servers with a Gamma Cloud account"),
+  T("Turn on Gamma Cloud sign-in to publish pages for free and carry your settings to your other servers"),
+  T("Connect this server to Gamma Cloud to finish turning on its sign-in"),
   T("Microsoft's free translation keeps failing — set up Google or Youdao"),
   T("Your storage is full ({used} of {quota} MB used)"),
   T("Your storage is nearly full ({used} of {quota} MB used)"),
@@ -51,6 +54,8 @@ const ACTIONS = {
   "publish-conflicts": T("Resolve the conflicts"),
   "cloud-sync": T("Review the sync"),
   "cloud-sync-choice": T("Choose a copy"),
+  "cloud-link": T("Link Gamma Cloud"),
+  "cloud-setup": T("Set up Gamma Cloud"),
   "free-translate": T("Set up translation"),
   storage: T("Review storage"),
 };

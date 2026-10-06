@@ -363,7 +363,7 @@ One share link per page or per folder of a workspace. What a token reaches and w
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link, validated like a PUT — the Share popover always sends one: the audience tile picked, or `list` with the first person invited) or return the existing one unchanged — root blocks only (400 otherwise); workspace editors and owners |
+| POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link, validated like a PUT — the Share popover always sends one: `users`/`view` from its Share button) or return the existing one unchanged — root blocks only (400 otherwise); workspace editors and owners |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | read settings (`{token: null}` when unshared; any member) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: unknown usernames or roles → 400; the token stays; `edit`+`anyone` is allowed — see "Link visitors" above) / stop sharing (the token dies) — editors and owners |
 | POST | `/share/folder/{folder_id}` | the same for a folder (an empty one too): 404 unless `folder_id` is a folder of the workspace |
 | GET/PUT/DELETE | `/share-settings/folder/{folder_id}` | the folder share's settings, changes and stop, as for a page. The share names the folder by id: a rename or a move changes nothing; it dies with the folder, whichever path deletes it (`ops.after_commit`) |

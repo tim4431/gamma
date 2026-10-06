@@ -2514,10 +2514,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: var(--fs-xs); }
 .topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
 .topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
-/* Stop sharing: the button at the end of the link's sections, or its
-   inline confirm across the width. */
-.shareStop { display: flex; justify-content: flex-end; padding: 8px 8px 2px; }
-.shareStop .mirrorConfirm { flex: 1; padding: 4px 0; }
 /* Slide citation / BibTeX: a sub-label line, then a copy box. */
 .citeHead { display: flex; align-items: baseline; gap: 4px; padding: 6px 8px 4px; }
 .citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }

@@ -188,7 +188,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover, undimmed whole: the address box (a scene typing into it), Upload files, New notebook (a drawing of the one page behind both views) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: a scene double-clicking it to fold, then one dragging it to the left dock |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access with Stop sharing (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
+| Sharing a page | the page gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table), each with a scene clicking it — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, then the eraser and the lasso on one card (Ctrl+Z brings back what was erased); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
@@ -313,8 +313,9 @@ Engine abilities available to every step:
   its tiles.
 - **`Section guide="…"`** in the settings kit groups a section's header and
   rows under one anchor (the Share popover's Who has access and General
-  access; its Link section carries `share.link` only once a link exists,
-  which is what the tour's create step waits for).
+  access; its Link section carries `share.start` before a link exists and
+  `share.link` once one does, which is what the tour's create step waits
+  for).
 - **Keys in copy** (`guide/keys.js`). Titles and bodies render `**bold**`,
   `*italic*`, `` `code` `` and key tokens. `{key:app.quickOpen}` names a
   command of the catalog ([hotkeys.md](hotkeys.md)) and shows the chord it
@@ -718,7 +719,7 @@ where the thing happens:
 | `highlight.created` `{id, kind}` | App's highlight creation path |
 | `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
-| `share.created` | App's `createShareLink` (the Share popover's first audience tile, or its first invitation) |
+| `share.created` | App's `createShareLink` (the Share popover's Share button) |
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |

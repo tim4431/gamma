@@ -5696,9 +5696,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Share popover (owner; sharing/SharePopover.jsx). Opening it only LOADS the
-  // state — nothing is shared until the first audience tile is picked or the
-  // first person invited, which creates the share with that access; settings
-  // changes save immediately and the token only changes on "Stop sharing".
+  // state — nothing is shared until its Share button creates the share;
+  // settings changes save immediately and the token only changes on "Stop
+  // sharing".
   function applyShareSettings(data) {
     setShareSettings(data);
     setShareError("");
@@ -5719,8 +5719,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
-  // `settings` ({audience, role, users}) is the new share's access — the
-  // tile picked, or Invited only with the first person invited.
+  // `settings` ({audience, role}) is the new share's access, the popover's
+  // NEW_SHARE.
   async function createShareLink(settings) {
     if (!shareTarget || shareMode) return false;
     try {
@@ -5752,10 +5752,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
   // People: invitations are additive to general access (Notion-style) —
-  // each invited account carries its own view/edit. The first invitation on
-  // an unshared page or folder creates its share, Invited only.
+  // each invited account carries its own view/edit.
   function inviteShareUser(name, role) {
-    if (!shareSettings?.token) return createShareLink({ audience: "list", users: [{ name, role }] });
+    if (!shareSettings?.token) return false;
     const current = shareSettings.users || [];
     if (current.some((u) => u.name === name)) return true;
     return updateShareSettings({ users: [...current, { name, role }] });

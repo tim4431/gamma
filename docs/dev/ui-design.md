@@ -447,21 +447,22 @@ wraps it in a `data-popover="share"` anchor, so the outside-click and Escape
 rules close it; on phones the bottom bar's popover rule spans it across the
 screen), built from the settings kit like the workspace Manage dialog.
 The title names what is shared (Share "<page title>" / Share folder
-"<name>"). `Section`s, top to bottom — Link (the address as the row hint and
-Copy link as the primary button; before a share exists, one wrapping line
-saying that choosing who can open it creates the link), Who has access (the
-invite box on top — a compact `AccountPicker` beside a primary Invite, no
-modal in a popover; then `aiProvRow` rows: you, a shared workspace's members
-as one row tagged *workspace*, each invited account with its own View / Edit
-`Segmented` and a `uiBtn sm iconSq` remove), General access (pictured, not
-described: three `IconChoices` tiles — Anyone / Signed in / Invited only —
-and, as the section's action, one View / Edit `Segmented`, disabled before a
-share exists and under Invited only; one summary sentence under the tiles is
-the only prose, amber `.shareWarn` when a link is editable without sign-in),
-then Stop sharing: a labelled `uiBtn sm danger` that opens the inline
-`mirrorConfirm` Unpublish uses, naming how many invited people lose access.
-Nothing is shared by opening the popover: the first tile picked creates the
-share with that audience, the first invitation creates it as Invited only.
+"<name>"). Before a share exists the popover holds only the Link row — one
+wrapping line and a primary **Share** button — then Gamma Cloud and the
+citation: nothing is shared by opening it, and Share creates the share as
+Signed in · View, the access controls appearing with it. `Section`s once
+shared, top to bottom — Link (the address as the row hint, Copy link as the
+primary button and Stop sharing beside it as a `uiBtn sm iconSq danger` —
+the cloud link's Copy / Unpublish pair — opening the same inline
+`mirrorConfirm`, naming how many invited people lose access), Who has access
+(the invite box on top — a compact `AccountPicker` beside a primary Invite,
+no modal in a popover; then `aiProvRow` rows: you, a shared workspace's
+members as one row tagged *workspace*, each invited account with its own
+View / Edit `Segmented` and a `uiBtn sm iconSq` remove), General access
+(pictured, not described: three `IconChoices` tiles — Anyone / Signed in /
+Invited only — and, as the section's action, one View / Edit `Segmented`,
+disabled under Invited only; one summary sentence under the tiles is the
+only prose, amber `.shareWarn` when a link is editable without sign-in).
 Below them the page's Citation section (App.jsx owns it: a `citeHead`
 label line, then a `CopyBox` — text with the copy button pinned top-right —
 for the slide citation and for BibTeX; the section's action regenerates).

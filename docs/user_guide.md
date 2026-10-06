@@ -189,13 +189,12 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 ## Sharing a page
 
-The **link button** in the top bar shares the open page, Notion-style. Opening it shares nothing yet:
+The **link button** in the top bar shares the open page, Notion-style. Opening it shares nothing yet: press **Share** to make the link. It starts out readable by anyone signed in to this server, and the access controls appear with it:
 
-- **Link**, on top: once the page is shared, its address and **Copy link**. Copied links carry the workspace, so a teammate opening one lands in the right library.
-- **Who has access**: invite people by name, each with their own **View** or **Edit**. Inviting someone on a page that isn't shared yet creates its link for *invited people only*. In a shared workspace, its members are listed too: they open every page with their workspace role.
-- **General access**: *anyone with the link*, *signed-in users*, or *invited people only*, plus a **View / Edit** toggle for that audience. Picking one on a page that isn't shared yet creates the link with that access.
+- **Link**, on top: the page's address, **Copy link**, and **Stop sharing** beside it, which asks first, then ends the link and every invitation; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
+- **Who has access**: invite people by name, each with their own **View** or **Edit**. In a shared workspace, its members are listed too: they open every page with their workspace role.
+- **General access**: *anyone with the link*, *signed-in users*, or *invited people only*, plus a **View / Edit** toggle for that audience.
 - Viewers see the PDF, highlights and notes; with *anyone with the link* no login is needed. Editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name. The top bar tells a visitor whether they can view or edit and who shared the page, and offers **Sign in**, or **Add to my library** once signed in.
-- **Stop sharing**, at the bottom, asks first, then ends the link and every invitation; share again for a new one.
 - A link for signed-in users asks a visitor to sign in right there. A stopped or incompletely copied link says so and offers the way to the server's own front door.
 
 **Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a read-only library view of that folder; visitors open a page like you would and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.
@@ -333,7 +332,7 @@ Something broke? Open the account menu and choose **Report a problem…** (it is
 
 ## Settings at a glance
 
-A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release, errors in the server log or a damaged database. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
+A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release, errors in the server log or a damaged database. An accent-coloured dot is only a suggestion: linking a Gamma Cloud account, or (for an admin) turning Gamma Cloud sign-in on, shown once. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
 
 Settings (account menu → Settings) has one sidebar: your account card on top (it opens Account & sync), four groups under it, and Help & diagnostics at the bottom. The search box at the top (Ctrl+F) finds any setting by name and says what it does and where it lives — Enter opens the first match, ↑/↓ walk the list.
 
