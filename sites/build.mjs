@@ -4,8 +4,7 @@
 //                        copied from the repository (the site keeps no copies),
 //                        plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
-//                        the privacy policy, the terms, the user guide, the developer guide
-//                        and the research notes (DOCS below)
+//                        the privacy policy, the terms and the user guide (DOCS below)
 //   ./dist/sitemap.xml   every page above
 //
 // `node build.mjs --strict` fails on a broken internal link or anchor
@@ -58,9 +57,7 @@ const MEDIA = {
 const DOCS = [
   { source: 'PRIVACY.md', at: 'privacy/' },
   { source: 'TERMS.md', at: 'terms/' },
-  { source: 'docs/user_guide.md', at: 'docs/', section: 'User guide' },
-  { source: 'docs/dev', at: 'docs/dev/', section: 'Developer guide' },
-  { source: 'docs/research', at: 'docs/research/', section: 'Research notes' },
+  { source: 'docs/user_guide/user_guide.md', at: 'docs/', section: 'User guide' },
 ];
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;

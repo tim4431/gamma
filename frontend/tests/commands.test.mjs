@@ -15,7 +15,7 @@ import { chordLabel, conflicts, effectiveKeys, normalizeChord } from "../src/sha
 import { EMPTY_VIEW, moveSibling, removeBlockKeepChildren, visibleNeighbor } from "../src/shared/model/blockModel.js";
 import { toggleTodoLine } from "../src/editor/mdMarks.js";
 
-const GUIDE = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../docs/user_guide.md");
+const GUIDE = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../docs/user_guide/user_guide.md");
 
 test("every command has a unique id, a label, a known group and canonical default keys", () => {
   const ids = new Set();

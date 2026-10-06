@@ -1,8 +1,8 @@
 # gammapdf.com
 
 The product website: the front page, the pricing page, and the repository's
-documents rendered as pages (the user guide, the developer guide, the
-research notes, the privacy policy, the Gamma Cloud terms), served by a Cloudflare Worker with
+documents rendered as pages (the user guide, the privacy policy, the Gamma
+Cloud terms), served by a Cloudflare Worker with
 static assets. Nothing here is part of the app, and nothing shown on the
 site is written for the site alone: the front page's copy follows the README
 and the Store listing, the artwork is the README's, and every other page is
@@ -43,17 +43,14 @@ sites/
    |---|---|
    | `PRIVACY.md` | `/privacy/` |
    | `TERMS.md` | `/terms/` |
-   | `docs/user_guide.md` | `/docs/` |
-   | `docs/dev/*.md` | `/docs/dev/` (the README) and `/docs/dev/<name>/` |
-   | `docs/research/*.md` | `/docs/research/` (the README) and `/docs/research/<name>/` |
+   | `docs/user_guide/user_guide.md` | `/docs/` |
 
    Everything about a page comes from its Markdown: the title is the first
    heading, the description the first paragraph, heading ids follow GitHub's
    rules so an anchor written for the repository works on the site too. The
-   sidebar groups the pages by section; a section's index page (its README)
-   decides their order and labels through the order and text of its links,
-   table links first, so the developer guide's topic table is the developer
-   sidebar. A relative link in a document becomes the page it points at when
+   sidebar lists the page's sections. The developer guide and the research
+   notes are written for contributors and are not published: they stay on
+   GitHub, where a link from the user guide to one of them lands. A relative link in a document becomes the page it points at when
    that document is rendered too, a copy under `/media/` when it is a
    picture, and otherwise a link to the file on GitHub, so a document can
    point at code. Each page ends with a link to its source file;
@@ -150,9 +147,7 @@ needs two repository secrets:
   fallback) and in both color schemes (the illustrations are light-only;
   the screenshot and demos are shown as recorded).
 - Documentation pages are edited in `docs/`, never here. A document that
-  should also be on the site is added to `DOCS` in `build.mjs`; a new file
-  in `docs/dev/` or `docs/research/` is published on the next build with
-  nothing to configure. Link between documents with relative paths to the
+  should also be on the site is added to `DOCS` in `build.mjs`. Link between documents with relative paths to the
   `.md` files, as GitHub needs anyway.
 - A new hand-written page: add a `.html` under `site/` with the two
   includes; the sitemap picks it up.
